@@ -14,6 +14,9 @@ export type AuthContextType = {
   token: string | null;
   loading: boolean;
   signInWithOAuth: () => Promise<void>;
+  signInWithProvider: (provider: "google" | "github") => Promise<void>;
+  signInWithPassword: (email: string, password: string) => Promise<void>;
+  register: (params: { username: string; email: string; password: string }) => Promise<void>;
   devEmailLogin: (email?: string) => Promise<void>;
   signOut: () => void;
 };
@@ -22,6 +25,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
+const USERS_KEY = "auth_users";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -57,14 +61,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       signInWithOAuth: async () => {
         // In production, redirect to backend OAuth start URL.
-        // For dev, simulate OAuth success with a mock user.
+        // For dev, simulate OAuth success with a mock Google user.
         await signIn({
           id: "1",
-          name: "Dev Operator",
-          email: "operator@example.com",
+          name: "Dev Google User",
+          email: "google.user@example.com",
           role: "operator",
-          avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=Dev%20Operator`,
-          provider: "DevOAuth",
+          avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=Dev%20Google%20User`,
+          provider: "google",
+        });
+      },
+      signInWithProvider: async (provider: "google" | "github") => {
+        const profiles = {
+          google: {
+            id: "g-1",
+            name: "Google User",
+            email: "google.user@example.com",
+            role: "operator",
+            avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=Google%20User`,
+            provider: "google",
+          },
+          github: {
+            id: "gh-1",
+            name: "GitHub User",
+            email: "github.user@example.com",
+            role: "admin",
+            avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=GitHub%20User`,
+            provider: "github",
+          },
+        } as const;
+        await signIn(profiles[provider]);
+      },
+      signInWithPassword: async (email: string, password: string) => {
+        const usersRaw = localStorage.getItem(USERS_KEY);
+        const users: Array<{ id: string; username: string; email: string; password: string; role: string }> = usersRaw
+          ? JSON.parse(usersRaw)
+          : [];
+        const existing = users.find((u) => u.email === email && u.password === password);
+        if (!existing) throw new Error("Invalid email or password");
+        await signIn({
+          id: existing.id,
+          name: existing.username,
+          email: existing.email,
+          role: existing.role,
+          avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(existing.username)}`,
+          provider: "password",
+        });
+      },
+      register: async ({ username, email, password }) => {
+        const usersRaw = localStorage.getItem(USERS_KEY);
+        const users: Array<{ id: string; username: string; email: string; password: string; role: string }> = usersRaw
+          ? JSON.parse(usersRaw)
+          : [];
+        const exists = users.some((u) => u.email === email);
+        if (exists) throw new Error("Email already registered");
+        const newUser = { id: crypto.randomUUID(), username, email, password, role: "operator" };
+        const updated = [...users, newUser];
+        localStorage.setItem(USERS_KEY, JSON.stringify(updated));
+        await signIn({
+          id: newUser.id,
+          name: username,
+          email,
+          role: newUser.role,
+          avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`,
+          provider: "password",
         });
       },
       devEmailLogin: async (email?: string) => {

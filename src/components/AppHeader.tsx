@@ -1,4 +1,4 @@
-import { Bell, Search, User as UserIcon } from "lucide-react";
+import { Bell, Moon, Search, Sun, User as UserIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,10 +13,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/lib/auth";
+import { useTheme } from "next-themes";
 
 export function AppHeader() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const { theme, setTheme } = useTheme();
+
+  const toggleTheme = () => setTheme(theme === "dark" ? "light" : "dark");
 
   return (
     <header className="sticky top-0 z-20 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
@@ -28,6 +32,10 @@ export function AppHeader() {
             <Search className="h-4 w-4 text-muted-foreground" aria-hidden />
             <Input placeholder="Search instruments…" aria-label="Search instruments" className="w-64" />
           </div>
+          <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
+            <Sun className="h-5 w-5 dark:hidden" />
+            <Moon className="h-5 w-5 hidden dark:block" />
+          </Button>
           <Button variant="ghost" size="icon" aria-label="Notifications">
             <Bell className="h-5 w-5" />
           </Button>

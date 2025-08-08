@@ -9,7 +9,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         <AppSidebar />
         <main className="flex-1">
           <AppHeader />
-          <div className="p-6">{children}</div>
+          <div className="p-6">
+            {children}
+          </div>
         </main>
       </div>
     </SidebarProvider>
