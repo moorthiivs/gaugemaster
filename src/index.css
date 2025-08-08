@@ -38,6 +38,16 @@ All colors MUST be HSL.
 
     --radius: 0.5rem;
 
+    /* Brand enhancements */
+    --brand: 221 83% 53%;
+    --primary-glow: 222 84% 65%;
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / 0.6));
+    --gradient-surface: radial-gradient(800px 400px at 50% 0%, hsl(var(--primary) / 0.08), transparent);
+
+    --shadow-elev: 0 10px 30px -10px hsl(var(--primary) / 0.15);
+    --transition-smooth: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+
+    /* Sidebar tokens */
     --sidebar-background: 0 0% 98%;
 
     --sidebar-foreground: 240 5.3% 26.1%;
