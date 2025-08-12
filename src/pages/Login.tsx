@@ -3,6 +3,8 @@ import { GalleryVerticalEnd } from "lucide-react"
 import { useSEO } from "@/hooks/useSEO"
 import { LoginForm } from "@/Forms/login-form"
 
+import loginside from "@/assets/login-inside.png";
+
 export default function LoginPage() {
   useSEO({
     title: "Login — Calibration Alerts",
@@ -31,7 +33,7 @@ export default function LoginPage() {
       <div className="relative hidden lg:block bg-muted">
         <div className="absolute inset-0">
           <img
-            src="/1 (1).png"
+            src={loginside}
             alt="Calibration Illustration"
             className="h-full w-full object-cover object-center dark:brightness-[0.8] dark:grayscale"
           />

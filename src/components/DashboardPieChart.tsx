@@ -57,6 +57,7 @@ export function DashboardPieChart({
                                     border: '1px solid hsl(var(--border))',
                                     borderRadius: '8px',
                                 }}
+                                cursor={{ fill: 'hsl(var(--muted))', fillOpacity: 0.5 }}
                             />
                             <Legend />
                         </PieChart>

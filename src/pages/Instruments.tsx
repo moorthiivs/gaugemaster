@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { listInstruments, Instrument, InstrumentQuery, updateInstrument } from "@/lib/api";
+import { Instrument, InstrumentQuery, updateInstrument } from "@/lib/api";
 import { useSEO } from "@/hooks/useSEO";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,6 +11,10 @@ import { useNavigate } from "react-router-dom";
 import api from "@/lib/apis";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
+import ExcelUpload from "@/components/ExcelUpload";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { PlusCircle, Upload } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 
 const pageSize = 10;
@@ -24,6 +28,8 @@ export default function Instruments() {
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+
+  const [isOpenupload, setisOpenupload] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
 
@@ -82,121 +88,185 @@ export default function Instruments() {
   };
 
   return (
-    <div className="space-y-4">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Instruments</h1>
-          <p className="text-muted-foreground">Filter and manage your inventory.</p>
+    <>
+      <div className="space-y-4">
+        <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Instruments</h1>
+            <p className="text-muted-foreground">Filter and manage your inventory.</p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button className="w-full sm:w-auto" onClick={() => navigate("/instruments/new")}>
+              <PlusCircle className="h-4 w-4 mr-2" /> Add instrument
+            </Button>
+            <Button className="w-full sm:w-auto" variant="outline" onClick={() => setisOpenupload(true)}>
+              <Upload className="h-4 w-4 mr-2" /> Upload instrument
+            </Button>
+          </div>
+        </header>
+
+        <div className="grid gap-3 md:grid-cols-5">
+          <Input placeholder="Search…" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value, page: 1 }))} className="md:col-span-2" />
+          <Select value={filters.status as any} onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}>
+            <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+            <SelectContent>
+              {(["All", "OK", "Overdue"] as const).map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
+            <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
+            <SelectContent>
+              {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
+            <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
+            <SelectContent>
+              {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
+                <SelectItem key={s} value={s}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        <Button className="w-full sm:w-auto" onClick={() => navigate("/instruments/new")}>Add instrument</Button>
-      </header>
 
-      <div className="grid gap-3 md:grid-cols-5">
-        <Input placeholder="Search…" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value, page: 1 }))} className="md:col-span-2" />
-        <Select value={filters.status as any} onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}>
-          <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-          <SelectContent>
-            {(["All", "OK", "Overdue"] as const).map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
-          <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
-          <SelectContent>
-            {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
-          <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
-          <SelectContent>
-            {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
-              <SelectItem key={s} value={s}>{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" disabled={!selectedIds.length} onClick={markCalibrated}>Mark calibrated</Button>
+          <Button
+            variant="outline"
+            disabled={!data.items.length}
+            onClick={() => {
+              const header = ["name", "id_code", "location", "last_calibration_date", "due_date", "frequency", "agency", "status"];
+              const csv = [header.join(","), ...data.items.map((r) => header.map((h) => (r as any)[h]).join(","))].join("\n");
+              const blob = new Blob([csv], { type: "text/csv" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `instruments_page_${filters.page}.csv`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            Export CSV (page)
+          </Button>
+        </div>
 
-      <div className="flex items-center gap-2">
-        <Button variant="secondary" disabled={!selectedIds.length} onClick={markCalibrated}>Mark calibrated</Button>
-        <Button
-          variant="outline"
-          disabled={!data.items.length}
-          onClick={() => {
-            const header = ["name", "id_code", "location", "last_calibration_date", "due_date", "frequency", "agency", "status"];
-            const csv = [header.join(","), ...data.items.map((r) => header.map((h) => (r as any)[h]).join(","))].join("\n");
-            const blob = new Blob([csv], { type: "text/csv" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `instruments_page_${filters.page}.csv`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          Export CSV (page)
-        </Button>
-      </div>
 
-      <div className="rounded-md border">
-        <Table aria-label="Instruments table">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10">
-                <Checkbox onCheckedChange={(v) => toggleAll(!!v)} aria-label="Select all" />
-              </TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>ID Code</TableHead>
-              <TableHead>Location</TableHead>
-              <TableHead>Last Calibration</TableHead>
-              <TableHead>Due Date</TableHead>
-              <TableHead>Frequency</TableHead>
-              <TableHead>Agency</TableHead>
-              <TableHead>Status</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.items.map((i) => (
-              <TableRow key={i.id} className="hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/instruments/${i.id}/edit`)}>
-                <TableCell onClick={(e) => e.stopPropagation()}>
-                  <Checkbox checked={!!selected[i.id]} onCheckedChange={(v) => setSelected((s) => ({ ...s, [i.id]: !!v }))} aria-label={`Select ${i.name}`} />
-                </TableCell>
-                <TableCell>{i.name}</TableCell>
-                <TableCell>{i.id_code}</TableCell>
-                <TableCell>{i.location}</TableCell>
-                <TableCell>{new Date(i.last_calibration_date).toLocaleDateString()}</TableCell>
-                <TableCell>{new Date(i.due_date).toLocaleDateString()}</TableCell>
-                <TableCell>{i.frequency}</TableCell>
-                <TableCell>{i.agency}</TableCell>
-                <TableCell>
-                  <Badge
-                    variant={
-                      i.status === "OK"
-                        ? "success"
-                        : i.status === "Overdue"
-                          ? "destructive"
-                          : "warning"
-                    }
-                    className="capitalize"
-                  >
-                    {i.status}
-                  </Badge>
-                </TableCell>
+        <div className="rounded-md border overflow-x-auto">
+          <Table aria-label="Instruments table" className="min-w-[10px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox onCheckedChange={(v) => toggleAll(!!v)} aria-label="Select all" />
+                </TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>ID Code</TableHead>
+                <TableHead>Location</TableHead>
+                <TableHead>Last Calibration</TableHead>
+                <TableHead>Due Date</TableHead>
+                <TableHead>Frequency</TableHead>
+                <TableHead>Agency</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {loading
+                ? Array.from({ length: 8 }).map((_, index) => (
+                  <TableRow key={index}>
+                    <TableCell><Skeleton className="h-4 w-4 rounded" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[140px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[100px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[100px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[120px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[120px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[80px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[150px]" /></TableCell>
+                    <TableCell><Skeleton className="h-4 w-[80px]" /></TableCell>
+                  </TableRow>
+                ))
+                : data.items.map((i) => (
+                  <TableRow
+                    key={i.id}
+                    className="hover:bg-muted/50 cursor-pointer"
+                    onClick={() => navigate(`/instruments/${i.id}/edit`)}
+                  >
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={!!selected[i.id]}
+                        onCheckedChange={(v) => setSelected((s) => ({ ...s, [i.id]: !!v }))}
+                        aria-label={`Select ${i.name}`}
+                      />
+                    </TableCell>
+                    <TableCell>{i.name}</TableCell>
+                    <TableCell>{i.id_code}</TableCell>
+                    <TableCell>{i.location}</TableCell>
+                    <TableCell>{new Date(i.last_calibration_date).toLocaleDateString()}</TableCell>
+                    <TableCell>{new Date(i.due_date).toLocaleDateString()}</TableCell>
+                    <TableCell>{i.frequency}</TableCell>
+                    <TableCell>{i.agency}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          i.status === "OK"
+                            ? "success"
+                            : i.status === "Overdue"
+                              ? "destructive"
+                              : "warning"
+                        }
+                        className="capitalize"
+                      >
+                        {i.status}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+            </TableBody>
+          </Table>
+        </div>
 
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">Page {filters.page} of {totalPages}</div>
-        <div className="flex gap-2">
-          <Button variant="outline" disabled={filters.page === 1} onClick={() => setFilters((f) => ({ ...f, page: (f.page || 1) - 1 }))}>Previous</Button>
-          <Button variant="outline" disabled={filters.page === totalPages} onClick={() => setFilters((f) => ({ ...f, page: (f.page || 1) + 1 }))}>Next</Button>
+
+        <div className="flex items-center justify-between">
+          <div className="text-sm text-muted-foreground">Page {filters.page} of {totalPages}</div>
+          <div className="flex gap-2">
+            <Button variant="outline" disabled={filters.page === 1} onClick={() => setFilters((f) => ({ ...f, page: (f.page || 1) - 1 }))}>Previous</Button>
+            <Button variant="outline" disabled={filters.page === totalPages} onClick={() => setFilters((f) => ({ ...f, page: (f.page || 1) + 1 }))}>Next</Button>
+          </div>
         </div>
       </div>
-    </div>
+
+      <Dialog open={isOpenupload} onOpenChange={setisOpenupload}>
+        <DialogContent className="max-w-lg">
+          <ExcelUpload
+            endpoint="/instruments"
+            mapRow={(row) => ({
+              name: row["NAME OF INSTRUMENT"],
+              id_code: row["ID CODE"],
+              range: row["RANGE"],
+              serial_no: row["SERIAL NO"],
+              least_count: row["LEAST COUNT"],
+              location: row["LOCATION"],
+              frequency: row["CALIBRATION FREQUENCY"],
+              last_calibration_date: row["LAST CALIBRATION DATE"]
+                ? new Date(row["LAST CALIBRATION DATE"]).toISOString()
+                : null,
+              due_date: row["DUE DATE"] ? new Date(row["DUE DATE"]).toISOString() : null,
+              agency: row["CALIBRATION AGENCY AND TC No"],
+              status: row["STATUS"],
+              custom_parameters: {},
+            })}
+            onComplete={() => {
+              fetchData();
+              setisOpenupload(false);
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+
+    </>
+
   );
 }

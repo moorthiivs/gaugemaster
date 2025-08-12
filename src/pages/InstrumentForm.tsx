@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon } from "lucide-react";
+import { ArrowLeft, CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import api from "@/lib/apis";
 import { useAuth } from "@/lib/auth";
@@ -167,9 +167,21 @@ export default function InstrumentForm() {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle>{isEdit ? "Edit instrument" : "Add instrument"}</CardTitle>
-      </CardHeader>
+      <div className="flex items-center gap-2 my-3 mx-3">
+        {isEdit && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/instruments")}
+            className="p-0"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+        )}
+        <CardTitle className="text-lg font-semibold">
+          {isEdit ? "Edit instrument" : "Add instrument"}
+        </CardTitle>
+      </div>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 md:grid-cols-2">
           {[
