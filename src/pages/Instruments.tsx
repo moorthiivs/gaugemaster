@@ -140,8 +140,8 @@ export default function Instruments() {
         </Button>
       </div>
 
-      <div className="rounded-md border">
-        <Table aria-label="Instruments table">
+      <div className="w-full overflow-x-auto rounded-md border">
+        <Table aria-label="Instruments table" className="min-w-[960px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-10">
