@@ -83,12 +83,12 @@ export default function Instruments() {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Instruments</h1>
           <p className="text-muted-foreground">Filter and manage your inventory.</p>
         </div>
-        <Button onClick={() => navigate("/instruments/new")}>Add instrument</Button>
+        <Button className="w-full sm:w-auto" onClick={() => navigate("/instruments/new")}>Add instrument</Button>
       </header>
 
       <div className="grid gap-3 md:grid-cols-5">
