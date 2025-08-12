@@ -1,10 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getDashboardSummary, DashboardSummary } from "@/lib/api";
 import { useSEO } from "@/hooks/useSEO";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart3, AlertTriangle, CalendarClock, Package } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from "recharts";
+import { Tooltip } from "@/components/ui/tooltip";
+import { DashboardChart } from "@/components/DashboardChart";
+import api from "@/lib/apis";
+import { useAuth } from "@/lib/auth";
+import { DashboardPieChart } from "@/components/DashboardPieChart";
+
+
+interface DashboardSummary {
+  total: number;
+  dueThisMonth: number;
+  overdue: number;
+  nextCalibrationDate: string | null;
+  dueDatesByMonth: { month: string; count: number }[];
+  dueSoonList: { id: string; name: string; dueDate: string }[];
+  recentActivity: { id: string; name: string; action: string; at: string }[];
+}
 
 const StatCard = ({ title, value, icon: Icon, helper }: { title: string; value: string | number; icon: any; helper?: string }) => (
   <Card className="hover:shadow-lg transition-shadow" aria-label={title}>
@@ -24,12 +40,36 @@ const Index = () => {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const { user } = useAuth()
+
   useEffect(() => {
-    getDashboardSummary().then((d) => {
-      setData(d);
-      setLoading(false);
-    });
-  }, []);
+    if (!user?.id) return;
+
+    async function fetchDashboard() {
+      try {
+        const d = await api.get(`/dashboard/${user?.id}`);
+        setData(d.data);
+      } catch (error) {
+        console.error("Failed to fetch dashboard data:", error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchDashboard();
+  }, [user?.id]);
+
+
+  const pieData = data
+    ? [
+      { name: 'Calibrated', value: data.total - data.overdue - data.dueThisMonth },
+      { name: 'Due This Month', value: data.dueThisMonth },
+      { name: 'Overdue', value: data.overdue },
+    ]
+    : [];
+
+  const chartData = data?.dueDatesByMonth || [];
+
 
   return (
     <div className="space-y-6">
@@ -53,38 +93,10 @@ const Index = () => {
         </div>
       )}
 
-      <section aria-label="Upcoming due dates by month">
-        <Card>
-          <CardHeader>
-            <CardTitle>Upcoming due dates</CardTitle>
-            <CardDescription>Next 12 months</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <Skeleton className="h-64" />
-            ) : (
-              <div className="w-full h-64">
-                {/* Using a simple SVG chart to avoid heavy dependencies at first render */}
-                <svg role="img" aria-label="Bar chart of upcoming due dates by month" className="w-full h-full">
-                  {data?.monthlyUpcoming.map((m, idx) => {
-                    const max = Math.max(...(data?.monthlyUpcoming.map((x) => x.count) || [1]));
-                    const barW = 100 / (data!.monthlyUpcoming.length * 1.5);
-                    const gap = barW / 2;
-                    const height = max ? (m.count / max) * 80 : 0;
-                    const x = idx * (barW + gap) + gap;
-                    const y = 90 - height;
-                    return (
-                      <g key={m.month}>
-                        <rect x={`${x}%`} y={`${y}%`} width={`${barW}%`} height={`${height}%`} rx="4" className="fill-primary/70" />
-                        <text x={`${x + barW / 2}%`} y="98%" textAnchor="middle" className="fill-muted-foreground text-[10px]">{m.month}</text>
-                      </g>
-                    );
-                  })}
-                </svg>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+
+      <section aria-label="Upcoming due dates by month" className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <DashboardChart data={chartData} />
+        <DashboardPieChart data={pieData} />
       </section>
 
       <section>
@@ -119,6 +131,42 @@ const Index = () => {
           </CardContent>
         </Card>
       </section>
+
+
+
+      <section>
+        <Card>
+          <CardHeader>
+            <CardTitle>Instruments Due Soon (Next 30 Days)</CardTitle>
+            <CardDescription>List of instruments with calibration due dates in the next 30 days.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <Skeleton className="h-40" />
+            ) : !data?.dueSoonList.length ? (
+              <p className="text-muted-foreground">No instruments due soon.</p>
+            ) : (
+              <Table aria-label="Due soon instruments">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Instrument</TableHead>
+                    <TableHead>Due Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.dueSoonList.map(({ id, name, dueDate }) => (
+                    <TableRow key={id}>
+                      <TableCell>{name}</TableCell>
+                      <TableCell>{new Date(dueDate).toLocaleDateString()}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
     </div>
   );
 };

@@ -19,7 +19,7 @@ export default function Register() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await register({ username, email, password });
+      await register(username, email, password);
       toast({ title: "Welcome aboard!", description: "Your account is ready." });
       navigate("/dashboard", { replace: true });
     } catch (e: any) {

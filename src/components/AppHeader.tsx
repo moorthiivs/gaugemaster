@@ -1,4 +1,4 @@
-import { Bell, Moon, Search, Sun, User as UserIcon } from "lucide-react";
+import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,10 +28,10 @@ export function AppHeader() {
         <SidebarTrigger aria-label="Toggle sidebar" />
         <div className="font-semibold">Calibration Alerts</div>
         <div className="ml-auto flex items-center gap-2">
-          <div className="hidden md:flex items-center gap-2">
+          {/* <div className="hidden md:flex items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground" aria-hidden />
             <Input placeholder="Search instruments…" aria-label="Search instruments" className="w-64" />
-          </div>
+          </div> */}
           <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggleTheme}>
             <Sun className="h-5 w-5 dark:hidden" />
             <Moon className="h-5 w-5 hidden dark:block" />
@@ -39,7 +39,10 @@ export function AppHeader() {
           <Button variant="ghost" size="icon" aria-label="Notifications">
             <Bell className="h-5 w-5" />
           </Button>
-          <DropdownMenu>
+
+
+
+          {/* <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="gap-2">
                 <Avatar className="h-6 w-6">
@@ -62,6 +65,48 @@ export function AppHeader() {
                 }}
               >
                 Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu> */}
+
+
+          {/* User Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={user?.avatarUrl} alt={user?.name || "User"} />
+                  <AvatarFallback><UserIcon className="h-4 w-4" /></AvatarFallback>
+                </Avatar>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-64" align="end" forceMount>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                  <p className="text-sm font-medium leading-none">
+                    {user?.name}
+                  </p>
+                  <p className="text-xs leading-none text-muted-foreground">
+                    {user?.email}
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>
+                <User className="mr-2 h-4 w-4" />
+                <span>Profile</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Settings className="mr-2 h-4 w-4" />
+                <span>Settings</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => {
+                signOut();
+                navigate("/login", { replace: true });
+              }}>
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Log out</span>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

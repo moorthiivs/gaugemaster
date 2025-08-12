@@ -8,14 +8,18 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
+import api from "@/lib/apis";
+import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/lib/auth";
+
 
 const pageSize = 10;
 
 export default function Instruments() {
   useSEO({ title: "Instruments — Calibration Alerts", description: "Browse, filter, and manage instruments." });
   const { toast } = useToast();
+  const { user } = useAuth()
   const navigate = useNavigate();
-
   const [filters, setFilters] = useState<InstrumentQuery>({ status: "All", location: "All", frequency: "All", page: 1, pageSize });
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
   const [loading, setLoading] = useState(false);
@@ -24,16 +28,37 @@ export default function Instruments() {
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
 
   const fetchData = async () => {
-    setLoading(true);
-    const res = await listInstruments(filters);
-    setData(res);
-    setLoading(false);
-    setSelected({});
+    try {
+      setLoading(true);
+      const queryParams = new URLSearchParams();
+      if (filters.status && filters.status !== "All") queryParams.append("status", filters.status);
+      if (filters.location && filters.location !== "All") queryParams.append("location", filters.location);
+      if (filters.frequency && filters.frequency !== "All") queryParams.append("frequency", filters.frequency);
+      if (filters.search) queryParams.append("search", filters.search);
+      if (filters.page) queryParams.append("page", String(filters.page));
+      if (filters.pageSize) queryParams.append("pageSize", String(filters.pageSize));
+
+      queryParams.append("createdBy", String(user.id));
+      // API call
+      const res = await api.get(`/instruments?${queryParams}`);
+      if (!res.status) throw new Error("Failed to fetch instruments");
+      const result = await res.data;
+      setData({
+        items: result.data,
+        total: result.total
+      });
+
+
+      setSelected({});
+    } catch (error) {
+      toast({ title: "Error", description: String(error), variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.page, filters.status, filters.location, filters.frequency]);
 
   const toggleAll = (checked: boolean) => {
@@ -49,7 +74,6 @@ export default function Instruments() {
     for (const id of selectedIds) {
       await updateInstrument(id, {
         last_calibration_date: today.toISOString(),
-        // push due date 6 months ahead by default
         due_date: new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()).toISOString(),
       });
     }
@@ -72,7 +96,7 @@ export default function Instruments() {
         <Select value={filters.status as any} onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}>
           <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
-            {(["All","OK","Overdue"] as const).map((s) => (
+            {(["All", "OK", "Overdue"] as const).map((s) => (
               <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
           </SelectContent>
@@ -80,7 +104,7 @@ export default function Instruments() {
         <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
           <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
           <SelectContent>
-            {(["All","Yearly","Half-Yearly","Quarterly","Monthly"] as const).map((s) => (
+            {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
               <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
           </SelectContent>
@@ -88,7 +112,7 @@ export default function Instruments() {
         <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
           <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
           <SelectContent>
-            {(["All","Lab A","Lab B","Field","QA Room"] as const).map((s) => (
+            {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
               <SelectItem key={s} value={s}>{s}</SelectItem>
             ))}
           </SelectContent>
@@ -101,7 +125,7 @@ export default function Instruments() {
           variant="outline"
           disabled={!data.items.length}
           onClick={() => {
-            const header = ["name","id_code","location","last_calibration_date","due_date","frequency","agency","status"]; 
+            const header = ["name", "id_code", "location", "last_calibration_date", "due_date", "frequency", "agency", "status"];
             const csv = [header.join(","), ...data.items.map((r) => header.map((h) => (r as any)[h]).join(","))].join("\n");
             const blob = new Blob([csv], { type: "text/csv" });
             const url = URL.createObjectURL(blob);
@@ -146,7 +170,20 @@ export default function Instruments() {
                 <TableCell>{new Date(i.due_date).toLocaleDateString()}</TableCell>
                 <TableCell>{i.frequency}</TableCell>
                 <TableCell>{i.agency}</TableCell>
-                <TableCell>{i.status}</TableCell>
+                <TableCell>
+                  <Badge
+                    variant={
+                      i.status === "OK"
+                        ? "success"
+                        : i.status === "Overdue"
+                          ? "destructive"
+                          : "warning"
+                    }
+                    className="capitalize"
+                  >
+                    {i.status}
+                  </Badge>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

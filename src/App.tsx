@@ -17,50 +17,54 @@ import { AuthProvider } from "@/lib/auth";
 import Landing from "./pages/Landing";
 import Register from "./pages/Register";
 import { ThemeProvider } from "next-themes";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 
 const queryClient = new QueryClient();
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Routes>
-              {/* Public pages */}
-              <Route path="/" element={<Landing />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
 
-              {/* Protected app */}
-              <Route
-                element={
-                  <ProtectedRoute>
-                    <MainLayout>
-                      <Outlet />
-                    </MainLayout>
-                  </ProtectedRoute>
-                }
-              >
-                <Route path="/dashboard" element={<Index />} />
-                <Route path="/instruments" element={<Instruments />} />
-                <Route path="/instruments/new" element={<InstrumentForm />} />
-                <Route path="/instruments/:id/edit" element={<InstrumentForm />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/profile" element={<Profile />} />
-                <Route path="/settings" element={<Settings />} />
-              </Route>
+  <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Routes>
+                {/* Public pages */}
+                <Route path="/" element={<Landing />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
 
-              {/* Catch-all */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </TooltipProvider>
-      </ThemeProvider>
-    </AuthProvider>
-  </QueryClientProvider>
+                {/* Protected app */}
+                <Route
+                  element={
+                    <ProtectedRoute>
+                      <MainLayout>
+                        <Outlet />
+                      </MainLayout>
+                    </ProtectedRoute>
+                  }
+                >
+                  <Route path="/dashboard" element={<Index />} />
+                  <Route path="/instruments" element={<Instruments />} />
+                  <Route path="/instruments/new" element={<InstrumentForm />} />
+                  <Route path="/instruments/:id/edit" element={<InstrumentForm />} />
+                  <Route path="/reports" element={<Reports />} />
+                  <Route path="/profile" element={<Profile />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Route>
+
+                {/* Catch-all */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </ThemeProvider>
+      </AuthProvider>
+    </QueryClientProvider>
+  </GoogleOAuthProvider>
 );
 
 export default App;
