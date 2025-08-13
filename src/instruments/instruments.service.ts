@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { Instrument } from './instrument.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Like, Repository } from 'typeorm';
+import { ILike, Like, Repository } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
 
@@ -28,6 +28,26 @@ export class InstrumentsService {
     ) { }
 
 
+    async findFilterParams(createdById: string) {
+        const instruments = await this.instrumentRepository.find({
+            where: { created_by: { id: createdById } },
+            select: ['status', 'frequency', 'location'],
+        });
+
+        if (!instruments.length) {
+            throw new NotFoundException(`No instruments found for created_by ID ${createdById}`);
+        }
+
+        const unique = (arr: string[]) => [...new Set(arr.filter(Boolean))];
+
+        return {
+            status: unique(instruments.map(i => i.status)),
+            frequency: unique(instruments.map(i => i.frequency)),
+            location: unique(instruments.map(i => i.location)),
+        };
+    }
+
+
     async findOne(id: string): Promise<Instrument> {
         const instrument = await this.instrumentRepository.findOne({
             where: { id },
@@ -43,13 +63,13 @@ export class InstrumentsService {
 
         const where: any = {};
 
-        if (status && status !== 'All') where.status = status;
-        if (location && location !== 'All') where.location = location;
-        if (frequency && frequency !== 'All') where.frequency = frequency;
+        if (status && status !== 'All') where.status = ILike(status);
+        if (location && location !== 'All') where.location = ILike(location);
+        if (frequency && frequency !== 'All') where.frequency = ILike(frequency);
         if (createdBy) where.created_by = { id: createdBy };
         // Search in multiple columns
         if (search) {
-            where.name = Like(`%${search}%`);
+            where.name = ILike(`%${search}%`);
         }
 
         const [data, total] = await this.instrumentRepository.findAndCount({
@@ -68,29 +88,6 @@ export class InstrumentsService {
         };
     }
 
-    // async create(instrumentDto: CreateInstrumentDto) {
-    //     try {
-
-    //         console.log(instrumentDto, "instrumentDto");
-
-    //         const newInstrument = this.instrumentRepository.create({
-    //             ...instrumentDto,
-    //             created_by: { id: instrumentDto.created_by },
-    //             updated_by: { id: null },
-    //             last_calibration_date: new Date(instrumentDto.last_calibration_date),
-    //             due_date: new Date(instrumentDto.due_date),
-    //         });
-
-    //         return await this.instrumentRepository.save(newInstrument);
-    //     } catch (error) {
-    //         if (this.isUniqueConstraintError(error)) {
-    //             throw new ConflictException(
-    //                 `Instrument with the same identifier already exists.`,
-    //             );
-    //         }
-    //         throw new InternalServerErrorException('An unexpected error occurred.');
-    //     }
-    // }
 
 
     async create(instrumentDto: CreateInstrumentDto) {
@@ -109,7 +106,7 @@ export class InstrumentsService {
                 );
             }
 
-            
+
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
                 created_by: { id: instrumentDto.created_by },

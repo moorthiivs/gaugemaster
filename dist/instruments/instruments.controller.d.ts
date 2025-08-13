@@ -11,6 +11,11 @@ export declare class InstrumentsController {
         pageSize: number;
         totalPages: number;
     }>;
+    getFilterParams(createdById: string): Promise<{
+        status: string[];
+        frequency: string[];
+        location: string[];
+    }>;
     findOne(id: string): Promise<import("./instrument.entity").Instrument>;
     create(createInstrumentDto: CreateInstrumentDto): Promise<import("./instrument.entity").Instrument>;
     update(id: string, updateInstrumentDto: UpdateInstrumentDto): Promise<import("./instrument.entity").Instrument>;

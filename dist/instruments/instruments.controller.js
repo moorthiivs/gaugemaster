@@ -35,6 +35,9 @@ let InstrumentsController = class InstrumentsController {
             createdBy
         });
     }
+    async getFilterParams(createdById) {
+        return this.instrumentsService.findFilterParams(createdById);
+    }
     async findOne(id) {
         return this.instrumentsService.findOne(id);
     }
@@ -59,6 +62,13 @@ __decorate([
     __metadata("design:paramtypes", [String, String, String, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], InstrumentsController.prototype, "findAll", null);
+__decorate([
+    (0, common_1.Get)('filters/:createdById'),
+    __param(0, (0, common_1.Param)('createdById')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String]),
+    __metadata("design:returntype", Promise)
+], InstrumentsController.prototype, "getFilterParams", null);
 __decorate([
     (0, common_1.Get)(':id'),
     __param(0, (0, common_1.Param)('id')),

@@ -14,6 +14,11 @@ interface InstrumentFilters {
 export declare class InstrumentsService {
     private readonly instrumentRepository;
     constructor(instrumentRepository: Repository<Instrument>);
+    findFilterParams(createdById: string): Promise<{
+        status: string[];
+        frequency: string[];
+        location: string[];
+    }>;
     findOne(id: string): Promise<Instrument>;
     findAll(filters: InstrumentFilters): Promise<{
         data: Instrument[];

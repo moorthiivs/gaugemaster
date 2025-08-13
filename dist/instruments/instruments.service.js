@@ -22,6 +22,21 @@ let InstrumentsService = class InstrumentsService {
     constructor(instrumentRepository) {
         this.instrumentRepository = instrumentRepository;
     }
+    async findFilterParams(createdById) {
+        const instruments = await this.instrumentRepository.find({
+            where: { created_by: { id: createdById } },
+            select: ['status', 'frequency', 'location'],
+        });
+        if (!instruments.length) {
+            throw new common_1.NotFoundException(`No instruments found for created_by ID ${createdById}`);
+        }
+        const unique = (arr) => [...new Set(arr.filter(Boolean))];
+        return {
+            status: unique(instruments.map(i => i.status)),
+            frequency: unique(instruments.map(i => i.frequency)),
+            location: unique(instruments.map(i => i.location)),
+        };
+    }
     async findOne(id) {
         const instrument = await this.instrumentRepository.findOne({
             where: { id },
@@ -35,15 +50,15 @@ let InstrumentsService = class InstrumentsService {
         const { status, location, frequency, search, page, pageSize, createdBy } = filters;
         const where = {};
         if (status && status !== 'All')
-            where.status = status;
+            where.status = (0, typeorm_2.ILike)(status);
         if (location && location !== 'All')
-            where.location = location;
+            where.location = (0, typeorm_2.ILike)(location);
         if (frequency && frequency !== 'All')
-            where.frequency = frequency;
+            where.frequency = (0, typeorm_2.ILike)(frequency);
         if (createdBy)
             where.created_by = { id: createdBy };
         if (search) {
-            where.name = (0, typeorm_2.Like)(`%${search}%`);
+            where.name = (0, typeorm_2.ILike)(`%${search}%`);
         }
         const [data, total] = await this.instrumentRepository.findAndCount({
             where,

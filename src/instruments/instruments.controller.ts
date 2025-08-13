@@ -32,6 +32,12 @@ export class InstrumentsController {
         });
     }
 
+    @Get('filters/:createdById')
+    async getFilterParams(@Param('createdById') createdById: string) {
+        return this.instrumentsService.findFilterParams(createdById);
+    }
+
+
     @Get(':id')
     async findOne(@Param('id') id: string) {
         return this.instrumentsService.findOne(id);
