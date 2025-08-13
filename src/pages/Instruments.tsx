@@ -15,6 +15,7 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { PlusCircle, Upload } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import TooltipProv from "@/components/TooltipProv";
 
 
 const pageSize = 10;
@@ -108,30 +109,47 @@ export default function Instruments() {
 
         <div className="grid gap-3 md:grid-cols-5">
           <Input placeholder="Search…" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value, page: 1 }))} className="md:col-span-2" />
-          <Select value={filters.status as any} onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}>
-            <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              {(["All", "OK", "Overdue"] as const).map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
-            <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
-            <SelectContent>
-              {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
-            <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
-            <SelectContent>
-              {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
-                <SelectItem key={s} value={s}>{s}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <TooltipProv content="Filter instruments by status">
+            <Select
+              value={filters.status as any}
+              onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {(["All", "OK", "Overdue"] as const).map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TooltipProv>
+
+          <TooltipProv content="Filter instruments by Frequency">
+            <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
+              <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
+              <SelectContent>
+                {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </TooltipProv>
+
+          <TooltipProv content="Filter instruments by Location">
+
+            <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
+              <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
+              <SelectContent>
+                {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+          </TooltipProv>
         </div>
 
         <div className="flex items-center gap-2">

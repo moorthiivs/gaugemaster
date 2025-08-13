@@ -7,12 +7,100 @@ import { Upload, FileSpreadsheet } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import api from "@/lib/apis";
 import { useAuth } from "@/lib/auth";
+import ExcelJS from "exceljs";
+import { saveAs } from "file-saver";
 
 interface ExcelUploadProps {
   endpoint: string;
   mapRow: (row: Record<string, any>) => Record<string, any>;
   onComplete?: () => void;
 }
+
+
+
+export const downloadTemplate = async () => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Template");
+
+  const headers = [
+    "NAME OF INSTRUMENT",
+    "ID CODE",
+    "RANGE",
+    "SERIAL NO",
+    "LEAST COUNT",
+    "LOCATION",
+    "CALIBRATION FREQUENCY",
+    "LAST CALIBRATION DATE",
+    "DUE DATE",
+    "CALIBRATION AGENCY AND TC No",
+    "STATUS",
+  ];
+
+  const sampleRow = [
+    "Vernier Caliper",
+    "VC-001",
+    "0-150mm",
+    "SN123456",
+    "0.02mm",
+    "Lab 1",
+    "6 Months",
+    "2024-01-10",
+    "2024-07-10",
+    "ABC Labs - TC123",
+    "Active",
+  ];
+
+  // Add headers and sample
+  ws.addRow(headers);
+  ws.addRow(sampleRow);
+
+  // Style headers
+  ws.getRow(1).font = { bold: true };
+  ws.getRow(1).alignment = { vertical: "middle", horizontal: "center" };
+
+  // ID CODE uniqueness validation
+  ws.getColumn(2).eachCell((cell, rowNumber) => {
+    if (rowNumber > 1) {
+      cell.dataValidation = {
+        type: "custom",
+        formulae: [`COUNTIF($B:$B,B${rowNumber})=1`],
+        showErrorMessage: true,
+        errorStyle: 'stop', // Force rejection
+        errorTitle: "Duplicate ID CODE",
+        error: "Each ID CODE must be unique.",
+        allowBlank: true,
+
+      };
+    }
+  });
+
+  // Date validation for LAST CALIBRATION DATE & DUE DATE
+  [8, 9].forEach((colIndex) => {
+    ws.getColumn(colIndex).eachCell((cell, rowNumber) => {
+      if (rowNumber > 1) {
+        cell.dataValidation = {
+          type: "date",
+          operator: "between",
+          formulae: [
+            new Date(2000, 0, 1),
+            new Date(2100, 11, 31)
+          ],
+          showErrorMessage: true,
+          errorStyle: 'stop', // Reject invalid date
+          errorTitle: "Invalid Date",
+          error: "Please enter a valid date (YYYY-MM-DD).",
+          allowBlank: true,
+        };
+
+      }
+    });
+  });
+
+  // Export file
+  const buf = await wb.xlsx.writeBuffer();
+  saveAs(new Blob([buf]), "Calibration_Template.xlsx");
+};
+
 
 export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploadProps) {
   const { user } = useAuth();
@@ -142,6 +230,10 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
             Clear
           </Button>
         )}
+
+        <Button variant="outline" size="sm" onClick={downloadTemplate}>
+          Download Sample Template
+        </Button>
       </CardContent>
     </Card>
   );
