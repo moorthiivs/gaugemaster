@@ -16,6 +16,7 @@ import MainLayout from "./components/MainLayout";
 import { AuthProvider } from "@/lib/auth";
 import Landing from "./pages/Landing";
 import Register from "./pages/Register";
+import OnboardingWizard from "./components/OnboardingWizard";
 import { ThemeProvider } from "next-themes";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 
@@ -34,6 +35,16 @@ const App = () => (
                 <Route path="/" element={<Landing />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
+
+                {/* Onboarding */}
+                <Route 
+                  path="/onboarding" 
+                  element={
+                    <ProtectedRoute>
+                      <OnboardingWizard />
+                    </ProtectedRoute>
+                  } 
+                />
 
                 {/* Protected app */}
                 <Route

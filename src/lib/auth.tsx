@@ -14,6 +14,7 @@ export type AuthContextType = {
   user: User | null;
   token: string | null;
   loading: boolean;
+  isNewCustomer: boolean;
   signInWithGoogleToken: (token: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
@@ -29,14 +30,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isNewCustomer, setIsNewCustomer] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedUser = localStorage.getItem(USER_KEY);
+    const setupCompleted = localStorage.getItem('setupCompleted');
+    
     if (storedToken && storedUser) {
       setToken(storedToken);
       try {
         setUser(JSON.parse(storedUser));
+        // Check if setup was completed
+        setIsNewCustomer(!setupCompleted);
       } catch {
         setUser(null);
       }
@@ -49,6 +55,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
     setToken(token);
     setUser(userData);
+    
+    // Check if this is a new customer (no setup completed)
+    const setupCompleted = localStorage.getItem('setupCompleted');
+    setIsNewCustomer(!setupCompleted);
   };
 
   const value = useMemo<AuthContextType>(
@@ -56,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       user,
       token,
       loading,
+      isNewCustomer,
 
       signInWithGoogleToken: async (idToken: string) => {
         try {
@@ -144,11 +155,14 @@ accessToken
 signOut: () => {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem('setupCompleted');
+  localStorage.removeItem('setupData');
   setToken(null);
   setUser(null);
+  setIsNewCustomer(false);
 },
     }),
-[user, token, loading]
+[user, token, loading, isNewCustomer]
   );
 
 return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

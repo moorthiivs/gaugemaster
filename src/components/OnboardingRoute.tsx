@@ -2,7 +2,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 
-export default function ProtectedRoute({ children }: { children: ReactNode }) {
+export default function OnboardingRoute({ children }: { children: ReactNode }) {
   const { token, loading, isNewCustomer } = useAuth();
   const location = useLocation();
 
@@ -18,9 +18,9 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If user is new and trying to access protected routes other than onboarding
-  if (isNewCustomer && location.pathname !== "/onboarding") {
-    return <Navigate to="/onboarding" replace />;
+  // If user has completed setup, redirect to dashboard
+  if (!isNewCustomer) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;

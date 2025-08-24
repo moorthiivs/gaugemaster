@@ -83,7 +83,7 @@ import { useGoogleLogin } from "@react-oauth/google";
 
 export function LoginForm() {
 
-    const { signInWithGoogleToken, signInWithPassword } = useAuth()
+    const { signInWithGoogleToken, signInWithPassword, isNewCustomer } = useAuth()
     const { toast } = useToast()
     const navigate = useNavigate()
     const location = useLocation()
@@ -97,7 +97,10 @@ export function LoginForm() {
         try {
             await signInWithPassword(email, password)
             toast({ title: "Signed in", description: "Welcome back!" })
-            navigate(from, { replace: true })
+            // Check if user needs onboarding after login
+            const setupCompleted = localStorage.getItem('setupCompleted')
+            const redirectTo = !setupCompleted ? "/onboarding" : from
+            navigate(redirectTo, { replace: true })
         } catch (e: any) {
             toast({
                 title: "Sign-in failed",
@@ -156,7 +159,10 @@ export function LoginForm() {
                                 try {
                                     await signInWithGoogleToken(credentialResponse.credential);
                                     toast({ title: "Signed in", description: `Welcome back via Google!` });
-                                    navigate(from, { replace: true });
+                                    // Check if user needs onboarding after login
+                                    const setupCompleted = localStorage.getItem('setupCompleted')
+                                    const redirectTo = !setupCompleted ? "/onboarding" : from
+                                    navigate(redirectTo, { replace: true });
                                 } catch (e: any) {
                                     toast({
                                         title: "Sign in failed",
