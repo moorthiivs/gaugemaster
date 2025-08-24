@@ -10,6 +10,7 @@ import { DashboardChart } from "@/components/DashboardChart";
 import api from "@/lib/apis";
 import { useAuth } from "@/lib/auth";
 import { DashboardPieChart } from "@/components/DashboardPieChart";
+import { Button } from "@/components/ui/button";
 
 
 interface DashboardSummary {
@@ -69,7 +70,12 @@ const Index = () => {
     : [];
 
   const chartData = data?.dueDatesByMonth || [];
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 10;
 
+  const totalPages = Math.ceil((data?.dueSoonList?.length || 0) / itemsPerPage);
+  const startIndex = (page - 1) * itemsPerPage;
+  const currentPageData = data?.dueSoonList?.slice(startIndex, startIndex + itemsPerPage) || [];
 
   return (
     <div className="space-y-6">
@@ -133,20 +139,18 @@ const Index = () => {
       </section>
 
 
-
       <section>
         <Card>
           <CardHeader>
             <CardTitle>Instruments Due Soon (Next 30 Days)</CardTitle>
-            <CardDescription>List of instruments with calibration due dates in the next 30 days.</CardDescription>
+            <CardDescription>
+              List of instruments with calibration due dates in the next 30 days.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <Skeleton className="h-40" />
-            ) : !data?.dueSoonList.length ? (
-              <p className="text-muted-foreground">No instruments due soon.</p>
-            ) : (
-              <Table aria-label="Due soon instruments">
+              // Skeleton table with 10 rows
+              <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Instrument</TableHead>
@@ -154,14 +158,64 @@ const Index = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.dueSoonList.map(({ id, name, dueDate }) => (
-                    <TableRow key={id}>
-                      <TableCell>{name}</TableCell>
-                      <TableCell>{new Date(dueDate).toLocaleDateString()}</TableCell>
+                  {Array.from({ length: itemsPerPage }).map((_, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell>
+                        <Skeleton className="h-4 w-[150px]" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-[100px]" />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
+            ) : !data?.dueSoonList?.length ? (
+              <p className="text-muted-foreground">No instruments due soon.</p>
+            ) : (
+              <>
+                <Table aria-label="Due soon instruments">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Instrument</TableHead>
+                      <TableHead>Due Date</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {currentPageData.map(({ id, name, dueDate }) => (
+                      <TableRow key={id}>
+                        <TableCell>{name}</TableCell>
+                        <TableCell>{new Date(dueDate).toLocaleDateString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                {/* Pagination controls */}
+                {totalPages > 1 && (
+                  <div className="flex justify-end gap-2 mt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page === 1}
+                      onClick={() => setPage((p) => p - 1)}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-sm text-muted-foreground self-center">
+                      Page {page} of {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page === totalPages}
+                      onClick={() => setPage((p) => p + 1)}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </CardContent>
         </Card>
