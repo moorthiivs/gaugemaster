@@ -22,15 +22,13 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 const queryClient = new QueryClient();
 
 const App = () => (
-
-  <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <TooltipProvider>
-            
-            <Sonner />
-            <BrowserRouter>
+  <BrowserRouter>
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+            <TooltipProvider>
+              <Sonner />
               <Routes>
                 {/* Public pages */}
                 <Route path="/" element={<Landing />} />
@@ -59,12 +57,12 @@ const App = () => (
                 {/* Catch-all */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
-          </TooltipProvider>
-        </ThemeProvider>
-      </AuthProvider>
-    </QueryClientProvider>
-  </GoogleOAuthProvider>
+            </TooltipProvider>
+          </ThemeProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </GoogleOAuthProvider>
+  </BrowserRouter>
 );
 
 export default App;
