@@ -136,13 +136,13 @@ export default function OnboardingWizard() {
           <div className="w-full max-w-md animate-fade-in">
             {/* Header */}
             <div className="text-center mb-8">
-              <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4 animate-scale-in">
+              {/* <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4 animate-scale-in">
                 {(() => {
                   const Icon = getStepIcon();
                   return <Icon className="w-8 h-8 text-primary" />;
                 })()}
-              </div>
-              <h1 className="text-3xl font-bold mb-2 animate-fade-in">Welcome to Calibration Alerts</h1>
+              </div> */}
+              {/* <h1 className="text-3xl font-bold mb-2 animate-fade-in">Welcome to Calibration Alerts</h1> */}
               <p className="text-muted-foreground animate-fade-in">Let's set up your account in just a few steps</p>
               
               {/* Progress */}
@@ -184,14 +184,14 @@ export default function OnboardingWizard() {
                         placeholder="Enter your company name"
                         value={setupData.companyName}
                         onChange={(e) => updateData('companyName', e.target.value)}
-                        className="mt-2 h-12 text-lg"
+                        className="mt-2 h-10 "                  
                       />
                     </div>
                     
                     <div className="animate-fade-in" style={{ animationDelay: '0.2s' }}>
                       <Label htmlFor="companySize" className="text-base font-medium">Company Size</Label>
                       <Select value={setupData.companySize} onValueChange={(value) => updateData('companySize', value)}>
-                        <SelectTrigger className="mt-2 h-12 text-lg">
+                        <SelectTrigger className="mt-2 h-10 ">
                           <SelectValue placeholder="Select company size" />
                         </SelectTrigger>
                         <SelectContent>
@@ -207,7 +207,7 @@ export default function OnboardingWizard() {
                     <div className="animate-fade-in" style={{ animationDelay: '0.3s' }}>
                       <Label htmlFor="industry" className="text-base font-medium">Industry</Label>
                       <Select value={setupData.industry} onValueChange={(value) => updateData('industry', value)}>
-                        <SelectTrigger className="mt-2 h-12 text-lg">
+                        <SelectTrigger className="mt-2 h-10">
                           <SelectValue placeholder="Select your industry" />
                         </SelectTrigger>
                         <SelectContent>
@@ -237,7 +237,7 @@ export default function OnboardingWizard() {
                   <div className="animate-fade-in" style={{ animationDelay: '0.1s' }}>
                     <Label htmlFor="userRole" className="text-base font-medium">Role</Label>
                     <Select value={setupData.userRole} onValueChange={(value) => updateData('userRole', value)}>
-                      <SelectTrigger className="mt-2 h-12 text-lg">
+                      <SelectTrigger className="mt-2 h-10">
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
                       <SelectContent>
@@ -270,7 +270,7 @@ export default function OnboardingWizard() {
                       placeholder="Enter your full name"
                       value={setupData.userName}
                       onChange={(e) => updateData('userName', e.target.value)}
-                      className="mt-2 h-12 text-lg"
+                      className="mt-2 h-10"
                     />
                   </div>
                   
