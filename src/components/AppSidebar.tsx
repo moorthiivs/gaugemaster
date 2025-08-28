@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Wrench, PlusCircle, BarChart3, User, Settings, LogOut } from "lucide-react";
+import { LayoutDashboard, Wrench, PlusCircle, BarChart3, User, Settings, LogOut, Activity } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -17,12 +17,13 @@ const items = [
   { title: "Instruments", url: "/instruments", icon: Wrench },
   { title: "Add Instrument", url: "/instruments/new", icon: PlusCircle },
   { title: "Reports", url: "/reports", icon: BarChart3 },
+  { title: "Analytics", url: "/analytics", icon: Activity },
   { title: "Profile", url: "/profile", icon: User },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 export function AppSidebar() {
-  
+
   const getNavCls = ({ isActive }: { isActive: boolean }) =>
     cn(
       "justify-start",

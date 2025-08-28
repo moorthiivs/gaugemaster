@@ -18,6 +18,7 @@ import Landing from "./pages/Landing";
 import Register from "./pages/Register";
 import { ThemeProvider } from "next-themes";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import Analytics from "./pages/Analytics";
 
 const queryClient = new QueryClient();
 
@@ -28,7 +29,7 @@ const App = () => (
       <AuthProvider>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <TooltipProvider>
-            
+
             <Sonner />
             <BrowserRouter>
               <Routes>
@@ -52,6 +53,7 @@ const App = () => (
                   <Route path="/instruments/new" element={<InstrumentForm />} />
                   <Route path="/instruments/:id/edit" element={<InstrumentForm />} />
                   <Route path="/reports" element={<Reports />} />
+                  <Route path="/analytics" element={<Analytics />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/settings" element={<Settings />} />
                 </Route>

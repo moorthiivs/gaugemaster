@@ -27,8 +27,15 @@ export default function Instruments() {
   const navigate = useNavigate();
   const [filters, setFilters] = useState<InstrumentQuery>({ status: "All", location: "All", frequency: "All", page: 1, pageSize });
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
+  const [allData, setAllData] = useState<Instrument[]>([]); // store original data
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+
+  const [StatusFillter, setStatusFilter] = useState([])
+
+  const [FrequencyFillter, setFrequencyFilter] = useState([])
+
+  const [LocationFillter, setLocationFilter] = useState([])
 
   const [isOpenupload, setisOpenupload] = useState(false);
 
@@ -54,8 +61,7 @@ export default function Instruments() {
         items: result.data,
         total: result.total
       });
-
-
+      setAllData(result.data); // keep original copy
       setSelected({});
     } catch (error) {
       toast({ title: "Error", description: String(error), variant: "destructive" });
@@ -67,6 +73,15 @@ export default function Instruments() {
   useEffect(() => {
     fetchData();
   }, [filters.page, filters.status, filters.location, filters.frequency]);
+
+  useEffect(() => {
+    api.get(`/instruments/filters/${user.id}`).then(res => {
+      setStatusFilter(["All", ...res.data.status]);
+      setFrequencyFilter(["All", ...res.data.frequency]);
+      setLocationFilter(["All", ...res.data.location]);
+    });
+  }, []);
+
 
   const toggleAll = (checked: boolean) => {
     const map: Record<string, boolean> = {};
@@ -88,6 +103,7 @@ export default function Instruments() {
     fetchData();
   };
 
+
   return (
     <>
       <div className="space-y-4">
@@ -108,7 +124,22 @@ export default function Instruments() {
         </header>
 
         <div className="grid gap-3 md:grid-cols-5">
-          <Input placeholder="Search…" onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value, page: 1 }))} className="md:col-span-2" />
+          <Input placeholder="Search…" onChange={(e) => {
+            const searchValue = e.target.value.toLowerCase();
+
+            if (!searchValue) {
+              // If empty, reset back to original
+              setData({ items: allData, total: allData.length });
+              return;
+            }
+
+            const filterData = allData.filter((value: any) =>
+              value.name.toLowerCase().includes(searchValue)
+            );
+
+            setData({ items: filterData, total: filterData.length });
+          }} 
+          className="md:col-span-2" />
           <TooltipProv content="Filter instruments by status">
             <Select
               value={filters.status as any}
@@ -118,9 +149,10 @@ export default function Instruments() {
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>
-                {(["All", "OK", "Overdue"] as const).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
+
+                {StatusFillter.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {status}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -131,20 +163,23 @@ export default function Instruments() {
             <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
               <SelectTrigger><SelectValue placeholder="Frequency" /></SelectTrigger>
               <SelectContent>
-                {(["All", "Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                {FrequencyFillter.map((freq) => (
+                  <SelectItem key={freq} value={freq}>
+                    {freq}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </TooltipProv>
 
           <TooltipProv content="Filter instruments by Location">
-
             <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
               <SelectTrigger><SelectValue placeholder="Location" /></SelectTrigger>
               <SelectContent>
-                {(["All", "Lab A", "Lab B", "Field", "QA Room"] as const).map((s) => (
-                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                {LocationFillter.map((loc) => (
+                  <SelectItem key={loc} value={loc}>
+                    {loc}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
