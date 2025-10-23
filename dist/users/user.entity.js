@@ -13,6 +13,7 @@ exports.User = void 0;
 const typeorm_1 = require("typeorm");
 const swagger_1 = require("@nestjs/swagger");
 const uuid_1 = require("uuid");
+const company_entity_1 = require("../company/entities/company.entity");
 let User = class User {
     id = (0, uuid_1.v4)();
     email;
@@ -21,6 +22,9 @@ let User = class User {
     googleId;
     createdAt;
     updatedAt;
+    company;
+    companyId;
+    onboarded;
 };
 exports.User = User;
 __decorate([
@@ -54,6 +58,19 @@ __decorate([
     (0, typeorm_1.UpdateDateColumn)(),
     __metadata("design:type", Date)
 ], User.prototype, "updatedAt", void 0);
+__decorate([
+    (0, typeorm_1.ManyToOne)(() => company_entity_1.Company, (company) => company.users, { onDelete: 'SET NULL' }),
+    (0, typeorm_1.JoinColumn)({ name: 'companyId' }),
+    __metadata("design:type", company_entity_1.Company)
+], User.prototype, "company", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ nullable: true }),
+    __metadata("design:type", String)
+], User.prototype, "companyId", void 0);
+__decorate([
+    (0, typeorm_1.Column)({ default: false }),
+    __metadata("design:type", Boolean)
+], User.prototype, "onboarded", void 0);
 exports.User = User = __decorate([
     (0, typeorm_1.Entity)('users')
 ], User);

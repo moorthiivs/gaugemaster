@@ -89,7 +89,6 @@ export class InstrumentsService {
     }
 
 
-
     async create(instrumentDto: CreateInstrumentDto) {
         try {
             const existingInstrument = await this.instrumentRepository.findOne({
@@ -150,28 +149,14 @@ export class InstrumentsService {
     }
 
 
-
-    private isUniqueConstraintError(error: any): boolean {
-        if (!error) return false;
-
-        // MySQL / MariaDB
-        if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062) return true;
-
-        // Postgres
-        if (error.code === '23505') return true;
-
-        // SQLite
-        if (error.code === 'SQLITE_CONSTRAINT' || error.code === 'SQLITE_CONSTRAINT_UNIQUE') return true;
-
-        // MSSQL
-        if (error.number === 2627 || error.number === 2601) return true;
-
-        // Generic check in error message
-        if (typeof error.message === 'string') {
-            const msg = error.message.toLowerCase();
-            if (msg.includes('duplicate') || msg.includes('unique constraint')) return true;
+    async remainder(){
+        try {
+            
+        } catch (error) {
+            
+            console.log(error);
+            
         }
-
-        return false;
     }
+
 }

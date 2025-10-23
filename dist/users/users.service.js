@@ -51,10 +51,13 @@ const user_entity_1 = require("./user.entity");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
 const bcrypt = __importStar(require("bcryptjs"));
+const company_entity_1 = require("../company/entities/company.entity");
 let UsersService = class UsersService {
     userRepository;
-    constructor(userRepository) {
+    companyRepository;
+    constructor(userRepository, companyRepository) {
         this.userRepository = userRepository;
+        this.companyRepository = companyRepository;
     }
     users = [];
     async findByEmail(email) {
@@ -70,6 +73,7 @@ let UsersService = class UsersService {
             name: createUserDto.name,
             email: createUserDto.email,
             password: hashedPassword,
+            onboarded: false,
         });
         return this.userRepository.save(user);
     }
@@ -80,16 +84,36 @@ let UsersService = class UsersService {
                 email: profile.email,
                 name: profile.name,
                 googleId: profile.id,
+                onboarded: false,
             });
             await this.userRepository.save(user);
         }
         return user;
+    }
+    async updateCompany(companyId, userId) {
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (!user) {
+            throw new common_1.UnauthorizedException('Invalid credentials');
+        }
+        const company = await this.companyRepository.findOne({ where: { id: companyId } });
+        if (!company) {
+            throw new common_1.NotFoundException('Company not found');
+        }
+        user.companyId = companyId;
+        user.onboarded = true;
+        await this.userRepository.save(user);
+        return {
+            message: 'Company updated successfully for user',
+            user,
+        };
     }
 };
 exports.UsersService = UsersService;
 exports.UsersService = UsersService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(user_entity_1.User)),
-    __metadata("design:paramtypes", [typeorm_2.Repository])
+    __param(1, (0, typeorm_1.InjectRepository)(company_entity_1.Company)),
+    __metadata("design:paramtypes", [typeorm_2.Repository,
+        typeorm_2.Repository])
 ], UsersService);
 //# sourceMappingURL=users.service.js.map

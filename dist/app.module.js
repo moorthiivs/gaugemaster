@@ -15,12 +15,17 @@ const instruments_module_1 = require("./instruments/instruments.module");
 const reports_module_1 = require("./reports/reports.module");
 const auth_module_1 = require("./auth/auth.module");
 const dashboard_module_1 = require("./dashboard/dashboard.module");
+const company_module_1 = require("./company/company.module");
+const settings_module_1 = require("./settings/settings.module");
+const reminder_module_1 = require("./reminder/reminder.module");
+const schedule_1 = require("@nestjs/schedule");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
+            schedule_1.ScheduleModule.forRoot(),
             config_1.ConfigModule.forRoot({ isGlobal: true }),
             typeorm_1.TypeOrmModule.forRoot({
                 type: 'postgres',
@@ -39,6 +44,9 @@ exports.AppModule = AppModule = __decorate([
             instruments_module_1.InstrumentsModule,
             reports_module_1.ReportsModule,
             dashboard_module_1.DashboardModule,
+            company_module_1.CompanyModule,
+            settings_module_1.SettingsModule,
+            reminder_module_1.ReminderModule
         ],
     })
 ], AppModule);

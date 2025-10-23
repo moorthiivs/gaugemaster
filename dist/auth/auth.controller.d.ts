@@ -10,6 +10,8 @@ export declare class AuthController {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
     register(createUserDto: CreateUserDto): Promise<{
@@ -18,6 +20,8 @@ export declare class AuthController {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
     googleTokenLogin(token: string): Promise<{
@@ -26,6 +30,8 @@ export declare class AuthController {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
 }

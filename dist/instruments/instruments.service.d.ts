@@ -29,6 +29,6 @@ export declare class InstrumentsService {
     }>;
     create(instrumentDto: CreateInstrumentDto): Promise<Instrument>;
     update(id: string, updateInstrumentDto: UpdateInstrumentDto): Promise<Instrument>;
-    private isUniqueConstraintError;
+    remainder(): Promise<void>;
 }
 export {};

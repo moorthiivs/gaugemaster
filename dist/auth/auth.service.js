@@ -73,7 +73,7 @@ let AuthService = class AuthService {
     }
     async register(createUserDto) {
         const user = await this.usersService.create(createUserDto);
-        const payload = { sub: user.id, email: user.email, name: user.name };
+        const payload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
         return {
             accessToken: this.jwtService.sign(payload),
             user: payload,
@@ -89,7 +89,7 @@ let AuthService = class AuthService {
         if (!isPasswordValid) {
             throw new common_1.UnauthorizedException('Invalid credentials');
         }
-        const payload = { sub: user.id, email: user.email, name: user.name };
+        const payload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
         return {
             accessToken: this.jwtService.sign(payload),
             user: payload,
@@ -106,7 +106,7 @@ let AuthService = class AuthService {
             throw new common_1.UnauthorizedException('Invalid Google token');
         }
         const user = await this.usersService.findOrCreateByGoogleProfile({ id: googleId, email, name });
-        const jwtPayload = { sub: user.id, email: user.email, name: user.name };
+        const jwtPayload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
         return {
             accessToken: this.jwtService.sign(jwtPayload),
             user: jwtPayload,

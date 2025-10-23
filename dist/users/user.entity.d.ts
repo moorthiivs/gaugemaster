@@ -1,3 +1,4 @@
+import { Company } from 'src/company/entities/company.entity';
 export declare class User {
     id: string;
     email: string;
@@ -6,4 +7,7 @@ export declare class User {
     googleId: string;
     createdAt: Date;
     updatedAt: Date;
+    company: Company;
+    companyId: string;
+    onboarded: boolean;
 }

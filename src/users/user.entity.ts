@@ -1,6 +1,7 @@
-import { Entity, PrimaryGeneratedColumn, Column, UpdateDateColumn, CreateDateColumn, PrimaryColumn } from 'typeorm';
+import { Entity, PrimaryColumn, Column, UpdateDateColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { ApiProperty } from '@nestjs/swagger';
 import { v4 as uuidv4 } from 'uuid';
+import { Company } from 'src/company/entities/company.entity';
 
 @Entity('users')
 export class User {
@@ -17,15 +18,24 @@ export class User {
 
   @Column({ nullable: true })
   @ApiProperty()
-  password: string
+  password: string;
 
   @Column({ nullable: true })
   googleId: string;
-
 
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @ManyToOne(() => Company, (company) => company.users, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'companyId' })
+  company: Company;
+
+  @Column({ nullable: true })
+  companyId: string;
+
+  @Column({ default: false })   
+  onboarded: boolean;
 }

@@ -23,6 +23,8 @@ export declare class AuthService {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
     login(loginDto: LoginDto): Promise<{
@@ -31,6 +33,8 @@ export declare class AuthService {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
     loginWithGoogleToken(token: string): Promise<{
@@ -39,6 +43,8 @@ export declare class AuthService {
             sub: string;
             email: string;
             name: string;
+            onboarded: boolean;
+            companyId: string;
         };
     }>;
 }

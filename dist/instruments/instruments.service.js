@@ -123,23 +123,12 @@ let InstrumentsService = class InstrumentsService {
             throw error;
         }
     }
-    isUniqueConstraintError(error) {
-        if (!error)
-            return false;
-        if (error.code === 'ER_DUP_ENTRY' || error.errno === 1062)
-            return true;
-        if (error.code === '23505')
-            return true;
-        if (error.code === 'SQLITE_CONSTRAINT' || error.code === 'SQLITE_CONSTRAINT_UNIQUE')
-            return true;
-        if (error.number === 2627 || error.number === 2601)
-            return true;
-        if (typeof error.message === 'string') {
-            const msg = error.message.toLowerCase();
-            if (msg.includes('duplicate') || msg.includes('unique constraint'))
-                return true;
+    async remainder() {
+        try {
         }
-        return false;
+        catch (error) {
+            console.log(error);
+        }
     }
 };
 exports.InstrumentsService = InstrumentsService;

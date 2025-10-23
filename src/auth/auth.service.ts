@@ -1,5 +1,5 @@
 // src/auth/auth.service.ts
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
@@ -36,7 +36,7 @@ export class AuthService {
 
   async register(createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
-    const payload = { sub: user.id, email: user.email, name: user.name }
+    const payload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId }
     return {
       accessToken: this.jwtService.sign(payload),
       user: payload,
@@ -57,7 +57,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const payload = { sub: user.id, email: user.email, name: user.name };
+    const payload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
     return {
       accessToken: this.jwtService.sign(payload),
       user: payload,
@@ -79,7 +79,7 @@ export class AuthService {
 
     const user = await this.usersService.findOrCreateByGoogleProfile({ id: googleId, email, name });
 
-    const jwtPayload = { sub: user.id, email: user.email, name: user.name };
+    const jwtPayload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
     return {
       accessToken: this.jwtService.sign(jwtPayload),
       user: jwtPayload,
