@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,16 +12,21 @@ export default function Register() {
   const { register } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation()
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const from = (location.state as any)?.from?.pathname || "/dashboard"
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       await register(username, email, password);
       toast({ title: "Welcome aboard!", description: "Your account is ready." });
-      navigate("/dashboard", { replace: true });
+      const setupCompleted = localStorage.getItem('setupCompleted')
+      const redirectTo = !setupCompleted ? "/onboarding" : from
+      navigate(redirectTo, { replace: true });
+      //navigate("/dashboard", { replace: true });
     } catch (e: any) {
       toast({ title: "Registration failed", description: e?.message || "Try again.", variant: "destructive" });
     }

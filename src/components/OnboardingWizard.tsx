@@ -11,16 +11,22 @@ import { useSEO } from "@/hooks/useSEO";
 import { Building2, User, UserCheck } from "lucide-react";
 import heroImage from "@/assets/hero-instruments.jpg";
 import dashboardPreview from "@/assets/dashboard-preview.jpg";
+import api from "@/lib/apis";
+import { useAuth } from "@/lib/auth";
 
 interface SetupData {
   companyName: string;
   companySize: string;
   industry: string;
-  userRole: string;
+  role: string;
   userName: string;
+  registeredUserId: string;
+  registeredEmail: string;
+
 }
 
 export default function OnboardingWizard() {
+  const { user, setIsNewCustomer, setUser } = useAuth()
   useSEO({
     title: "Welcome Setup — Calibration Alerts",
     description: "Complete your profile setup to get started with instrument management.",
@@ -33,9 +39,12 @@ export default function OnboardingWizard() {
     companyName: "",
     companySize: "",
     industry: "",
-    userRole: "",
+    role: "",
     userName: "",
+    registeredUserId: user.id,
+    registeredEmail: user.email
   });
+  const [loading, setLoading] = useState(false);
 
   const totalSteps = 3;
   const progress = (currentStep / totalSteps) * 100;
@@ -52,17 +61,41 @@ export default function OnboardingWizard() {
     }
   };
 
-  const handleComplete = () => {
-    // Frontend-only save - just store in localStorage for demo
-    localStorage.setItem('setupCompleted', 'true');
-    localStorage.setItem('setupData', JSON.stringify(setupData));
-    
-    toast({
-      title: "Setup Complete!",
-      description: "Welcome to Calibration Alerts. Let's get started!",
-    });
-    
-    navigate("/dashboard", { replace: true });
+  const handleComplete = async () => {
+    setLoading(true)
+    try {
+      const response = await api.post(
+        `${(window as any).API_URL}/company/register`,
+        setupData
+      );
+
+      const { id } = response.data;
+
+      const updatedUser = {
+        ...user,
+        companyId: id,
+        isNewCustomer: false
+      };
+
+      setUser(updatedUser)
+      setIsNewCustomer(false);
+
+      localStorage.setItem('auth_user', JSON.stringify(updatedUser));
+      localStorage.setItem('setupCompleted', 'true');
+      localStorage.setItem('setupData', JSON.stringify(setupData));
+
+
+      toast({
+        title: "Setup Complete!",
+        description: "Welcome to Calibration Alerts. Let's get started!",
+      });
+
+      navigate("/dashboard", { replace: true });
+    } catch (error) {
+      console.log(error);
+    } finally {
+      setLoading(false)
+    }
   };
 
   const updateData = (field: keyof SetupData, value: string) => {
@@ -74,7 +107,7 @@ export default function OnboardingWizard() {
       case 1:
         return setupData.companyName && setupData.companySize && setupData.industry;
       case 2:
-        return setupData.userRole;
+        return setupData.role;
       case 3:
         return setupData.userName;
       default:
@@ -105,14 +138,14 @@ export default function OnboardingWizard() {
       {/* Background Elements */}
       <div className="absolute inset-0 bg-grid-white/[0.02] bg-[size:50px_50px]" />
       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/5 to-transparent" />
-      
+
       <div className="relative z-10 min-h-screen flex">
         {/* Left Side - Image */}
         <div className="hidden lg:flex lg:w-1/2 relative">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-primary/5" />
-          <img 
-            src={getStepImage()} 
-            alt="Setup illustration" 
+          <img
+            src={getStepImage()}
+            alt="Setup illustration"
             className="w-full h-full object-cover transition-all duration-700 ease-in-out animate-fade-in"
             key={currentStep}
           />
@@ -144,18 +177,17 @@ export default function OnboardingWizard() {
               </div> */}
               {/* <h1 className="text-3xl font-bold mb-2 animate-fade-in">Welcome to Calibration Alerts</h1> */}
               <p className="text-muted-foreground animate-fade-in">Let's set up your account in just a few steps</p>
-              
+
               {/* Progress */}
               <div className="mt-6 animate-fade-in">
                 <div className="flex justify-between mb-2">
                   {[1, 2, 3].map((step) => (
                     <div
                       key={step}
-                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all duration-300 ${
-                        step <= currentStep
-                          ? 'bg-primary text-primary-foreground scale-110'
-                          : 'bg-muted text-muted-foreground'
-                      }`}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all duration-300 ${step <= currentStep
+                        ? 'bg-primary text-primary-foreground scale-110'
+                        : 'bg-muted text-muted-foreground'
+                        }`}
                     >
                       {step}
                     </div>
@@ -165,7 +197,7 @@ export default function OnboardingWizard() {
                 <p className="text-sm text-muted-foreground mt-2">Step {currentStep} of {totalSteps}</p>
               </div>
             </div>
-        
+
             {/* Form Content */}
             <div className="space-y-6">
               {/* Step 1: Company Information */}
@@ -175,7 +207,7 @@ export default function OnboardingWizard() {
                     <h3 className="text-2xl font-semibold mb-2">Company Information</h3>
                     <p className="text-muted-foreground">Tell us about your organization to get started</p>
                   </div>
-              
+
                   <div className="space-y-6">
                     <div className="animate-fade-in" style={{ animationDelay: '0.1s' }}>
                       <Label htmlFor="companyName" className="text-base font-medium">Company Name</Label>
@@ -184,10 +216,10 @@ export default function OnboardingWizard() {
                         placeholder="Enter your company name"
                         value={setupData.companyName}
                         onChange={(e) => updateData('companyName', e.target.value)}
-                        className="mt-2 h-10 "                  
+                        className="mt-2 h-10 "
                       />
                     </div>
-                    
+
                     <div className="animate-fade-in" style={{ animationDelay: '0.2s' }}>
                       <Label htmlFor="companySize" className="text-base font-medium">Company Size</Label>
                       <Select value={setupData.companySize} onValueChange={(value) => updateData('companySize', value)}>
@@ -203,7 +235,7 @@ export default function OnboardingWizard() {
                         </SelectContent>
                       </Select>
                     </div>
-                    
+
                     <div className="animate-fade-in" style={{ animationDelay: '0.3s' }}>
                       <Label htmlFor="industry" className="text-base font-medium">Industry</Label>
                       <Select value={setupData.industry} onValueChange={(value) => updateData('industry', value)}>
@@ -223,8 +255,8 @@ export default function OnboardingWizard() {
                       </Select>
                     </div>
                   </div>
-            </div>
-          )}
+                </div>
+              )}
 
               {/* Step 2: User Role */}
               {currentStep === 2 && (
@@ -233,10 +265,10 @@ export default function OnboardingWizard() {
                     <h3 className="text-2xl font-semibold mb-2">Your Role</h3>
                     <p className="text-muted-foreground">What's your role in the company? This helps us personalize your experience.</p>
                   </div>
-                  
+
                   <div className="animate-fade-in" style={{ animationDelay: '0.1s' }}>
-                    <Label htmlFor="userRole" className="text-base font-medium">Role</Label>
-                    <Select value={setupData.userRole} onValueChange={(value) => updateData('userRole', value)}>
+                    <Label htmlFor="role" className="text-base font-medium">Role</Label>
+                    <Select value={setupData.role} onValueChange={(value) => updateData('role', value)}>
                       <SelectTrigger className="mt-2 h-10">
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
@@ -262,7 +294,7 @@ export default function OnboardingWizard() {
                     <h3 className="text-2xl font-semibold mb-2">Personal Information</h3>
                     <p className="text-muted-foreground">How should we address you? We're almost ready to get started!</p>
                   </div>
-                  
+
                   <div className="animate-fade-in" style={{ animationDelay: '0.1s' }}>
                     <Label htmlFor="userName" className="text-base font-medium">Full Name</Label>
                     <Input
@@ -273,7 +305,7 @@ export default function OnboardingWizard() {
                       className="mt-2 h-10"
                     />
                   </div>
-                  
+
                   <div className="bg-primary/5 border border-primary/20 rounded-lg p-6 animate-fade-in" style={{ animationDelay: '0.2s' }}>
                     <h4 className="font-semibold text-primary mb-2">🎉 You're all set!</h4>
                     <p className="text-sm text-muted-foreground">
@@ -293,7 +325,7 @@ export default function OnboardingWizard() {
                 >
                   Previous
                 </Button>
-                
+
                 {currentStep < totalSteps ? (
                   <Button
                     onClick={handleNext}
@@ -305,10 +337,13 @@ export default function OnboardingWizard() {
                 ) : (
                   <Button
                     onClick={handleComplete}
-                    disabled={!isStepValid()}
+                    disabled={!isStepValid() || loading}
                     className="h-12 px-8 text-base hover-scale bg-primary hover:bg-primary/90"
+
                   >
-                    🚀 Complete Setup
+
+                    {loading ? "Setuping..." : "🚀 Complete Setup"}
+
                   </Button>
                 )}
               </div>

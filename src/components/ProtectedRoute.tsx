@@ -18,9 +18,14 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // If user is new and trying to access protected routes other than onboarding
+  // Redirect to onboarding if user has not completed setup
   if (isNewCustomer && location.pathname !== "/onboarding") {
     return <Navigate to="/onboarding" replace />;
+  }
+
+  // Prevent accessing onboarding if setup is complete
+  if (!isNewCustomer && location.pathname === "/onboarding") {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return <>{children}</>;

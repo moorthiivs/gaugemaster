@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { X, Plus, Mail, Clock, AlertCircle } from "lucide-react";
+import { X, Plus, Mail, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import api from "@/lib/apis";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type ReminderRole = "junior" | "senior" | "supervisor";
 type ReminderFrequency = "normal" | "important" | "critical";
@@ -21,6 +24,9 @@ interface ReminderConfig {
 }
 
 export default function ReminderConfig() {
+
+
+  const { user, setUser } = useAuth()
   const [config, setConfig] = useState<ReminderConfig>({
     frequency: "normal",
     recipients: {
@@ -29,7 +35,8 @@ export default function ReminderConfig() {
       supervisor: [],
     },
   });
-
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
   const [emailInputs, setEmailInputs] = useState({
     junior: "",
     senior: "",
@@ -85,7 +92,7 @@ export default function ReminderConfig() {
 
   const addEmail = (role: ReminderRole) => {
     const email = emailInputs[role].trim();
-    
+
     if (!email) {
       toast({
         title: "Email required",
@@ -144,8 +151,8 @@ export default function ReminderConfig() {
     });
   };
 
-  const handleSave = () => {
-    const totalRecipients = 
+  const handleSave = async () => {
+    const totalRecipients =
       config.recipients.junior.length +
       config.recipients.senior.length +
       config.recipients.supervisor.length;
@@ -159,14 +166,96 @@ export default function ReminderConfig() {
       return;
     }
 
-    // Here you would typically save to backend
-    console.log("Saving reminder configuration:", config);
+    try {
+      setIsSaving(true); // 👈 Start loading
+      const allData = {
+        juniorRecipients: config.recipients.junior,
+        seniorRecipients: config.recipients.senior,
+        supervisorRecipients: config.recipients.supervisor,
+        reminderFrequency: config.frequency,
+        userId: user.id,
+        companyId: user.companyId
+      }
+      const response = await api.post('/settings/mailconfig', allData)
 
-    toast({
-      title: "Configuration saved",
-      description: `Reminder settings saved with ${totalRecipients} total recipients`,
-    });
+      if (response.status === 201 || response.status === 200) {
+        const { id } = response.data
+        const updatedUser = {
+          ...user,
+          settingsid: id
+        };
+        setUser(updatedUser)
+        toast({
+          title: "Configuration saved",
+          description: `Reminder settings saved with ${totalRecipients} total recipients`,
+        });
+      }
+
+    } catch (error) {
+      console.log(error);
+    } finally {
+      setIsSaving(false); // 👈 Stop loading
+    }
   };
+
+  const fetchemailConfig = async () => {
+    try {
+      setLoading(true);
+      const params = { userId: user.id, companyId: user.companyId };
+      const response = await api.get('/settings/fetchmailconfig', { params })
+
+      if (response.status === 200 && response.data) {
+        const data = response.data;
+        setConfig({
+          frequency: data.reminderFrequency || "normal",
+          recipients: {
+            junior: data.juniorRecipients || [],
+            senior: data.seniorRecipients || [],
+            supervisor: data.supervisorRecipients || [],
+          },
+        });
+      }
+    } catch (error) {
+      console.log(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  useEffect(() => {
+    fetchemailConfig()
+  }, [user])
+
+
+  if (loading) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="flex items-center gap-3 mb-6">
+          <Skeleton className="h-6 w-6 rounded-full" />
+          <Skeleton className="h-5 w-32" />
+        </div>
+
+        {[...Array(4)].map((_, i) => (
+          <Card key={i} className="bg-card/50 border-border/50">
+            <CardHeader>
+              <Skeleton className="h-4 w-40 mb-2" />
+              <Skeleton className="h-3 w-64" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Skeleton className="h-10 w-full rounded-md" />
+              <Skeleton className="h-8 w-1/2 rounded-md" />
+            </CardContent>
+          </Card>
+        ))}
+
+        <div className="flex justify-end gap-3 pt-4">
+          <Skeleton className="h-10 w-32 rounded-md" />
+          <Skeleton className="h-10 w-40 rounded-md" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -249,6 +338,8 @@ export default function ReminderConfig() {
                   onChange={(e) =>
                     setEmailInputs((prev) => ({ ...prev, [role]: e.target.value }))
                   }
+                  name={`email-${role}`}
+                  autoComplete="new-email"
                   onKeyPress={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
@@ -300,14 +391,34 @@ export default function ReminderConfig() {
       ))}
 
       {/* Save Button */}
-      <div className="flex justify-end gap-3 sticky bottom-4 bg-background/80 backdrop-blur-sm p-4 rounded-lg border">
+      {/* <div className="flex justify-end gap-3 sticky bottom-4 bg-background/80 backdrop-blur-sm p-4 rounded-lg border">
         <Button variant="outline" onClick={() => window.location.reload()}>
           Reset
         </Button>
-        <Button onClick={handleSave} size="lg">
+        <Button onClick={handleSave} >
           Save Configuration
         </Button>
+      </div> */}
+
+
+      <div className="flex justify-end gap-3 pt-4">
+        <Button variant="outline" onClick={() => window.location.reload()}>
+          Reset
+        </Button>
+        <Button onClick={handleSave} disabled={isSaving}>
+          {isSaving ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            "Save Configuration"
+          )}
+        </Button>
       </div>
+
+
+
     </div>
   );
 }

@@ -8,6 +8,8 @@ export type User = {
   role: string;
   avatarUrl?: string;
   provider?: string;
+  companyId: string;
+  isNewCustomer: boolean;
 };
 
 export type AuthContextType = {
@@ -19,12 +21,15 @@ export type AuthContextType = {
   signInWithPassword: (email: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
   signOut: () => void;
+  setIsNewCustomer: (value: boolean) => void;
+  setUser: React.Dispatch<React.SetStateAction<User | null>>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
+const SETUP_KEY = "setupCompleted";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -35,16 +40,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const storedToken = localStorage.getItem(TOKEN_KEY);
     const storedUser = localStorage.getItem(USER_KEY);
-    const setupCompleted = localStorage.getItem('setupCompleted');
-    
+    const setupCompleted = localStorage.getItem(SETUP_KEY);
+
     if (storedToken && storedUser) {
       setToken(storedToken);
       try {
-        setUser(JSON.parse(storedUser));
-        // Check if setup was completed
-        setIsNewCustomer(!setupCompleted);
+        const parsedUser: User = JSON.parse(storedUser);
+        setUser(parsedUser);
+        // If user has onboarded in database OR localStorage, consider as existing
+        setIsNewCustomer(!parsedUser.isNewCustomer && setupCompleted !== 'true' ? true : false);
       } catch {
         setUser(null);
+        setIsNewCustomer(false);
       }
     }
     setLoading(false);
@@ -53,12 +60,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signIn = async (userData: User, token: string) => {
     localStorage.setItem(TOKEN_KEY, token);
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
+    // Store setupCompleted as string 'true' if onboarded
+    localStorage.setItem(SETUP_KEY, userData.isNewCustomer ? 'false' : 'true');
+
     setToken(token);
     setUser(userData);
-    
-    // Check if this is a new customer (no setup completed)
-    const setupCompleted = localStorage.getItem('setupCompleted');
-    setIsNewCustomer(!setupCompleted);
+    setIsNewCustomer(!userData.isNewCustomer); // true if user not onboarded
   };
 
   const value = useMemo<AuthContextType>(
@@ -67,105 +74,98 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       loading,
       isNewCustomer,
+      setIsNewCustomer,
+      setUser,
 
       signInWithGoogleToken: async (idToken: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/google/token`, {
-            token: idToken,
-          });
-
+          const response = await axios.post(`${(window as any).API_URL}/auth/google/token`, { token: idToken });
           const { accessToken, user } = response.data;
 
-          console.log(user, "user");
+          const userObj: User = {
+            id: user.sub,
+            name: user.name,
+            email: user.email,
+            role: "operator",
+            avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+            provider: "google",
+            isNewCustomer: user.onboarded,
+            companyId: user.companyId,
+          };
 
-          await signIn(
-            {
-              id: user.sub,
-              name: user.name,
-              email: user.email,
-              role: "operator",
-              avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
-              provider: "google",
-            },
-            accessToken
-          );
+          await signIn(userObj, accessToken);
+
         } catch (error: any) {
           console.error("Google login failed", error);
           throw new Error("Google login failed");
         }
       },
 
-
       signInWithPassword: async (email: string, password: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/login`, {
-            email,
-            password,
-          });
+          const response = await axios.post(`${(window as any).API_URL}/auth/login`, { email, password });
+          const { accessToken, user } = response.data;
 
-          const { accessToken, user } = response.data
+          const userObj: User = {
+            id: user.sub,
+            name: user.name,
+            email: user.email,
+            role: user.role || "operator",
+            avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+            provider: "password",
+            isNewCustomer: user.onboarded,
+            companyId: user.companyId,
+          };
 
-          await signIn(
-            {
-              id: user.sub,
-              name: user.name,
-              email: user.email,
-              role: user.role || "operator",
-              avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
-              provider: "password",
-            },
-            accessToken
-          );
+          await signIn(userObj, accessToken);
+
         } catch (error: any) {
-          // If server returns an error message, use it; else fallback
           const message =
             error.response?.data?.message ||
-            error.message || "Login failed. Please check your credentials and try again.";
+            error.message ||
+            "Login failed. Please check your credentials and try again.";
           throw new Error(message);
         }
       },
 
       register: async (username: string, email: string, password: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/register`, {
-            name: username,
-            email,
-            password,
-          });
-
+          const response = await axios.post(`${(window as any).API_URL}/auth/register`, { name: username, email, password });
           const { accessToken, user } = response.data;
 
-          await signIn(
-            {
-              id: user.sub,
-              name: user.name,
-              email: user.email,
-              role: user.role || "operator",
-              avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
-    provider: "password",
-            },
-accessToken
-          );
+          const userObj: User = {
+            id: user.sub,
+            name: user.name,
+            email: user.email,
+            role: user.role || "operator",
+            avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+            provider: "password",
+            isNewCustomer: user.onboarded,
+            companyId: user.companyId,
+          };
+
+          await signIn(userObj, accessToken);
+
         } catch (error: any) {
-  console.error("Registration failed", error);
-  throw new Error(error?.response?.data?.message || "Registration failed");
-}
+          console.error("Registration failed", error);
+          throw new Error(error?.response?.data?.message || "Registration failed");
+        }
       },
 
-signOut: () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
-  localStorage.removeItem('setupCompleted');
-  localStorage.removeItem('setupData');
-  setToken(null);
-  setUser(null);
-  setIsNewCustomer(false);
-},
+      signOut: () => {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(SETUP_KEY);
+        localStorage.removeItem('setupData');
+        setToken(null);
+        setUser(null);
+        setIsNewCustomer(false);
+      },
     }),
-[user, token, loading, isNewCustomer]
+    [user, token, loading, isNewCustomer]
   );
 
-return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
