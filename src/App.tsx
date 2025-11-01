@@ -1,4 +1,3 @@
-
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -24,17 +23,6 @@ import Analytics from "./pages/Analytics";
 const queryClient = new QueryClient();
 
 const App = () => (
-<<<<<<< HEAD
-
-  <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <TooltipProvider>
-
-            <Sonner />
-            <BrowserRouter>
-=======
   <BrowserRouter>
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
       <QueryClientProvider client={queryClient}>
@@ -42,7 +30,6 @@ const App = () => (
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
             <TooltipProvider>
               <Sonner />
->>>>>>> recover-mail-reminder
               <Routes>
                 {/* Public pages */}
                 <Route path="/" element={<Landing />} />
@@ -50,13 +37,13 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
 
                 {/* Onboarding */}
-                <Route 
-                  path="/onboarding" 
+                <Route
+                  path="/onboarding"
                   element={
                     <ProtectedRoute>
                       <OnboardingWizard />
                     </ProtectedRoute>
-                  } 
+                  }
                 />
 
                 {/* Protected app */}

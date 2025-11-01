@@ -67,7 +67,6 @@ export default function InstrumentForm() {
   useSEO({ title: isEdit ? "Edit Instrument — Calibration Alerts" : "Add Instrument — Calibration Alerts" });
   const { toast } = useToast();
   const navigate = useNavigate();
-
   const [isloading, setisloading] = useState(false)
   const {
     register,
