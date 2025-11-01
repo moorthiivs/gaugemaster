@@ -16,6 +16,7 @@ import MainLayout from "./components/MainLayout";
 import { AuthProvider } from "@/lib/auth";
 import Landing from "./pages/Landing";
 import Register from "./pages/Register";
+import OnboardingWizard from "./components/OnboardingWizard";
 import { ThemeProvider } from "next-themes";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import Analytics from "./pages/Analytics";
@@ -23,6 +24,7 @@ import Analytics from "./pages/Analytics";
 const queryClient = new QueryClient();
 
 const App = () => (
+<<<<<<< HEAD
 
   <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
     <QueryClientProvider client={queryClient}>
@@ -32,11 +34,30 @@ const App = () => (
 
             <Sonner />
             <BrowserRouter>
+=======
+  <BrowserRouter>
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID!}>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+            <TooltipProvider>
+              <Sonner />
+>>>>>>> recover-mail-reminder
               <Routes>
                 {/* Public pages */}
                 <Route path="/" element={<Landing />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/register" element={<Register />} />
+
+                {/* Onboarding */}
+                <Route 
+                  path="/onboarding" 
+                  element={
+                    <ProtectedRoute>
+                      <OnboardingWizard />
+                    </ProtectedRoute>
+                  } 
+                />
 
                 {/* Protected app */}
                 <Route
@@ -61,12 +82,12 @@ const App = () => (
                 {/* Catch-all */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
-          </TooltipProvider>
-        </ThemeProvider>
-      </AuthProvider>
-    </QueryClientProvider>
-  </GoogleOAuthProvider>
+            </TooltipProvider>
+          </ThemeProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </GoogleOAuthProvider>
+  </BrowserRouter>
 );
 
 export default App;

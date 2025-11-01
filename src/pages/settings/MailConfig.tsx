@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,10 +6,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, Server, Shield, Bell } from "lucide-react";
+import { Mail, Server, Shield, Bell, Loader2 } from "lucide-react";
+import api from "@/lib/apis";
+import { useAuth } from "@/lib/auth";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function MailConfig() {
+    const { user, setUser } = useAuth()
     const { toast } = useToast();
+    const [loading, setLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
     const [emailSettings, setEmailSettings] = useState({
         smtpServer: "",
         smtpPort: "587",
@@ -20,11 +26,36 @@ export default function MailConfig() {
         enableAlerts: true,
     });
 
-    const handleSave = () => {
-        toast({
-            title: "Settings saved",
-            description: "Your email configuration has been updated successfully.",
-        });
+    const handleSave = async () => {
+        try {
+            setIsSaving(true)
+            const allData = {
+                smtpConfig: emailSettings,
+                userId: user.id,
+                companyId: user.companyId
+            }
+            const response = await api.post('/settings/mailconfig', allData)
+
+            if (response.status === 201) {
+                const { id } = response.data
+                const updatedUser = {
+                    ...user,
+                    settingsid: id
+                };
+                setUser(updatedUser)
+
+                toast({
+                    title: "Settings saved",
+                    description: "Your email configuration has been updated successfully.",
+                });
+            }
+
+        } catch (error) {
+            console.log(error);
+        } finally {
+            setIsSaving(false)
+        }
+
     };
 
     const handleInputChange = (field: string, value: string | boolean) => {
@@ -34,6 +65,74 @@ export default function MailConfig() {
         }));
     };
 
+    const fetchemailConfig = async () => {
+        try {
+            setLoading(true);
+            const params = { userId: user.id, companyId: user.companyId };
+            const response = await api.get('/settings/fetchmailconfig', { params })
+            if (response.status === 200) {
+                setEmailSettings(response.data.smtpConfig)
+            }
+
+
+        } catch (error) {
+
+            console.log(error);
+
+        } finally {
+            setLoading(false);
+        }
+    }
+
+
+    useEffect(() => {
+        fetchemailConfig()
+    }, [user])
+
+    if (loading) {
+        return (
+            <div className="space-y-6 animate-pulse">
+                <div className="flex items-center gap-3 mb-6">
+                    <Skeleton className="h-10 w-10 rounded-lg" />
+                    <div className="space-y-2">
+                        <Skeleton className="h-4 w-40" />
+                        <Skeleton className="h-3 w-72" />
+                    </div>
+                </div>
+
+                <Card className="bg-card/50 border-border/50">
+                    <CardHeader className="pb-4 space-y-2">
+                        <Skeleton className="h-4 w-32" />
+                        <Skeleton className="h-3 w-64" />
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {[...Array(4)].map((_, i) => (
+                            <div key={i} className="grid grid-cols-2 gap-4">
+                                <Skeleton className="h-10 w-full rounded-md" />
+                                <Skeleton className="h-10 w-full rounded-md" />
+                            </div>
+                        ))}
+                    </CardContent>
+                </Card>
+
+                <Card className="bg-card/50 border-border/50">
+                    <CardHeader className="pb-4 space-y-2">
+                        <Skeleton className="h-4 w-40" />
+                        <Skeleton className="h-3 w-64" />
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                        <Skeleton className="h-10 w-full rounded-md" />
+                        <Skeleton className="h-10 w-full rounded-md" />
+                    </CardContent>
+                </Card>
+
+                <div className="flex justify-end gap-3 pt-4">
+                    <Skeleton className="h-10 w-32 rounded-md" />
+                    <Skeleton className="h-10 w-40 rounded-md" />
+                </div>
+            </div>
+        );
+    }
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-3 mb-6">
@@ -65,7 +164,7 @@ export default function MailConfig() {
                                 <Input
                                     id="smtp-server"
                                     placeholder="smtp.gmail.com"
-                                    value={emailSettings.smtpServer}
+                                    value={emailSettings?.smtpServer}
                                     onChange={(e) => handleInputChange("smtpServer", e.target.value)}
                                     className="bg-background/50"
                                 />
@@ -75,7 +174,7 @@ export default function MailConfig() {
                                 <Input
                                     id="smtp-port"
                                     placeholder="587"
-                                    value={emailSettings.smtpPort}
+                                    value={emailSettings?.smtpPort}
                                     onChange={(e) => handleInputChange("smtpPort", e.target.value)}
                                     className="bg-background/50"
                                 />
@@ -88,7 +187,7 @@ export default function MailConfig() {
                                     id="username"
                                     type="email"
                                     placeholder="your-email@gmail.com"
-                                    value={emailSettings.username}
+                                    value={emailSettings?.username}
                                     onChange={(e) => handleInputChange("username", e.target.value)}
                                     className="bg-background/50"
                                 />
@@ -99,7 +198,7 @@ export default function MailConfig() {
                                     id="password"
                                     type="password"
                                     placeholder="••••••••"
-                                    value={emailSettings.password}
+                                    value={emailSettings?.password}
                                     onChange={(e) => handleInputChange("password", e.target.value)}
                                     className="bg-background/50"
                                 />
@@ -108,7 +207,7 @@ export default function MailConfig() {
                         <div className="space-y-2">
                             <Label htmlFor="encryption">Encryption</Label>
                             <Select
-                                value={emailSettings.encryption}
+                                value={emailSettings?.encryption}
                                 onValueChange={(value) => handleInputChange("encryption", value)}
                             >
                                 <SelectTrigger className="bg-background/50">
@@ -145,7 +244,7 @@ export default function MailConfig() {
                             </div>
                             <Switch
                                 id="notifications"
-                                checked={emailSettings.enableNotifications}
+                                checked={emailSettings?.enableNotifications}
                                 onCheckedChange={(checked) => handleInputChange("enableNotifications", checked)}
                             />
                         </div>
@@ -158,7 +257,7 @@ export default function MailConfig() {
                             </div>
                             <Switch
                                 id="alerts"
-                                checked={emailSettings.enableAlerts}
+                                checked={emailSettings?.enableAlerts}
                                 onCheckedChange={(checked) => handleInputChange("enableAlerts", checked)}
                             />
                         </div>
@@ -170,8 +269,15 @@ export default function MailConfig() {
                     <Button variant="outline" className="px-6">
                         Test Connection
                     </Button>
-                    <Button onClick={handleSave} >
-                        Save Configuration
+                    <Button onClick={handleSave} disabled={isSaving} >
+                        {isSaving ? (
+                            <>
+                                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                Saving...
+                            </>
+                        ) : (
+                            "Save Configuration"
+                        )}
                     </Button>
                 </div>
             </div>

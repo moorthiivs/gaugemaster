@@ -1,6 +1,7 @@
 import { useSEO } from "@/hooks/useSEO";
 import MailConfig from "./settings/MailConfig";
 import ThemeSettings from "./settings/ThemeSettings";
+import ReminderConfig from "./settings/ReminderConfig";
 import SettingsLayout from "./settings/SettingsLayout";
 
 export default function Settings() {
@@ -15,6 +16,12 @@ export default function Settings() {
       label: "Mail Configuration",
       icon: "📧",
       content: <MailConfig />,
+    },
+    {
+      value: "reminders",
+      label: "Reminder Settings",
+      icon: "🔔",
+      content: <ReminderConfig />,
     },
     {
       value: "appearance",

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -21,6 +21,7 @@ import { ArrowLeft, CalendarIcon } from "lucide-react";
 import { format } from "date-fns";
 import api from "@/lib/apis";
 import { useAuth } from "@/lib/auth";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const schema = z.object({
   name: z.string().min(2),
@@ -67,6 +68,7 @@ export default function InstrumentForm() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
+  const [isloading, setisloading] = useState(false)
   const {
     register,
     control,
@@ -118,6 +120,7 @@ export default function InstrumentForm() {
 
 
   const onSubmit = async (values: FormData) => {
+    setisloading(true)
     try {
       const payload: Omit<Instrument, "id"> = {
         name: values.name!,
@@ -160,6 +163,8 @@ export default function InstrumentForm() {
         description: Array.isArray(message) ? message.join(", ") : String(message),
         variant: "destructive",
       });
+    } finally {
+      setisloading(false)
     }
   };
 
@@ -183,151 +188,170 @@ export default function InstrumentForm() {
         </CardTitle>
       </div>
       <CardContent>
-        <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 md:grid-cols-2">
-          {[
-            { label: "Name", name: "name" },
-            { label: "ID Code", name: "id_code" },
-            { label: "Range", name: "range" },
-            { label: "Serial No.", name: "serial_no" },
-            { label: "Least Count", name: "least_count" },
-            { label: "Location", name: "location" },
-            { label: "Agency & TC No", name: "agency" },
-            { label: "Notes", name: "notes", full: true },
-          ].map(({ label, name, full }) => (
-            <div key={name} className={full ? "md:col-span-2" : undefined}>
-              <label className="text-sm">{label}</label>
-              <Input type={"text"} {...register(name as keyof FormData)} />
+
+        {isloading ? (
+          /* Skeleton While Saving */
+          <div className="grid gap-4 md:grid-cols-2">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-10 w-full" />
+              </div>
+            ))}
+
+            {/* Buttons */}
+            <div className="md:col-span-2 flex gap-2 justify-end">
+              <Skeleton className="h-10 w-24" />
+              <Skeleton className="h-10 w-32" />
             </div>
-          ))}
-
-
-          <div>
-            <label className="text-sm">Last Calibration Date</label>
-            <Controller
-              control={control}
-              name="last_calibration_date"
-              render={({ field }) => {
-                const dateValue = field.value ? new Date(field.value) : undefined;
-                return (
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={`w-full justify-start text-left font-normal ${!dateValue ? "text-muted-foreground" : ""}`}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {dateValue ? format(dateValue, "yyyy-MM-dd") : "Pick a date"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="p-0">
-                      <Calendar
-                        mode="single"
-                        selected={dateValue}
-                        onSelect={(date) => {
-                          if (date) {
-                            const localDate = format(date, "yyyy-MM-dd");
-                            field.onChange(localDate);
-                          }
-                        }}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                );
-              }}
-            />
           </div>
-
-          <div>
-            <label className="text-sm">Due Date</label>
-            <Controller
-              control={control}
-              name="due_date"
-              render={({ field }) => {
-                const dateValue = field.value ? new Date(field.value) : undefined;
-                return (
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        className={`w-full justify-start text-left font-normal ${!dateValue ? "text-muted-foreground" : ""}`}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {dateValue ? format(dateValue, "yyyy-MM-dd") : "Pick a date"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="p-0">
-                      <Calendar
-                        mode="single"
-                        selected={dateValue}
-                        onSelect={(date) => {
-                          if (date) {
-                            const localDate = format(date, "yyyy-MM-dd");
-                            field.onChange(localDate);
-                          }
-                        }}
-                      />
-                    </PopoverContent>
-                  </Popover>
-                );
-              }}
-            />
-          </div>
+        ) : (
+          < form onSubmit={handleSubmit(onSubmit)} className="grid gap-4 md:grid-cols-2">
+            {[
+              { label: "Name", name: "name" },
+              { label: "ID Code", name: "id_code" },
+              { label: "Range", name: "range" },
+              { label: "Serial No.", name: "serial_no" },
+              { label: "Least Count", name: "least_count" },
+              { label: "Location", name: "location" },
+              { label: "Agency & TC No", name: "agency" },
+              { label: "Notes", name: "notes", full: true },
+            ].map(({ label, name, full }) => (
+              <div key={name} className={full ? "md:col-span-2" : undefined}>
+                <label className="text-sm">{label}</label>
+                <Input type={"text"} {...register(name as keyof FormData)} />
+              </div>
+            ))}
 
 
-          <div>
-            <label className="text-sm">Frequency</label>
-            <Controller
-              control={control}
-              name="frequency"
-              render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value}>
-                  <SelectTrigger className="h-10 w-full rounded-md border bg-background px-3">
-                    <SelectValue placeholder="Select frequency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(["Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
+            <div>
+              <label className="text-sm">Last Calibration Date</label>
+              <Controller
+                control={control}
+                name="last_calibration_date"
+                render={({ field }) => {
+                  const dateValue = field.value ? new Date(field.value) : undefined;
+                  return (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={`w-full justify-start text-left font-normal ${!dateValue ? "text-muted-foreground" : ""}`}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {dateValue ? format(dateValue, "yyyy-MM-dd") : "Pick a date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="p-0">
+                        <Calendar
+                          mode="single"
+                          selected={dateValue}
+                          onSelect={(date) => {
+                            if (date) {
+                              const localDate = format(date, "yyyy-MM-dd");
+                              field.onChange(localDate);
+                            }
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  );
+                }}
+              />
+            </div>
 
-          <div>
-            <label className="text-sm">Status</label>
-            <Controller
-              control={control}
-              name="status"
-              render={({ field }) => (
-                <Select onValueChange={field.onChange} value={field.value}>
-                  <SelectTrigger className="h-10 w-full rounded-md border bg-background px-3">
-                    <SelectValue placeholder="Select status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(["OK", "Overdue"] as const).map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
-          </div>
+            <div>
+              <label className="text-sm">Due Date</label>
+              <Controller
+                control={control}
+                name="due_date"
+                render={({ field }) => {
+                  const dateValue = field.value ? new Date(field.value) : undefined;
+                  return (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          className={`w-full justify-start text-left font-normal ${!dateValue ? "text-muted-foreground" : ""}`}
+                        >
+                          <CalendarIcon className="mr-2 h-4 w-4" />
+                          {dateValue ? format(dateValue, "yyyy-MM-dd") : "Pick a date"}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="p-0">
+                        <Calendar
+                          mode="single"
+                          selected={dateValue}
+                          onSelect={(date) => {
+                            if (date) {
+                              const localDate = format(date, "yyyy-MM-dd");
+                              field.onChange(localDate);
+                            }
+                          }}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  );
+                }}
+              />
+            </div>
 
-          <div className="md:col-span-2 flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={() => navigate(-1)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isEdit ? "Save changes" : "Create"}
-            </Button>
-          </div>
-        </form>
+
+            <div>
+              <label className="text-sm">Frequency</label>
+              <Controller
+                control={control}
+                name="frequency"
+                render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger className="h-10 w-full rounded-md border bg-background px-3">
+                      <SelectValue placeholder="Select frequency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["Yearly", "Half-Yearly", "Quarterly", "Monthly"] as const).map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm">Status</label>
+              <Controller
+                control={control}
+                name="status"
+                render={({ field }) => (
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <SelectTrigger className="h-10 w-full rounded-md border bg-background px-3">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["OK", "Overdue"] as const).map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+
+            <div className="md:col-span-2 flex gap-2 justify-end">
+              <Button type="button" variant="outline" onClick={() => navigate(-1)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isEdit ? "Save changes" : "Create"}
+              </Button>
+            </div>
+          </form>
+        )}
       </CardContent>
-    </Card>
+    </Card >
   );
 }

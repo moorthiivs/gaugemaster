@@ -2,7 +2,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 
-export default function ProtectedRoute({ children }: { children: ReactNode }) {
+export default function OnboardingRoute({ children }: { children: ReactNode }) {
   const { token, loading, isNewCustomer } = useAuth();
   const location = useLocation();
 
@@ -18,13 +18,8 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Redirect to onboarding if user has not completed setup
-  if (isNewCustomer && location.pathname !== "/onboarding") {
-    return <Navigate to="/onboarding" replace />;
-  }
-
-  // Prevent accessing onboarding if setup is complete
-  if (!isNewCustomer && location.pathname === "/onboarding") {
+  // If user has completed setup, redirect to dashboard
+  if (!isNewCustomer) {
     return <Navigate to="/dashboard" replace />;
   }
 
