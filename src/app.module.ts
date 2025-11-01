@@ -27,6 +27,9 @@ import { ScheduleModule } from '@nestjs/schedule';
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       migrationsRun: true,
       synchronize: true,
+      ssl: {
+        rejectUnauthorized: false,
+      }
     }),
     AuthModule,
     UsersModule,
