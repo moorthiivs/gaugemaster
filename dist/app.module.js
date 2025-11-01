@@ -38,6 +38,9 @@ exports.AppModule = AppModule = __decorate([
                 migrations: [__dirname + '/migrations/*{.ts,.js}'],
                 migrationsRun: true,
                 synchronize: true,
+                ssl: {
+                    rejectUnauthorized: false,
+                }
             }),
             auth_module_1.AuthModule,
             users_module_1.UsersModule,
