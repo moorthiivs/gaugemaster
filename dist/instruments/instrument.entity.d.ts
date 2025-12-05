@@ -1,7 +1,9 @@
+import { Company } from 'src/company/entities/company.entity';
 import { User } from 'src/users/user.entity';
 export declare class Instrument {
     id: string;
     id_code: string;
+    sino: string;
     name: string;
     location: string;
     frequency: string;
@@ -18,4 +20,6 @@ export declare class Instrument {
     updated_at: Date;
     created_by?: User;
     updated_by?: User;
+    company?: Company;
+    companyId: string;
 }

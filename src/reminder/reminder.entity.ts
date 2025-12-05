@@ -12,52 +12,48 @@ import {
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 
-@Entity('instruments')
-export class Instrument {
+@Entity('ReminderFrequncy')
+export class ReminderFrequncy {
   @PrimaryColumn('uuid')
   id: string = uuidv4();
 
   @Column()
-  id_code: string;
-
-  @Column({ nullable: true })
-  sino: string;
+  no_of_mails: number;
 
   @Column()
-  name: string;
+  when: string;
 
   @Column()
-  location: string;
+  reminder_start: number;
 
   @Column()
-  frequency: string;
+  reminder_start_unit: string;
+
+  @Column()
+  reminder_field: string;
 
   @Column({ type: 'timestamp' })
-  last_calibration_date: Date;
+  reminder_date: Date;
 
-  @Column({ type: 'timestamp' })
-  due_date: Date;
+  @Column({ type: "json", nullable: true })
+  mail_times: {
+      date: any; time: string 
+}[];
 
-  @Column()
-  agency: string;
-
-  @Column()
-  range: string;
 
   @Column()
-  serial_no: string;
+  priority: string;
+
+  @Column({ type: "text" })
+  mail_template: string;
+
 
   @Column()
-  least_count: string;
+  recipient_role: string;
 
-  @Column({ type: 'text', nullable: true })
-  notes: string;
 
-  @Column() // e.g. "OK", "Overdue", "Pending"
-  status: string;
-
-  @Column({ type: 'json', nullable: true })
-  custom_parameters: Record<string, any>; // ✅ for dynamic extra fields
+  @Column({ default: true })
+  isactive: boolean;
 
   // Audit fields
   @CreateDateColumn()

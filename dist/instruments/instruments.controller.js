@@ -47,6 +47,13 @@ let InstrumentsController = class InstrumentsController {
     update(id, updateInstrumentDto) {
         return this.instrumentsService.update(id, updateInstrumentDto);
     }
+    async bulkUpload(dto) {
+        const dataArray = Array.isArray(dto) ? dto : [dto];
+        return this.instrumentsService.bulkUpload(dataArray);
+    }
+    async sendCalibagency(data) {
+        return this.instrumentsService.sendCalibagency(data);
+    }
 };
 exports.InstrumentsController = InstrumentsController;
 __decorate([
@@ -91,6 +98,20 @@ __decorate([
     __metadata("design:paramtypes", [String, update_instrument_dto_1.UpdateInstrumentDto]),
     __metadata("design:returntype", void 0)
 ], InstrumentsController.prototype, "update", null);
+__decorate([
+    (0, common_1.Post)('bulk-upload'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], InstrumentsController.prototype, "bulkUpload", null);
+__decorate([
+    (0, common_1.Post)('send-calibration-agency'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], InstrumentsController.prototype, "sendCalibagency", null);
 exports.InstrumentsController = InstrumentsController = __decorate([
     (0, common_1.Controller)('api/instruments'),
     __metadata("design:paramtypes", [instruments_service_1.InstrumentsService])

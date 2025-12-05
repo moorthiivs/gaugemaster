@@ -10,6 +10,8 @@ exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const typeorm_1 = require("@nestjs/typeorm");
 const config_1 = require("@nestjs/config");
+const schedule_1 = require("@nestjs/schedule");
+const nest_pg_boss_1 = require("@loctax/nest-pg-boss");
 const users_module_1 = require("./users/users.module");
 const instruments_module_1 = require("./instruments/instruments.module");
 const reports_module_1 = require("./reports/reports.module");
@@ -18,7 +20,6 @@ const dashboard_module_1 = require("./dashboard/dashboard.module");
 const company_module_1 = require("./company/company.module");
 const settings_module_1 = require("./settings/settings.module");
 const reminder_module_1 = require("./reminder/reminder.module");
-const schedule_1 = require("@nestjs/schedule");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -26,7 +27,9 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             schedule_1.ScheduleModule.forRoot(),
-            config_1.ConfigModule.forRoot({ isGlobal: true }),
+            config_1.ConfigModule.forRoot({
+                isGlobal: true,
+            }),
             typeorm_1.TypeOrmModule.forRoot({
                 type: 'postgres',
                 host: process.env.DB_HOST,
@@ -38,9 +41,7 @@ exports.AppModule = AppModule = __decorate([
                 migrations: [__dirname + '/migrations/*{.ts,.js}'],
                 migrationsRun: true,
                 synchronize: true,
-                ssl: {
-                    rejectUnauthorized: false,
-                }
+                ssl: { rejectUnauthorized: false },
             }),
             auth_module_1.AuthModule,
             users_module_1.UsersModule,
@@ -49,7 +50,25 @@ exports.AppModule = AppModule = __decorate([
             dashboard_module_1.DashboardModule,
             company_module_1.CompanyModule,
             settings_module_1.SettingsModule,
-            reminder_module_1.ReminderModule
+            reminder_module_1.ReminderModule,
+            nest_pg_boss_1.PGBossModule.forRootAsync({
+                useFactory: (config) => ({
+                    application_name: "default",
+                    host: config.get("DB_HOST"),
+                    user: config.get("DB_USERNAME"),
+                    password: config.get("DB_PASSWORD"),
+                    database: config.get("DB_NAME"),
+                    schema: "public",
+                    max: config.get("DB_POOL_MAX") || 10,
+                    ssl: {
+                        rejectUnauthorized: false,
+                    },
+                    onError: (err) => {
+                        console.error("PgBoss Error:", err.message);
+                    },
+                }),
+                inject: [config_1.ConfigService],
+            }),
         ],
     })
 ], AppModule);

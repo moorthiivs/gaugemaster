@@ -8,6 +8,9 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ReminderController = void 0;
 const common_1 = require("@nestjs/common");
@@ -17,17 +20,48 @@ let ReminderController = class ReminderController {
     constructor(reminderService) {
         this.reminderService = reminderService;
     }
-    async testReminder() {
-        return this.reminderService.handleReminderJob();
+    async fetchFrequencyData(query) {
+        return this.reminderService.fetchrequencyData(query);
+    }
+    async saveReminder(data) {
+        return this.reminderService.saveReminder(data);
+    }
+    async deleteReminder(body) {
+        return this.reminderService.deleteReminder(body.id);
+    }
+    async updateReminder(payload) {
+        return this.reminderService.updateReminder(payload);
     }
 };
 exports.ReminderController = ReminderController;
 __decorate([
-    (0, common_1.Get)('test'),
+    (0, common_1.Get)('frequencyData'),
+    __param(0, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
-], ReminderController.prototype, "testReminder", null);
+], ReminderController.prototype, "fetchFrequencyData", null);
+__decorate([
+    (0, common_1.Post)('saveReminder'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ReminderController.prototype, "saveReminder", null);
+__decorate([
+    (0, common_1.Delete)('deleteReminder'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ReminderController.prototype, "deleteReminder", null);
+__decorate([
+    (0, common_1.Put)('updateReminder'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ReminderController.prototype, "updateReminder", null);
 exports.ReminderController = ReminderController = __decorate([
     (0, common_1.Controller)('api/reminder'),
     __metadata("design:paramtypes", [reminder_service_1.ReminderService])

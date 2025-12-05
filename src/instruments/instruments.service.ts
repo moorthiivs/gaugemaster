@@ -9,7 +9,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Like, Repository } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
-
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { LessThanOrEqual } from 'typeorm';
+import { Logger } from '@nestjs/common';
+import { MailerService } from 'src/mail/mailer.service';
 interface InstrumentFilters {
     status?: string;
     location?: string;
@@ -25,6 +28,7 @@ export class InstrumentsService {
     constructor(
         @InjectRepository(Instrument)
         private readonly instrumentRepository: Repository<Instrument>,
+        private readonly mailerService: MailerService,
     ) { }
 
 
@@ -105,9 +109,33 @@ export class InstrumentsService {
                 );
             }
 
+            let sinoStr = instrumentDto.sino ? String(instrumentDto.sino) : undefined;
+
+            if (!sinoStr) {
+                const lastInstrument = await this.instrumentRepository.findOne({
+                    where: {
+                        created_by: { id: instrumentDto.created_by },
+                        companyId: instrumentDto.companyId,
+                    },
+                    order: { sino: 'ASC' },
+                });
+
+                if (lastInstrument?.sino) {
+                    const last = String(lastInstrument.sino);
+                    const lastNum = parseInt(last, 10);
+
+                    // Keep length format (001 → 3 digits)
+                    const next = lastNum + 1;
+                    sinoStr = String(next).padStart(last.length, "0");
+                } else {
+                    // Default start
+                    sinoStr = "001"; // or "001" if you prefer
+                }
+            }
 
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
+                sino: sinoStr,
                 created_by: { id: instrumentDto.created_by },
                 updated_by: undefined,
                 last_calibration_date: new Date(instrumentDto.last_calibration_date),
@@ -149,13 +177,103 @@ export class InstrumentsService {
     }
 
 
-    async remainder(){
+    async bulkUpload(instruments: CreateInstrumentDto[]) {
         try {
-            
+            const saved: CreateInstrumentDto[] = [];
+            const rejected: any[] = [];
+
+            for (const instrument of instruments) {
+                try {
+                    const existingSino = await this.instrumentRepository.findOne({
+                        where: {
+                            sino: instrument.sino,
+                            companyId: instrument.companyId,
+                            created_by: { id: instrument.created_by },
+                        },
+                    });
+
+                    if (existingSino) {
+                        rejected.push({
+                            ...instrument,
+                            error: `SINO '${instrument.sino}' already exists`,
+                        });
+                        continue;
+                    }
+
+                    const existingCode = await this.instrumentRepository.findOne({
+                        where: {
+                            id_code: instrument.id_code,
+                            created_by: { id: instrument.created_by },
+                        },
+                    });
+
+                    if (existingCode) {
+                        rejected.push({
+                            ...instrument,
+                            error: `ID Code '${instrument.id_code}' already exists`,
+                        });
+                        continue;
+                    }
+
+                    await this.create(instrument);
+                    saved.push(instrument);
+                } catch (err) {
+                    rejected.push({
+                        ...instrument,
+                        error: err?.message || 'Unknown error',
+                    });
+                }
+            }
+
+            return {
+                successCount: saved.length,
+                failedCount: rejected.length,
+                saved,
+                rejected,
+            };
         } catch (error) {
-            
             console.log(error);
-            
+        }
+
+    }
+
+
+    async sendCalibagency(data: any) {
+        await this.mailerService.sendCalibrationAgency(data);
+    }
+
+    //@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+    @Cron('27 12 * * *')
+    async autoupdateinstrumentStatus() {
+        const logger = new Logger('InstrumentsService');
+
+        try {
+            logger.log('🕒 Running auto-overdue status update job...');
+
+            const today = new Date();
+
+            const overdueInstruments = await this.instrumentRepository.find({
+                where: {
+                    due_date: LessThanOrEqual(today),
+                },
+            });
+
+
+            if (!overdueInstruments.length) {
+                logger.log('✅ No overdue instruments found.');
+                return;
+            }
+
+            // 🔹 Update each to status = 'Overdue'
+            for (const instrument of overdueInstruments) {
+                instrument.status = 'Overdue';
+                await this.instrumentRepository.save(instrument);
+                logger.log(`⚠️ Instrument ${instrument.name} (${instrument.id_code}) marked as Overdue.`);
+            }
+
+            logger.log(`✅ ${overdueInstruments.length} instruments updated to 'Overdue'`);
+        } catch (error) {
+            console.error('❌ Error in autoupdateinstrumentStatus cron:', error);
         }
     }
 

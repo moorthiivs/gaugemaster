@@ -14,17 +14,23 @@ const reminder_controller_1 = require("./reminder.controller");
 const instrument_entity_1 = require("../instruments/instrument.entity");
 const setting_entity_1 = require("../settings/entities/setting.entity");
 const mailer_module_1 = require("../mail/mailer.module");
+const reminder_entity_1 = require("./reminder.entity");
+const reminder_job_1 = require("./reminder.job");
 let ReminderModule = class ReminderModule {
 };
 exports.ReminderModule = ReminderModule;
 exports.ReminderModule = ReminderModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            typeorm_1.TypeOrmModule.forFeature([instrument_entity_1.Instrument, setting_entity_1.Setting]),
-            mailer_module_1.MailerModule,
+            typeorm_1.TypeOrmModule.forFeature([reminder_entity_1.ReminderFrequncy, instrument_entity_1.Instrument, setting_entity_1.Setting]),
+            mailer_module_1.MailerModule
         ],
         controllers: [reminder_controller_1.ReminderController],
-        providers: [reminder_service_1.ReminderService],
+        providers: [
+            reminder_service_1.ReminderService,
+            reminder_job_1.ReminderJob.ServiceProvider,
+        ],
+        exports: [reminder_service_1.ReminderService],
     })
 ], ReminderModule);
 //# sourceMappingURL=reminder.module.js.map

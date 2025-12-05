@@ -1,5 +1,6 @@
 export declare class CreateInstrumentDto {
     id_code: string;
+    sino: string;
     name: string;
     location: string;
     frequency: string;
@@ -14,4 +15,5 @@ export declare class CreateInstrumentDto {
     custom_parameters?: Record<string, any>;
     created_by: string;
     updated_by: string;
+    companyId: string;
 }

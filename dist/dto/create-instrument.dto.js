@@ -13,6 +13,7 @@ exports.CreateInstrumentDto = void 0;
 const class_validator_1 = require("class-validator");
 class CreateInstrumentDto {
     id_code;
+    sino;
     name;
     location;
     frequency;
@@ -27,6 +28,7 @@ class CreateInstrumentDto {
     custom_parameters;
     created_by;
     updated_by;
+    companyId;
 }
 exports.CreateInstrumentDto = CreateInstrumentDto;
 __decorate([
@@ -34,6 +36,11 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     __metadata("design:type", String)
 ], CreateInstrumentDto.prototype, "id_code", void 0);
+__decorate([
+    (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], CreateInstrumentDto.prototype, "sino", void 0);
 __decorate([
     (0, class_validator_1.IsString)(),
     (0, class_validator_1.IsNotEmpty)(),
@@ -101,4 +108,9 @@ __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     __metadata("design:type", String)
 ], CreateInstrumentDto.prototype, "updated_by", void 0);
+__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsNotEmpty)(),
+    __metadata("design:type", String)
+], CreateInstrumentDto.prototype, "companyId", void 0);
 //# sourceMappingURL=create-instrument.dto.js.map

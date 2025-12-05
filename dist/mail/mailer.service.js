@@ -95,6 +95,51 @@ let MailerService = MailerService_1 = class MailerService {
             this.logger.error(`❌ Error sending email: ${err.message}`);
         }
     }
+    async sendCalibrationAgency(params) {
+        const smtpSetting = await this.getMailConfig(params.userId);
+        if (!smtpSetting?.smtpConfig) {
+            throw new Error(`No SMTP configuration found for user ${params.userId}`);
+        }
+        const smtp = smtpSetting.smtpConfig;
+        console.log(smtp, "smtp");
+        const transporter = nodemailer.createTransport({
+            host: smtp.smtpServer,
+            port: Number(smtp.smtpPort) || 587,
+            secure: smtp.encryption === 'ssl',
+            auth: {
+                user: smtp.username,
+                pass: smtp.password,
+            },
+        });
+        const html = `
+  <h3>Calibration Request</h3>
+
+  <p><strong>Description:</strong> ${params.description}</p>
+
+  <h4>Selected Instruments:</h4>
+  <ul>
+    ${params.instruments
+            .map((item) => `
+        <li style="margin-bottom: 10px;">
+          <span><strong>Instrument Name:</strong> ${item.name || item.instrumentName}</span>
+          <span><strong>Least Count:</strong> ${item.least_count || '-'}</span>
+          <span><strong>Range:</strong> ${item.range || '-'}</span>
+        </li>
+      `)
+            .join("")}
+  </ul>
+
+  <p>Thank You.</p>
+`;
+        const subject = "Calibration Agency Request";
+        await transporter.sendMail({
+            from: smtp.username,
+            to: params.to,
+            subject,
+            html,
+        });
+        return { message: "Email sent successfully" };
+    }
 };
 exports.MailerService = MailerService;
 exports.MailerService = MailerService = MailerService_1 = __decorate([

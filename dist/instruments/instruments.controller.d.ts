@@ -19,4 +19,11 @@ export declare class InstrumentsController {
     findOne(id: string): Promise<import("./instrument.entity").Instrument>;
     create(createInstrumentDto: CreateInstrumentDto): Promise<import("./instrument.entity").Instrument>;
     update(id: string, updateInstrumentDto: UpdateInstrumentDto): Promise<import("./instrument.entity").Instrument>;
+    bulkUpload(dto: CreateInstrumentDto | CreateInstrumentDto[]): Promise<{
+        successCount: number;
+        failedCount: number;
+        saved: CreateInstrumentDto[];
+        rejected: any[];
+    } | undefined>;
+    sendCalibagency(data: any): Promise<void>;
 }

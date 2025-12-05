@@ -56,4 +56,16 @@ export class InstrumentsController {
         return this.instrumentsService.update(id, updateInstrumentDto);
     }
 
+    @Post('bulk-upload')
+    async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
+        const dataArray = Array.isArray(dto) ? dto : [dto];
+        return this.instrumentsService.bulkUpload(dataArray);
+    }
+
+
+    @Post('send-calibration-agency')
+    async sendCalibagency(@Body() data: any) {
+        return this.instrumentsService.sendCalibagency(data);
+    }
+
 }

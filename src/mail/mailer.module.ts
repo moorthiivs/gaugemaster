@@ -7,6 +7,6 @@ import { Setting } from 'src/settings/entities/setting.entity';
 @Module({
     imports: [TypeOrmModule.forFeature([Setting])],
     providers: [MailerService],
-    exports: [MailerService], // ✅ allows other modules to use it
+    exports: [MailerService], 
 })
 export class MailerModule { }

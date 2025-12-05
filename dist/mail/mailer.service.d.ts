@@ -11,4 +11,7 @@ export declare class MailerService {
         html: string;
         userId: string;
     }): Promise<void>;
+    sendCalibrationAgency(params: any): Promise<{
+        message: string;
+    }>;
 }

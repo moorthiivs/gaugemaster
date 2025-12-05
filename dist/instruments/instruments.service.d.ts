@@ -2,6 +2,7 @@ import { Instrument } from './instrument.entity';
 import { Repository } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
+import { MailerService } from 'src/mail/mailer.service';
 interface InstrumentFilters {
     status?: string;
     location?: string;
@@ -13,7 +14,8 @@ interface InstrumentFilters {
 }
 export declare class InstrumentsService {
     private readonly instrumentRepository;
-    constructor(instrumentRepository: Repository<Instrument>);
+    private readonly mailerService;
+    constructor(instrumentRepository: Repository<Instrument>, mailerService: MailerService);
     findFilterParams(createdById: string): Promise<{
         status: string[];
         frequency: string[];
@@ -29,6 +31,13 @@ export declare class InstrumentsService {
     }>;
     create(instrumentDto: CreateInstrumentDto): Promise<Instrument>;
     update(id: string, updateInstrumentDto: UpdateInstrumentDto): Promise<Instrument>;
-    remainder(): Promise<void>;
+    bulkUpload(instruments: CreateInstrumentDto[]): Promise<{
+        successCount: number;
+        failedCount: number;
+        saved: CreateInstrumentDto[];
+        rejected: any[];
+    } | undefined>;
+    sendCalibagency(data: any): Promise<void>;
+    autoupdateinstrumentStatus(): Promise<void>;
 }
 export {};

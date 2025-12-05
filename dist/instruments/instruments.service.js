@@ -17,10 +17,16 @@ const common_1 = require("@nestjs/common");
 const instrument_entity_1 = require("./instrument.entity");
 const typeorm_1 = require("@nestjs/typeorm");
 const typeorm_2 = require("typeorm");
+const schedule_1 = require("@nestjs/schedule");
+const typeorm_3 = require("typeorm");
+const common_2 = require("@nestjs/common");
+const mailer_service_1 = require("../mail/mailer.service");
 let InstrumentsService = class InstrumentsService {
     instrumentRepository;
-    constructor(instrumentRepository) {
+    mailerService;
+    constructor(instrumentRepository, mailerService) {
         this.instrumentRepository = instrumentRepository;
+        this.mailerService = mailerService;
     }
     async findFilterParams(createdById) {
         const instruments = await this.instrumentRepository.find({
@@ -86,8 +92,28 @@ let InstrumentsService = class InstrumentsService {
             if (existingInstrument) {
                 throw new common_1.ConflictException(`Instrument '${instrumentDto.id_code}' already exists for this user.`);
             }
+            let sinoStr = instrumentDto.sino ? String(instrumentDto.sino) : undefined;
+            if (!sinoStr) {
+                const lastInstrument = await this.instrumentRepository.findOne({
+                    where: {
+                        created_by: { id: instrumentDto.created_by },
+                        companyId: instrumentDto.companyId,
+                    },
+                    order: { sino: 'ASC' },
+                });
+                if (lastInstrument?.sino) {
+                    const last = String(lastInstrument.sino);
+                    const lastNum = parseInt(last, 10);
+                    const next = lastNum + 1;
+                    sinoStr = String(next).padStart(last.length, "0");
+                }
+                else {
+                    sinoStr = "001";
+                }
+            }
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
+                sino: sinoStr,
                 created_by: { id: instrumentDto.created_by },
                 updated_by: undefined,
                 last_calibration_date: new Date(instrumentDto.last_calibration_date),
@@ -123,18 +149,100 @@ let InstrumentsService = class InstrumentsService {
             throw error;
         }
     }
-    async remainder() {
+    async bulkUpload(instruments) {
         try {
+            const saved = [];
+            const rejected = [];
+            for (const instrument of instruments) {
+                try {
+                    const existingSino = await this.instrumentRepository.findOne({
+                        where: {
+                            sino: instrument.sino,
+                            companyId: instrument.companyId,
+                            created_by: { id: instrument.created_by },
+                        },
+                    });
+                    if (existingSino) {
+                        rejected.push({
+                            ...instrument,
+                            error: `SINO '${instrument.sino}' already exists`,
+                        });
+                        continue;
+                    }
+                    const existingCode = await this.instrumentRepository.findOne({
+                        where: {
+                            id_code: instrument.id_code,
+                            created_by: { id: instrument.created_by },
+                        },
+                    });
+                    if (existingCode) {
+                        rejected.push({
+                            ...instrument,
+                            error: `ID Code '${instrument.id_code}' already exists`,
+                        });
+                        continue;
+                    }
+                    await this.create(instrument);
+                    saved.push(instrument);
+                }
+                catch (err) {
+                    rejected.push({
+                        ...instrument,
+                        error: err?.message || 'Unknown error',
+                    });
+                }
+            }
+            return {
+                successCount: saved.length,
+                failedCount: rejected.length,
+                saved,
+                rejected,
+            };
         }
         catch (error) {
             console.log(error);
         }
     }
+    async sendCalibagency(data) {
+        await this.mailerService.sendCalibrationAgency(data);
+    }
+    async autoupdateinstrumentStatus() {
+        const logger = new common_2.Logger('InstrumentsService');
+        try {
+            logger.log('🕒 Running auto-overdue status update job...');
+            const today = new Date();
+            const overdueInstruments = await this.instrumentRepository.find({
+                where: {
+                    due_date: (0, typeorm_3.LessThanOrEqual)(today),
+                },
+            });
+            if (!overdueInstruments.length) {
+                logger.log('✅ No overdue instruments found.');
+                return;
+            }
+            for (const instrument of overdueInstruments) {
+                instrument.status = 'Overdue';
+                await this.instrumentRepository.save(instrument);
+                logger.log(`⚠️ Instrument ${instrument.name} (${instrument.id_code}) marked as Overdue.`);
+            }
+            logger.log(`✅ ${overdueInstruments.length} instruments updated to 'Overdue'`);
+        }
+        catch (error) {
+            console.error('❌ Error in autoupdateinstrumentStatus cron:', error);
+        }
+    }
 };
 exports.InstrumentsService = InstrumentsService;
+__decorate([
+    (0, schedule_1.Cron)('27 12 * * *'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], InstrumentsService.prototype, "autoupdateinstrumentStatus", null);
 exports.InstrumentsService = InstrumentsService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, typeorm_1.InjectRepository)(instrument_entity_1.Instrument)),
-    __metadata("design:paramtypes", [typeorm_2.Repository])
+    __metadata("design:paramtypes", [typeorm_2.Repository,
+        mailer_service_1.MailerService])
 ], InstrumentsService);
 //# sourceMappingURL=instruments.service.js.map
