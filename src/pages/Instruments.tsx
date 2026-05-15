@@ -12,10 +12,13 @@ import api from "@/lib/apis";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
 import ExcelUpload from "@/components/ExcelUpload";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader } from "@/components/ui/dialog";
 import { PlusCircle, Upload } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import TooltipProv from "@/components/TooltipProv";
+import { Label } from "@radix-ui/react-label";
+import { DialogDescription, DialogTitle } from "@radix-ui/react-dialog";
+import { Textarea } from "@/components/ui/textarea";
 
 
 const pageSize = 10;
@@ -25,7 +28,7 @@ export default function Instruments() {
   const { toast } = useToast();
   const { user } = useAuth()
   const navigate = useNavigate();
-  const [filters, setFilters] = useState<InstrumentQuery>({ status: "All", location: "All", frequency: "All", page: 1, pageSize });
+  const [filters, setFilters] = useState<InstrumentQuery>({ status: "All", location: "All", frequency: "All", page: 1, pageSize, limit: 10 });
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
   const [allData, setAllData] = useState<Instrument[]>([]); // store original data
   const [loading, setLoading] = useState(false);
@@ -38,6 +41,16 @@ export default function Instruments() {
   const [LocationFillter, setLocationFilter] = useState([])
 
   const [isOpenupload, setisOpenupload] = useState(false);
+  const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
+
+
+
+
+  const [isOpenCalibagency, setisOpenCalibagency] = useState(false);
+  const [selectedAgency, setSelectedAgency] = useState("");
+  const [description, setDescription] = useState("");
+
+  const [isSendCalibration, setisSendCalibration] = useState(false);
 
   const totalPages = Math.max(1, Math.ceil(data.total / pageSize));
 
@@ -64,7 +77,7 @@ export default function Instruments() {
       setAllData(result.data); // keep original copy
       setSelected({});
     } catch (error) {
-      toast({ title: "Error", description: String(error), variant: "destructive" });
+      toast({ title: 'error', description: String(error), variant: 'destructive' })
     } finally {
       setLoading(false);
     }
@@ -99,10 +112,45 @@ export default function Instruments() {
         due_date: new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()).toISOString(),
       });
     }
-    toast({ title: "Updated", description: `Marked ${selectedIds.length} as calibrated.` });
     fetchData();
   };
 
+
+
+  const handleSendMail = async () => {
+    setisSendCalibration(true)
+    try {
+      const selectedItems = data.items.filter((i) => selected[i.id]);
+      const payload = {
+        to: selectedAgency,
+        description,
+        instruments: selectedItems,
+        userId: user.id,
+      };
+
+      console.log(payload, "payload");
+      const res = await api.post(`/instruments/send-calibration-agency`, payload);
+      console.log("Mail Payload:", res);
+      setisOpenCalibagency(false);
+
+      toast({
+        title: "Mail Sent Successfully",
+        description: "Calibration request has been sent to the selected agency.",
+        variant: 'success',
+      });
+      setisSendCalibration(false)
+    } catch (error) {
+      console.log(error);
+      toast({
+        title: "Sending Failed",
+        description: "Unable to send calibration mail. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setisSendCalibration(false)
+    }
+
+  };
 
   return (
     <>
@@ -124,7 +172,7 @@ export default function Instruments() {
         </header>
 
         <div className="grid gap-3 md:grid-cols-5">
-          <Input placeholder="Search…" onChange={(e) => {
+          <Input placeholder="Search… by 	Name or IDcode" onChange={(e) => {
             const searchValue = e.target.value.toLowerCase();
 
             if (!searchValue) {
@@ -133,13 +181,16 @@ export default function Instruments() {
               return;
             }
 
-            const filterData = allData.filter((value: any) =>
-              value.name.toLowerCase().includes(searchValue)
-            );
+            const filterData = allData.filter((value: any) => {
+              const nameMatch = value.name?.toLowerCase().includes(searchValue);
+              const idCodeMatch = value.id_code?.toLowerCase().includes(searchValue);
+              return nameMatch || idCodeMatch;
+              //value.name.toLowerCase().includes(searchValue)
+            });
 
             setData({ items: filterData, total: filterData.length });
-          }} 
-          className="md:col-span-2" />
+          }}
+            className="md:col-span-2" />
           <TooltipProv content="Filter instruments by status">
             <Select
               value={filters.status as any}
@@ -188,7 +239,7 @@ export default function Instruments() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="secondary" disabled={!selectedIds.length} onClick={markCalibrated}>Mark calibrated</Button>
+          {/* <Button variant="secondary" disabled={!selectedIds.length} onClick={markCalibrated}>Mark calibrated</Button> */}
           <Button
             variant="outline"
             disabled={!data.items.length}
@@ -206,6 +257,7 @@ export default function Instruments() {
           >
             Export CSV (page)
           </Button>
+          <Button variant="secondary" disabled={!selectedIds.length} onClick={() => setisOpenCalibagency(true)}>Send For Agency</Button>
         </div>
 
 
@@ -216,6 +268,7 @@ export default function Instruments() {
                 <TableHead className="w-10">
                   <Checkbox onCheckedChange={(v) => toggleAll(!!v)} aria-label="Select all" />
                 </TableHead>
+                <TableHead>S.No</TableHead>
                 <TableHead>Name</TableHead>
                 <TableHead>ID Code</TableHead>
                 <TableHead>Location</TableHead>
@@ -241,7 +294,7 @@ export default function Instruments() {
                     <TableCell><Skeleton className="h-4 w-[80px]" /></TableCell>
                   </TableRow>
                 ))
-                : data.items.map((i) => (
+                : data.items.map((i, index) => (
                   <TableRow
                     key={i.id}
                     className="hover:bg-muted/50 cursor-pointer"
@@ -254,6 +307,9 @@ export default function Instruments() {
                         aria-label={`Select ${i.name}`}
                       />
                     </TableCell>
+                    {/* <TableCell>{i.sino}</TableCell> */}
+                    <TableCell>{i.sino ? i.sino : (filters.page - 1) * filters.limit + index + 1}</TableCell>
+
                     <TableCell>{i.name}</TableCell>
                     <TableCell>{i.id_code}</TableCell>
                     <TableCell>{i.location}</TableCell>
@@ -268,13 +324,17 @@ export default function Instruments() {
                             ? "success"
                             : i.status === "Overdue"
                               ? "destructive"
-                              : "warning"
+                              : i.status === "Sent for Calibration"
+                                ? "premium"
+                                : "warning" // Upcoming Calibration (10 days before)
                         }
                         className="capitalize"
                       >
                         {i.status}
                       </Badge>
                     </TableCell>
+
+
                   </TableRow>
                 ))}
             </TableBody>
@@ -294,8 +354,9 @@ export default function Instruments() {
       <Dialog open={isOpenupload} onOpenChange={setisOpenupload}>
         <DialogContent className="max-w-lg">
           <ExcelUpload
-            endpoint="/instruments"
+            endpoint="/instruments/bulk-upload"
             mapRow={(row) => ({
+              sino: row["S.No"],
               name: row["NAME OF INSTRUMENT"],
               id_code: row["ID CODE"],
               range: row["RANGE"],
@@ -311,13 +372,112 @@ export default function Instruments() {
               status: row["STATUS"],
               custom_parameters: {},
             })}
+
+            rejectedFile={rejectedFile}
+            setRejectedFile={setRejectedFile}
             onComplete={() => {
               fetchData();
               setisOpenupload(false);
             }}
+
+
           />
         </DialogContent>
       </Dialog>
+
+
+
+      <Dialog open={isOpenCalibagency} onOpenChange={setisOpenCalibagency}>
+        <DialogContent className="max-w-lg space-y-4">
+
+          <DialogHeader>
+            <DialogTitle>Send Instruments to Calibration Agency</DialogTitle>
+            <DialogDescription>
+              Enter agency email, review selected instruments and add description.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Agency Email Input */}
+          <div className="space-y-2">
+            <Label>Calibration Agency Email</Label>
+            <Input
+              type="email"
+              value={selectedAgency}
+              onChange={(e) => setSelectedAgency(e.target.value)}
+              placeholder="Enter agency email"
+            />
+          </div>
+
+          {/* Selected Instruments List */}
+          <div className="space-y-2">
+            <Label>Selected Instruments</Label>
+
+            <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
+
+              {Object.keys(selected)
+                .filter((id) => selected[id])
+                .map((id) => {
+                  const item = data.items.find((i) => i.id === id);
+                  if (!item) return null;
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between bg-muted p-2 rounded-md"
+                    >
+                      <div className="text-sm">
+                        <div className="font-medium">{item.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {item.id_code}
+                        </div>
+                      </div>
+
+                      {/* Remove Button */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() =>
+                          setSelected((prev) => {
+                            const copy = { ...prev };
+                            delete copy[item.id];
+                            return copy;
+                          })
+                        }
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  );
+                })}
+
+              {Object.keys(selected).filter((id) => selected[id]).length === 0 && (
+                <p className="text-sm text-muted-foreground">No instruments selected</p>
+              )}
+            </div>
+          </div>
+
+          {/* Description */}
+          <div className="space-y-2">
+            <Label>Description</Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Enter description for the agency…"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              disabled={isSendCalibration}
+              onClick={handleSendMail}
+            >
+              {isSendCalibration ? 'Mail Sending...' : 'Send Mail'}
+            </Button>
+          </DialogFooter>
+
+        </DialogContent>
+      </Dialog>
+
 
     </>
 

@@ -34,7 +34,7 @@ const schema = z.object({
   last_calibration_date: z.string(),
   due_date: z.string(),
   agency: z.string().min(1),
-  status: z.enum(["OK", "Overdue"]),
+  status: z.enum(["OK", "Upcoming Calibration (10 days before )", "Sent for Calibration", "Overdue"]),
   notes: z.string().optional(),
 });
 
@@ -50,14 +50,48 @@ export type Instrument = {
   due_date: string; // ISO
   frequency: "Yearly" | "Half-Yearly" | "Quarterly" | "Monthly";
   agency: string;
-  status: "OK" | "Overdue";
+  status: "OK" | "Upcoming Calibration (10 days before )" | "Sent for Calibration" | "Overdue";
   range?: string;
   serial_no?: string;
   least_count?: string;
   notes?: string;
-  updated_by?: string
-  created_by?: string
+  updated_by?: string;
+  created_by?: string;
+  companyId?: string
 };
+
+
+
+const computeStatusOptions = (currentStatus: string, dueDate: string) => {
+  const today = new Date();
+  const due = new Date(dueDate);
+
+  console.log(due < today, "due < today");
+
+  // 1. Overdue condition
+  if (due < today) {
+    return ["Overdue"];
+  }
+
+  // 2. Upcoming Calibration condition
+  if (currentStatus === "Upcoming Calibration (10 days before )") {
+    return ["Upcoming Calibration (10 days before )", "Sent for Calibration"];
+  }
+
+  // 3. Sent for Calibration condition
+  if (currentStatus === "Sent for Calibration") {
+    return ["Sent for Calibration", "Overdue"];
+  }
+
+  // 4. Default: OK
+  return [
+    "OK",
+    "Upcoming Calibration (10 days before )",
+    "Sent for Calibration",
+    "Overdue"
+  ];
+};
+
 
 export default function InstrumentForm() {
 
@@ -73,6 +107,7 @@ export default function InstrumentForm() {
     control,
     handleSubmit,
     reset,
+    setValue,   // <-- ADD THIS 
     formState: { errors, isSubmitting }
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -135,7 +170,8 @@ export default function InstrumentForm() {
         notes: values.notes,
         status: values.status,
         created_by: user.id,
-        updated_by: user.id
+        updated_by: user.id,
+        companyId: user.companyId,
       };
 
       let response;
@@ -285,6 +321,11 @@ export default function InstrumentForm() {
                             if (date) {
                               const localDate = format(date, "yyyy-MM-dd");
                               field.onChange(localDate);
+                              const today = new Date();
+                              const due = new Date(localDate);
+                              if (due < today) {
+                                setValue("status", "Overdue");
+                              }
                             }
                           }}
                         />
@@ -329,7 +370,20 @@ export default function InstrumentForm() {
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(["OK", "Overdue"] as const).map((f) => (
+                      {/* {(["OK", "Upcoming Calibration (10 days before )", "Sent for Calibration", "Overdue"] as const).map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))} */}
+
+                      {(
+                        isEdit
+                          ? computeStatusOptions(
+                            control._formValues.status,
+                            control._formValues.due_date
+                          )
+                          : ["OK", "Upcoming Calibration (10 days before )", "Sent for Calibration", "Overdue"]
+                      ).map((f) => (
                         <SelectItem key={f} value={f}>
                           {f}
                         </SelectItem>

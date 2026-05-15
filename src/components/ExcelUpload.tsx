@@ -3,17 +3,20 @@ import * as XLSX from "xlsx";
 import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Upload, FileSpreadsheet } from "lucide-react";
+import { Upload, FileSpreadsheet, DownloadCloudIcon } from "lucide-react";
 import { toast } from "@/components/ui/use-toast";
 import api from "@/lib/apis";
 import { useAuth } from "@/lib/auth";
 import ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
+import TooltipProv from "./TooltipProv";
 
 interface ExcelUploadProps {
   endpoint: string;
   mapRow: (row: Record<string, any>) => Record<string, any>;
   onComplete?: () => void;
+  rejectedFile: Blob | null;
+  setRejectedFile: React.Dispatch<React.SetStateAction<Blob | null>>;
 }
 
 
@@ -23,6 +26,7 @@ export const downloadTemplate = async () => {
   const ws = wb.addWorksheet("Template");
 
   const headers = [
+    "S.No",
     "NAME OF INSTRUMENT",
     "ID CODE",
     "RANGE",
@@ -37,6 +41,7 @@ export const downloadTemplate = async () => {
   ];
 
   const sampleRow = [
+    "001",
     "Vernier Caliper",
     "VC-001",
     "0-150mm",
@@ -102,7 +107,38 @@ export const downloadTemplate = async () => {
 };
 
 
-export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploadProps) {
+export const exportRejectedToExcel = async (rejected: any[]) => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Rejected Rows");
+
+  worksheet.columns = [
+    { header: "Row", key: "row", width: 10 },
+    { header: "S.No", key: "sino", width: 15 },
+    { header: "NAME OF INSTRUMENT", key: "name", width: 20 },
+    { header: "ID CODE", key: "id_code", width: 15 },
+    { header: "RANGE", key: "range", width: 20 },
+    { header: "SERIAL NO", key: "serial_no", width: 20 },
+    { header: "LEAST COUNT", key: "least_count", width: 20 },
+    { header: "LOCATION", key: "location", width: 20 },
+    { header: "CALIBRATION FREQUENCY", key: "frequency", width: 20 },
+    { header: "LAST CALIBRATION DATE", key: "last_calibration_date", width: 20 },
+    { header: "DUE DATE", key: "due_date", width: 20 },
+    { header: "CALIBRATION AGENCY AND TC No", key: "agency", width: 20 },
+    { header: "STATUS", key: "status", width: 20 },
+    { header: "Error", key: "error", width: 40 },
+
+  ];
+
+  worksheet.addRows(
+    rejected.map((r, index) => ({ row: index + 1, ...r }))
+  );
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return buffer;
+}
+
+
+export default function ExcelUpload({ endpoint, mapRow, onComplete, rejectedFile, setRejectedFile }: ExcelUploadProps) {
   const { user } = useAuth();
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
@@ -110,6 +146,7 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
 
   // Required columns for validation
   const requiredColumns = [
+    "S.No",
     "NAME OF INSTRUMENT",
     "ID CODE",
     "RANGE",
@@ -145,6 +182,8 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
 
     const reader = new FileReader();
     reader.onload = async (evt) => {
+      const failedRows: { row: number; data: any; error: string }[] = [];
+      let successCount = 0;
       try {
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
@@ -174,26 +213,52 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
             }),
             created_by: user.id,
             updated_by: user.id,
+            companyId: user.companyId,
           };
-          try {
-            await api.post(endpoint, payload);
-          } catch (err) {
-            console.error(`Row ${i + 1} failed`, err);
+
+
+          const res = await api.post(endpoint, payload);
+          const { successCount: s, failedCount, rejected } = res.data;
+
+          successCount = s
+
+          if (failedCount > 0) {
+            toast({
+              title: "Upload Partial ⚠️",
+              description: `${successCount} success, ${failedCount} failed`,
+              variant: "destructive",
+            });
+
+            const buffer = await exportRejectedToExcel(rejected);
+            const blob = new Blob([buffer]);
+            setRejectedFile(blob);
+            saveAs(blob, "Rejected_Rows.xlsx");
+          } else {
+            toast({
+              title: "Upload Success",
+              description: `${successCount} records uploaded.`,
+            });
           }
+
           setUploadProgress(Math.round(((i + 1) / rows.length) * 100));
         }
+      }
 
-        toast({ title: "Upload complete", description: `${rows.length} records uploaded.` });
-        onComplete?.();
-      } catch (err) {
+      catch (err) {
         console.error(err);
-        toast({ title: "Error", description: "Failed to read Excel file", variant: "destructive" });
+        toast({
+          title: "Error",
+          description: "Failed to read Excel file",
+          variant: "destructive",
+        });
       } finally {
         setIsUploading(false);
       }
     };
+
     reader.readAsArrayBuffer(file);
   };
+
 
   return (
     <Card className="w-full max-w-md border-dashed border-2 border-muted-foreground/40 hover:border-primary transition-colors">
@@ -203,16 +268,20 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-3">
-        <label className="cursor-pointer flex flex-col items-center gap-2 p-4 rounded-lg hover:bg-muted/50 transition-colors">
-          <FileSpreadsheet size={36} className="text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">Click to select or drag & drop</span>
-          <input
-            type="file"
-            accept=".xlsx, .xls"
-            className="hidden"
-            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-          />
-        </label>
+
+        <div className="w-full mt-3">
+          <label className="cursor-pointer flex flex-col items-center gap-2 p-4 rounded-lg hover:bg-muted/50 transition-colors border-dashed border-2 border-muted-foreground/40">
+            <FileSpreadsheet size={40} className="text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Click to select or drag & drop</span>
+            <input
+              type="file"
+              accept=".xlsx, .xls"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+            />
+          </label>
+        </div>
+
 
         {fileName && (
           <p className="text-sm font-medium text-center truncate max-w-full">{fileName}</p>
@@ -231,10 +300,35 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete }: ExcelUploa
           </Button>
         )}
 
-        <Button variant="outline" size="sm" onClick={downloadTemplate}>
-          Download Sample Template
-        </Button>
+
+
+        <div className="mt-10 flex gap-4">
+
+          {/* Download Template */}
+          <TooltipProv content="Download Sample Excel File">
+            <Button variant="hero" size="sm" onClick={downloadTemplate}>
+              <DownloadCloudIcon size={40} className="text-muted-foreground" />
+              Template
+            </Button>
+          </TooltipProv>
+
+          {/* Show only if rejectedFile exists */}
+          {rejectedFile && (
+            <TooltipProv content="Download Last Rejected File">
+              <Button
+                variant="hero"
+                size="sm"
+                onClick={() => saveAs(rejectedFile, "Rejected_Rows_Last.xlsx")}
+              >
+                <DownloadCloudIcon size={40} className="text-muted-foreground" />
+                Rejected File
+              </Button>
+            </TooltipProv>
+          )}
+        </div>
+
+
       </CardContent>
-    </Card>
+    </Card >
   );
 }

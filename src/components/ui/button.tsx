@@ -21,6 +21,22 @@ const buttonVariants = cva(
         hero: "bg-gradient-to-r from-primary to-primary/80 text-primary-foreground hover:from-primary/90 hover:to-primary/70 shadow-lg hover:shadow-xl transform hover:scale-105 font-semibold",
         premium: "bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-700 hover:to-blue-700 shadow-lg hover:shadow-xl border-0",
         glass: "bg-white/10 backdrop-blur-sm border border-white/20 text-white hover:bg-white/20 shadow-lg",
+        subtle:
+          "bg-muted text-muted-foreground hover:bg-muted/70 hover:shadow-sm border border-border/50",
+        success:
+          "bg-green-600 text-white hover:bg-green-700 shadow-sm hover:shadow-md",
+        warning:
+          "bg-yellow-500 text-black hover:bg-yellow-600 shadow-sm hover:shadow-md",
+        neon:
+          "bg-black text-white border border-white/10 shadow-[0_0_10px_#7f5af0] hover:shadow-[0_0_18px_#7f5af0] hover:bg-black/80 transition-all",
+
+        soft:
+          "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-700 shadow-inner",
+        info:
+          "bg-sky-500 text-white hover:bg-sky-600 shadow-sm hover:shadow-md",
+
+        danger:
+          "bg-red-600 text-white hover:bg-red-700 shadow-sm hover:shadow-md",
       },
       size: {
         default: "h-10 px-4 py-2",

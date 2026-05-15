@@ -10,6 +10,7 @@ import { X, Plus, Mail, Clock, AlertCircle, Loader2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import api from "@/lib/apis";
 import { Skeleton } from "@/components/ui/skeleton";
+import FrequencyDialog from "@/components/FrequencyDialog";
 
 type ReminderRole = "junior" | "senior" | "supervisor";
 type ReminderFrequency = "normal" | "important" | "critical";
@@ -37,6 +38,13 @@ export default function ReminderConfig() {
   });
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [isFrequencymodel, setisFrequencymodel] = useState(false);
+
+  const [recipient_role, setrecipient_role] = useState('')
+
+  const [frequencyData, setfrequencyData] = useState([]);
+
   const [emailInputs, setEmailInputs] = useState({
     junior: "",
     senior: "",
@@ -61,6 +69,7 @@ export default function ReminderConfig() {
       description: "Receives urgent reminders 7 days after due date",
       icon: "👔",
       color: "bg-red-500/10 text-red-700 dark:text-red-300",
+
     },
   };
 
@@ -228,6 +237,8 @@ export default function ReminderConfig() {
   }, [user])
 
 
+  console.log(frequencyData, "frequencyData");
+
   if (loading) {
     return (
       <div className="space-y-6 animate-pulse">
@@ -318,13 +329,25 @@ export default function ReminderConfig() {
         <Card key={role} className="animate-fade-in">
           <CardHeader>
             <div className="flex items-center gap-3">
+
               <div className={`p-3 rounded-lg ${roleInfo[role].color}`}>
                 <span className="text-2xl">{roleInfo[role].icon}</span>
               </div>
-              <div>
-                <CardTitle>{roleInfo[role].title}</CardTitle>
-                <CardDescription>{roleInfo[role].description}</CardDescription>
+              <div className=" w-full flex items-center justify-between">
+                <div>
+                  <CardTitle>{roleInfo[role].title}</CardTitle>
+                  <CardDescription>{roleInfo[role].description}</CardDescription>
+                </div>
+
+                <Button variant="info" onClick={() => {
+                  setisFrequencymodel(true)
+                  setrecipient_role(roleInfo[role].title)
+                }}>Set Frequency</Button>
               </div>
+
+
+
+
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -418,6 +441,9 @@ export default function ReminderConfig() {
       </div>
 
 
+      {isFrequencymodel && (
+        <FrequencyDialog open={isFrequencymodel} onClose={() => setisFrequencymodel(false)} data={frequencyData} setData={setfrequencyData} recipient_role={recipient_role} />
+      )}
 
     </div>
   );

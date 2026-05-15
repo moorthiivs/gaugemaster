@@ -1,5 +1,6 @@
 export type Instrument = {
   id: string;
+  sino: string;
   name: string;
   id_code: string;
   location: string;
@@ -32,6 +33,7 @@ function seedIfEmpty() {
     due.setMonth(last.getMonth() + (i % 2 === 0 ? 12 : 6));
     return {
       id: `${i + 1}`,
+      sino: '',
       name: `Instrument ${i + 1}`,
       id_code: `INS-${1000 + i}`,
       location: ["Lab A", "Lab B", "Field", "QA Room"][i % 4],
@@ -115,6 +117,7 @@ export type InstrumentQuery = {
   search?: string;
   page?: number;
   pageSize?: number;
+  limit?: number,
 };
 
 export async function listInstruments(q: InstrumentQuery) {
@@ -187,7 +190,7 @@ export async function generateReport(from: string, to: string, format: "csv" | "
   await new Promise((r) => setTimeout(r, 500));
 
   if (format === "csv") {
-    const header = ["name","id_code","location","last_calibration_date","due_date","frequency","agency","status"]; 
+    const header = ["name", "id_code", "location", "last_calibration_date", "due_date", "frequency", "agency", "status"];
     const csv = [header.join(","), ...rows.map((r) => header.map((h) => (r as any)[h]).join(","))].join("\n");
     return new Blob([csv], { type: "text/csv" });
   }
