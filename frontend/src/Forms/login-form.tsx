@@ -28,7 +28,7 @@ export function LoginForm() {
     } | null>(null);
 
     useEffect(() => {
-        axios.get(`${(window as any).API_URL}/auth/config`)
+        axios.get(`/api/auth/config`)
             .then(res => setAuthConfig(res.data))
             .catch(() => {
                 // Fallback: assume no Google, no registration

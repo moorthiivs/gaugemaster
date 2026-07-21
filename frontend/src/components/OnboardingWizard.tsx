@@ -65,7 +65,7 @@ export default function OnboardingWizard() {
     setLoading(true)
     try {
       const response = await httpClient.post(
-        `${(window as any).API_URL}/company/register`,
+        `/api/company/register`,
         setupData
       );
 

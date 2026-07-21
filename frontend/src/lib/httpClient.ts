@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const httpClient = axios.create({
-    baseURL: (window as any).API_URL || "http://localhost:5000/api", // Standardized port and prefix
+    baseURL: "/api", // Standardized port and prefix
     withCredentials: true,
 });
 

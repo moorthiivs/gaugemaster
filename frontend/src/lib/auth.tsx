@@ -79,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       signInWithGoogleToken: async (idToken: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/google/token`, { token: idToken });
+          const response = await axios.post(`/api/auth/google/token`, { token: idToken });
           const { accessToken, user } = response.data;
 
           const userObj: User = {
@@ -103,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       signInWithPassword: async (email: string, password: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/login`, { email, password });
+          const response = await axios.post(`/api/auth/login`, { email, password });
           const { accessToken, user } = response.data;
 
           const userObj: User = {
@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       register: async (username: string, email: string, password: string) => {
         try {
-          const response = await axios.post(`${(window as any).API_URL}/auth/register`, { name: username, email, password });
+          const response = await axios.post(`/api/auth/register`, { name: username, email, password });
           const { accessToken, user } = response.data;
 
           const userObj: User = {

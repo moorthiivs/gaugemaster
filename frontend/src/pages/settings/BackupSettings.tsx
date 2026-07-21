@@ -26,7 +26,7 @@ import relativeTime from "dayjs/plugin/relativeTime";
 
 dayjs.extend(relativeTime);
 
-const API = (window as any).API_URL;
+const API = "/api";
 
 /** Parse a UTC timestamp from the API and return a dayjs in local timezone */
 function toLocal(dateStr: string) {
