@@ -35,7 +35,7 @@ function OptionalGoogleProvider({ children }: { children: React.ReactNode }) {
     return <GoogleOAuthProvider clientId={googleClientId}>{children}</GoogleOAuthProvider>;
   }
   return <>{children}</>;
-}
+} 
 
 const App = () => (
   <BrowserRouter>
