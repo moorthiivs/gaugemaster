@@ -40,6 +40,7 @@ import { CalibrationModule } from './calibration/calibration.module';
       migrationsRun: false,
       synchronize: true,
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+      uuidExtension: 'pgcrypto',
     }),
 
     AuthModule,

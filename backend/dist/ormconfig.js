@@ -47,5 +47,6 @@ exports.default = new typeorm_1.DataSource({
     migrations: ['src/migrations/*.ts'],
     synchronize: true,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    uuidExtension: 'pgcrypto',
 });
 //# sourceMappingURL=ormconfig.js.map

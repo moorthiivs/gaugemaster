@@ -48,6 +48,7 @@ exports.AppModule = AppModule = __decorate([
                 migrationsRun: false,
                 synchronize: true,
                 ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+                uuidExtension: 'pgcrypto',
             }),
             auth_module_1.AuthModule,
             users_module_1.UsersModule,

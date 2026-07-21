@@ -14,4 +14,5 @@ export default new DataSource({
     migrations: ['src/migrations/*.ts'],
     synchronize: true,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+    uuidExtension: 'pgcrypto',
 });
