@@ -22,13 +22,28 @@ jobs:
         with:
           node-version: '22.x'
 
-      # Step 3: Install production dependencies only
-      - name: Install dependencies
+      # Step 3: Install and Build Frontend
+      - name: Build Frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      # Step 4: Copy Frontend build to Backend public folder
+      - name: Copy Frontend to Backend
+        run: |
+          mkdir -p backend/src/public
+          cp -R frontend/dist/* backend/src/public/
+
+      # Step 5: Install Backend Dependencies and Build
+      - name: Build Backend
         run: |
           cd backend
-          npm install --production
+          npm install
+          npm run build
+          npm prune --production
 
-      # Step 4: Upload for deployment
+      # Step 6: Upload for deployment
       - name: Upload artifact for deployment
         uses: actions/upload-artifact@v4
         with:
