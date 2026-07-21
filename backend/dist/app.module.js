@@ -1,0 +1,83 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.AppModule = void 0;
+const common_1 = require("@nestjs/common");
+const typeorm_1 = require("@nestjs/typeorm");
+const config_1 = require("@nestjs/config");
+const schedule_1 = require("@nestjs/schedule");
+const nest_pg_boss_1 = require("@loctax/nest-pg-boss");
+const users_module_1 = require("./users/users.module");
+const instruments_module_1 = require("./instruments/instruments.module");
+const reports_module_1 = require("./reports/reports.module");
+const auth_module_1 = require("./auth/auth.module");
+const dashboard_module_1 = require("./dashboard/dashboard.module");
+const company_module_1 = require("./company/company.module");
+const settings_module_1 = require("./settings/settings.module");
+const reminder_module_1 = require("./reminder/reminder.module");
+const validation_module_1 = require("./validation/validation.module");
+const upload_jobs_module_1 = require("./upload-jobs/upload-jobs.module");
+const backup_module_1 = require("./backup/backup.module");
+const notifications_module_1 = require("./notifications/notifications.module");
+const report_templates_module_1 = require("./report-templates/report-templates.module");
+const calibration_module_1 = require("./calibration/calibration.module");
+let AppModule = class AppModule {
+};
+exports.AppModule = AppModule;
+exports.AppModule = AppModule = __decorate([
+    (0, common_1.Module)({
+        imports: [
+            schedule_1.ScheduleModule.forRoot(),
+            config_1.ConfigModule.forRoot({
+                isGlobal: true,
+            }),
+            typeorm_1.TypeOrmModule.forRoot({
+                type: 'postgres',
+                host: process.env.DB_HOST,
+                port: parseInt(process.env.DB_PORT, 10),
+                username: process.env.DB_USERNAME,
+                password: process.env.DB_PASSWORD,
+                database: process.env.DB_NAME,
+                entities: [__dirname + '/**/*.entity{.ts,.js}'],
+                migrations: [__dirname + '/migrations/*{.ts,.js}'],
+                migrationsRun: false,
+                synchronize: true,
+            }),
+            auth_module_1.AuthModule,
+            users_module_1.UsersModule,
+            instruments_module_1.InstrumentsModule,
+            reports_module_1.ReportsModule,
+            dashboard_module_1.DashboardModule,
+            company_module_1.CompanyModule,
+            settings_module_1.SettingsModule,
+            reminder_module_1.ReminderModule,
+            validation_module_1.ValidationModule,
+            upload_jobs_module_1.UploadJobsModule,
+            backup_module_1.BackupModule,
+            notifications_module_1.NotificationsModule,
+            report_templates_module_1.ReportTemplatesModule,
+            calibration_module_1.CalibrationModule,
+            nest_pg_boss_1.PGBossModule.forRootAsync({
+                useFactory: (config) => ({
+                    application_name: "default",
+                    host: config.get("DB_HOST"),
+                    user: config.get("DB_USERNAME"),
+                    password: config.get("DB_PASSWORD"),
+                    database: config.get("DB_NAME"),
+                    schema: "public",
+                    max: config.get("DB_POOL_MAX") || 10,
+                    onError: (err) => {
+                        console.error("PgBoss Error:", err.message);
+                    },
+                }),
+                inject: [config_1.ConfigService],
+            }),
+        ],
+    })
+], AppModule);
+//# sourceMappingURL=app.module.js.map
