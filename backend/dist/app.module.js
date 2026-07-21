@@ -47,6 +47,7 @@ exports.AppModule = AppModule = __decorate([
                 migrations: [__dirname + '/migrations/*{.ts,.js}'],
                 migrationsRun: false,
                 synchronize: true,
+                ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
             }),
             auth_module_1.AuthModule,
             users_module_1.UsersModule,
@@ -71,6 +72,7 @@ exports.AppModule = AppModule = __decorate([
                     database: config.get("DB_NAME"),
                     schema: "public",
                     max: config.get("DB_POOL_MAX") || 10,
+                    ssl: config.get("DB_SSL") === 'true' ? { rejectUnauthorized: false } : false,
                     onError: (err) => {
                         console.error("PgBoss Error:", err.message);
                     },

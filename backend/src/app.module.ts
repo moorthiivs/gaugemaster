@@ -39,9 +39,7 @@ import { CalibrationModule } from './calibration/calibration.module';
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       migrationsRun: false,
       synchronize: true,
-      // ssl: {
-      //   rejectUnauthorized: false,
-      // },
+      ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     }),
 
     AuthModule,
@@ -71,9 +69,7 @@ import { CalibrationModule } from './calibration/calibration.module';
 
         schema: "public",
         max: config.get<number>("DB_POOL_MAX") || 10,
-        // ssl: {
-        //   rejectUnauthorized: false,
-        // },
+        ssl: config.get<string>("DB_SSL") === 'true' ? { rejectUnauthorized: false } : false,
         // Required by PgBoss
         onError: (err: Error) => {
           console.error("PgBoss Error:", err.message);

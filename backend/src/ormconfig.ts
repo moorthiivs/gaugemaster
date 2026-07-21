@@ -13,7 +13,5 @@ export default new DataSource({
     entities: ['src/**/*.entity.ts'],
     migrations: ['src/migrations/*.ts'],
     synchronize: true,
-    // ssl: {
-    //     rejectUnauthorized: false
-    // },
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });

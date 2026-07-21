@@ -46,5 +46,6 @@ exports.default = new typeorm_1.DataSource({
     entities: ['src/**/*.entity.ts'],
     migrations: ['src/migrations/*.ts'],
     synchronize: true,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 //# sourceMappingURL=ormconfig.js.map
