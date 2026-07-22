@@ -44,6 +44,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var _a, _b, _c;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BackupController = void 0;
 const common_1 = require("@nestjs/common");
@@ -153,7 +154,7 @@ __decorate([
     __param(1, (0, common_1.Query)('companyId')),
     __param(2, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Object]),
+    __metadata("design:paramtypes", [String, String, typeof (_a = typeof express !== "undefined" && express.Response) === "function" ? _a : Object]),
     __metadata("design:returntype", Promise)
 ], BackupController.prototype, "downloadBackup", null);
 __decorate([
@@ -219,7 +220,7 @@ __decorate([
     __param(2, (0, common_1.Req)()),
     __param(3, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, Object, Object]),
+    __metadata("design:paramtypes", [String, String, typeof (_b = typeof express !== "undefined" && express.Request) === "function" ? _b : Object, typeof (_c = typeof express !== "undefined" && express.Response) === "function" ? _c : Object]),
     __metadata("design:returntype", Promise)
 ], BackupController.prototype, "driveCallback", null);
 __decorate([
