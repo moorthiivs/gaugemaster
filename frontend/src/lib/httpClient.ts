@@ -1,7 +1,8 @@
 import axios from "axios";
 
+const API_URL = import.meta.env.VITE_API_URL || "/api";
 const httpClient = axios.create({
-    baseURL: "/api", // Standardized port and prefix
+    baseURL: API_URL,
     withCredentials: true,
 });
 
