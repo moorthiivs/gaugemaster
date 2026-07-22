@@ -122,20 +122,29 @@ let CalibrationController = class CalibrationController {
         });
         res.end(pdfBuffer);
     }
-    async downloadCertificate(id, res) {
+    async downloadCertificate(id, templateId, res) {
         const calibration = await this.calibrationService.findOne(id);
-        if (!calibration.certificate_file) {
-            return res
-                .status(404)
-                .json({ error: 'Certificate has not been generated yet.' });
+        if (!calibration) {
+            return res.status(404).json({ error: 'Calibration not found.' });
         }
-        const filePath = path.join(process.cwd(), calibration.certificate_file.replace(/^\//, ''));
-        if (!fs.existsSync(filePath)) {
-            return res
-                .status(404)
-                .json({ error: 'Certificate file not found on server.' });
+        const userId = calibration.created_by?.id;
+        const pdfBuffer = await this.certificateService.generateCertificate(calibration, userId, templateId);
+        const uploadsDir = path.join(process.cwd(), 'uploads', 'certificates');
+        if (!fs.existsSync(uploadsDir)) {
+            fs.mkdirSync(uploadsDir, { recursive: true });
         }
-        res.download(filePath);
+        const certNumSafe = (calibration.certificate_number || 'CERT').replace(/[\/\\]/g, '-');
+        const fileName = `Certificate-${certNumSafe}.pdf`;
+        const filePath = path.join(uploadsDir, fileName);
+        fs.writeFileSync(filePath, pdfBuffer);
+        const fileUrl = `/uploads/certificates/${fileName}`;
+        await this.calibrationService.markCertificateGenerated(id, fileUrl);
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': `inline; filename="${fileName}"`,
+            'Content-Length': pdfBuffer.length.toString(),
+        });
+        res.end(pdfBuffer);
     }
 };
 exports.CalibrationController = CalibrationController;
@@ -237,9 +246,10 @@ __decorate([
 __decorate([
     (0, common_1.Get)(':id/certificate/download'),
     __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Res)()),
+    __param(1, (0, common_1.Query)('templateId')),
+    __param(2, (0, common_1.Res)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [String, String, Object]),
     __metadata("design:returntype", Promise)
 ], CalibrationController.prototype, "downloadCertificate", null);
 exports.CalibrationController = CalibrationController = __decorate([

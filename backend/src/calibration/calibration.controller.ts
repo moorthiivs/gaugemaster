@@ -144,26 +144,40 @@ export class CalibrationController {
   }
 
   @Get(':id/certificate/download')
-  async downloadCertificate(@Param('id') id: string, @Res() res: any) {
+  async downloadCertificate(
+    @Param('id') id: string,
+    @Query('templateId') templateId?: string,
+    @Res() res?: any,
+  ) {
     const calibration = await this.calibrationService.findOne(id);
-
-    if (!calibration.certificate_file) {
-      return res
-        .status(404)
-        .json({ error: 'Certificate has not been generated yet.' });
+    if (!calibration) {
+      return res.status(404).json({ error: 'Calibration not found.' });
     }
 
-    const filePath = path.join(
-      process.cwd(),
-      calibration.certificate_file.replace(/^\//, ''),
+    const userId = calibration.created_by?.id;
+    const pdfBuffer = await this.certificateService.generateCertificate(
+      calibration,
+      userId,
+      templateId,
     );
 
-    if (!fs.existsSync(filePath)) {
-      return res
-        .status(404)
-        .json({ error: 'Certificate file not found on server.' });
+    const uploadsDir = path.join(process.cwd(), 'uploads', 'certificates');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
     }
+    const certNumSafe = (calibration.certificate_number || 'CERT').replace(/[\/\\]/g, '-');
+    const fileName = `Certificate-${certNumSafe}.pdf`;
+    const filePath = path.join(uploadsDir, fileName);
+    fs.writeFileSync(filePath, pdfBuffer);
 
-    res.download(filePath);
+    const fileUrl = `/uploads/certificates/${fileName}`;
+    await this.calibrationService.markCertificateGenerated(id, fileUrl);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${fileName}"`,
+      'Content-Length': pdfBuffer.length.toString(),
+    });
+    res.end(pdfBuffer);
   }
 }

@@ -17,6 +17,9 @@ const common_1 = require("@nestjs/common");
 const pdfmake_1 = __importDefault(require("pdfmake"));
 const settings_service_1 = require("../settings/settings.service");
 const report_templates_service_1 = require("../report-templates/report-templates.service");
+const htmlToPdfmake = require('html-to-pdfmake');
+const { JSDOM } = require('jsdom');
+const path = require('path');
 const fonts = {
     Roboto: {
         normal: 'src/fonts/Roboto-Regular.ttf',
@@ -36,7 +39,10 @@ let CertificateService = class CertificateService {
     async generateCertificate(calibration, userId, templateId) {
         const inst = calibration.instrument;
         const points = calibration.calibration_points || [];
-        const env = calibration.environmental_conditions || { temperature: '-', humidity: '-' };
+        const env = calibration.environmental_conditions || {
+            temperature: '-',
+            humidity: '-',
+        };
         let headerText = '';
         let footerText = '';
         const hasTemplateId = templateId &&
@@ -53,14 +59,9 @@ let CertificateService = class CertificateService {
         }
         else if (userId) {
             const userSettings = await this.settingsService.findOneByUserId(userId);
-            headerText =
-                userSettings?.reportConfig?.headerText || '';
-            footerText =
-                userSettings?.reportConfig?.footerText || '';
+            headerText = userSettings?.reportConfig?.headerText || '';
+            footerText = userSettings?.reportConfig?.footerText || '';
         }
-        const htmlToPdfmake = require('html-to-pdfmake');
-        const { JSDOM } = require('jsdom');
-        const path = require('path');
         const resolveImagePath = (src) => {
             if (!src)
                 return src;
@@ -158,348 +159,657 @@ let CertificateService = class CertificateService {
                 year: 'numeric',
             });
         };
-        const dataTableHeader = [
-            { text: 'Pt', style: 'thCell' },
-            { text: 'Nominal', style: 'thCell' },
-            { text: 'Ascending', style: 'thCell' },
-            { text: 'Descending', style: 'thCell' },
-            { text: 'Error', style: 'thCell' },
-            { text: 'Tolerance', style: 'thCell' },
-            { text: 'Status', style: 'thCell' },
-        ];
+        const hasDescription = points.some((pt) => pt.description && String(pt.description).trim() !== '');
+        const hasDescending = points.some((pt) => pt.descending_reading !== undefined &&
+            pt.descending_reading !== null &&
+            pt.descending_reading !== 0);
+        const unit = points[0]?.unit || 'mm';
+        const customColMap = new Map();
+        points.forEach((pt) => {
+            if (pt.customFields && typeof pt.customFields === 'object') {
+                Object.entries(pt.customFields).forEach(([key, val]) => {
+                    if (val && typeof val === 'object' && 'name' in val) {
+                        customColMap.set(key, val.name);
+                    }
+                    else if (typeof val !== 'object' &&
+                        val !== null &&
+                        val !== undefined) {
+                        customColMap.set(key, key);
+                    }
+                });
+            }
+        });
+        const customKeys = Array.from(customColMap.keys());
+        const dataTableHeader = [{ text: 'Sr No.', style: 'thCell' }];
+        if (hasDescription) {
+            dataTableHeader.push({ text: 'Description', style: 'thCell' });
+        }
+        dataTableHeader.push({ text: 'STANDARD VALUE', style: 'thCell' }, {
+            text: hasDescending ? 'AVG OBS VALUE (ASC)' : 'AVG OBS VALUE UUC',
+            style: 'thCell',
+        });
+        if (hasDescending) {
+            dataTableHeader.push({ text: 'AVG OBS VALUE (DESC)', style: 'thCell' });
+        }
+        customKeys.forEach((k) => {
+            const label = customColMap.get(k) || k;
+            dataTableHeader.push({ text: label, style: 'thCell' });
+        });
+        dataTableHeader.push({ text: 'ERROR', style: 'thCell' }, { text: 'Status', style: 'thCell' });
         const dataTableBody = [dataTableHeader];
         points.forEach((pt, idx) => {
             const status = pt.status || '-';
-            const statusColor = status === 'PASS' ? '#16a34a' : status === 'FAIL' ? '#dc2626' : '#000';
-            dataTableBody.push([
-                { text: String(pt.point_number || idx + 1), style: 'tdCell' },
-                { text: String(pt.nominal ?? '-'), style: 'tdCell' },
-                { text: String(pt.ascending_reading ?? '-'), style: 'tdCell' },
-                { text: String(pt.descending_reading ?? '-'), style: 'tdCell' },
-                { text: String(pt.error ?? '-'), style: 'tdCell' },
-                { text: pt.tolerance != null ? `±${pt.tolerance}` : '-', style: 'tdCell' },
-                { text: status, style: 'tdCell', color: statusColor, bold: true },
-            ]);
+            const statusColor = status === 'PASS' ? '#15803d' : status === 'FAIL' ? '#b91c1c' : '#000';
+            const row = [
+                {
+                    text: String(pt.point_number || idx + 1).padStart(2, '0'),
+                    style: 'tdCell',
+                },
+            ];
+            if (hasDescription) {
+                row.push({
+                    text: String(pt.description || '-'),
+                    style: 'tdCell',
+                });
+            }
+            row.push({ text: Number(pt.nominal ?? 0).toFixed(4), style: 'tdCellMono' }, {
+                text: Number(pt.ascending_reading ?? 0).toFixed(4),
+                style: 'tdCellMono',
+            });
+            if (hasDescending) {
+                row.push({
+                    text: Number(pt.descending_reading ?? 0).toFixed(4),
+                    style: 'tdCellMono',
+                });
+            }
+            customKeys.forEach((k) => {
+                const obj = pt.customFields?.[k];
+                const valStr = typeof obj === 'object' && obj !== null && 'value' in obj
+                    ? String(obj.value ?? '-')
+                    : String(obj ?? '-');
+                row.push({ text: valStr, style: 'tdCellMono' });
+            });
+            row.push({ text: Number(pt.error ?? 0).toFixed(4), style: 'tdCellMono' }, { text: status, style: 'tdCell', color: statusColor, bold: true });
+            dataTableBody.push(row);
         });
-        const instrumentDetails = [
-            ['Instrument Name', inst?.name || '-'],
-            ['ID Code', inst?.id_code || '-'],
-            ['Make', inst?.make || '-'],
-            ['Range', inst?.range || '-'],
-            ['Least Count', inst?.least_count || '-'],
-            ['Serial No', inst?.serial_no || '-'],
-            ['Location', inst?.location || '-'],
-        ];
+        const totalCols = dataTableHeader.length;
+        const tableWidths = Array(totalCols).fill('*');
+        tableWidths[0] = 35;
+        tableWidths[totalCols - 1] = 45;
         let referenceStandards = [];
-        if (calibration.reference_standards && calibration.reference_standards.length > 0) {
+        if (calibration.reference_standards &&
+            calibration.reference_standards.length > 0) {
             referenceStandards = calibration.reference_standards;
         }
-        else if (calibration.reference_standard_name) {
-            referenceStandards = [{
-                    name: calibration.reference_standard_name,
-                    id: calibration.reference_standard_id,
-                    traceable_to: calibration.reference_standard_traceable_to,
-                    range: calibration.reference_standard_range,
-                    least_count: calibration.reference_standard_least_count,
-                    validity: calibration.reference_standard_validity
-                }];
+        else {
+            referenceStandards = [
+                {
+                    name: calibration.reference_standard_name || 'Gauge Block Set',
+                    make: 'Standard',
+                    id: calibration.reference_standard_id || 'REF-01',
+                    cert_no: 'AE/CC/REF/101',
+                    cal_date: calibration.calibration_date,
+                    validity: calibration.reference_standard_validity,
+                    agency: 'NABL Accredited Lab',
+                },
+            ];
         }
-        const verdictText = calibration.verdict || 'PENDING';
-        const verdictColor = verdictText === 'PASS'
-            ? '#16a34a'
-            : verdictText === 'FAIL'
-                ? '#dc2626'
-                : '#d97706';
         const docDefinition = {
             pageSize: 'A4',
             pageOrientation: 'portrait',
-            pageMargins: [30, headerText ? 110 : 40, 30, footerText ? 90 : 50],
-            header: headerText
-                ? function () {
-                    return { margin: [30, 20, 30, 0], stack: headerStack };
-                }
-                : undefined,
-            footer: function (currentPage, pageCount) {
-                const pageInfo = {
-                    text: `Page ${currentPage} of ${pageCount}`,
-                    alignment: 'center',
-                    fontSize: 8,
-                    margin: [0, 5, 0, 0],
-                };
-                if (footerText && footerStack.length > 0) {
-                    return {
-                        margin: [30, 10, 30, 0],
-                        stack: [...footerStack, pageInfo],
-                    };
-                }
-                return {
-                    margin: [30, 10, 30, 0],
-                    stack: [pageInfo],
-                };
-            },
+            pageMargins: [25, 25, 25, 25],
             content: [
                 {
-                    text: 'CALIBRATION CERTIFICATE',
-                    style: 'title',
-                    alignment: 'center',
+                    table: {
+                        widths: [130, '*', 90],
+                        body: [
+                            [
+                                {
+                                    stack: [
+                                        {
+                                            text: 'ACME ENTERPRISES',
+                                            bold: true,
+                                            fontSize: 11,
+                                            color: '#000',
+                                        },
+                                        {
+                                            text: '(CALIBRATION LABORATORY)',
+                                            fontSize: 7.5,
+                                            bold: true,
+                                            color: '#475569',
+                                        },
+                                    ],
+                                },
+                                {
+                                    text: 'CALIBRATION CERTIFICATE',
+                                    bold: true,
+                                    fontSize: 13,
+                                    color: '#0369a1',
+                                    alignment: 'center',
+                                    margin: [0, 4, 0, 0],
+                                },
+                                {
+                                    stack: [
+                                        {
+                                            text: 'NABL / LAB',
+                                            fontSize: 7,
+                                            bold: true,
+                                            alignment: 'right',
+                                        },
+                                        {
+                                            text: 'CC - 2632',
+                                            fontSize: 9,
+                                            bold: true,
+                                            alignment: 'right',
+                                        },
+                                    ],
+                                },
+                            ],
+                        ],
+                    },
+                    layout: 'noBorders',
                     margin: [0, 0, 0, 6],
                 },
                 {
-                    columns: [
-                        {
-                            width: '*',
-                            text: [
-                                { text: 'Certificate No: ', bold: true, fontSize: 9 },
-                                { text: calibration.certificate_number || '-', fontSize: 9 },
-                            ],
-                        },
-                        calibration.ulr_number
-                            ? {
-                                width: '*',
-                                text: [
-                                    { text: 'ULR No: ', bold: true, fontSize: 9 },
-                                    { text: calibration.ulr_number, fontSize: 9 },
-                                ],
-                                alignment: 'right',
-                            }
-                            : { width: '*', text: '' },
-                    ],
-                    margin: [0, 0, 0, 2],
-                },
-                {
-                    columns: [
-                        {
-                            width: '*',
-                            text: [
-                                { text: 'Date of Calibration: ', bold: true, fontSize: 9 },
-                                { text: fmtDate(calibration.calibration_date), fontSize: 9 },
-                            ],
-                        },
-                        {
-                            width: '*',
-                            text: [
-                                { text: 'Next Due Date: ', bold: true, fontSize: 9 },
-                                { text: fmtDate(calibration.next_calibration_date), fontSize: 9 },
-                            ],
-                            alignment: 'right',
-                        },
-                    ],
-                    margin: [0, 0, 0, 10],
-                },
-                {
-                    text: 'INSTRUMENT UNDER CALIBRATION',
-                    style: 'sectionHeader',
-                },
-                {
                     table: {
-                        widths: [120, '*'],
-                        body: instrumentDetails.map(([k, v]) => [
-                            { text: k, bold: true, fontSize: 9, margin: [0, 2, 0, 2] },
-                            { text: v, fontSize: 9, margin: [0, 2, 0, 2] },
-                        ]),
+                        widths: ['*', '*', '*', '*', '*'],
+                        body: [
+                            [
+                                { text: 'Calibration On', style: 'gridTh' },
+                                { text: 'Next Calibration Due', style: 'gridTh' },
+                                { text: 'Certificate No.:', style: 'gridTh' },
+                                { text: 'Certi Issue Date', style: 'gridTh' },
+                                { text: 'Sheet No.', style: 'gridTh' },
+                            ],
+                            [
+                                {
+                                    text: fmtDate(calibration.calibration_date),
+                                    style: 'gridTd',
+                                },
+                                {
+                                    text: fmtDate(calibration.next_calibration_date),
+                                    style: 'gridTd',
+                                },
+                                {
+                                    text: calibration.certificate_number || '—',
+                                    style: 'gridTdBold',
+                                },
+                                {
+                                    text: fmtDate(calibration.calibration_date),
+                                    style: 'gridTd',
+                                },
+                                { text: '1 of 1', style: 'gridTd' },
+                            ],
+                        ],
                     },
                     layout: {
                         hLineWidth: () => 0.5,
                         vLineWidth: () => 0.5,
-                        hLineColor: () => '#ddd',
-                        vLineColor: () => '#ddd',
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
                     },
-                    margin: [0, 0, 0, 10],
+                    margin: [0, 0, 0, 6],
                 },
                 {
-                    text: 'REFERENCE STANDARD / MASTER INSTRUMENT',
-                    style: 'sectionHeader',
-                },
-                referenceStandards.length > 0
-                    ? referenceStandards.map((ref, idx) => ([
-                        idx > 0 ? { text: ' ', margin: [0, 4, 0, 4] } : null,
-                        {
-                            table: {
-                                widths: [120, '*'],
-                                body: [
-                                    [{ text: 'Name', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: ref.name || '-', fontSize: 9, margin: [0, 2, 0, 2] }],
-                                    [{ text: 'ID / Serial No', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: ref.id || '-', fontSize: 9, margin: [0, 2, 0, 2] }],
-                                    [{ text: 'Traceable To', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: ref.traceable_to || '-', fontSize: 9, margin: [0, 2, 0, 2] }],
-                                    [{ text: 'Range', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: ref.range || '-', fontSize: 9, margin: [0, 2, 0, 2] }],
-                                    [{ text: 'Least Count', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: ref.least_count || '-', fontSize: 9, margin: [0, 2, 0, 2] }],
-                                    [{ text: 'Valid Until', bold: true, fontSize: 9, margin: [0, 2, 0, 2] }, { text: fmtDate(ref.validity), fontSize: 9, margin: [0, 2, 0, 2] }],
-                                ]
-                            },
-                            layout: {
-                                hLineWidth: () => 0.5,
-                                vLineWidth: () => 0.5,
-                                hLineColor: () => '#ddd',
-                                vLineColor: () => '#ddd',
-                            },
-                            margin: [0, 0, 0, idx === referenceStandards.length - 1 ? 10 : 0],
-                        }
-                    ]))
-                    : {
-                        text: 'No Reference Standard Used',
-                        italics: true,
-                        fontSize: 9,
-                        margin: [0, 0, 0, 10],
+                    table: {
+                        widths: ['*', '*'],
+                        body: [
+                            [
+                                {
+                                    stack: [
+                                        {
+                                            text: inst?.location || 'M/s Customer Name',
+                                            bold: true,
+                                            fontSize: 8.5,
+                                        },
+                                        {
+                                            text: 'Calibration Customer / Address Details',
+                                            fontSize: 7.5,
+                                            color: '#475569',
+                                        },
+                                    ],
+                                    margin: [2, 2, 2, 2],
+                                },
+                                {
+                                    stack: [
+                                        {
+                                            text: 'Location of Calibration : Permanent Laboratory',
+                                            fontSize: 8,
+                                            bold: true,
+                                        },
+                                    ],
+                                    margin: [2, 2, 2, 2],
+                                },
+                            ],
+                        ],
                     },
-                {
-                    text: 'ENVIRONMENTAL CONDITIONS',
-                    style: 'sectionHeader',
+                    layout: {
+                        hLineWidth: () => 0.5,
+                        vLineWidth: () => 0.5,
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
+                    },
+                    margin: [0, 0, 0, 6],
                 },
                 {
-                    columns: [
-                        {
-                            text: [
-                                { text: 'Temperature: ', bold: true, fontSize: 9 },
-                                { text: env.temperature || '-', fontSize: 9 },
+                    table: {
+                        widths: ['*'],
+                        body: [
+                            [
+                                {
+                                    text: 'Description & Identification',
+                                    style: 'boxHeader',
+                                },
                             ],
-                        },
-                        {
-                            text: [
-                                { text: 'Humidity: ', bold: true, fontSize: 9 },
-                                { text: env.humidity || '-', fontSize: 9 },
+                            [
+                                {
+                                    stack: [
+                                        {
+                                            columns: [
+                                                {
+                                                    text: 'Instrument (UUC) : ' + (inst?.name || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                                {
+                                                    text: 'Model No. : ' + (inst?.model_no || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                            ],
+                                        },
+                                        {
+                                            columns: [
+                                                {
+                                                    text: 'Make : ' + (inst?.make || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                                {
+                                                    text: 'Range : ' + (inst?.range || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                            ],
+                                        },
+                                        {
+                                            columns: [
+                                                {
+                                                    text: 'Serial No. : ' + (inst?.serial_no || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                                {
+                                                    text: 'Least Count : ' + (inst?.least_count || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                            ],
+                                        },
+                                        {
+                                            columns: [
+                                                {
+                                                    text: 'ID No. : ' + (inst?.id_code || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                                {
+                                                    text: 'Instrument Cond. : SATISFACTORY',
+                                                    style: 'kvPair',
+                                                },
+                                            ],
+                                        },
+                                        {
+                                            columns: [
+                                                {
+                                                    text: 'Calibration Range : ' + (inst?.range || '-'),
+                                                    style: 'kvPair',
+                                                },
+                                                {
+                                                    text: 'Location : ' +
+                                                        (inst?.location || 'Permanent Laboratory'),
+                                                    style: 'kvPair',
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                    margin: [4, 4, 4, 4],
+                                },
                             ],
-                        },
-                        env.pressure
-                            ? {
-                                text: [
-                                    { text: 'Pressure: ', bold: true, fontSize: 9 },
-                                    { text: env.pressure, fontSize: 9 },
-                                ],
-                            }
-                            : { text: '' },
-                    ],
-                    margin: [0, 0, 0, 10],
+                            [
+                                {
+                                    stack: [
+                                        {
+                                            text: 'Procedure reference : AE/CAL-SOP/01',
+                                            style: 'subNote',
+                                        },
+                                        {
+                                            text: `Environmental Conditions : Temperature at ${env.temperature}° C  RH ${env.humidity} %`,
+                                            style: 'subNote',
+                                        },
+                                        {
+                                            text: 'Standard Reference : IS / ISO Standard Calibration Guidelines',
+                                            style: 'subNote',
+                                        },
+                                        {
+                                            text: 'Discipline : DIMENSION (Basic Measuring Instrument, Gauge etc)',
+                                            style: 'subNote',
+                                        },
+                                    ],
+                                    fillColor: '#f8fafc',
+                                    margin: [4, 4, 4, 4],
+                                },
+                            ],
+                        ],
+                    },
+                    layout: {
+                        hLineWidth: () => 0.5,
+                        vLineWidth: () => 0.5,
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
+                    },
+                    margin: [0, 0, 0, 6],
                 },
                 {
-                    text: 'CALIBRATION DATA',
-                    style: 'sectionHeader',
+                    table: {
+                        widths: ['*'],
+                        body: [
+                            [
+                                {
+                                    text: 'TRACEABILITY OF MASTER USED :',
+                                    style: 'boxHeader',
+                                },
+                            ],
+                            [
+                                {
+                                    table: {
+                                        widths: ['*', '*', '*', '*', '*', '*', '*'],
+                                        body: [
+                                            [
+                                                { text: 'Instrument Desc.', style: 'thCellDark' },
+                                                { text: 'Make', style: 'thCellDark' },
+                                                { text: 'Sr No / Id. No.', style: 'thCellDark' },
+                                                { text: 'Cert.No.', style: 'thCellDark' },
+                                                { text: 'Dt.of Cal', style: 'thCellDark' },
+                                                { text: 'Due Dt.', style: 'thCellDark' },
+                                                { text: 'Cal.Agency', style: 'thCellDark' },
+                                            ],
+                                            ...referenceStandards.map((ref) => [
+                                                { text: ref.name || '-', style: 'tdCell' },
+                                                { text: ref.make || '-', style: 'tdCell' },
+                                                { text: ref.id || '-', style: 'tdCell' },
+                                                {
+                                                    text: ref.cert_no || 'AE/CC/REF/01',
+                                                    style: 'tdCell',
+                                                },
+                                                {
+                                                    text: fmtDate(ref.cal_date || calibration.calibration_date),
+                                                    style: 'tdCell',
+                                                },
+                                                { text: fmtDate(ref.validity), style: 'tdCell' },
+                                                { text: ref.agency || 'NABL Lab', style: 'tdCell' },
+                                            ]),
+                                        ],
+                                    },
+                                    layout: {
+                                        hLineWidth: () => 0.5,
+                                        vLineWidth: () => 0.5,
+                                        hLineColor: () => '#cbd5e1',
+                                        vLineColor: () => '#cbd5e1',
+                                    },
+                                },
+                            ],
+                            [
+                                {
+                                    text: 'All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.',
+                                    fontSize: 7,
+                                    italics: true,
+                                    color: '#334155',
+                                    margin: [4, 2, 4, 2],
+                                    fillColor: '#f8fafc',
+                                },
+                            ],
+                        ],
+                    },
+                    layout: {
+                        hLineWidth: () => 0.5,
+                        vLineWidth: () => 0.5,
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
+                    },
+                    margin: [0, 0, 0, 6],
                 },
                 points.length > 0
                     ? {
                         table: {
-                            headerRows: 1,
-                            widths: ['auto', '*', '*', '*', '*', '*', 'auto'],
-                            body: dataTableBody,
+                            widths: ['*'],
+                            body: [
+                                [
+                                    {
+                                        text: `Calibration Result (ALL VALUES ARE IN ${unit})`,
+                                        style: 'boxHeader',
+                                    },
+                                ],
+                                [
+                                    {
+                                        table: {
+                                            headerRows: 1,
+                                            widths: tableWidths,
+                                            body: dataTableBody,
+                                        },
+                                        layout: {
+                                            fillColor: (rowIndex) => rowIndex === 0 ? '#f1f5f9' : null,
+                                            hLineWidth: () => 0.5,
+                                            vLineWidth: () => 0.5,
+                                            hLineColor: () => '#cbd5e1',
+                                            vLineColor: () => '#cbd5e1',
+                                        },
+                                    },
+                                ],
+                                [
+                                    {
+                                        text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ±${calibration.uncertainty || '0.00'}${unit}`,
+                                        fontSize: 8,
+                                        bold: true,
+                                        alignment: 'center',
+                                        fillColor: '#f8fafc',
+                                        margin: [2, 3, 2, 3],
+                                    },
+                                ],
+                            ],
                         },
                         layout: {
-                            fillColor: (rowIndex) => rowIndex === 0 ? '#2563eb' : rowIndex % 2 === 0 ? '#f8fafc' : null,
                             hLineWidth: () => 0.5,
                             vLineWidth: () => 0.5,
-                            hLineColor: () => '#cbd5e1',
-                            vLineColor: () => '#cbd5e1',
+                            hLineColor: () => '#000',
+                            vLineColor: () => '#000',
                         },
-                        margin: [0, 0, 0, 10],
+                        margin: [0, 0, 0, 8],
                     }
-                    : {
-                        text: 'No calibration data points recorded.',
-                        fontSize: 9,
-                        italics: true,
-                        margin: [0, 0, 0, 10],
-                    },
+                    : { text: '' },
                 {
-                    text: 'RESULT',
-                    style: 'sectionHeader',
-                },
-                {
-                    columns: [
-                        {
-                            width: '*',
-                            stack: [
+                    table: {
+                        widths: ['*', '*', '*'],
+                        body: [
+                            [
                                 {
-                                    text: [
-                                        { text: 'Measurement Uncertainty: ', bold: true, fontSize: 9 },
-                                        { text: calibration.uncertainty || '-', fontSize: 9 },
+                                    stack: [
+                                        { text: ' ', margin: [0, 10, 0, 0] },
+                                        {
+                                            text: '________________________',
+                                            alignment: 'center',
+                                            fontSize: 8,
+                                        },
+                                        {
+                                            text: calibration.calibrated_by || 'Calibrated By',
+                                            alignment: 'center',
+                                            bold: true,
+                                            fontSize: 8,
+                                        },
+                                        {
+                                            text: calibration.calibrated_by_designation ||
+                                                'Calibration Engineer',
+                                            alignment: 'center',
+                                            fontSize: 7.5,
+                                            color: '#475569',
+                                        },
+                                        calibration.ulr_number
+                                            ? {
+                                                text: `ULR : ${calibration.ulr_number}`,
+                                                alignment: 'center',
+                                                fontSize: 7,
+                                                bold: true,
+                                            }
+                                            : { text: '' },
                                     ],
-                                    margin: [0, 0, 0, 4],
+                                    margin: [2, 2, 2, 2],
                                 },
                                 {
-                                    text: [
-                                        { text: 'Verdict: ', bold: true, fontSize: 10 },
+                                    stack: [
                                         {
-                                            text: ` ${verdictText} `,
+                                            text: 'CALIBRATION',
+                                            alignment: 'center',
+                                            fontSize: 7,
                                             bold: true,
-                                            fontSize: 11,
-                                            color: '#fff',
-                                            background: verdictColor,
+                                            color: '#0369a1',
+                                        },
+                                        {
+                                            text: 'SEAL / STAMP',
+                                            alignment: 'center',
+                                            fontSize: 7,
+                                            bold: true,
+                                            color: '#0369a1',
                                         },
                                     ],
-                                    margin: [0, 0, 0, 4],
+                                    margin: [2, 10, 2, 2],
+                                },
+                                {
+                                    stack: [
+                                        { text: ' ', margin: [0, 10, 0, 0] },
+                                        {
+                                            text: '________________________',
+                                            alignment: 'center',
+                                            fontSize: 8,
+                                        },
+                                        {
+                                            text: calibration.approved_by ||
+                                                calibration.reviewed_by ||
+                                                'Authorized By',
+                                            alignment: 'center',
+                                            bold: true,
+                                            fontSize: 8,
+                                        },
+                                        {
+                                            text: calibration.approved_by_designation ||
+                                                'Quality Manager',
+                                            alignment: 'center',
+                                            fontSize: 7.5,
+                                            color: '#475569',
+                                        },
+                                    ],
+                                    margin: [2, 2, 2, 2],
                                 },
                             ],
-                        },
-                    ],
-                    margin: [0, 0, 0, 4],
-                },
-                calibration.remarks
-                    ? {
-                        text: [
-                            { text: 'Remarks: ', bold: true, fontSize: 9 },
-                            { text: calibration.remarks, fontSize: 9 },
                         ],
-                        margin: [0, 0, 0, 10],
-                    }
-                    : { text: '', margin: [0, 0, 0, 10] },
-                {
-                    margin: [0, 20, 0, 0],
-                    columns: [
-                        {
-                            width: '*',
-                            stack: [
-                                { text: '________________________', alignment: 'center', fontSize: 9, margin: [0, 0, 0, 4] },
-                                { text: calibration.calibrated_by || '(Name)', alignment: 'center', bold: true, fontSize: 9 },
-                                { text: calibration.calibrated_by_designation || 'Calibrated By', alignment: 'center', fontSize: 8, color: '#64748b' },
-                            ],
-                        },
-                        {
-                            width: '*',
-                            stack: [
-                                { text: '________________________', alignment: 'center', fontSize: 9, margin: [0, 0, 0, 4] },
-                                { text: calibration.reviewed_by || '(Name)', alignment: 'center', bold: true, fontSize: 9 },
-                                { text: calibration.reviewed_by_designation || 'Reviewed By', alignment: 'center', fontSize: 8, color: '#64748b' },
-                            ],
-                        },
-                        {
-                            width: '*',
-                            stack: [
-                                { text: '________________________', alignment: 'center', fontSize: 9, margin: [0, 0, 0, 4] },
-                                { text: calibration.approved_by || '(Name)', alignment: 'center', bold: true, fontSize: 9 },
-                                { text: calibration.approved_by_designation || 'Approved By', alignment: 'center', fontSize: 8, color: '#64748b' },
-                            ],
-                        },
-                    ],
+                    },
+                    layout: {
+                        hLineWidth: () => 0.5,
+                        vLineWidth: () => 0.5,
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
+                    },
+                    margin: [0, 0, 0, 6],
                 },
                 {
-                    text: 'This certificate is issued based on calibration conducted as per standard procedures. The results relate only to the item calibrated.',
-                    fontSize: 7,
-                    color: '#94a3b8',
-                    alignment: 'center',
-                    margin: [0, 20, 0, 0],
+                    table: {
+                        widths: ['*'],
+                        body: [
+                            [
+                                {
+                                    stack: [
+                                        {
+                                            text: 'CALIBRATION CENTER :',
+                                            bold: true,
+                                            fontSize: 8,
+                                            alignment: 'center',
+                                        },
+                                        {
+                                            text: 'Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.',
+                                            fontSize: 7.5,
+                                            alignment: 'center',
+                                        },
+                                        {
+                                            text: 'Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948',
+                                            fontSize: 7,
+                                            alignment: 'center',
+                                            color: '#334155',
+                                        },
+                                    ],
+                                    fillColor: '#f1f5f9',
+                                    margin: [2, 3, 2, 3],
+                                },
+                            ],
+                        ],
+                    },
+                    layout: {
+                        hLineWidth: () => 0.5,
+                        vLineWidth: () => 0.5,
+                        hLineColor: () => '#000',
+                        vLineColor: () => '#000',
+                    },
                 },
             ],
             styles: {
-                title: {
-                    fontSize: 16,
+                gridTh: {
+                    fontSize: 7.5,
                     bold: true,
-                    color: '#1e293b',
+                    alignment: 'center',
+                    margin: [0, 2, 0, 2],
                 },
-                sectionHeader: {
-                    fontSize: 10,
+                gridTd: {
+                    fontSize: 7.5,
+                    alignment: 'center',
+                    margin: [0, 2, 0, 2],
+                },
+                gridTdBold: {
+                    fontSize: 7.5,
                     bold: true,
-                    color: '#fff',
-                    fillColor: '#334155',
-                    margin: [0, 0, 0, 4],
-                    padding: [4, 3, 4, 3],
+                    alignment: 'center',
+                    margin: [0, 2, 0, 2],
+                },
+                boxHeader: {
+                    fontSize: 8.5,
+                    bold: true,
+                    color: '#000',
+                    fillColor: '#e2e8f0',
+                    margin: [2, 2, 2, 2],
+                },
+                kvPair: {
+                    fontSize: 8,
+                    bold: true,
+                    margin: [0, 1, 0, 1],
+                },
+                subNote: {
+                    fontSize: 7.5,
+                    bold: true,
+                    margin: [0, 1, 0, 1],
+                },
+                thCellDark: {
+                    fontSize: 7.5,
+                    bold: true,
+                    alignment: 'center',
+                    fillColor: '#f1f5f9',
+                    margin: [0, 2, 0, 2],
                 },
                 thCell: {
-                    fontSize: 8,
+                    fontSize: 7.5,
                     bold: true,
-                    color: '#fff',
+                    color: '#000',
                     alignment: 'center',
-                    margin: [0, 3, 0, 3],
+                    margin: [0, 2, 0, 2],
                 },
                 tdCell: {
-                    fontSize: 8,
+                    fontSize: 7.5,
                     alignment: 'center',
-                    margin: [0, 3, 0, 3],
+                    margin: [0, 2, 0, 2],
+                },
+                tdCellMono: {
+                    fontSize: 7.5,
+                    alignment: 'center',
+                    margin: [0, 2, 0, 2],
                 },
             },
             defaultStyle: {

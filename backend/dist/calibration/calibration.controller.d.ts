@@ -36,5 +36,5 @@ export declare class CalibrationController {
     findByInstrument(instrumentId: string): Promise<import("./calibration.entity").Calibration[]>;
     findOne(id: string): Promise<import("./calibration.entity").Calibration>;
     generateCertificate(id: string, templateId?: string, res?: any): Promise<void>;
-    downloadCertificate(id: string, res: any): Promise<any>;
+    downloadCertificate(id: string, templateId?: string, res?: any): Promise<any>;
 }
