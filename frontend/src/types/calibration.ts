@@ -5,6 +5,7 @@ import { Instrument } from "./instrument";
  */
 export interface CalibrationPoint {
   point_number: number;
+  description?: string;
   nominal: number;
   ascending_reading: number;
   descending_reading?: number;
@@ -12,6 +13,7 @@ export interface CalibrationPoint {
   unit: string;
   tolerance?: number;
   status?: "PASS" | "FAIL";
+  customFields?: Record<string, any>;
 }
 
 /**

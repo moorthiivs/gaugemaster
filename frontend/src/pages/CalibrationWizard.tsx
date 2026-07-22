@@ -282,6 +282,7 @@ export default function CalibrationWizard() {
           
           // Recalculate error and status to ensure correctness
           const fixedPoints = cal.calibration_points.map((pt: any) => {
+            const rowTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : loadedTol;
             let error = 0;
             if (hasDescending) {
               const avg = ((pt.ascending_reading || 0) + (pt.descending_reading || 0)) / 2;
@@ -292,9 +293,10 @@ export default function CalibrationWizard() {
             
             return {
               ...pt,
+              description: pt.description || "",
               error,
-              tolerance: loadedTol,
-              status: loadedTol > 0 ? (Math.abs(error) <= loadedTol ? "PASS" : "FAIL") : undefined
+              tolerance: rowTol,
+              status: rowTol > 0 ? (Math.abs(error) <= rowTol ? "PASS" : "FAIL") : undefined
             };
           });
           

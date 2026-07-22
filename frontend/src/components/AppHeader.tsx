@@ -134,8 +134,8 @@ export function AppHeader() {
         httpClient.get<UploadJob[]>(`/upload-jobs/company/${user.companyId}`),
         httpClient.get<AppNotification[]>(`/notifications/company/${user.companyId}`).catch(() => ({ data: [] }))
       ]);
-      const latestJobs = res.data;
-      const latestNotifs = notifRes.data;
+      const latestJobs = Array.isArray(res.data) ? res.data : [];
+      const latestNotifs = Array.isArray(notifRes.data) ? notifRes.data : [];
 
       // Detect unread notifications
       if (latestNotifs.some(n => !n.is_read)) {

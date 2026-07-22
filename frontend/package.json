@@ -52,6 +52,7 @@
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
     "framer-motion": "^12.23.12",
+    "hyperformula": "^3.3.0",
     "input-otp": "^1.4.2",
     "jodit-react": "^4.1.2",
     "lucide-react": "^0.462.0",
