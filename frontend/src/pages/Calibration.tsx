@@ -350,7 +350,7 @@ export default function Calibration() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {draft.updated_at ? format(new Date(draft.updated_at.replace("Z", "")), "dd-MMM-yyyy hh:mm a") : "-"}
+                            {draft.updated_at ? format(new Date(draft.updated_at), "dd-MMM-yyyy hh:mm a") : "-"}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-2">

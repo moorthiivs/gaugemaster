@@ -1520,7 +1520,7 @@ export default function Instruments() {
                     {historyData.map((record) => (
                       <TableRow key={record.id}>
                         <TableCell className="font-medium">
-                          {record.created_at ? new Date(record.created_at.replace('Z', '')).toLocaleString() : 'N/A'}
+                          {record.created_at ? new Date(record.created_at).toLocaleString() : 'N/A'}
                         </TableCell>
                         <TableCell>
                           {record.last_calibration_date ? new Date(record.last_calibration_date).toLocaleDateString() : 'N/A'}

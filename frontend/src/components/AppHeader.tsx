@@ -326,7 +326,7 @@ export function AppHeader() {
                               {notif.message}
                             </p>
                             <p className="text-[9px] text-muted-foreground/60 mt-1">
-                              {notif.created_at ? new Date(notif.created_at.replace('Z', '')).toLocaleString(undefined, {
+                              {notif.created_at ? new Date(notif.created_at).toLocaleString(undefined, {
                                 month: 'short',
                                 day: 'numeric',
                                 hour: '2-digit',
@@ -393,7 +393,7 @@ export function AppHeader() {
                                 )}
                               </p>
                               <span className="text-[9px] text-muted-foreground/60">
-                                {job.created_at ? new Date(job.created_at.replace('Z', '')).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                                {job.created_at ? new Date(job.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
                               </span>
                             </div>
                           )}
@@ -508,7 +508,7 @@ export function AppHeader() {
               {selectedNotificationForDetail?.title}
             </DialogTitle>
             <DialogDescription>
-              {selectedNotificationForDetail?.created_at && new Date(selectedNotificationForDetail.created_at.replace('Z', '')).toLocaleString(undefined, {
+              {selectedNotificationForDetail?.created_at && new Date(selectedNotificationForDetail.created_at).toLocaleString(undefined, {
                 dateStyle: "medium",
                 timeStyle: "short",
               })}
@@ -566,7 +566,7 @@ export function AppHeader() {
                     <div className="min-w-0 flex-1">
                       <h4 className="text-sm font-bold text-foreground truncate pr-2" title={liveJob.fileName}>{liveJob.fileName}</h4>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
-                        Started: {liveJob.created_at ? new Date(liveJob.created_at.replace('Z', '')).toLocaleString() : 'N/A'}
+                        Started: {liveJob.created_at ? new Date(liveJob.created_at).toLocaleString() : 'N/A'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
