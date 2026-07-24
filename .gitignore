@@ -1,6 +1,8 @@
 .env
 .env.*
 backend/.env
+backend/dist
+dist
 backend/.env_production
 frontend/.env
 .env
