@@ -20,6 +20,13 @@ interface CertConfig {
   ulrYearFormat: string;
   ulrSeqLength: number;
   ulrNextSeq: number;
+  headerCompanyName: string;
+  headerCompanySubtitle: string;
+  headerRightBoxText1: string;
+  headerRightBoxText2: string;
+  footerLine1: string;
+  footerLine2: string;
+  footerLine3: string;
 }
 
 const DEFAULTS: CertConfig = {
@@ -33,6 +40,13 @@ const DEFAULTS: CertConfig = {
   ulrYearFormat: "YYYY",
   ulrSeqLength: 5,
   ulrNextSeq: 0,
+  headerCompanyName: "ACME ENTERPRISES",
+  headerCompanySubtitle: "(CALIBRATION LABORATORY)",
+  headerRightBoxText1: "NABL / LAB",
+  headerRightBoxText2: "CC - 2632",
+  footerLine1: "CALIBRATION CENTER :",
+  footerLine2: "Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.",
+  footerLine3: "Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948",
 };
 
 export default function CertificateConfig() {
@@ -247,6 +261,96 @@ export default function CertificateConfig() {
             <p className="text-[10px] text-muted-foreground mt-1">
               Current sequence: {config.ulrNextSeq || 0} issued
             </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Certificate Header Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-sky-600" />
+            <div>
+              <CardTitle className="text-base">Certificate Header Settings</CardTitle>
+              <CardDescription className="text-xs">Customize the header text of the calibration certificate</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Company Name</Label>
+              <Input
+                value={config.headerCompanyName}
+                onChange={(e) => update("headerCompanyName", e.target.value)}
+                placeholder="ACME ENTERPRISES"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Company Subtitle</Label>
+              <Input
+                value={config.headerCompanySubtitle}
+                onChange={(e) => update("headerCompanySubtitle", e.target.value)}
+                placeholder="(CALIBRATION LABORATORY)"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Top Right Box (Line 1)</Label>
+              <Input
+                value={config.headerRightBoxText1}
+                onChange={(e) => update("headerRightBoxText1", e.target.value)}
+                placeholder="NABL / LAB"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Top Right Box (Line 2)</Label>
+              <Input
+                value={config.headerRightBoxText2}
+                onChange={(e) => update("headerRightBoxText2", e.target.value)}
+                placeholder="CC - 2632"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Certificate Footer Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-sky-600" />
+            <div>
+              <CardTitle className="text-base">Certificate Footer Settings</CardTitle>
+              <CardDescription className="text-xs">Customize the footer text of the calibration certificate</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Footer Line 1 (Heading)</Label>
+              <Input
+                value={config.footerLine1}
+                onChange={(e) => update("footerLine1", e.target.value)}
+                placeholder="CALIBRATION CENTER :"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Footer Line 2 (Address)</Label>
+              <Input
+                value={config.footerLine2}
+                onChange={(e) => update("footerLine2", e.target.value)}
+                placeholder="Laboratory Address, Behind Main Road, Industrial Zone, State - 440024."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Footer Line 3 (Contact Info)</Label>
+              <Input
+                value={config.footerLine3}
+                onChange={(e) => update("footerLine3", e.target.value)}
+                placeholder="Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

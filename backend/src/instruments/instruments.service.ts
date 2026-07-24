@@ -225,13 +225,28 @@ export class InstrumentsService {
                 }
             }
 
+            let autoStatus = instrumentDto.status;
+            const parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
+            if (parsedDueDate) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
+                if (parsedDueDate <= today) {
+                    autoStatus = 'Overdue';
+                } else if (!autoStatus) {
+                    autoStatus = 'OK';
+                }
+            } else if (!autoStatus) {
+                autoStatus = 'OK';
+            }
+
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
                 sino: sinoStr,
+                status: autoStatus,
                 created_by: { id: instrumentDto.created_by },
                 updated_by: undefined,
                 last_calibration_date: this.parseDateSafe(instrumentDto.last_calibration_date),
-                due_date: this.parseDateSafe(instrumentDto.due_date),
+                due_date: parsedDueDate,
                 gauge_issue_date: this.parseDateSafe(instrumentDto.gauge_issue_date),
             });
 
@@ -268,6 +283,22 @@ export class InstrumentsService {
                 await this.validationService.validateData(companyId, merged);
             }
 
+            // Automatically update status based on new due_date
+            const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
+            if (finalDueDate) {
+                const parsedDueDate = this.parseDateSafe(finalDueDate);
+                if (parsedDueDate) {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    if (parsedDueDate <= today) {
+                        payload.status = 'Overdue';
+                    } else if (instrument.status === 'Overdue' && (!payload.status || payload.status === 'Overdue')) {
+                        // If it was overdue but now the date is extended into the future, reset to OK
+                        payload.status = 'OK';
+                    }
+                }
+            }
+
             const updatedInstrument = this.instrumentRepository.merge(instrument, payload);
             const savedInstrument = await this.instrumentRepository.save(updatedInstrument);
 
@@ -278,6 +309,7 @@ export class InstrumentsService {
                     last_calibration_date: savedInstrument.last_calibration_date,
                     due_date: savedInstrument.due_date,
                     certificate_file: savedInstrument.certificate_file,
+                    calibration_source: savedInstrument.calibration_source,
                 });
                 await this.calibrationHistoryRepository.save(history);
             } else if (updateInstrumentDto.certificate_file) {
@@ -288,6 +320,9 @@ export class InstrumentsService {
                 });
                 if (latestHistory) {
                     latestHistory.certificate_file = updateInstrumentDto.certificate_file;
+                    if (updateInstrumentDto.calibration_source) {
+                        latestHistory.calibration_source = updateInstrumentDto.calibration_source;
+                    }
                     await this.calibrationHistoryRepository.save(latestHistory);
                 }
             }

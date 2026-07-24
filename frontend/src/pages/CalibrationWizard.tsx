@@ -10,14 +10,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck } from "lucide-react";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
-import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft } from "@/lib/calibrationActions";
+import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getCalibration, updateCalibration } from "@/lib/calibrationActions";
+import { getTemplates } from "@/lib/templateActions";
+import { CalibrationTemplate } from "@/types/template";
 import { getInstrument } from "@/lib/instrumentActions";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
-import { CalibrationDataGrid } from "@/components/calibration/CalibrationDataGrid";
+import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { UlrGate } from "@/components/calibration/UlrGate";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
@@ -71,9 +73,12 @@ export default function CalibrationWizard() {
   const [envTemp, setEnvTemp] = useState("");
   const [envHumidity, setEnvHumidity] = useState("");
   const [envPressure, setEnvPressure] = useState("");
+  const [procedureReference, setProcedureReference] = useState("");
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
   const [calUnit, setCalUnit] = useState("");
   const [calTolerance, setCalTolerance] = useState(0);
+  const [statusRuleType, setStatusRuleType] = useState<"default" | "custom_formula">("default");
+  const [statusFormula, setStatusFormula] = useState<string>("");
 
   // Step 4 — Results
   const [uncertainty, setUncertainty] = useState("");
@@ -95,12 +100,221 @@ export default function CalibrationWizard() {
   const [savedCalibrationId, setSavedCalibrationId] = useState<string | null>(null);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
 
-  // Draft state
+  // Draft & Edit state
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get("draftId");
+  const editIdParam = searchParams.get("editId");
+  const typeParam = searchParams.get("type");
+  const [isEditMode, setIsEditMode] = useState(!!editIdParam);
+  const [availableTemplates, setAvailableTemplates] = useState<CalibrationTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [templateSearchQuery, setTemplateSearchQuery] = useState("");
+  const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
+
   const draftIdRef = useRef<string | null>(draftIdParam || null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
   const [isInitializing, setIsInitializing] = useState(true);
+
+  // Pre-select calibration type if type URL parameter is present
+  useEffect(() => {
+    if (typeParam && !editIdParam && !draftIdParam) {
+      const match = CALIBRATION_TYPES.find(
+        (t) =>
+          t.type.toLowerCase() === typeParam.toLowerCase() ||
+          t.label.toLowerCase() === typeParam.toLowerCase()
+      );
+      if (match) {
+        setSelectedType(match);
+        if (match.defaultUnit) {
+          setCalUnit(match.defaultUnit);
+        }
+      }
+    }
+  }, [typeParam, editIdParam, draftIdParam]);
+
+  // Fetch templates for selected Calibration Type
+  useEffect(() => {
+    if (!user || !selectedType) return;
+    getTemplates({ userId: user.id, calibrationType: selectedType.type })
+      .then((tpls) => {
+        setAvailableTemplates(tpls || []);
+      })
+      .catch(console.error);
+  }, [user, selectedType]);
+
+  const [wizardCustomColumns, setWizardCustomColumns] = useState<CustomColumn[]>([]);
+  const [wizardColumnOrder, setWizardColumnOrder] = useState<string[]>([]);
+  const [wizardHiddenColumns, setWizardHiddenColumns] = useState<string[]>([]);
+
+  const handleClearTemplate = () => {
+    setSelectedTemplateId("none");
+    setWizardCustomColumns([]);
+    setWizardColumnOrder([]);
+    setWizardHiddenColumns([]);
+    toast.info("Cleared template selection (Custom Grid)");
+  };
+
+  // Apply Calibration Template helper
+  const handleApplyTemplate = (tplId: string) => {
+    if (tplId === "none") {
+      handleClearTemplate();
+      return;
+    }
+    const tpl = availableTemplates.find((t) => t.id === tplId);
+    if (!tpl) return;
+
+    setSelectedTemplateId(tplId);
+    if (tpl.default_unit) setCalUnit(tpl.default_unit);
+    if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
+    if (tpl.environmental_defaults) {
+      if (tpl.environmental_defaults.temperature) setEnvTemp(tpl.environmental_defaults.temperature);
+      if (tpl.environmental_defaults.humidity) setEnvHumidity(tpl.environmental_defaults.humidity);
+      if (tpl.environmental_defaults.pressure) setEnvPressure(tpl.environmental_defaults.pressure);
+    }
+    if (tpl.remarks) setRemarks(tpl.remarks);
+    if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
+    if (tpl.status_formula) setStatusFormula(tpl.status_formula);
+
+    // Always reset/set custom columns, column order, and hidden columns from selected template
+    setWizardCustomColumns((tpl as any).custom_columns || []);
+    setWizardColumnOrder((tpl as any).column_order || []);
+    setWizardHiddenColumns((tpl as any).hidden_columns || []);
+
+    if (tpl.calibration_points && tpl.calibration_points.length > 0) {
+      const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
+        point_number: pt.point_number || idx + 1,
+        description: pt.description || `Point ${idx + 1}`,
+        nominal: pt.nominal !== undefined ? Number(pt.nominal) : 0,
+        ascending_reading: pt.ascending_reading !== undefined ? Number(pt.ascending_reading) : (pt.nominal !== undefined ? Number(pt.nominal) : 0),
+        descending_reading: pt.descending_reading !== undefined ? Number(pt.descending_reading) : undefined,
+        error: pt.error !== undefined ? Number(pt.error) : 0,
+        unit: pt.unit || tpl.default_unit || calUnit || "mm",
+        tolerance: pt.tolerance !== undefined ? Number(pt.tolerance) : (tpl.default_tolerance !== undefined ? Number(tpl.default_tolerance) : calTolerance),
+        status: pt.status || "PASS",
+        customFields: pt.customFields || {},
+      }));
+      setCalPoints(formattedPoints);
+    }
+    toast.success(`Applied template "${tpl.name}"`);
+  };
+
+  // Auto-apply matching template when templates load or instrument changes (for new calibrations)
+  useEffect(() => {
+    if (!availableTemplates || availableTemplates.length === 0) return;
+    if (selectedTemplateId || isEditMode || draftIdParam) return;
+
+    let match: CalibrationTemplate | undefined;
+    if (selectedInstrument) {
+      const instName = (selectedInstrument.name || "").toLowerCase();
+      const instType = (selectedInstrument.item_type || "").toLowerCase();
+      match = availableTemplates.find(
+        (t) =>
+          t.instrument_type.toLowerCase() === instName ||
+          t.instrument_type.toLowerCase() === instType ||
+          (instName && instName.includes(t.name.toLowerCase())) ||
+          t.name.toLowerCase().includes(instName)
+      );
+    }
+
+    if (!match && availableTemplates.length > 0) {
+      match = availableTemplates[0];
+    }
+
+    if (match) {
+      handleApplyTemplate(match.id);
+    }
+  }, [availableTemplates, selectedInstrument, selectedTemplateId, isEditMode, draftIdParam]);
+
+  // Load existing calibration if in Edit mode
+  useEffect(() => {
+    if (!user || !editIdParam) return;
+    setIsEditMode(true);
+    getCalibration(editIdParam)
+      .then((cal) => {
+        setSavedCalibrationId(cal.id);
+        setSelectedInstrument(cal.instrument);
+        const typeMatch =
+          CALIBRATION_TYPES.find((t) => t.type === cal.calibration_type) ||
+          CALIBRATION_TYPES[0];
+        setSelectedType(typeMatch);
+
+        if (cal.reference_standards && cal.reference_standards.length > 0) {
+          setReferenceStandards(cal.reference_standards);
+        } else if (cal.reference_standard_name) {
+          setReferenceStandards([
+            {
+              name: cal.reference_standard_name,
+              id: cal.reference_standard_id || "",
+              traceable_to: cal.reference_standard_traceable_to || "",
+              validity: cal.reference_standard_validity
+                ? cal.reference_standard_validity.split("T")[0]
+                : "",
+              range: cal.reference_standard_range || "",
+              least_count: cal.reference_standard_least_count || "",
+            },
+          ]);
+        }
+
+        if (cal.environmental_conditions) {
+          setEnvTemp(cal.environmental_conditions.temperature || "");
+          setEnvHumidity(cal.environmental_conditions.humidity || "");
+          setEnvPressure(cal.environmental_conditions.pressure || "");
+        }
+        if ((cal as any).procedure_reference) {
+          setProcedureReference((cal as any).procedure_reference);
+        }
+
+        if (cal.calibration_points && cal.calibration_points.length > 0) {
+          setCalPoints(cal.calibration_points);
+          if (cal.calibration_points[0].unit) {
+            setCalUnit(cal.calibration_points[0].unit);
+          }
+          if (cal.calibration_points[0].tolerance !== undefined) {
+            setCalTolerance(cal.calibration_points[0].tolerance);
+          }
+          if ((cal as any).status_rule_type) setStatusRuleType((cal as any).status_rule_type);
+          if ((cal as any).status_formula) setStatusFormula((cal as any).status_formula);
+        }
+
+        if (cal.custom_columns) setWizardCustomColumns(cal.custom_columns);
+        if (cal.column_order) setWizardColumnOrder(cal.column_order);
+        if (cal.hidden_columns) setWizardHiddenColumns(cal.hidden_columns);
+
+        setUncertainty(cal.uncertainty || "");
+        setVerdict((cal.verdict as any) || "PASS");
+        setRemarks(cal.remarks || "");
+        setCalibratedBy(cal.calibrated_by || "");
+        setCalibratedByDesignation(cal.calibrated_by_designation || "");
+        setReviewedBy(cal.reviewed_by || "");
+        setReviewedByDesignation(cal.reviewed_by_designation || "");
+        setApprovedBy(cal.approved_by || "");
+        setApprovedByDesignation(cal.approved_by_designation || "");
+        setCalDate(
+          cal.calibration_date
+            ? cal.calibration_date.split("T")[0]
+            : new Date().toISOString().split("T")[0]
+        );
+        setNextCalDate(
+          cal.next_calibration_date ? cal.next_calibration_date.split("T")[0] : ""
+        );
+        setNextCertNumber(cal.certificate_number || "");
+        if (cal.ulr_number) {
+          setUlrEnabled(true);
+          setNextUlrNumber(cal.ulr_number);
+        } else if ((cal as any).ulr_enabled) {
+          setUlrEnabled(true);
+        }
+
+        // Reopen workflow starting from Step 2 (Calibration Entry)
+        setStep(2);
+        toast.info(`Editing calibration ${cal.certificate_number}`);
+        setIsInitializing(false);
+      })
+      .catch((err) => {
+        toast.error("Failed to load calibration for editing");
+        setIsInitializing(false);
+      });
+  }, [user, editIdParam]);
 
   // Auto-save Draft
   useEffect(() => {
@@ -114,7 +328,11 @@ export default function CalibrationWizard() {
         envTemp,
         envHumidity,
         envPressure,
+        procedureReference,
         calPoints,
+        wizardCustomColumns,
+        wizardColumnOrder,
+        wizardHiddenColumns,
         calUnit,
         calTolerance,
         uncertainty,
@@ -138,8 +356,8 @@ export default function CalibrationWizard() {
     }, 1500); // 1.5s debounce
     return () => clearTimeout(timeout);
   }, [
-    step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envPressure,
-    calPoints, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
+    step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envPressure, procedureReference,
+    calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
 
@@ -160,7 +378,11 @@ export default function CalibrationWizard() {
           setEnvTemp(d.envTemp || "");
           setEnvHumidity(d.envHumidity || "");
           setEnvPressure(d.envPressure || "");
+          setProcedureReference(d.procedureReference || "");
           setCalPoints(d.calPoints || []);
+          setWizardCustomColumns(d.wizardCustomColumns || []);
+          setWizardColumnOrder(d.wizardColumnOrder || []);
+          setWizardHiddenColumns(d.wizardHiddenColumns || []);
           setCalUnit(d.calUnit || "");
           setCalTolerance(d.calTolerance || 0);
           setUncertainty(d.uncertainty || "");
@@ -362,10 +584,16 @@ export default function CalibrationWizard() {
           humidity: envHumidity,
           pressure: envPressure || undefined,
         },
+        procedure_reference: procedureReference || undefined,
         calibration_points: calPoints,
+        custom_columns: wizardCustomColumns,
+        column_order: wizardColumnOrder,
+        hidden_columns: wizardHiddenColumns,
         uncertainty,
         verdict,
         remarks,
+        status_rule_type: statusRuleType,
+        status_formula: statusFormula,
         calibrated_by: calibratedBy,
         calibrated_by_designation: calibratedByDesignation,
         reviewed_by: reviewedBy,
@@ -378,12 +606,32 @@ export default function CalibrationWizard() {
         created_by: user?.id,
       };
 
-      const saved = await createCalibration(data as any);
-      setSavedCalibrationId(saved.id);
-      setNextCertNumber(saved.certificate_number || nextCertNumber);
-      if (saved.ulr_number) setNextUlrNumber(saved.ulr_number);
+      let savedId = savedCalibrationId;
+      if (isEditMode && savedCalibrationId) {
+        const updated = await updateCalibration(
+          savedCalibrationId,
+          data as any,
+          user?.id,
+          user?.name || user?.email || "User",
+        );
+        toast.success("Calibration updated & certificate regenerated!");
+      } else {
+        const saved = await createCalibration(data as any);
+        savedId = saved.id;
+        setSavedCalibrationId(saved.id);
+        setNextCertNumber(saved.certificate_number || nextCertNumber);
+        if (saved.ulr_number) setNextUlrNumber(saved.ulr_number);
+
+        if (activeDraftId) {
+          await deleteDraft(activeDraftId).catch(console.error);
+          setActiveDraftId(null);
+          draftIdRef.current = null;
+        }
+
+        toast.success("Calibration saved successfully!");
+      }
+
       setCertificateGenerated(false);
-      toast.success("Calibration saved successfully!");
       
       // Delete draft after successful save
       if (activeDraftId) {
@@ -703,7 +951,131 @@ export default function CalibrationWizard() {
           {/* ═══ Step 3: Environmental + Data Entry ═══ */}
           {step === 2 && selectedType && (
             <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              {/* Calibration Template Selector */}
+              {availableTemplates.length > 0 && (
+                <div className="p-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2 mb-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-semibold">Calibration Template</span>
+                      <Badge variant="secondary" className="text-[10px] capitalize">
+                        {selectedType.label}
+                      </Badge>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      Search and select a template to auto-fill test points & tolerances
+                    </span>
+                  </div>
+
+                  {/* Searchable Combobox Dropdown */}
+                  <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={templatePopoverOpen}
+                        className="w-full justify-between bg-background text-xs h-9 font-normal border-input"
+                      >
+                        {selectedTemplateId && selectedTemplateId !== "none" ? (
+                          <span className="truncate font-semibold text-foreground">
+                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
+                            {" "}
+                            <span className="text-muted-foreground font-normal">
+                              ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type}) — {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground font-medium">-- None / Custom (No Template) --</span>
+                        )}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2 space-y-2 z-50 bg-popover shadow-xl border">
+                      {/* Search Filter Input */}
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={templateSearchQuery}
+                          onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                          placeholder="Search template name, instrument type..."
+                          className="pl-8 pr-7 h-8 text-xs bg-background"
+                        />
+                        {templateSearchQuery && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setTemplateSearchQuery("")}
+                            className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+
+                      {/* Filtered Suggestion List */}
+                      <div className="max-h-56 overflow-y-auto space-y-1">
+                        {/* Default Option: None */}
+                        <div
+                          onClick={() => {
+                            handleApplyTemplate("none");
+                            setTemplatePopoverOpen(false);
+                            setTemplateSearchQuery("");
+                          }}
+                          className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
+                            !selectedTemplateId || selectedTemplateId === "none"
+                              ? "bg-primary/10 text-primary font-bold"
+                              : "hover:bg-accent text-muted-foreground"
+                          }`}
+                        >
+                          <span>-- None / Custom (No Template) --</span>
+                          {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary" />}
+                        </div>
+
+                        {/* Templates List */}
+                        {availableTemplates
+                          .filter((tpl) => {
+                            if (!templateSearchQuery.trim()) return true;
+                            const q = templateSearchQuery.toLowerCase();
+                            return (
+                              tpl.name.toLowerCase().includes(q) ||
+                              tpl.instrument_type.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((tpl) => {
+                            const isSelected = selectedTemplateId === tpl.id;
+                            return (
+                              <div
+                                key={tpl.id}
+                                onClick={() => {
+                                  handleApplyTemplate(tpl.id);
+                                  setTemplatePopoverOpen(false);
+                                  setTemplateSearchQuery("");
+                                }}
+                                className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
+                                  isSelected ? "bg-primary/10 text-primary font-bold" : "hover:bg-accent"
+                                }`}
+                              >
+                                <div className="truncate pr-2">
+                                  <p className="font-semibold text-foreground">{tpl.name}</p>
+                                  <p className="text-[10px] text-muted-foreground truncate">
+                                    {tpl.instrument_type} • {tpl.calibration_points?.length || 0} test points
+                                  </p>
+                                </div>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Procedure Reference</Label>
+                  <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" />
+                </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Temperature</Label>
                   <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="e.g., 23°C ± 2°C" />
@@ -713,7 +1085,7 @@ export default function CalibrationWizard() {
                   <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="e.g., 55% ± 5%" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Atmospheric Pressure (optional)</Label>
+                  <Label className="text-xs">Pressure (optional)</Label>
                   <Input value={envPressure} onChange={(e) => setEnvPressure(e.target.value)} placeholder="e.g., 1013 hPa" />
                 </div>
               </div>
@@ -726,6 +1098,18 @@ export default function CalibrationWizard() {
                 onUnitChange={setCalUnit}
                 tolerance={calTolerance}
                 onToleranceChange={setCalTolerance}
+                initialCustomColumns={wizardCustomColumns}
+                initialColumnOrder={wizardColumnOrder}
+                initialHiddenColumns={wizardHiddenColumns}
+                onCustomColumnsChange={setWizardCustomColumns}
+                onColumnOrderChange={setWizardColumnOrder}
+                onHiddenColumnsChange={setWizardHiddenColumns}
+                initialStatusRuleType={statusRuleType}
+                initialStatusFormula={statusFormula}
+                onStatusRuleChange={(type, formula) => {
+                  setStatusRuleType(type);
+                  setStatusFormula(formula);
+                }}
               />
             </>
           )}
@@ -889,6 +1273,10 @@ export default function CalibrationWizard() {
                       reviewed_by_designation: reviewedByDesignation,
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
+                      procedure_reference: procedureReference,
+                      column_order: wizardColumnOrder,
+                      hidden_columns: wizardHiddenColumns,
+                      custom_columns: wizardCustomColumns as any,
                     }}
                   />
                 </div>

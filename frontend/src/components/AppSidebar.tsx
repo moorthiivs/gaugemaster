@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Wrench, PlusCircle, BarChart3, User, Settings, LogOut, Activity, CalendarDays, ShieldCheck } from "lucide-react";
+import { LayoutDashboard, Wrench, PlusCircle, BarChart3, User, Settings, LogOut, Activity, CalendarDays, ShieldCheck, Layers } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -18,6 +18,7 @@ const items = [
   { title: "Instruments", url: "/instruments", icon: Wrench },
   { title: "Add Instrument", url: "/instruments/new", icon: PlusCircle },
   { title: "Calibration", url: "/calibration", icon: Activity },
+  { title: "Templates", url: "/calibration/templates", icon: Layers },
   { title: "Reports", url: "/reports", icon: BarChart3 },
   { title: "Calendar", url: "/calendar", icon: CalendarDays },
   { title: "Profile", url: "/profile", icon: User },

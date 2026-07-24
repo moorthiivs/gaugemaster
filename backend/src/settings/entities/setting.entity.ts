@@ -68,5 +68,13 @@ export class Setting {
         ulrYearFormat: string;    // Default: "YYYY"
         ulrSeqLength: number;     // Default: 5
         ulrNextSeq: number;       // Auto-incremented, starts at 0
+
+        headerCompanyName?: string;
+        headerCompanySubtitle?: string;
+        headerRightBoxText1?: string;
+        headerRightBoxText2?: string;
+        footerLine1?: string;
+        footerLine2?: string;
+        footerLine3?: string;
     };
 }

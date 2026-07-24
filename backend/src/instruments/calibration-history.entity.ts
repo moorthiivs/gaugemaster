@@ -20,6 +20,9 @@ export class CalibrationHistory {
   @Column({ nullable: true })
   certificate_file: string;
 
+  @Column({ nullable: true })
+  calibration_source: string;
+
   @CreateDateColumn()
   created_at: Date;
 }

@@ -3,8 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between } from 'typeorm';
 import { Calibration } from './calibration.entity';
 import { CalibrationDraft } from './calibration-draft.entity';
+import { CalibrationAuditLog } from './calibration-audit-log.entity';
 import { CreateCalibrationDto } from './dto/create-calibration.dto';
 import { SettingsService } from '../settings/settings.service';
+import { InstrumentsService } from '../instruments/instruments.service';
 
 /**
  * Handles calibration CRUD, auto-generates certificate and ULR numbers
@@ -17,7 +19,10 @@ export class CalibrationService {
     private readonly calibrationRepository: Repository<Calibration>,
     @InjectRepository(CalibrationDraft)
     private readonly draftRepository: Repository<CalibrationDraft>,
+    @InjectRepository(CalibrationAuditLog)
+    private readonly auditLogRepository: Repository<CalibrationAuditLog>,
     private readonly settingsService: SettingsService,
+    private readonly instrumentsService: InstrumentsService,
   ) {}
 
   // ── Defaults ─────────────────────────────────────────────────
@@ -188,7 +193,21 @@ export class CalibrationService {
       created_by: dto.created_by ? { id: dto.created_by } as any : undefined,
     });
 
-    return this.calibrationRepository.save(calibration);
+    const savedCalibration = await this.calibrationRepository.save(calibration);
+
+    // Automatically update the instrument's calibration dates and status
+    try {
+      await this.instrumentsService.update(dto.instrument_id, {
+        last_calibration_date: savedCalibration.calibration_date as any,
+        due_date: savedCalibration.next_calibration_date as any,
+        status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+        calibration_source: 'In-House',
+      } as any);
+    } catch (err) {
+      console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
+    }
+
+    return savedCalibration;
   }
 
   async findAll(filters: {
@@ -199,6 +218,7 @@ export class CalibrationService {
     verdict?: string;
     dateFrom?: string;
     dateTo?: string;
+    search?: string;
     page?: number;
     pageSize?: number;
   }) {
@@ -210,27 +230,38 @@ export class CalibrationService {
       verdict,
       dateFrom,
       dateTo,
+      search,
       page = 1,
       pageSize = 10,
     } = filters;
 
-    const where: any = {};
-    if (userId) where.created_by = { id: userId };
-    if (companyId) where.companyId = companyId;
-    if (instrumentId) where.instrument_id = instrumentId;
-    if (calibrationType) where.calibration_type = calibrationType;
-    if (verdict) where.verdict = verdict;
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoinAndSelect('cal.instrument', 'instrument')
+      .leftJoinAndSelect('cal.created_by', 'created_by');
+
+    if (userId) qb.andWhere('created_by.id = :userId', { userId });
+    if (companyId) qb.andWhere('cal.companyId = :companyId', { companyId });
+    if (instrumentId) qb.andWhere('cal.instrument_id = :instrumentId', { instrumentId });
+    if (calibrationType) qb.andWhere('cal.calibration_type = :calibrationType', { calibrationType });
+    if (verdict) qb.andWhere('cal.verdict = :verdict', { verdict });
     if (dateFrom && dateTo) {
-      where.calibration_date = Between(new Date(dateFrom), new Date(dateTo));
+      qb.andWhere('cal.calibration_date BETWEEN :dateFrom AND :dateTo', { dateFrom, dateTo });
     }
 
-    const [data, total] = await this.calibrationRepository.findAndCount({
-      where,
-      relations: ['instrument', 'created_by'],
-      order: { calibration_date: 'DESC' },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-    });
+    if (search && search.trim()) {
+      const s = `%${search.trim().toLowerCase()}%`;
+      qb.andWhere(
+        '(LOWER(cal.certificate_number) LIKE :s OR LOWER(cal.ulr_number) LIKE :s OR LOWER(instrument.name) LIKE :s OR LOWER(instrument.id_code) LIKE :s)',
+        { s },
+      );
+    }
+
+    qb.orderBy('cal.calibration_date', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+
+    const [data, total] = await qb.getManyAndCount();
 
     return {
       data,
@@ -271,7 +302,17 @@ export class CalibrationService {
     const calibration = await this.findOne(id);
     calibration.certificate_generated = true;
     calibration.certificate_file = filePath;
-    return this.calibrationRepository.save(calibration);
+    const saved = await this.calibrationRepository.save(calibration);
+
+    try {
+      await this.instrumentsService.update(calibration.instrument_id, {
+        certificate_file: filePath,
+      } as any);
+    } catch (err) {
+      console.warn(`Failed to update instrument certificate`, err);
+    }
+
+    return saved;
   }
 
   async getStats(userId: string) {
@@ -333,5 +374,123 @@ export class CalibrationService {
 
   async deleteDraft(id: string): Promise<void> {
     await this.draftRepository.delete({ id });
+  }
+
+  // ── Update & Audit Log ───────────────────────────────────────
+
+  async update(
+    id: string,
+    dto: Partial<CreateCalibrationDto>,
+    editedByUserId?: string,
+    editedByName?: string,
+  ): Promise<Calibration> {
+    const existing = await this.findOne(id);
+    if (!existing) {
+      throw new NotFoundException(`Calibration with ID ${id} not found`);
+    }
+
+    // Track changes for audit log
+    const changesSummary: { field: string; oldValue: any; newValue: any }[] = [];
+
+    const keysToTrack: (keyof CreateCalibrationDto)[] = [
+      'calibration_date',
+      'calibration_type',
+      'reference_standard_name',
+      'reference_standard_id',
+      'environmental_conditions',
+      'calibration_points',
+      'uncertainty',
+      'verdict',
+      'remarks',
+      'calibrated_by',
+      'reviewed_by',
+      'approved_by',
+      'next_calibration_date',
+    ];
+
+    for (const key of keysToTrack) {
+      if (dto[key] !== undefined) {
+        const oldVal = (existing as any)[key];
+        const newVal = dto[key];
+
+        if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+          changesSummary.push({
+            field: key,
+            oldValue: oldVal,
+            newValue: newVal,
+          });
+        }
+      }
+    }
+
+    if (dto.calibration_date) existing.calibration_date = new Date(dto.calibration_date);
+    if (dto.calibration_type !== undefined) existing.calibration_type = dto.calibration_type;
+    
+    // Generate ULR if newly enabled
+    if (dto.ulr_enabled && !existing.ulr_number) {
+      existing.ulr_number = await this.generateUlrNumber(
+        existing.created_by?.id || '',
+        existing.company?.id || ''
+      );
+    }
+
+    if (dto.reference_standard_name !== undefined) existing.reference_standard_name = dto.reference_standard_name;
+    if (dto.reference_standard_id !== undefined) existing.reference_standard_id = dto.reference_standard_id;
+    if (dto.reference_standard_traceable_to !== undefined) existing.reference_standard_traceable_to = dto.reference_standard_traceable_to;
+    if (dto.reference_standard_validity !== undefined) {
+      existing.reference_standard_validity = dto.reference_standard_validity
+        ? new Date(dto.reference_standard_validity)
+        : (undefined as any);
+    }
+    if (dto.reference_standard_range !== undefined) existing.reference_standard_range = dto.reference_standard_range;
+    if (dto.reference_standard_least_count !== undefined) existing.reference_standard_least_count = dto.reference_standard_least_count;
+    if (dto.reference_standards !== undefined) existing.reference_standards = dto.reference_standards;
+    if (dto.environmental_conditions !== undefined) existing.environmental_conditions = dto.environmental_conditions;
+    if (dto.calibration_points !== undefined) existing.calibration_points = dto.calibration_points;
+    if (dto.uncertainty !== undefined) existing.uncertainty = dto.uncertainty;
+    if (dto.verdict !== undefined) existing.verdict = dto.verdict;
+    if (dto.remarks !== undefined) existing.remarks = dto.remarks;
+    if (dto.calibrated_by !== undefined) existing.calibrated_by = dto.calibrated_by;
+    if (dto.calibrated_by_designation !== undefined) existing.calibrated_by_designation = dto.calibrated_by_designation;
+    if (dto.reviewed_by !== undefined) existing.reviewed_by = dto.reviewed_by;
+    if (dto.reviewed_by_designation !== undefined) existing.reviewed_by_designation = dto.reviewed_by_designation;
+    if (dto.approved_by !== undefined) existing.approved_by = dto.approved_by;
+    if (dto.approved_by_designation !== undefined) existing.approved_by_designation = dto.approved_by_designation;
+    if (dto.next_calibration_date !== undefined) {
+      existing.next_calibration_date = dto.next_calibration_date
+        ? new Date(dto.next_calibration_date)
+        : (undefined as any);
+    }
+
+    const saved = await this.calibrationRepository.save(existing);
+
+    // Record audit log entry if changes were made
+    if (changesSummary.length > 0) {
+      const log = this.auditLogRepository.create({
+        calibration_id: saved.id,
+        edited_by_id: editedByUserId,
+        edited_by_name: editedByName || 'User',
+        changes_summary: changesSummary,
+      });
+      await this.auditLogRepository.save(log);
+    }
+
+    return saved;
+  }
+
+  async getAuditLogs(calibrationId: string): Promise<CalibrationAuditLog[]> {
+    return this.auditLogRepository.find({
+      where: { calibration_id: calibrationId },
+      relations: ['edited_by'],
+      order: { edited_at: 'DESC' },
+    });
+  }
+
+  async remove(id: string): Promise<void> {
+    const calibration = await this.findOne(id);
+    if (calibration) {
+      await this.auditLogRepository.delete({ calibration_id: id });
+      await this.calibrationRepository.remove(calibration);
+    }
   }
 }

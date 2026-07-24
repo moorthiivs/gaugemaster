@@ -42,6 +42,7 @@
     "@react-oauth/google": "^0.12.2",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.14.8",
     "apexcharts": "^3.49.0",
     "axios": "^1.11.0",
     "class-variance-authority": "^0.7.1",

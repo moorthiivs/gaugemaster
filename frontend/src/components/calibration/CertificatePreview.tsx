@@ -1,5 +1,8 @@
+import { useState, useEffect } from "react";
 import { CalibrationRecord } from "@/types/calibration";
 import { format } from "date-fns";
+import httpClient from "@/lib/httpClient";
+import { useAuth } from "@/lib/auth";
 
 interface CertificatePreviewProps {
   calibration: Partial<CalibrationRecord>;
@@ -11,6 +14,21 @@ interface CertificatePreviewProps {
  * Formatted according to calibration-certificate-01-3487339.jpg layout.
  */
 export function CertificatePreview({ calibration, instrumentName }: CertificatePreviewProps) {
+  const { user } = useAuth();
+  const [certConfig, setCertConfig] = useState<any>(null);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    httpClient
+      .get("/settings", { params: { userId: user.id } })
+      .then((res) => {
+        if (res.data?.certificateConfig) {
+          setCertConfig(res.data.certificateConfig);
+        }
+      })
+      .catch(() => {});
+  }, [user]);
+
   const fmtDate = (d?: string) => {
     if (!d) return "-";
     try {
@@ -23,6 +41,16 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
   const points = calibration.calibration_points || [];
   const env = calibration.environmental_conditions || { temperature: "-", humidity: "-" };
   const inst = calibration.instrument;
+  
+  const headerCompanyName = certConfig?.headerCompanyName || "ACME ENTERPRISES";
+  const headerCompanySubtitle = certConfig?.headerCompanySubtitle || "(CALIBRATION LABORATORY)";
+  const headerRightBoxText1 = certConfig?.headerRightBoxText1 || "NABL / LAB";
+  const headerRightBoxText2 = certConfig?.headerRightBoxText2 || "CC - 2632";
+  const footerLine1 = certConfig?.footerLine1 || "CALIBRATION CENTER :";
+  const footerLine2 = certConfig?.footerLine2 || "Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.";
+  const footerLine3 = certConfig?.footerLine3 || "Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948";
+  
+  const procedureReference = (calibration as any).procedure_reference || "AE/CAL-SOP/01";
 
   return (
     <div className="bg-white text-black border border-slate-400 rounded-sm shadow-lg overflow-hidden text-[10px] leading-tight font-sans" style={{ maxWidth: 750 }}>
@@ -31,10 +59,10 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
         <div className="flex items-center justify-between gap-2 px-1">
           <div>
             <h1 className="text-sm font-bold text-black uppercase leading-none">
-              ACME ENTERPRISES
+              {headerCompanyName}
             </h1>
             <p className="text-[8px] font-bold text-slate-600 tracking-wider">
-              (CALIBRATION LABORATORY)
+              {headerCompanySubtitle}
             </p>
           </div>
           <div className="text-center">
@@ -43,8 +71,8 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
             </h2>
           </div>
           <div className="text-right border border-black px-1.5 py-0.5 rounded min-w-[70px]">
-            <div className="text-[7.5px] font-bold">NABL / LAB</div>
-            <div className="text-[8.5px] font-black">CC - 2632</div>
+            <div className="text-[7.5px] font-bold">{headerRightBoxText1}</div>
+            <div className="text-[8.5px] font-black">{headerRightBoxText2}</div>
           </div>
         </div>
 
@@ -144,7 +172,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
           <div className="border-t border-slate-300 p-1.5 space-y-0.5 text-[9px] bg-slate-50">
             <div className="flex">
               <span className="font-bold w-40">Procedure reference</span>
-              <span>: AE/CAL-SOP/01</span>
+              <span>: {procedureReference}</span>
             </div>
             <div className="flex">
               <span className="font-bold w-40">Environmental Conditions</span>
@@ -242,7 +270,12 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
               });
             }
           });
-          const customKeys = Array.from(customColMap.keys());
+          const hidden = new Set(calibration.hidden_columns || []);
+          const columnOrder = calibration.column_order && calibration.column_order.length > 0 
+            ? calibration.column_order 
+            : ["description", "nominal", "ascending_reading", hasDescending ? "descending_reading" : "", ...Array.from(customColMap.keys()), "error"].filter(Boolean);
+            
+          const activeColumns = columnOrder.filter(k => k !== "pt" && k !== "actions" && !hidden.has(k));
 
           return (
             <div className="border border-black">
@@ -253,14 +286,15 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                 <thead>
                   <tr className="bg-slate-100 border-b border-black font-bold text-center">
                     <th className="border-r border-black p-1 w-12">Sr No.</th>
-                    {hasDescription && <th className="border-r border-black p-1">Description</th>}
-                    <th className="border-r border-black p-1">STANDARD VALUE</th>
-                    <th className="border-r border-black p-1">{hasDescending ? "AVG OBS VALUE (ASC)" : "AVG OBS VALUE UUC"}</th>
-                    {hasDescending && <th className="border-r border-black p-1">AVG OBS VALUE (DESC)</th>}
-                    {customKeys.map((k) => (
-                      <th key={k} className="border-r border-black p-1">{customColMap.get(k) || k}</th>
-                    ))}
-                    <th className="border-r border-black p-1">ERROR</th>
+                    {activeColumns.map(k => {
+                      if (k === "description") return <th key={k} className="border-r border-black p-1">Description</th>;
+                      if (k === "nominal") return <th key={k} className="border-r border-black p-1">Nominal</th>;
+                      if (k === "ascending_reading") return <th key={k} className="border-r border-black p-1">{hasDescending ? "Ascending" : "Actual"}</th>;
+                      if (k === "descending_reading") return <th key={k} className="border-r border-black p-1">Descending</th>;
+                      if (k === "error") return <th key={k} className="border-r border-black p-1">Error</th>;
+                      if (k === "status") return null;
+                      return <th key={k} className="border-r border-black p-1">{customColMap.get(k) || k}</th>;
+                    })}
                     <th className="p-1">Status</th>
                   </tr>
                 </thead>
@@ -268,16 +302,17 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                   {points.map((pt: any, idx: number) => (
                     <tr key={idx} className="text-center border-b border-slate-200 font-mono">
                       <td className="border-r border-slate-300 p-1 font-sans">{String(pt.point_number || idx + 1).padStart(2, "0")}</td>
-                      {hasDescription && <td className="border-r border-slate-300 p-1 font-sans">{pt.description || "-"}</td>}
-                      <td className="border-r border-slate-300 p-1">{Number(pt.nominal).toFixed(4)}</td>
-                      <td className="border-r border-slate-300 p-1">{Number(pt.ascending_reading).toFixed(4)}</td>
-                      {hasDescending && <td className="border-r border-slate-300 p-1">{Number(pt.descending_reading ?? 0).toFixed(4)}</td>}
-                      {customKeys.map((k) => {
+                      {activeColumns.map(k => {
+                        if (k === "description") return <td key={k} className="border-r border-slate-300 p-1 font-sans">{pt.description || "-"}</td>;
+                        if (k === "nominal") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.nominal ?? 0).toFixed(4))}</td>;
+                        if (k === "ascending_reading") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.ascending_reading ?? 0).toFixed(4))}</td>;
+                        if (k === "descending_reading") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.descending_reading ?? 0).toFixed(4))}</td>;
+                        if (k === "error") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.error ?? 0).toFixed(4))}</td>;
+                        if (k === "status") return null;
                         const obj = pt.customFields?.[k];
                         const displayVal = typeof obj === "object" && obj !== null && "value" in obj ? obj.value : (obj ?? "-");
                         return <td key={k} className="border-r border-slate-300 p-1">{String(displayVal)}</td>;
                       })}
-                      <td className="border-r border-slate-300 p-1">{Number(pt.error ?? 0).toFixed(4)}</td>
                       <td className={`p-1 font-bold font-sans ${pt.status === "PASS" ? "text-emerald-700" : pt.status === "FAIL" ? "text-red-700" : ""}`}>
                         {pt.status || "-"}
                       </td>
@@ -330,10 +365,10 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
 
         {/* Footer Laboratory Address Banner */}
         <div className="border border-black p-1.5 text-[8.5px] text-center space-y-0.5 bg-slate-100">
-          <div className="font-bold text-black text-[9px]">CALIBRATION CENTER :</div>
-          <p>Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.</p>
+          <div className="font-bold text-black text-[9px]">{footerLine1}</div>
+          <p>{footerLine2}</p>
           <p className="font-medium text-slate-700">
-            Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948
+            {footerLine3}
           </p>
         </div>
       </div>

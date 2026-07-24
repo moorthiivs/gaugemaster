@@ -68,6 +68,17 @@ export class CertificateService {
       footerText = userSettings?.reportConfig?.footerText || '';
     }
 
+    const certConfig = userId ? (await this.settingsService.findOneByUserId(userId))?.certificateConfig : null;
+    const headerCompanyName = certConfig?.headerCompanyName || 'ACME ENTERPRISES';
+    const headerCompanySubtitle = certConfig?.headerCompanySubtitle || '(CALIBRATION LABORATORY)';
+    const headerRightBoxText1 = certConfig?.headerRightBoxText1 || 'NABL / LAB';
+    const headerRightBoxText2 = certConfig?.headerRightBoxText2 || 'CC - 2632';
+    const footerLine1 = certConfig?.footerLine1 || 'CALIBRATION CENTER :';
+    const footerLine2 = certConfig?.footerLine2 || 'Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.';
+    const footerLine3 = certConfig?.footerLine3 || 'Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948';
+    
+    const procedureReference = calibration.procedure_reference || 'AE/CAL-SOP/01';
+
     const resolveImagePath = (src: string) => {
       if (!src) return src;
       if (src.startsWith('data:')) return src;
@@ -192,82 +203,51 @@ export class CertificateService {
         });
       }
     });
-    const customKeys = Array.from(customColMap.keys());
+
+    const hidden = new Set(calibration.hidden_columns || []);
+    const columnOrder = calibration.column_order && calibration.column_order.length > 0 
+      ? calibration.column_order 
+      : ['description', 'nominal', 'ascending_reading', hasDescending ? 'descending_reading' : '', ...Array.from(customColMap.keys()), 'error'].filter(Boolean);
+    
+    // Always include 'pt' at start and 'status' at end conceptually, but we build headers exactly as requested.
+    const activeColumns = columnOrder.filter(k => k !== 'pt' && k !== 'actions' && !hidden.has(k));
 
     // Build Table Header
     const dataTableHeader: any[] = [{ text: 'Sr No.', style: 'thCell' }];
-    if (hasDescription) {
-      dataTableHeader.push({ text: 'Description', style: 'thCell' });
-    }
-    dataTableHeader.push(
-      { text: 'STANDARD VALUE', style: 'thCell' },
-      {
-        text: hasDescending ? 'AVG OBS VALUE (ASC)' : 'AVG OBS VALUE UUC',
-        style: 'thCell',
-      },
-    );
-    if (hasDescending) {
-      dataTableHeader.push({ text: 'AVG OBS VALUE (DESC)', style: 'thCell' });
-    }
-    customKeys.forEach((k) => {
-      const label = customColMap.get(k) || k;
-      dataTableHeader.push({ text: label, style: 'thCell' });
+    activeColumns.forEach(k => {
+      if (k === 'description') dataTableHeader.push({ text: 'Description', style: 'thCell' });
+      else if (k === 'nominal') dataTableHeader.push({ text: 'Nominal', style: 'thCell' });
+      else if (k === 'ascending_reading') dataTableHeader.push({ text: hasDescending ? 'Ascending' : 'Actual', style: 'thCell' });
+      else if (k === 'descending_reading') dataTableHeader.push({ text: 'Descending', style: 'thCell' });
+      else if (k === 'error') dataTableHeader.push({ text: 'Error', style: 'thCell' });
+      else if (k === 'status') return;
+      else dataTableHeader.push({ text: customColMap.get(k) || k, style: 'thCell' });
     });
-    dataTableHeader.push(
-      { text: 'ERROR', style: 'thCell' },
-      { text: 'Status', style: 'thCell' },
-    );
+    dataTableHeader.push({ text: 'Status', style: 'thCell' });
 
     // Build Table Body
     const dataTableBody = [dataTableHeader];
     points.forEach((pt: CalibrationPoint, idx: number) => {
       const status = pt.status || '-';
-      const statusColor =
-        status === 'PASS' ? '#15803d' : status === 'FAIL' ? '#b91c1c' : '#000';
+      const statusColor = status === 'PASS' ? '#15803d' : status === 'FAIL' ? '#b91c1c' : '#000';
 
-      const row: any[] = [
-        {
-          text: String(pt.point_number || idx + 1).padStart(2, '0'),
-          style: 'tdCell',
-        },
-      ];
+      const row: any[] = [{ text: String(pt.point_number || idx + 1).padStart(2, '0'), style: 'tdCell' }];
 
-      if (hasDescription) {
-        row.push({
-          text: String((pt as any).description || '-'),
-          style: 'tdCell',
-        });
-      }
-
-      row.push(
-        { text: Number(pt.nominal ?? 0).toFixed(4), style: 'tdCellMono' },
-        {
-          text: Number(pt.ascending_reading ?? 0).toFixed(4),
-          style: 'tdCellMono',
-        },
-      );
-
-      if (hasDescending) {
-        row.push({
-          text: Number(pt.descending_reading ?? 0).toFixed(4),
-          style: 'tdCellMono',
-        });
-      }
-
-      customKeys.forEach((k) => {
-        const obj = ((pt as any).customFields as any)?.[k];
-        const valStr =
-          typeof obj === 'object' && obj !== null && 'value' in obj
-            ? String(obj.value ?? '-')
-            : String(obj ?? '-');
-        row.push({ text: valStr, style: 'tdCellMono' });
+      activeColumns.forEach(k => {
+        if (k === 'description') row.push({ text: String((pt as any).description || '-'), style: 'tdCell' });
+        else if (k === 'nominal') row.push({ text: parseFloat(Number(pt.nominal ?? 0).toFixed(4)), style: 'tdCellMono' });
+        else if (k === 'ascending_reading') row.push({ text: parseFloat(Number(pt.ascending_reading ?? 0).toFixed(4)), style: 'tdCellMono' });
+        else if (k === 'descending_reading') row.push({ text: parseFloat(Number(pt.descending_reading ?? 0).toFixed(4)), style: 'tdCellMono' });
+        else if (k === 'error') row.push({ text: parseFloat(Number(pt.error ?? 0).toFixed(4)), style: 'tdCellMono' });
+        else if (k === 'status') return;
+        else {
+          const obj = ((pt as any).customFields as any)?.[k];
+          const valStr = typeof obj === 'object' && obj !== null && 'value' in obj ? String(obj.value ?? '-') : String(obj ?? '-');
+          row.push({ text: valStr, style: 'tdCellMono' });
+        }
       });
 
-      row.push(
-        { text: Number(pt.error ?? 0).toFixed(4), style: 'tdCellMono' },
-        { text: status, style: 'tdCell', color: statusColor, bold: true },
-      );
-
+      row.push({ text: status, style: 'tdCell', color: statusColor, bold: true });
       dataTableBody.push(row);
     });
 
@@ -313,13 +293,13 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'ACME ENTERPRISES',
+                      text: headerCompanyName,
                       bold: true,
                       fontSize: 11,
                       color: '#000',
                     },
                     {
-                      text: '(CALIBRATION LABORATORY)',
+                      text: headerCompanySubtitle,
                       fontSize: 7.5,
                       bold: true,
                       color: '#475569',
@@ -337,13 +317,13 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'NABL / LAB',
+                      text: headerRightBoxText1,
                       fontSize: 7,
                       bold: true,
                       alignment: 'right',
                     },
                     {
-                      text: 'CC - 2632',
+                      text: headerRightBoxText2,
                       fontSize: 9,
                       bold: true,
                       alignment: 'right',
@@ -527,7 +507,7 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'Procedure reference : AE/CAL-SOP/01',
+                      text: `Procedure reference : ${procedureReference}`,
                       style: 'subNote',
                     },
                     {
@@ -627,6 +607,10 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000',
             vLineColor: () => '#000',
+            paddingLeft: () => 0,
+            paddingRight: () => 0,
+            paddingTop: () => 0,
+            paddingBottom: () => 0,
           },
           margin: [0, 0, 0, 6] as [number, number, number, number],
         },
@@ -677,6 +661,10 @@ export class CertificateService {
                 vLineWidth: () => 0.5,
                 hLineColor: () => '#000',
                 vLineColor: () => '#000',
+                paddingLeft: () => 0,
+                paddingRight: () => 0,
+                paddingTop: () => 0,
+                paddingBottom: () => 0,
               },
               margin: [0, 0, 0, 8] as [number, number, number, number],
             }
@@ -789,14 +777,20 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'CALIBRATION CENTER :',
+                      text: footerLine1,
                       bold: true,
                       fontSize: 8,
                       alignment: 'center',
                     },
                     {
-                      text: 'Laboratory Address, Behind Main Road, Industrial Zone, State - 440024.',
+                      text: footerLine2,
                       fontSize: 7.5,
+                      alignment: 'center',
+                    },
+                    {
+                      text: footerLine3,
+                      fontSize: 7.5,
+                      color: '#475569',
                       alignment: 'center',
                     },
                     {

@@ -41,14 +41,20 @@ export interface CalibrationRecord {
     humidity: string;
     pressure?: string;
   };
+  procedure_reference?: string;
 
   // Data
   calibration_points: CalibrationPoint[];
+  custom_columns?: any[];
+  column_order?: string[];
+  hidden_columns?: string[];
 
   // Results
   uncertainty: string;
   verdict: "PASS" | "FAIL" | "CONDITIONAL";
   remarks?: string;
+  status_rule_type?: string;
+  status_formula?: string;
 
   // Signatories
   calibrated_by: string;
@@ -214,3 +220,14 @@ export const CALIBRATION_TYPES: CalibrationTypeConfig[] = [
     units: ["L/min", "m³/h", "GPM"],
   },
 ];
+
+export interface CalibrationAuditLog {
+  id: string;
+  calibration_id: string;
+  edited_by_id?: string;
+  edited_by_name?: string;
+  edited_by?: any;
+  changes_summary: { field: string; oldValue: any; newValue: any }[];
+  remarks?: string;
+  edited_at: string;
+}

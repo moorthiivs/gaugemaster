@@ -12,7 +12,7 @@ export async function createCalibration(data: Partial<CalibrationRecord>): Promi
   return res.data;
 }
 
-/** List calibrations with filters and pagination */
+/** List calibrations with filters, search, and pagination */
 export async function listCalibrations(params: {
   userId?: string;
   companyId?: string;
@@ -21,6 +21,7 @@ export async function listCalibrations(params: {
   verdict?: string;
   dateFrom?: string;
   dateTo?: string;
+  search?: string;
   page?: number;
   pageSize?: number;
 }) {
@@ -111,4 +112,30 @@ export async function saveDraft(userId: string, data: any, draftId?: string) {
 export async function deleteDraft(id: string) {
   const res = await httpClient.delete(`/calibrations/draft/${id}`);
   return res.data;
+}
+
+/** Update an existing completed calibration record */
+export async function updateCalibration(
+  id: string,
+  data: Partial<CalibrationRecord>,
+  editedByUserId?: string,
+  editedByName?: string,
+): Promise<CalibrationRecord> {
+  const res = await httpClient.put(`/calibrations/${id}`, {
+    dto: data,
+    editedByUserId,
+    editedByName,
+  });
+  return res.data;
+}
+
+/** Get audit trail logs for a calibration */
+export async function getCalibrationAuditLogs(calibrationId: string) {
+  const res = await httpClient.get(`/calibrations/${calibrationId}/audit-logs`);
+  return res.data;
+}
+
+/** Delete a completed calibration record */
+export async function deleteCalibration(id: string): Promise<void> {
+  await httpClient.delete(`/calibrations/${id}`);
 }

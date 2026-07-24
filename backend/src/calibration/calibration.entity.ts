@@ -8,9 +8,11 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   ManyToOne,
+  OneToMany,
   JoinColumn,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import { CalibrationAuditLog } from './calibration-audit-log.entity';
 
 /**
  * Stores each calibration performed on an instrument.
@@ -71,6 +73,15 @@ export class Calibration {
   @Column({ type: 'jsonb', nullable: true })
   calibration_points: CalibrationPoint[];
 
+  @Column({ type: 'jsonb', nullable: true })
+  custom_columns?: any[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  column_order?: string[];
+
+  @Column({ type: 'jsonb', nullable: true })
+  hidden_columns?: string[];
+
   // ── Results ──────────────────────────────────────────────────
   @Column({ nullable: true })
   uncertainty: string;
@@ -80,6 +91,15 @@ export class Calibration {
 
   @Column({ type: 'text', nullable: true })
   remarks: string;
+
+  @Column({ nullable: true })
+  status_rule_type?: string;
+
+  @Column({ type: 'text', nullable: true })
+  status_formula?: string;
+
+  @Column({ nullable: true })
+  procedure_reference?: string;
 
   // ── Signatories ──────────────────────────────────────────────
   @Column({ nullable: true })
@@ -136,6 +156,11 @@ export class Calibration {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  @OneToMany(() => CalibrationAuditLog, (log) => log.calibration, {
+    cascade: true,
+  })
+  audit_logs: CalibrationAuditLog[];
 }
 
 /**

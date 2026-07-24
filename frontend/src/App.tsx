@@ -24,6 +24,8 @@ import CalendarPage from "./pages/CalendarPage";
 import Calibration from "./pages/Calibration";
 import CalibrationWizard from "./pages/CalibrationWizard";
 import CalibrationHistory from "./pages/CalibrationHistory";
+import TemplateBuilder from "./pages/TemplateBuilder";
+import TemplateBuilderForm from "./pages/TemplateBuilderForm";
 
 const queryClient = new QueryClient();
 
@@ -78,6 +80,8 @@ const App = () => (
                   <Route path="/instruments/:id/edit" element={<InstrumentForm />} />
                   <Route path="/reports" element={<Reports />} />
                   <Route path="/calibration" element={<Calibration />} />
+                  <Route path="/calibration/templates" element={<TemplateBuilder />} />
+                  <Route path="/calibration/templates/builder" element={<TemplateBuilderForm />} />
                   <Route path="/calibration/new" element={<CalibrationWizard />} />
                   <Route path="/calibration/new/:instrumentId" element={<CalibrationWizard />} />
                   <Route path="/calibration/history/:id" element={<CalibrationHistory />} />

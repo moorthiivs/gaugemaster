@@ -61,6 +61,18 @@ export class CreateCalibrationDto {
   @IsArray()
   calibration_points?: any[];
 
+  @IsOptional()
+  @IsArray()
+  custom_columns?: any[];
+
+  @IsOptional()
+  @IsArray()
+  column_order?: string[];
+
+  @IsOptional()
+  @IsArray()
+  hidden_columns?: string[];
+
   // Results
   @IsOptional()
   @IsString()
@@ -73,6 +85,18 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   remarks?: string;
+
+  @IsOptional()
+  @IsString()
+  status_rule_type?: string;
+
+  @IsOptional()
+  @IsString()
+  status_formula?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_reference?: string;
 
   // Signatories
   @IsOptional()

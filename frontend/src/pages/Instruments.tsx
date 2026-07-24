@@ -111,32 +111,11 @@ export default function Instruments() {
   const [isOpenupload, setisOpenupload] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
 
-  const [convertingId, setConvertingId] = useState<string | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
-  const [driveConnected, setDriveConnected] = useState(false);
 
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [instrumentsToPrint, setInstrumentsToPrint] = useState<Instrument[]>([]);
 
-  const handleConvertToGoogleSheet = async (id: string) => {
-    try {
-      setConvertingId(id);
-      const res = await httpClient.post(`${BASE_URL}/instruments/${id}/google-sheet/convert`);
-      if (res.data?.url) {
-        toast({ title: "Opened in Google Sheets" });
-        window.open(res.data.url, "_blank");
-        fetchData(); // Refresh list to update URL
-      }
-    } catch (err: any) {
-      toast({ 
-        title: "Failed to open in Google Sheets", 
-        description: err.response?.data?.message || err.message,
-        variant: "destructive" 
-      });
-    } finally {
-      setConvertingId(null);
-    }
-  };
   const [isOpenCalibagency, setisOpenCalibagency] = useState(false);
   const [selectedAgency, setSelectedAgency] = useState("");
   const [description, setDescription] = useState("");
@@ -307,12 +286,6 @@ export default function Instruments() {
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
     });
-    
-    if (user?.companyId) {
-      httpClient.get(`/backup/drive/status?companyId=${user.companyId}`).then(res => {
-        setDriveConnected(res.data?.connected || false);
-      }).catch(err => console.error("Failed to fetch drive status", err));
-    }
   }, [user]);
 
 
@@ -670,7 +643,7 @@ export default function Instruments() {
             <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
               <input 
                 type="file" 
-                accept=".xlsx,.xls"
+                accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
@@ -700,21 +673,6 @@ export default function Instruments() {
               <FileSpreadsheet className="h-3 w-3" />
               View
             </a>
-            {(driveConnected && certFile.match(/\.(xlsx|xls)$/i)) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={convertingId === instId}
-                className="h-6 px-2 text-xs flex gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleConvertToGoogleSheet(instId);
-                }}
-              >
-                {convertingId === instId ? <Loader2 className="h-3 w-3 animate-spin" /> : <Edit className="h-3 w-3" />}
-                Sheets
-              </Button>
-            )}
             <div className="relative inline-block ml-1" onClick={(e) => e.stopPropagation()}>
               <input 
                 type="file" 
@@ -1513,6 +1471,7 @@ export default function Instruments() {
                       <TableHead>Updated On</TableHead>
                       <TableHead>Last Calibration</TableHead>
                       <TableHead>Due Date</TableHead>
+                      <TableHead>Source</TableHead>
                       <TableHead>Certificate</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1527,6 +1486,11 @@ export default function Instruments() {
                         </TableCell>
                         <TableCell>
                           {record.due_date ? new Date(record.due_date).toLocaleDateString() : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={record.calibration_source === 'In-House' ? 'bg-blue-50 text-blue-700' : record.calibration_source === 'External' ? 'bg-amber-50 text-amber-700' : ''}>
+                            {record.calibration_source || 'Unknown'}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           {record.certificate_file ? (

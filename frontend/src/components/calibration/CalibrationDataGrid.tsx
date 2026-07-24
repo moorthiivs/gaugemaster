@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { CalibrationPoint, CalibrationTypeConfig } from "@/types/calibration";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -14,8 +16,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
-import { HyperFormula } from "hyperformula";
+import {
+  CustomColumn,
+  evaluateFormulaValue,
+  FORMULA_VARIABLE_SUGGESTIONS,
+  getExcelColumnLetter,
+  validateFormulaSyntax,
+} from "@/lib/formulaEngine";
+
+export type { CustomColumn };
 
 interface CalibrationDataGridProps {
   typeConfig: CalibrationTypeConfig;
@@ -25,23 +40,35 @@ interface CalibrationDataGridProps {
   onUnitChange: (unit: string) => void;
   tolerance: number;
   onToleranceChange: (tolerance: number) => void;
+  initialCustomColumns?: CustomColumn[];
+  initialColumnOrder?: string[];
+  initialHiddenColumns?: string[];
+  onCustomColumnsChange?: (columns: CustomColumn[]) => void;
+  onColumnOrderChange?: (order: string[]) => void;
+  onHiddenColumnsChange?: (hidden: string[]) => void;
+  acceptanceCriteria?: {
+    enabled?: boolean;
+    value?: number;
+    type?: "percentage" | "absolute";
+  };
+  onAcceptanceCriteriaChange?: (config: { enabled?: boolean; value?: number; type?: "percentage" | "absolute" }) => void;
+  initialStatusRuleType?: "default" | "custom_formula";
+  initialStatusFormula?: string;
+  onStatusRuleChange?: (ruleType: "default" | "custom_formula", formula: string) => void;
 }
 
-export interface CustomColumn {
-  id: string;
-  name: string;
-  type: "text" | "number" | "formula";
-  formulaType?: "avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom";
-  customFormula?: string;
-}
+const ALL_STANDARD_COLUMNS = [
+  { id: "description", label: "Description" },
+  { id: "nominal", label: "Nominal Value" },
+  { id: "tolerance", label: "Tolerance (±)" },
+  { id: "ascending_reading", label: "Actual / Ascending" },
+  { id: "descending_reading", label: "Descending Reading" },
+  { id: "error", label: "Error" },
+  { id: "status", label: "Status" },
+];
 
 /**
- * Dynamic data entry grid for calibration points.
- * Features:
- * - Unified Column Order Engine (Drag & Drop or click ← / → to move custom columns anywhere)
- * - Powered by HyperFormula (Excel-compatible formula calculation engine)
- * - Editable per-item tolerance
- * - High-precision string input handling (allows 0.000 / micron values without erasing decimals)
+ * Dynamic data entry grid powered by TanStack Virtual & HyperFormula.
  */
 export function CalibrationDataGrid({
   typeConfig,
@@ -51,6 +78,17 @@ export function CalibrationDataGrid({
   onUnitChange,
   tolerance,
   onToleranceChange,
+  initialCustomColumns = [],
+  initialColumnOrder = [],
+  initialHiddenColumns = [],
+  onCustomColumnsChange,
+  onColumnOrderChange,
+  onHiddenColumnsChange,
+  acceptanceCriteria,
+  onAcceptanceCriteriaChange,
+  initialStatusRuleType = "default",
+  initialStatusFormula = "",
+  onStatusRuleChange,
 }: CalibrationDataGridProps) {
   const hasDescending = typeConfig.columns.some((c) => c.key === "descending_reading");
 
@@ -58,11 +96,56 @@ export function CalibrationDataGrid({
   const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
   const [rawTolerance, setRawTolerance] = useState<string | null>(null);
 
-  // Dynamic custom columns state
-  const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  // Dynamic custom columns & hidden columns state
+  const [customColumns, setCustomColumns] = useState<CustomColumn[]>(initialCustomColumns);
+  const [columnOrder, setColumnOrder] = useState<string[]>(initialColumnOrder);
+  const [hiddenColumns, setHiddenColumns] = useState<string[]>(initialHiddenColumns);
 
-  // Column order state storing column IDs in order
-  const [columnOrder, setColumnOrder] = useState<string[]>([]);
+  // Status Rule & Formula state
+  const [statusRuleType, setStatusRuleType] = useState<"default" | "custom_formula">(initialStatusRuleType);
+  const [statusFormula, setStatusFormula] = useState<string>(initialStatusFormula);
+  const [isEditStatusOpen, setIsEditStatusOpen] = useState(false);
+  const [editStatusFormula, setEditStatusFormula] = useState<string>(initialStatusFormula);
+  const [editStatusRuleType, setEditStatusRuleType] = useState<"default" | "custom_formula">(initialStatusRuleType);
+
+  // Parent container ref for TanStack Virtualizer
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Sync initial props if changed externally (e.g. when template is loaded)
+  useEffect(() => {
+    setCustomColumns(initialCustomColumns || []);
+  }, [initialCustomColumns]);
+
+  useEffect(() => {
+    setColumnOrder(initialColumnOrder || []);
+  }, [initialColumnOrder]);
+
+  useEffect(() => {
+    setHiddenColumns(initialHiddenColumns || []);
+  }, [initialHiddenColumns]);
+
+  useEffect(() => {
+    setStatusRuleType(initialStatusRuleType);
+    setEditStatusRuleType(initialStatusRuleType);
+  }, [initialStatusRuleType]);
+
+  useEffect(() => {
+    setStatusFormula(initialStatusFormula);
+    setEditStatusFormula(initialStatusFormula);
+  }, [initialStatusFormula]);
+
+  // Reset raw text inputs when points array changes (e.g. when applying a template)
+  useEffect(() => {
+    setRawInputs({});
+  }, [points]);
+
+  // TanStack Virtualizer for high-performance rendering of large point sets
+  const rowVirtualizer = useVirtualizer({
+    count: points.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 48, // Row height estimate in px
+    overscan: 8,
+  });
 
   // Drag and drop state
   const [draggedColId, setDraggedColId] = useState<string | null>(null);
@@ -75,43 +158,75 @@ export function CalibrationDataGrid({
   const [newFormulaType, setNewFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("avg");
   const [newCustomFormula, setNewCustomFormula] = useState("=Actual - Nominal");
 
-  // Calculate active unified column order
+  // Edit Column Dialog State
+  const [editingCol, setEditingCol] = useState<CustomColumn | null>(null);
+  const [editColName, setEditColName] = useState("");
+  const [editColType, setEditColType] = useState<"text" | "number" | "formula">("text");
+  const [editFormulaType, setEditFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("custom");
+  const [editCustomFormula, setEditCustomFormula] = useState("");
+
+  // Notify parent component on state changes
+  const updateCustomColumnsState = (cols: CustomColumn[]) => {
+    setCustomColumns(cols);
+    if (onCustomColumnsChange) onCustomColumnsChange(cols);
+  };
+
+  const updateColumnOrderState = (order: string[]) => {
+    setColumnOrder(order);
+    if (onColumnOrderChange) onColumnOrderChange(order);
+  };
+
+  const updateHiddenColumnsState = (hidden: string[]) => {
+    setHiddenColumns(hidden);
+    if (onHiddenColumnsChange) onHiddenColumnsChange(hidden);
+  };
+
+  const toggleColumnHide = (colId: string) => {
+    const nextHidden = hiddenColumns.includes(colId)
+      ? hiddenColumns.filter((id) => id !== colId)
+      : [...hiddenColumns, colId];
+    updateHiddenColumnsState(nextHidden);
+  };
+
+  // Calculate active unified column order filtered by hiddenColumns
+  // ALWAYS returns: ["pt", ...middleColumns, "actions"]
   const getActiveColumnOrder = (): string[] => {
-    const standardKeys = ["pt", "description", "nominal", "tolerance", "ascending_reading"];
+    const standardKeys = ["description", "nominal", "tolerance", "ascending_reading"];
     if (hasDescending) standardKeys.push("descending_reading");
-    standardKeys.push("error", "status", "actions");
+    standardKeys.push("error", "status");
 
     const customIds = customColumns.map((c) => c.id);
 
-    if (columnOrder.length > 0) {
-      let order = columnOrder.filter((k) => standardKeys.includes(k) || customIds.includes(k));
-
-      // Add missing standard keys
+    let fullOrder = columnOrder.length > 0 ? [...columnOrder] : [];
+    if (fullOrder.length === 0) {
+      fullOrder = ["description", "nominal", "tolerance", "ascending_reading"];
+      if (hasDescending) fullOrder.push("descending_reading");
+      customIds.forEach((id) => fullOrder.push(id));
+      fullOrder.push("error", "status");
+    } else {
       standardKeys.forEach((k) => {
-        if (!order.includes(k)) order.push(k);
+        if (!fullOrder.includes(k)) fullOrder.push(k);
       });
-
-      // Add missing custom keys
       customIds.forEach((id) => {
-        if (!order.includes(id)) {
-          const errIdx = order.indexOf("error");
-          if (errIdx !== -1) order.splice(errIdx, 0, id);
-          else order.push(id);
+        if (!fullOrder.includes(id)) {
+          const errIdx = fullOrder.indexOf("error");
+          if (errIdx !== -1) fullOrder.splice(errIdx, 0, id);
+          else fullOrder.push(id);
         }
       });
-
-      if (!hasDescending) {
-        order = order.filter((k) => k !== "descending_reading");
-      }
-      return order;
     }
 
-    // Default initial order
-    const initial = ["pt", "description", "nominal", "tolerance", "ascending_reading"];
-    if (hasDescending) initial.push("descending_reading");
-    customIds.forEach((id) => initial.push(id));
-    initial.push("error", "status", "actions");
-    return initial;
+    if (!hasDescending) {
+      fullOrder = fullOrder.filter((k) => k !== "descending_reading");
+    }
+
+    // Filter out 'pt', 'actions', and any hidden columns
+    const middleOrder = fullOrder.filter(
+      (key) => key !== "pt" && key !== "actions" && !hiddenColumns.includes(key)
+    );
+
+    // ALWAYS return 'pt' as Column 1 and 'actions' as the VERY LAST column
+    return ["pt", ...middleOrder, "actions"];
   };
 
   const addPoint = () => {
@@ -154,6 +269,59 @@ export function CalibrationDataGrid({
     return isNaN(parsed) ? 0 : parsed;
   };
 
+  const computePointStatus = (
+    pt: CalibrationPoint,
+    ruleType: "default" | "custom_formula" = statusRuleType,
+    formulaStr: string = statusFormula,
+    currentTol: number = tolerance,
+    currentColumns: CustomColumn[] = customColumns,
+    currentOrder: string[] = activeOrder
+  ): "PASS" | "FAIL" | undefined => {
+    const rowTol = pt.tolerance !== undefined && pt.tolerance !== null && pt.tolerance > 0
+      ? parseNum(pt.tolerance)
+      : parseNum(currentTol);
+
+    if (ruleType === "custom_formula" && formulaStr && formulaStr.trim()) {
+      const dummyCol: CustomColumn = {
+        id: "status_eval",
+        name: "Status Evaluation",
+        type: "formula",
+        formulaType: "custom",
+        customFormula: formulaStr,
+      };
+
+      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, currentOrder, rowTol);
+
+      if (resultStr === "TRUE" || resultStr === "1" || resultStr.toLowerCase() === "pass" || resultStr === "true") {
+        return "PASS";
+      }
+      if (resultStr === "FALSE" || resultStr === "0" || resultStr.toLowerCase() === "fail" || resultStr === "false") {
+        return "FAIL";
+      }
+      const numVal = parseFloat(resultStr);
+      if (!isNaN(numVal)) {
+        return rowTol > 0 ? (Math.abs(numVal) <= rowTol ? "PASS" : "FAIL") : "PASS";
+      }
+      return "FAIL";
+    }
+
+    // Default rule: If custom formula column named 'ERROR' or formula column exists, use its computed value!
+    let errVal = pt.error;
+    const formulaErrCol = currentColumns.find((c) => c.type === "formula");
+    if (formulaErrCol) {
+      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, currentOrder, rowTol);
+      const parsed = parseFloat(calcStr.replace("%", ""));
+      if (!isNaN(parsed)) {
+        errVal = parsed;
+      }
+    }
+
+    if (rowTol > 0 && errVal !== undefined) {
+      return Math.abs(errVal) <= rowTol ? "PASS" : "FAIL";
+    }
+    return "PASS";
+  };
+
   const updatePoint = (index: number, field: string, value: any) => {
     const updated = [...points];
     const pt = { ...updated[index] };
@@ -176,17 +344,7 @@ export function CalibrationDataGrid({
       pt.error = parseFloat((asc - nom).toFixed(6));
     }
 
-    // Determine pass/fail based on row tolerance
-    const rowTol = pt.tolerance !== undefined && pt.tolerance !== null && pt.tolerance > 0 
-      ? parseNum(pt.tolerance) 
-      : tolerance;
-
     pt.unit = unit;
-    if (rowTol > 0) {
-      pt.status = Math.abs(pt.error) <= rowTol ? "PASS" : "FAIL";
-    } else {
-      pt.status = undefined;
-    }
 
     // Ensure custom columns are mapped with name and value for certificate generation
     if (customColumns.length > 0) {
@@ -194,7 +352,7 @@ export function CalibrationDataGrid({
       const computedFields: Record<string, any> = {};
       customColumns.forEach((col) => {
         if (col.type === "formula") {
-          const val = calculateFormulaValue(col, pt);
+          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance);
           computedFields[col.id] = { name: col.name, value: val };
         } else {
           const existing = currentFields[col.id];
@@ -204,6 +362,9 @@ export function CalibrationDataGrid({
       });
       pt.customFields = computedFields;
     }
+
+    // Determine pass/fail status using computePointStatus
+    pt.status = computePointStatus(pt);
 
     updated[index] = pt;
     onPointsChange(updated);
@@ -255,9 +416,38 @@ export function CalibrationDataGrid({
     onPointsChange([...points, ...newPoints]);
   };
 
-  // Add Dynamic Column and place in columnOrder
+  // Helper to validate unique column names (case-insensitive)
+  const isColumnNameTaken = (nameToCheck: string, excludeColId?: string): boolean => {
+    const normalized = nameToCheck.trim().toLowerCase();
+    if (!normalized) return false;
+
+    const customDuplicate = customColumns.some(
+      (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
+    );
+    if (customDuplicate) return true;
+
+    const standardNames = [
+      "pt",
+      "sl.no",
+      "sl no",
+      "description",
+      "nominal",
+      "tolerance",
+      "actual",
+      "ascending",
+      "descending",
+      "error",
+      "status",
+    ];
+    return standardNames.includes(normalized);
+  };
+
+  const isAddNameDuplicate = isColumnNameTaken(newColName);
+  const isEditNameDuplicate = editingCol ? isColumnNameTaken(editColName, editingCol.id) : false;
+
+  // Add Dynamic Column
   const handleAddColumn = () => {
-    if (!newColName.trim()) return;
+    if (!newColName.trim() || isAddNameDuplicate) return;
     const colId = `col_${Date.now()}`;
     const newCol: CustomColumn = {
       id: colId,
@@ -267,7 +457,8 @@ export function CalibrationDataGrid({
       customFormula: newColType === "formula" && newFormulaType === "custom" ? newCustomFormula : undefined,
     };
 
-    setCustomColumns((prev) => [...prev, newCol]);
+    const nextCols = [...customColumns, newCol];
+    updateCustomColumnsState(nextCols);
 
     // Insert into column order
     const currentOrder = getActiveColumnOrder();
@@ -293,7 +484,7 @@ export function CalibrationDataGrid({
     } else {
       updatedOrder.push(colId);
     }
-    setColumnOrder(updatedOrder);
+    updateColumnOrderState(updatedOrder);
 
     // Reset dialog
     setNewColName("");
@@ -304,27 +495,58 @@ export function CalibrationDataGrid({
     setIsAddColumnOpen(false);
   };
 
-  const handleRemoveColumn = (colId: string) => {
-    setCustomColumns((prev) => prev.filter((c) => c.id !== colId));
-    setColumnOrder((prev) => prev.filter((id) => id !== colId));
+  // Edit Dynamic Column
+  const handleOpenEditColumn = (col: CustomColumn) => {
+    setEditingCol(col);
+    setEditColName(col.name);
+    setEditColType(col.type);
+    setEditFormulaType(col.formulaType || "custom");
+    setEditCustomFormula(col.customFormula || "=Actual - Nominal");
   };
 
-  // Move column left or right across any column in table
+  const handleSaveEditColumn = () => {
+    if (!editingCol || !editColName.trim() || isEditNameDuplicate) return;
+
+    const updatedCols = customColumns.map((c) => {
+      if (c.id === editingCol.id) {
+        return {
+          ...c,
+          name: editColName.trim(),
+          type: editColType,
+          formulaType: editColType === "formula" ? editFormulaType : undefined,
+          customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
+        };
+      }
+      return c;
+    });
+
+    updateCustomColumnsState(updatedCols);
+    setEditingCol(null);
+  };
+
+  const handleRemoveColumn = (colId: string) => {
+    const nextCols = customColumns.filter((c) => c.id !== colId);
+    const nextOrder = columnOrder.filter((id) => id !== colId);
+    updateCustomColumnsState(nextCols);
+    updateColumnOrderState(nextOrder);
+  };
+
+  // Move column left or right
   const moveColumnInOrder = (colId: string, direction: "left" | "right") => {
     const currentOrder = getActiveColumnOrder();
     const idx = currentOrder.indexOf(colId);
     if (idx === -1) return;
 
     const targetIdx = direction === "left" ? idx - 1 : idx + 1;
-    if (targetIdx <= 0 || targetIdx >= currentOrder.length - 1) return; // Stay within bounds
+    if (targetIdx <= 0 || targetIdx >= currentOrder.length - 1) return;
 
     const updated = [...currentOrder];
     const [moved] = updated.splice(idx, 1);
     updated.splice(targetIdx, 0, moved);
-    setColumnOrder(updated);
+    updateColumnOrderState(updated);
   };
 
-  // Drag and Drop handlers across any table column
+  // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, colId: string) => {
     setDraggedColId(colId);
     e.dataTransfer.setData("text/plain", colId);
@@ -348,76 +570,18 @@ export function CalibrationDataGrid({
       const updated = [...currentOrder];
       const [moved] = updated.splice(sourceIdx, 1);
       updated.splice(targetIdx, 0, moved);
-      setColumnOrder(updated);
+      updateColumnOrderState(updated);
     }
     setDraggedColId(null);
   };
 
-  // Evaluate formula using HyperFormula spreadsheet engine
-  const calculateFormulaValue = (col: CustomColumn, pt: CalibrationPoint) => {
-    const nom = parseNum(pt.nominal);
-    const asc = parseNum(pt.ascending_reading);
-    const desc = pt.descending_reading !== undefined ? parseNum(pt.descending_reading) : undefined;
-    const actual = desc !== undefined ? (asc + desc) / 2 : asc;
-    const err = pt.error ?? (actual - nom);
+  // Helper to append variable suggestion to formula text field
+  const appendVariableToNewFormula = (varName: string) => {
+    setNewCustomFormula((prev) => (prev ? `${prev} ${varName}` : `=${varName}`));
+  };
 
-    let formulaExpr = "";
-
-    switch (col.formulaType) {
-      case "avg":
-        formulaExpr = "=AVERAGE(Nominal, Actual)";
-        break;
-      case "stddev":
-        formulaExpr = desc !== undefined ? "=STDEV(Ascending, Descending)" : "=0";
-        break;
-      case "pct_error":
-        formulaExpr = "=((Actual - Nominal) / Nominal) * 100";
-        break;
-      case "abs_error":
-        formulaExpr = "=ABS(Actual - Nominal)";
-        break;
-      case "bias":
-        formulaExpr = "=Actual - Nominal";
-        break;
-      case "custom":
-        formulaExpr = col.customFormula || "=Actual - Nominal";
-        break;
-      default:
-        return "-";
-    }
-
-    try {
-      let expr = formulaExpr.trim();
-      if (!expr.startsWith("=")) {
-        expr = "=" + expr;
-      }
-
-      // Convert variable names to HyperFormula cell coordinates
-      const excelExpr = expr
-        .replace(/\bNominal\b/gi, "A1")
-        .replace(/\bTolerance\b/gi, "B1")
-        .replace(/\bActual\b/gi, "C1")
-        .replace(/\bAscending\b/gi, "C1")
-        .replace(/\bDescending\b/gi, hasDescending ? "D1" : "0")
-        .replace(/\bError\b/gi, String(err));
-
-      const sheetData = [[nom, pt.tolerance || tolerance, asc, desc || 0]];
-      const hf = HyperFormula.buildFromArray(sheetData, { licenseKey: "gpl-v3" });
-
-      hf.setCellContents({ sheet: 0, col: 4, row: 0 }, [[excelExpr]]);
-      const res = hf.getCellValue({ sheet: 0, col: 4, row: 0 });
-
-      if (res === null || res === undefined) return "-";
-      if (typeof res === "object" && "type" in res) {
-        return `#${(res as any).type}`;
-      }
-      if (typeof res === "number") {
-        return isNaN(res) ? "Err" : (col.formulaType === "pct_error" ? `${res.toFixed(3)}%` : res.toFixed(4));
-      }
-      return String(res);
-    } catch {
-      return "Err";
-    }
+  const appendVariableToEditFormula = (varName: string) => {
+    setEditCustomFormula((prev) => (prev ? `${prev} ${varName}` : `=${varName}`));
   };
 
   // Helper to retrieve display values
@@ -441,7 +605,7 @@ export function CalibrationDataGrid({
 
   const renderCustomCell = (col: CustomColumn, pt: CalibrationPoint, idx: number) => {
     if (col.type === "formula") {
-      const calculatedVal = calculateFormulaValue(col, pt);
+      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance);
       return (
         <TableCell key={col.id} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -449,85 +613,197 @@ export function CalibrationDataGrid({
       );
     }
 
-    const fieldValue = pt.customFields?.[col.id];
+    const customData = pt.customFields?.[col.id];
+    const rawVal = typeof customData === "object" && customData !== null && "value" in customData ? customData.value : customData;
+    const isNum = col.type === "number";
+
     return (
-      <TableCell key={col.id} className="bg-primary/5 border-x border-primary/10">
+      <TableCell key={col.id} className="border-x border-primary/10">
         <Input
-          type="text"
-          inputMode={col.type === "number" ? "decimal" : "text"}
-          value={getCustomInputValue(idx, col.id, fieldValue)}
-          onChange={(e) => handleCustomFieldChange(idx, col.id, e.target.value, col.type === "number")}
-          placeholder={col.type === "number" ? "0.00" : "Value..."}
-          className="h-8 text-sm font-mono"
+          type={isNum ? "number" : "text"}
+          step={isNum ? "any" : undefined}
+          value={getCustomInputValue(idx, col.id, rawVal)}
+          onChange={(e) => handleCustomFieldChange(idx, col.id, e.target.value, isNum)}
+          className="h-9 text-xs"
+          placeholder={isNum ? "0.00" : "Text..."}
         />
       </TableCell>
     );
   };
+
+  const activeOrder = getActiveColumnOrder();
 
   const nominalCol = typeConfig.columns.find((c) => c.key === "nominal");
   const ascCol = typeConfig.columns.find((c) => c.key === "ascending_reading");
   const descCol = typeConfig.columns.find((c) => c.key === "descending_reading");
   const errorCol = typeConfig.columns.find((c) => c.key === "error");
 
-  const activeOrder = getActiveColumnOrder();
+  const virtualItems = rowVirtualizer.getVirtualItems();
 
   return (
     <div className="space-y-4">
-      {/* Controls Row */}
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Unit</label>
-          <Select value={unit} onValueChange={onUnitChange}>
-            <SelectTrigger className="w-[120px] h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {typeConfig.units.map((u) => (
-                <SelectItem key={u} value={u}>
-                  {u}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      {/* Top Config & Toolbar Bar */}
+      <div className="flex flex-wrap items-end justify-between gap-4 p-4 border rounded-xl bg-card shadow-xs">
+        <div className="flex items-center gap-3 flex-wrap">
+          {acceptanceCriteria?.enabled && (
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground font-semibold">Acceptance Criteria</Label>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="number"
+                  step="any"
+                  value={acceptanceCriteria.value ?? 2}
+                  onChange={(e) => {
+                    if (onAcceptanceCriteriaChange) {
+                      onAcceptanceCriteriaChange({
+                        ...acceptanceCriteria,
+                        value: e.target.value === "" ? 0 : parseFloat(e.target.value),
+                      });
+                    }
+                  }}
+                  className="w-[90px] h-9 text-xs font-mono font-bold"
+                />
+                <Badge variant="outline" className="h-9 px-2 text-xs font-semibold font-mono bg-muted/30">
+                  {acceptanceCriteria.type === "percentage" ? "%" : unit}
+                </Badge>
+              </div>
+            </div>
+          )}
+          
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground font-semibold">Unit</Label>
+            <Select value={unit} onValueChange={onUnitChange}>
+              <SelectTrigger className="w-[110px] h-9 text-xs">
+                <SelectValue placeholder="Unit" />
+              </SelectTrigger>
+              <SelectContent>
+                {typeConfig.units.map((u) => (
+                  <SelectItem key={u} value={u}>
+                    {u}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground font-semibold">
+              Default Tolerance (±)
+            </Label>
+            <Input
+              type="number"
+              step="any"
+              value={
+                rawTolerance !== null
+                  ? rawTolerance
+                  : tolerance !== undefined && tolerance !== null
+                  ? String(tolerance)
+                  : ""
+              }
+              onChange={(e) => {
+                const text = e.target.value;
+                setRawTolerance(text);
+                const parsed = parseFloat(text);
+                const newTol = isNaN(parsed) ? 0 : parsed;
+                onToleranceChange(newTol);
+
+                const updated = points.map((pt) => {
+                  const ptTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : newTol;
+                  const newPt = { ...pt };
+                  if (ptTol > 0) {
+                    newPt.status = Math.abs(newPt.error) <= ptTol ? "PASS" : "FAIL";
+                  } else {
+                    newPt.status = undefined;
+                  }
+                  return newPt;
+                });
+                onPointsChange(updated);
+              }}
+              placeholder="0.01"
+              className="w-[120px] h-9 text-xs"
+            />
+          </div>
         </div>
 
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Default Tolerance (±)</label>
-          <Input
-            type="text"
-            inputMode="decimal"
-            value={
-              rawTolerance !== null
-                ? rawTolerance
-                : tolerance !== undefined && tolerance !== null
-                ? String(tolerance)
-                : ""
-            }
-            onChange={(e) => {
-              const text = e.target.value;
-              setRawTolerance(text);
-              const parsed = parseFloat(text);
-              const newTol = isNaN(parsed) ? 0 : parsed;
-              onToleranceChange(newTol);
+        <div className="flex items-end gap-2 ml-auto flex-wrap">
+          {/* Columns & Visibility Popover */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="text-xs gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-primary" />
+                Columns & Visibility
+                {hiddenColumns.length > 0 && (
+                  <Badge variant="destructive" className="ml-1 text-[9px] px-1 py-0 h-4">
+                    {hiddenColumns.length} hidden
+                  </Badge>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-3 space-y-3" align="end">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="font-bold text-xs">Toggle Column Visibility</span>
+                {hiddenColumns.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] text-primary p-0"
+                    onClick={() => updateHiddenColumnsState([])}
+                  >
+                    Show All
+                  </Button>
+                )}
+              </div>
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase block">Standard Columns</span>
+                {ALL_STANDARD_COLUMNS.map((col) => {
+                  if (col.id === "descending_reading" && !hasDescending) return null;
+                  const isVisible = !hiddenColumns.includes(col.id);
+                  return (
+                    <div key={col.id} className="flex items-center justify-between text-xs py-0.5">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <Checkbox
+                          checked={isVisible}
+                          onCheckedChange={() => toggleColumnHide(col.id)}
+                        />
+                        <span>{col.label}</span>
+                      </label>
+                      {!isVisible ? (
+                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5 text-primary" />
+                      )}
+                    </div>
+                  );
+                })}
 
-              const updated = points.map((pt) => {
-                const ptTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : newTol;
-                const newPt = { ...pt };
-                if (ptTol > 0) {
-                  newPt.status = Math.abs(newPt.error) <= ptTol ? "PASS" : "FAIL";
-                } else {
-                  newPt.status = undefined;
-                }
-                return newPt;
-              });
-              onPointsChange(updated);
-            }}
-            placeholder="0.01"
-            className="w-[120px] h-9"
-          />
-        </div>
+                {customColumns.length > 0 && (
+                  <>
+                    <span className="text-[10px] font-semibold text-muted-foreground uppercase block pt-2 border-t">Custom Columns</span>
+                    {customColumns.map((col) => {
+                      const isVisible = !hiddenColumns.includes(col.id);
+                      return (
+                        <div key={col.id} className="flex items-center justify-between text-xs py-0.5">
+                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                            <Checkbox
+                              checked={isVisible}
+                              onCheckedChange={() => toggleColumnHide(col.id)}
+                            />
+                            <span className="truncate max-w-[140px]">{col.name}</span>
+                          </label>
+                          {!isVisible ? (
+                            <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                          ) : (
+                            <Eye className="w-3.5 h-3.5 text-primary" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
 
-        <div className="flex gap-2 ml-auto flex-wrap">
           <Button variant="outline" size="sm" onClick={() => setIsAddColumnOpen(true)} className="text-xs gap-1 border-dashed">
             <Columns className="w-3.5 h-3.5 text-primary" />
             Add Column
@@ -545,22 +821,138 @@ export function CalibrationDataGrid({
         </div>
       </div>
 
-      {/* Data Table */}
+      {/* TanStack Virtual Data Table */}
       {points.length > 0 ? (
-        <div className="border rounded-lg overflow-x-auto shadow-sm">
+        <div
+          ref={parentRef}
+          className="border rounded-lg overflow-auto shadow-sm max-h-[600px] relative"
+        >
           <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50">
+            <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10 shadow-xs">
+              <TableRow>
                 {activeOrder.map((colKey) => {
-                  if (colKey === "pt") return <TableHead key="pt" className="w-12 text-center font-semibold">Pt</TableHead>;
-                  if (colKey === "description") return <TableHead key="description" className="font-semibold min-w-[120px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "description")}>Description</TableHead>;
-                  if (colKey === "nominal") return <TableHead key="nominal" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "nominal")}>{nominalCol?.label || "Nominal"} ({unit})</TableHead>;
-                  if (colKey === "tolerance") return <TableHead key="tolerance" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "tolerance")}>Tolerance (±)</TableHead>;
-                  if (colKey === "ascending_reading") return <TableHead key="ascending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "ascending_reading")}>{ascCol?.label || "Actual"} ({unit})</TableHead>;
-                  if (colKey === "descending_reading") return <TableHead key="descending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "descending_reading")}>{descCol?.label || "Descending"} ({unit})</TableHead>;
-                  if (colKey === "error") return <TableHead key="error" className="font-semibold" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "error")}>{errorCol?.label || "Error"} ({unit})</TableHead>;
-                  if (colKey === "status") return <TableHead key="status" className="font-semibold text-center">Status</TableHead>;
-                  if (colKey === "actions") return <TableHead key="actions" className="w-12"></TableHead>;
+                  if (colKey === "pt") return (
+                    <TableHead key="pt" className="w-12 text-center font-semibold border-r">
+                      <span>Pt</span>
+                    </TableHead>
+                  );
+
+                  if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
+
+                  const dataColumns = activeOrder.filter((k) => k !== "pt" && k !== "actions");
+                  const dataIdx = dataColumns.indexOf(colKey);
+                  const excelLetter = getExcelColumnLetter(dataIdx);
+
+                  if (colKey === "description") return (
+                    <TableHead key="description" className="font-semibold min-w-[120px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "description")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>Description</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("description")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "nominal") return (
+                    <TableHead key="nominal" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "nominal")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>{nominalCol?.label || "Nominal"} ({unit})</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("nominal")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "tolerance") return (
+                    <TableHead key="tolerance" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "tolerance")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>Tolerance (±)</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("tolerance")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "ascending_reading") return (
+                    <TableHead key="ascending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "ascending_reading")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>{ascCol?.label || "Actual"} ({unit})</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("ascending_reading")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "descending_reading") return (
+                    <TableHead key="descending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "descending_reading")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>{descCol?.label || "Descending"} ({unit})</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("descending_reading")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "error") return (
+                    <TableHead key="error" className="font-semibold" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "error")}>
+                      <div className="flex items-center justify-between group">
+                        <div className="flex items-center gap-1">
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <span>{errorCol?.label || "Error"} ({unit})</span>
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("error")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "status") return (
+                    <TableHead key="status" className="font-semibold text-center select-none">
+                      <div className="flex items-center justify-center gap-1 group">
+                        <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                        <span>Status</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => {
+                            setEditStatusRuleType(statusRuleType);
+                            setEditStatusFormula(statusFormula || "=ABS(C) <= tolerance");
+                            setIsEditStatusOpen(true);
+                          }}
+                          title="Configure Status Rule & Formula"
+                        >
+                          <Edit className="w-3 h-3" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("status")} title="Hide column">
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </TableHead>
+                  );
+
+                  if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
 
                   const col = customColumns.find((c) => c.id === colKey);
                   if (!col) return null;
@@ -577,6 +969,7 @@ export function CalibrationDataGrid({
                       <div className="flex items-center justify-between gap-1 py-1">
                         <div className="flex items-center gap-1 min-w-0 truncate">
                           <GripVertical className="w-3.5 h-3.5 text-primary/70 shrink-0" />
+                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
                           {col.type === "formula" && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
                           <span className="truncate text-xs font-bold text-primary">{col.name}</span>
                         </div>
@@ -589,7 +982,7 @@ export function CalibrationDataGrid({
                               e.stopPropagation();
                               moveColumnInOrder(col.id, "left");
                             }}
-                            title="Move column left"
+                            title="Move left"
                           >
                             <ChevronLeft className="w-3 h-3" />
                           </Button>
@@ -601,9 +994,21 @@ export function CalibrationDataGrid({
                               e.stopPropagation();
                               moveColumnInOrder(col.id, "right");
                             }}
-                            title="Move column right"
+                            title="Move right"
                           >
                             <ChevronRight className="w-3 h-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5 text-muted-foreground hover:text-primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEditColumn(col);
+                            }}
+                            title="Edit Column & Formula"
+                          >
+                            <Edit className="w-3 h-3" />
                           </Button>
                           <Button
                             variant="ghost"
@@ -625,130 +1030,25 @@ export function CalibrationDataGrid({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {points.map((pt, idx) => {
-                const ptTol = pt.tolerance !== undefined && pt.tolerance !== null && parseNum(pt.tolerance) > 0
-                  ? parseNum(pt.tolerance)
-                  : tolerance;
+              {points.map((pt, idx) => (
+                <TableRow key={idx} className="hover:bg-muted/30 border-b">
+                  {activeOrder.map((colKey) => {
+                    if (colKey === "pt") return <TableCell key="pt" className="font-mono text-center text-muted-foreground font-medium text-xs border-r w-12">{pt.point_number}</TableCell>;
+                    if (colKey === "description") return <TableCell key="description"><Input value={getInputValue(idx, "description", pt.description)} onChange={(e) => handleInputChange(idx, "description", e.target.value)} placeholder="e.g. GO" className="h-9 text-xs" /></TableCell>;
+                    if (colKey === "nominal") return <TableCell key="nominal"><Input type="number" step="any" value={getInputValue(idx, "nominal", pt.nominal)} onChange={(e) => handleInputChange(idx, "nominal", e.target.value)} className="h-9 text-xs font-mono" /></TableCell>;
+                    if (colKey === "tolerance") return <TableCell key="tolerance"><Input type="number" step="any" value={getInputValue(idx, "tolerance", pt.tolerance ?? tolerance)} onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)} className="h-9 text-xs font-mono" placeholder={String(tolerance)} /></TableCell>;
+                    if (colKey === "ascending_reading") return <TableCell key="ascending_reading"><Input type="number" step="any" value={getInputValue(idx, "ascending_reading", pt.ascending_reading)} onChange={(e) => handleInputChange(idx, "ascending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" /></TableCell>;
+                    if (colKey === "descending_reading" && hasDescending) return <TableCell key="descending_reading"><Input type="number" step="any" value={getInputValue(idx, "descending_reading", pt.descending_reading ?? 0)} onChange={(e) => handleInputChange(idx, "descending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" /></TableCell>;
+                    if (colKey === "error") return <TableCell key="error" className="font-mono text-xs font-semibold">{pt.error !== undefined ? pt.error.toFixed(4) : "-"}</TableCell>;
+                    if (colKey === "status") return <TableCell key="status" className="text-center">{pt.status ? <Badge variant={pt.status === "PASS" ? "default" : "destructive"} className="text-[10px] uppercase font-bold">{pt.status}</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>;
+                    if (colKey === "actions") return <TableCell key="actions" className="text-center border-l w-12"><Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => removePoint(idx)} title="Delete row"><Trash2 className="w-4 h-4" /></Button></TableCell>;
 
-                const isOutOfTolerance = ptTol > 0 && Math.abs(pt.error) > ptTol;
-
-                return (
-                  <TableRow key={idx} className={isOutOfTolerance ? "bg-red-50/60 dark:bg-red-950/20" : ""}>
-                    {activeOrder.map((colKey) => {
-                      if (colKey === "pt") return <TableCell key="pt" className="text-center font-medium text-muted-foreground">{pt.point_number}</TableCell>;
-                      if (colKey === "description") {
-                        return (
-                          <TableCell key="description">
-                            <Input
-                              type="text"
-                              value={getInputValue(idx, "description", pt.description)}
-                              onChange={(e) => handleInputChange(idx, "description", e.target.value)}
-                              placeholder="e.g., GO / NO GO"
-                              className="h-8 text-sm"
-                            />
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "nominal") {
-                        return (
-                          <TableCell key="nominal">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              value={getInputValue(idx, "nominal", pt.nominal)}
-                              onChange={(e) => handleInputChange(idx, "nominal", e.target.value)}
-                              placeholder="0.000"
-                              className="h-8 text-sm font-mono"
-                            />
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "tolerance") {
-                        return (
-                          <TableCell key="tolerance">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              value={getInputValue(idx, "tolerance", pt.tolerance)}
-                              onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)}
-                              placeholder={String(tolerance || "0.01")}
-                              className="h-8 text-sm font-mono"
-                            />
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "ascending_reading") {
-                        return (
-                          <TableCell key="ascending_reading">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              value={getInputValue(idx, "ascending_reading", pt.ascending_reading)}
-                              onChange={(e) => handleInputChange(idx, "ascending_reading", e.target.value)}
-                              placeholder="0.000"
-                              className="h-8 text-sm font-mono"
-                            />
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "descending_reading") {
-                        return (
-                          <TableCell key="descending_reading">
-                            <Input
-                              type="text"
-                              inputMode="decimal"
-                              value={getInputValue(idx, "descending_reading", pt.descending_reading)}
-                              onChange={(e) => handleInputChange(idx, "descending_reading", e.target.value)}
-                              placeholder="0.000"
-                              className="h-8 text-sm font-mono"
-                            />
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "error") {
-                        return (
-                          <TableCell key="error">
-                            <span className={`font-mono text-sm font-semibold ${isOutOfTolerance ? "text-red-600" : "text-emerald-600"}`}>
-                              {pt.error.toFixed(4)}
-                            </span>
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "status") {
-                        return (
-                          <TableCell key="status" className="text-center">
-                            {pt.status === "PASS" ? (
-                              <Badge className="bg-emerald-500/15 text-emerald-600 border-emerald-300 text-[10px] font-bold">PASS</Badge>
-                            ) : pt.status === "FAIL" ? (
-                              <Badge className="bg-red-500/15 text-red-600 border-red-300 text-[10px] font-bold">FAIL</Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </TableCell>
-                        );
-                      }
-                      if (colKey === "actions") {
-                        return (
-                          <TableCell key="actions">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => removePoint(idx)}
-                              className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </TableCell>
-                        );
-                      }
-
-                      const col = customColumns.find((c) => c.id === colKey);
-                      if (!col) return null;
-                      return renderCustomCell(col, pt, idx);
-                    })}
-                  </TableRow>
-                );
-              })}
+                    const col = customColumns.find((c) => c.id === colKey);
+                    if (!col) return null;
+                    return renderCustomCell(col, pt, idx);
+                  })}
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
@@ -759,54 +1059,64 @@ export function CalibrationDataGrid({
         </div>
       )}
 
-      {/* Summary */}
+      {/* Summary & Legend */}
       {points.length > 0 && (
-        <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
-          <span>{points.length} point(s)</span>
-          {points.some((p) => p.status !== undefined) && (
-            <>
-              <span className="text-emerald-600 font-bold">
-                {points.filter((p) => p.status === "PASS").length} Pass
-              </span>
-              <span className="text-red-600 font-bold">
-                {points.filter((p) => p.status === "FAIL").length} Fail
-              </span>
-            </>
-          )}
+        <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 flex-wrap gap-2">
+          <div className="flex items-center gap-4">
+            <span>{points.length} point(s)</span>
+            {points.some((p) => p.status !== undefined) && (
+              <>
+                <span className="text-emerald-600 font-bold">
+                  {points.filter((p) => p.status === "PASS").length} Pass
+                </span>
+                <span className="text-red-600 font-bold">
+                  {points.filter((p) => p.status === "FAIL").length} Fail
+                </span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/30 px-2 py-0.5 rounded border">
+            <Sparkles className="w-3 h-3 text-amber-500" />
+            <span>Powered by <strong>TanStack Virtual Engine</strong> (High Performance Virtual Scroll)</span>
+          </div>
         </div>
       )}
 
       {/* Add Column Dialog */}
       <Dialog open={isAddColumnOpen} onOpenChange={setIsAddColumnOpen}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Columns className="w-5 h-5 text-primary" />
               Add Custom Column
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs">
               Create a custom column for text, numeric entry, or dynamic calibration formulas.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div className="space-y-4 py-2 text-xs">
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Column Header Name</Label>
               <Input
                 value={newColName}
                 onChange={(e) => setNewColName(e.target.value)}
-                placeholder="e.g., Description, Average, Bias, Std Dev"
+                placeholder="e.g., DUC READING in rpm"
+                className={`text-xs ${isAddNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
               />
+              {isAddNameDuplicate && (
+                <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  A column with this name already exists. Please enter a unique name.
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Column Data Type</Label>
-                <Select
-                  value={newColType}
-                  onValueChange={(val: any) => setNewColType(val)}
-                >
-                  <SelectTrigger>
+                <Select value={newColType} onValueChange={(val: any) => setNewColType(val)}>
+                  <SelectTrigger className="text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -818,21 +1128,18 @@ export function CalibrationDataGrid({
               </div>
 
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Column Position / Placement</Label>
-                <Select
-                  value={newColPlacement}
-                  onValueChange={(val: any) => setNewColPlacement(val)}
-                >
-                  <SelectTrigger>
+                <Label className="text-xs font-semibold">Placement</Label>
+                <Select value={newColPlacement} onValueChange={(val: any) => setNewColPlacement(val)}>
+                  <SelectTrigger className="text-xs">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="after_actual">After Actual (Default)</SelectItem>
+                    <SelectItem value="after_actual">After Actual</SelectItem>
                     <SelectItem value="after_desc">After Description</SelectItem>
                     <SelectItem value="after_nom">After Nominal</SelectItem>
                     <SelectItem value="after_tol">After Tolerance</SelectItem>
                     <SelectItem value="before_error">Before Error</SelectItem>
-                    <SelectItem value="first">First Column (After Pt)</SelectItem>
+                    <SelectItem value="first">First Column</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -843,43 +1150,53 @@ export function CalibrationDataGrid({
                 <div className="space-y-1.5">
                   <Label className="text-xs font-semibold flex items-center gap-1">
                     <Calculator className="w-3.5 h-3.5 text-primary" />
-                    Select Formula Preset
+                    Formula Preset
                   </Label>
-                  <Select
-                    value={newFormulaType}
-                    onValueChange={(val: any) => setNewFormulaType(val)}
-                  >
-                    <SelectTrigger>
+                  <Select value={newFormulaType} onValueChange={(val: any) => setNewFormulaType(val)}>
+                    <SelectTrigger className="text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="avg">Average / Mean (Nominal & Actual)</SelectItem>
-                      <SelectItem value="stddev">Standard Deviation (Repeatability)</SelectItem>
-                      <SelectItem value="pct_error">Percentage Error (%)</SelectItem>
+                      <SelectItem value="avg">Average / Mean</SelectItem>
+                      <SelectItem value="stddev">Standard Deviation</SelectItem>
+                      <SelectItem value="pct_error">Percentage Error ((Actual - Nominal) / Nominal * 100)</SelectItem>
                       <SelectItem value="abs_error">Absolute Error (|Actual - Nominal|)</SelectItem>
-                      <SelectItem value="bias">Bias / Difference (Actual - Nominal)</SelectItem>
-                      <SelectItem value="custom">Custom Expression / Math</SelectItem>
+                      <SelectItem value="bias">Bias / Deviation (Actual - Nominal)</SelectItem>
+                      <SelectItem value="custom">Custom Excel / Math Expression</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 {newFormulaType === "custom" && (
-                  <div className="space-y-2 pt-1">
+                  <div className="space-y-2.5 pt-1">
                     <Label className="text-xs font-semibold flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                      Excel / HyperFormula Expression
+                      Formula Expression (e.g. =B - C or =(C - D)/D * 100)
                     </Label>
                     <Input
                       value={newCustomFormula}
                       onChange={(e) => setNewCustomFormula(e.target.value)}
-                      placeholder="e.g., =ROUND(Actual - Nominal, 4) or =IF(ABS(Error) <= Tolerance, 1, 0)"
-                      className="font-mono text-xs"
+                      placeholder="e.g., =B - C or =(C - D) / D * 100"
+                      className={`font-mono text-xs ${!validateFormulaSyntax(newCustomFormula).valid ? "border-amber-500 focus-visible:ring-amber-500" : ""}`}
                     />
-                    <p className="text-[11px] text-muted-foreground">
-                      Powered by <strong>HyperFormula</strong> (Excel engine). Supports <code className="text-primary font-bold">{`=AVERAGE()`}</code>, <code className="text-primary font-bold">{`=STDEV()`}</code>, <code className="text-primary font-bold">{`=ABS()`}</code>, <code className="text-primary font-bold">{`=ROUND()`}</code>, <code className="text-primary font-bold">{`=IF()`}</code>.
-                      <br />
-                      Variables: <code className="text-primary font-bold">{`Nominal`}</code>, <code className="text-primary font-bold">{`Actual`}</code>, <code className="text-primary font-bold">{`Error`}</code>, <code className="text-primary font-bold">{`Tolerance`}</code>
-                    </p>
+
+                    {!validateFormulaSyntax(newCustomFormula).valid && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        {validateFormulaSyntax(newCustomFormula).message}
+                      </p>
+                    )}
+
+                    {/* Concise Excel Syntax Reference */}
+                    <div className="space-y-1 text-[11px] text-muted-foreground p-2.5 rounded-lg bg-background border shadow-2xs">
+                      <span className="font-semibold block text-foreground">Standard Excel Formula Examples:</span>
+                      <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] pt-0.5">
+                        <div><code className="text-primary font-bold font-mono">=B - C</code> (Difference)</div>
+                        <div><code className="text-primary font-bold font-mono">=(B - C)/C * 100</code> (% Error)</div>
+                        <div><code className="text-primary font-bold font-mono">=ABS(B - C)</code> (Absolute)</div>
+                        <div><code className="text-primary font-bold font-mono">=AVERAGE(B, C)</code> (Mean)</div>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -887,11 +1204,298 @@ export function CalibrationDataGrid({
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAddColumnOpen(false)}>
+            <Button variant="outline" size="sm" onClick={() => setIsAddColumnOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleAddColumn} disabled={!newColName.trim()}>
+            <Button size="sm" onClick={handleAddColumn} disabled={!newColName.trim() || isAddNameDuplicate}>
               Add Column
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Column Dialog */}
+      <Dialog open={!!editingCol} onOpenChange={(open) => !open && setEditingCol(null)}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Edit className="w-5 h-5 text-primary" />
+              Edit Custom Column
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Rename column, change data type, or edit calculation formula.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Column Header Name</Label>
+              <Input
+                value={editColName}
+                onChange={(e) => setEditColName(e.target.value)}
+                placeholder="e.g., Error % in rpm"
+                className={`text-xs ${isEditNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
+              />
+              {isEditNameDuplicate && (
+                <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  A column with this name already exists. Please enter a unique name.
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Column Data Type</Label>
+              <Select value={editColType} onValueChange={(val: any) => setEditColType(val)}>
+                <SelectTrigger className="text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">Text Input (Manual)</SelectItem>
+                  <SelectItem value="number">Numeric Input (Manual)</SelectItem>
+                  <SelectItem value="formula">Calculated Formula (Auto-Computed)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {editColType === "formula" && (
+              <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Formula Type</Label>
+                  <Select value={editFormulaType} onValueChange={(val: any) => setEditFormulaType(val)}>
+                    <SelectTrigger className="text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="avg">Average / Mean</SelectItem>
+                      <SelectItem value="stddev">Standard Deviation</SelectItem>
+                      <SelectItem value="pct_error">Percentage Error ((Actual - Nominal) / Nominal * 100)</SelectItem>
+                      <SelectItem value="abs_error">Absolute Error (|Actual - Nominal|)</SelectItem>
+                      <SelectItem value="bias">Bias / Deviation (Actual - Nominal)</SelectItem>
+                      <SelectItem value="custom">Custom Formula Expression</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {editFormulaType === "custom" && (
+                  <div className="space-y-2.5 pt-1">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      Formula Expression (e.g. =B - C or =(C - D)/D * 100)
+                    </Label>
+                    <Input
+                      value={editCustomFormula}
+                      onChange={(e) => setEditCustomFormula(e.target.value)}
+                      placeholder="e.g., =B - C or =(C - D) / D * 100"
+                      className={`font-mono text-xs ${!validateFormulaSyntax(editCustomFormula).valid ? "border-amber-500 focus-visible:ring-amber-500" : ""}`}
+                    />
+
+                    {!validateFormulaSyntax(editCustomFormula).valid && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                        {validateFormulaSyntax(editCustomFormula).message}
+                      </p>
+                    )}
+
+                    {/* Concise Excel Syntax Reference */}
+                    <div className="space-y-1 text-[11px] text-muted-foreground p-2.5 rounded-lg bg-background border shadow-2xs">
+                      <span className="font-semibold block text-foreground">Standard Excel Formula Examples:</span>
+                      <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px] pt-0.5">
+                        <div><code className="text-primary font-bold font-mono">=B - C</code> (Difference)</div>
+                        <div><code className="text-primary font-bold font-mono">=(B - C)/C * 100</code> (% Error)</div>
+                        <div><code className="text-primary font-bold font-mono">=ABS(B - C)</code> (Absolute)</div>
+                        <div><code className="text-primary font-bold font-mono">=AVERAGE(B, C)</code> (Mean)</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setEditingCol(null)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSaveEditColumn} disabled={!editColName.trim() || isEditNameDuplicate}>
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Configure Status Rule & Formula Dialog */}
+      <Dialog open={isEditStatusOpen} onOpenChange={setIsEditStatusOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Calculator className="w-5 h-5 text-primary" />
+              Configure Status Rule & Formula
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Configure how Pass / Fail status is evaluated for each row using standard tolerance or custom expressions.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            {/* Rule Type Selector */}
+            <div className="space-y-2">
+              <Label className="text-xs font-bold">Status Evaluation Rule</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div
+                  onClick={() => setEditStatusRuleType("default")}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                    editStatusRuleType === "default"
+                      ? "border-primary bg-primary/10 font-bold text-primary"
+                      : "border-border hover:bg-accent"
+                  }`}
+                >
+                  <p className="text-xs font-bold">Default System Rule</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Evaluates ABS(Calculated Error) &le; Tolerance
+                  </p>
+                </div>
+
+                <div
+                  onClick={() => {
+                    setEditStatusRuleType("custom_formula");
+                    if (!editStatusFormula) {
+                      setEditStatusFormula("=ABS(C) <= tolerance");
+                    }
+                  }}
+                  className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                    editStatusRuleType === "custom_formula"
+                      ? "border-primary bg-primary/10 font-bold text-primary"
+                      : "border-border hover:bg-accent"
+                  }`}
+                >
+                  <p className="text-xs font-bold">Custom Status Formula</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Define custom pass/fail formula using column letters (A, B, C...)
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Custom Formula Editor */}
+            {editStatusRuleType === "custom_formula" && (
+              <div className="space-y-3 p-3 border rounded-lg bg-muted/20">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold">Custom Status Expression</Label>
+                    <span className="text-[10px] text-muted-foreground">Evaluates to TRUE (PASS) or FALSE (FAIL)</span>
+                  </div>
+                  <Input
+                    value={editStatusFormula}
+                    onChange={(e) => setEditStatusFormula(e.target.value)}
+                    placeholder="e.g. =ABS(C) <= tolerance"
+                    className="font-mono text-xs h-9 font-bold bg-background"
+                  />
+                </div>
+
+                {/* Quick Formula Presets */}
+                <div className="space-y-1">
+                  <span className="text-[10px] font-semibold text-muted-foreground block">Quick Formula Presets:</span>
+                  <div className="flex flex-wrap gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-2 font-mono"
+                      onClick={() => setEditStatusFormula("=ABS(C) <= tolerance")}
+                    >
+                      =ABS(C) &le; tolerance
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-2 font-mono"
+                      onClick={() => setEditStatusFormula("=ABS(C) <= 0.2")}
+                    >
+                      =ABS(C) &le; 0.2
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] px-2 font-mono"
+                      onClick={() => setEditStatusFormula("=ABS(D) <= 2")}
+                    >
+                      =ABS(D) &le; 2%
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Clickable Variable Chips */}
+                <div className="space-y-1 pt-1">
+                  <span className="text-[10px] font-semibold text-muted-foreground block">Clickable Column Tokens:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {activeOrder
+                      .filter((k) => k !== "pt" && k !== "status" && k !== "actions")
+                      .map((colKey, colIdx) => {
+                        const excelLetter = getExcelColumnLetter(colIdx);
+                        let name = colKey;
+                        if (colKey === "description") name = "Description";
+                        else if (colKey === "nominal") name = "Nominal";
+                        else if (colKey === "tolerance") name = "Tolerance";
+                        else if (colKey === "ascending_reading") name = "Actual";
+                        else if (colKey === "descending_reading") name = "Descending";
+                        else if (colKey === "error") name = "Error";
+                        else {
+                          const c = customColumns.find((cc) => cc.id === colKey);
+                          if (c) name = c.name;
+                        }
+
+                        return (
+                          <Badge
+                            key={colKey}
+                            variant="secondary"
+                            onClick={() => {
+                              setEditStatusFormula((prev) => (prev ? `${prev} ${excelLetter}` : `=${excelLetter}`));
+                            }}
+                            className="cursor-pointer hover:bg-primary/20 text-[10px] font-mono gap-1 py-1"
+                            title={`Insert Column ${excelLetter} (${name})`}
+                          >
+                            <span className="font-bold text-primary">{excelLetter}</span>
+                            <span className="text-muted-foreground font-sans">({name})</span>
+                          </Badge>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setIsEditStatusOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setStatusRuleType(editStatusRuleType);
+                setStatusFormula(editStatusFormula);
+                if (onStatusRuleChange) {
+                  onStatusRuleChange(editStatusRuleType, editStatusFormula);
+                }
+
+                // Immediately recalculate status for all points
+                const updated = points.map((pt) => {
+                  const newPt = { ...pt };
+                  newPt.status = computePointStatus(
+                    newPt,
+                    editStatusRuleType,
+                    editStatusFormula,
+                    tolerance,
+                    customColumns,
+                    activeOrder
+                  );
+                  return newPt;
+                });
+                onPointsChange(updated);
+                setIsEditStatusOpen(false);
+              }}
+            >
+              Apply Status Rule
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -899,5 +1503,3 @@ export function CalibrationDataGrid({
     </div>
   );
 }
-
-

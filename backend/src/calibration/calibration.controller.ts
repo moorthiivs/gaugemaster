@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Put,
   Query,
   Res,
   Delete,
@@ -62,6 +63,7 @@ export class CalibrationController {
     @Query('verdict') verdict?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('search') search?: string,
     @Query('page') page: string = '1',
     @Query('pageSize') pageSize: string = '10',
   ) {
@@ -73,6 +75,7 @@ export class CalibrationController {
       verdict,
       dateFrom,
       dateTo,
+      search,
       page: parseInt(page, 10),
       pageSize: parseInt(pageSize, 10),
     });
@@ -99,6 +102,30 @@ export class CalibrationController {
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.calibrationService.findOne(id);
+  }
+
+  @Put(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() body: { dto: any; editedByUserId?: string; editedByName?: string },
+  ) {
+    const dto = body.dto || body;
+    return this.calibrationService.update(
+      id,
+      dto,
+      body.editedByUserId,
+      body.editedByName,
+    );
+  }
+
+  @Get(':id/audit-logs')
+  async getAuditLogs(@Param('id') id: string) {
+    return this.calibrationService.getAuditLogs(id);
+  }
+
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    return this.calibrationService.remove(id);
   }
 
   /**

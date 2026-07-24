@@ -102,70 +102,14 @@ export class InstrumentsController {
     async uploadCertificate(@Param('id') id: string, @UploadedFile() file: any) {
         let fileUrl = `/uploads/certificates/${file.filename}`;
         
-        try {
-            const instrument = await this.instrumentsService.findOne(id);
-            if (instrument && instrument.companyId) {
-                // Try to upload to Google Drive if connected
-                const status = await this.googleDriveService.getConnectionStatus(instrument.companyId);
-                if (status.connected) {
-                    const driveUrl = await this.googleDriveService.uploadCertificate(
-                        instrument.companyId,
-                        file.path,
-                        file.originalname
-                    );
-                    if (driveUrl) {
-                        fileUrl = driveUrl; // use Google Sheets link instead of local file
-                    }
-                }
-            }
-        } catch (err) {
-            console.error('Failed to upload certificate to Google Drive, falling back to local storage', err);
-        }
-
-        await this.instrumentsService.update(id, { certificate_file: fileUrl });
+        await this.instrumentsService.update(id, { 
+            certificate_file: fileUrl,
+            calibration_source: 'External' 
+        });
         return { message: "Certificate uploaded successfully", url: fileUrl };
     }
 
-    @Post(':id/google-sheet/convert')
-    async convertToGoogleSheet(@Param('id') id: string) {
-        const instrument = await this.instrumentsService.findOne(id);
-        if (!instrument || !instrument.companyId) {
-            throw new Error("Instrument or Company not found");
-        }
-
-        const status = await this.googleDriveService.getConnectionStatus(instrument.companyId);
-        if (!status.connected) {
-            throw new Error("Google Drive is not connected in Settings. Please connect it first.");
-        }
-
-        const localUrl = instrument.certificate_file;
-        if (!localUrl || !localUrl.match(/\.(xlsx|xls)$/i)) {
-            throw new Error("Certificate is not a local Excel file.");
-        }
-
-        const path = require('path');
-        const fs = require('fs');
-        
-        // Remove leading slash and resolve path
-        const localPath = path.join(process.cwd(), localUrl.replace(/^\//, ''));
-        if (!fs.existsSync(localPath)) {
-            throw new Error("Local certificate file not found.");
-        }
-
-        const fileName = path.basename(localPath);
-        
-        // Upload to Drive
-        const driveUrl = await this.googleDriveService.uploadCertificate(instrument.companyId, localPath, fileName);
-        
-        if (!driveUrl) {
-            throw new Error("Failed to get Google Drive URL.");
-        }
-
-        // Update instrument
-        await this.instrumentsService.update(id, { certificate_file: driveUrl });
-
-        return { success: true, url: driveUrl };
-    }
+    // Google Sheets integration removed based on user request
 
     @Post('bulk-upload')
     async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
