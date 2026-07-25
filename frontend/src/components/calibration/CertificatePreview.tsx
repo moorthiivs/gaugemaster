@@ -76,15 +76,16 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
           </div>
         </div>
 
-        {/* Top 5-Column Certificate Metadata Grid */}
+        {/* Top 6-Column Certificate Metadata Grid */}
         <table className="w-full border-collapse border border-black text-[9px]">
           <thead>
             <tr className="bg-slate-100 border-b border-black text-center font-bold">
-              <th className="border-r border-black p-1 w-1/5">Calibration On</th>
-              <th className="border-r border-black p-1 w-1/5">Next Calibration Due</th>
-              <th className="border-r border-black p-1 w-1/5">Certificate No.:</th>
-              <th className="border-r border-black p-1 w-1/5">Certi Issue Date</th>
-              <th className="p-1 w-1/5">Sheet No.</th>
+              <th className="border-r border-black p-1 w-1/6">Calibration On</th>
+              <th className="border-r border-black p-1 w-1/6">Next Calibration Due</th>
+              <th className="border-r border-black p-1 w-1/6">Certificate No.:</th>
+              <th className="border-r border-black p-1 w-1/6">ULR No.</th>
+              <th className="border-r border-black p-1 w-1/6">Certi Issue Date</th>
+              <th className="p-1 w-1/6">Sheet No.</th>
             </tr>
           </thead>
           <tbody>
@@ -92,6 +93,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
               <td className="border-r border-black p-1">{fmtDate(calibration.calibration_date)}</td>
               <td className="border-r border-black p-1">{fmtDate(calibration.next_calibration_date)}</td>
               <td className="border-r border-black p-1 font-bold">{calibration.certificate_number || "—"}</td>
+              <td className="border-r border-black p-1 font-bold text-slate-700">{calibration.ulr_number || "—"}</td>
               <td className="border-r border-black p-1">{fmtDate(calibration.calibration_date)}</td>
               <td className="p-1">1 of 1</td>
             </tr>
@@ -123,69 +125,63 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
         </table>
 
         {/* Description & Identification */}
-        <div className="border border-black">
+        <div className="border-t border-l border-r border-black">
           <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5 border-b border-black">
             Description & Identification
           </div>
-          <div className="p-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[9.5px]">
-            <div className="flex">
-              <span className="font-bold w-36">Instrument (UUC)</span>
-              <span>: {instrumentName || inst?.name || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-28">Model No.</span>
-              <span>: {inst?.model_no || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-36">Make</span>
-              <span>: {inst?.make || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-28">Range</span>
-              <span>: {inst?.range || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-36">Serial No.</span>
-              <span>: {inst?.serial_no || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-28">Least Count</span>
-              <span>: {inst?.least_count || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-36">ID No.</span>
-              <span>: {inst?.id_code || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-28">Instrument Cond.</span>
-              <span>: SATISFACTORY</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-36">Calibration Range</span>
-              <span>: {inst?.range || "-"}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-28">Location</span>
-              <span>: {inst?.location || "Permanent Laboratory"}</span>
-            </div>
+          <table className="w-full border-collapse text-[9.5px]">
+            <tbody>
+              <tr className="border-b border-black">
+                <td className="border-r border-black p-1 font-bold w-1/4 pl-2">Instrument (UUC)</td>
+                <td className="border-r border-black p-1 w-1/4 pl-2">{instrumentName || inst?.name || "-"}</td>
+                <td className="border-r border-black p-1 font-bold w-1/4 pl-2">Model No.</td>
+                <td className="p-1 w-1/4 pl-2">{inst?.model_no || "-"}</td>
+              </tr>
+              <tr className="border-b border-black">
+                <td className="border-r border-black p-1 font-bold pl-2">Make</td>
+                <td className="border-r border-black p-1 pl-2">{inst?.make || "-"}</td>
+                <td className="border-r border-black p-1 font-bold pl-2">Range</td>
+                <td className="p-1 pl-2">{inst?.range || "-"}</td>
+              </tr>
+              <tr className="border-b border-black">
+                <td className="border-r border-black p-1 font-bold pl-2">Serial No. :</td>
+                <td className="border-r border-black p-1 pl-2">{inst?.serial_no || "-"}</td>
+                <td className="border-r border-black p-1 font-bold pl-2">Least Count</td>
+                <td className="p-1 pl-2">{inst?.least_count || "-"}</td>
+              </tr>
+              <tr className="border-b border-black">
+                <td className="border-r border-black p-1 font-bold pl-2">ID No.</td>
+                <td className="border-r border-black p-1 pl-2">{inst?.id_code || "-"}</td>
+                <td className="border-r border-black p-1 font-bold pl-2">Instrument Cond.</td>
+                <td className="p-1 pl-2">SATISFACTORY</td>
+              </tr>
+              <tr className="border-b border-black">
+                <td className="border-r border-black p-1 font-bold pl-2">Calibration Range</td>
+                <td className="border-r border-black p-1 pl-2">{inst?.range || "-"}</td>
+                <td className="border-r border-black p-1 font-bold pl-2">Location</td>
+                <td className="p-1 pl-2">{inst?.location || "Permanent Laboratory"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Procedure & Environmental Conditions */}
+        <div className="border border-black p-1.5 space-y-0.5 text-[9.5px]">
+          <div className="flex">
+            <span className="font-bold w-48">Procedure reference</span>
+            <span>: {procedureReference}</span>
           </div>
-          <div className="border-t border-slate-300 p-1.5 space-y-0.5 text-[9px] bg-slate-50">
-            <div className="flex">
-              <span className="font-bold w-40">Procedure reference</span>
-              <span>: {procedureReference}</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-40">Environmental Conditions</span>
-              <span>: Temperature at {env.temperature}° C  RH {env.humidity} %</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-40">Standard Reference</span>
-              <span>: IS / ISO Standard Calibration Guidelines</span>
-            </div>
-            <div className="flex">
-              <span className="font-bold w-40">Discipline</span>
-              <span>: DIMENSION (Basic Measuring Instrument, Gauge etc)</span>
-            </div>
+          <div className="flex">
+            <span className="font-bold w-48">Environmental Conditions</span>
+            <span>: Temperature at {env.temperature}° C  RH {env.humidity} %</span>
+          </div>
+          <div className="flex">
+            <span className="font-bold w-48">Standard Reference</span>
+            <span>: IS / ISO Standard Calibration Guidelines</span>
+          </div>
+          <div className="flex">
+            <span className="font-bold w-48">Discipline</span>
+            <span>: DIMENSION (Basic Measuring Instrument, Gauge etc)</span>
           </div>
         </div>
 
@@ -336,11 +332,6 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
             <div className="border-t border-black pt-0.5">
               <p className="font-bold text-[9.5px]">{calibration.calibrated_by || "Calibrated By"}</p>
               <p className="text-[8.5px] text-slate-600">{calibration.calibrated_by_designation || "Calibration Engineer"}</p>
-              {calibration.ulr_number && (
-                <p className="text-[8px] font-mono font-bold text-slate-700 mt-0.5">
-                  ULR : {calibration.ulr_number}
-                </p>
-              )}
             </div>
           </div>
 

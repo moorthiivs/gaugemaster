@@ -59,6 +59,7 @@ export default function TemplateBuilderForm() {
   ]);
 
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>([]);
+  const [standardColumnConfigs, setStandardColumnConfigs] = useState<Record<string, CustomColumn>>({});
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [remarks, setRemarks] = useState("Standard calibration per ISO/IEC 17025");
@@ -118,6 +119,9 @@ export default function TemplateBuilderForm() {
         if ((tpl as any).custom_columns) {
           setCustomColumns((tpl as any).custom_columns);
         }
+        if ((tpl as any).standard_columns_config) {
+          setStandardColumnConfigs((tpl as any).standard_columns_config);
+        }
         if ((tpl as any).column_order) {
           setColumnOrder((tpl as any).column_order);
         }
@@ -171,6 +175,7 @@ export default function TemplateBuilderForm() {
         },
         calibration_points: points,
         custom_columns: customColumns,
+        standard_columns_config: standardColumnConfigs,
         column_order: columnOrder,
         hidden_columns: hiddenColumns,
         remarks,
@@ -465,9 +470,11 @@ export default function TemplateBuilderForm() {
               tolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0}
               onToleranceChange={(tol) => setDefaultTolerance(tol)}
               initialCustomColumns={customColumns}
+              initialStandardColumnConfigs={standardColumnConfigs}
               initialColumnOrder={columnOrder}
               initialHiddenColumns={hiddenColumns}
               onCustomColumnsChange={setCustomColumns}
+              onStandardColumnConfigsChange={setStandardColumnConfigs}
               onColumnOrderChange={setColumnOrder}
               onHiddenColumnsChange={setHiddenColumns}
               acceptanceCriteria={{

@@ -25,6 +25,7 @@ export interface CalibrationTemplate {
     pressure?: string;
   };
   calibration_points?: CalibrationTemplatePoint[];
+  standard_columns_config?: Record<string, any>;
   acceptance_criteria?: {
     enabled?: boolean;
     value?: number;

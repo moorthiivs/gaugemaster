@@ -337,15 +337,16 @@ export class CertificateService {
           margin: [0, 0, 0, 6] as [number, number, number, number],
         },
 
-        // Top 5-Column Certificate Metadata Grid
+        // Top 6-Column Certificate Metadata Grid
         {
           table: {
-            widths: ['*', '*', '*', '*', '*'],
+            widths: ['*', '*', '*', '*', '*', '*'],
             body: [
               [
                 { text: 'Calibration On', style: 'gridTh' },
                 { text: 'Next Calibration Due', style: 'gridTh' },
                 { text: 'Certificate No.:', style: 'gridTh' },
+                { text: 'ULR No.', style: 'gridTh' },
                 { text: 'Certi Issue Date', style: 'gridTh' },
                 { text: 'Sheet No.', style: 'gridTh' },
               ],
@@ -363,6 +364,10 @@ export class CertificateService {
                   style: 'gridTdBold',
                 },
                 {
+                  text: calibration.ulr_number || '—',
+                  style: 'gridTdBold',
+                },
+                {
                   text: fmtDate(calibration.calibration_date),
                   style: 'gridTd',
                 },
@@ -376,7 +381,22 @@ export class CertificateService {
             hLineColor: () => '#000',
             vLineColor: () => '#000',
           },
-          margin: [0, 0, 0, 6] as [number, number, number, number],
+          margin: [0, 0, 0, 4] as [number, number, number, number],
+        },
+
+        // Section Divider Line under Header (Matching HTML Preview border-b border-black)
+        {
+          canvas: [
+            {
+              type: 'line',
+              x1: 0,
+              y1: 0,
+              x2: 545.28,
+              lineWidth: 1,
+              lineColor: '#000000',
+            },
+          ],
+          margin: [0, 2, 0, 8] as [number, number, number, number],
         },
 
         // Customer & Location Grid
@@ -435,95 +455,102 @@ export class CertificateService {
               ],
               [
                 {
-                  stack: [
-                    {
-                      columns: [
-                        {
-                          text: 'Instrument (UUC) : ' + (inst?.name || '-'),
-                          style: 'kvPair',
-                        },
-                        {
-                          text:
-                            'Model No. : ' + ((inst as any)?.model_no || '-'),
-                          style: 'kvPair',
-                        },
+                  table: {
+                    widths: ['25%', '25%', '25%', '25%'],
+                    body: [
+                      [
+                        { text: 'Instrument (UUC)', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.name || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'Model No.', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: (inst as any)?.model_no || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
                       ],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Make : ' + (inst?.make || '-'),
-                          style: 'kvPair',
-                        },
-                        {
-                          text: 'Range : ' + (inst?.range || '-'),
-                          style: 'kvPair',
-                        },
+                      [
+                        { text: 'Make', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.make || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'Range', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.range || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
                       ],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Serial No. : ' + (inst?.serial_no || '-'),
-                          style: 'kvPair',
-                        },
-                        {
-                          text: 'Least Count : ' + (inst?.least_count || '-'),
-                          style: 'kvPair',
-                        },
+                      [
+                        { text: 'Serial No. :', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.serial_no || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'Least Count', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.least_count || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
                       ],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'ID No. : ' + (inst?.id_code || '-'),
-                          style: 'kvPair',
-                        },
-                        {
-                          text: 'Instrument Cond. : SATISFACTORY',
-                          style: 'kvPair',
-                        },
+                      [
+                        { text: 'ID No.', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.id_code || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'Instrument Cond.', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'SATISFACTORY', fontSize: 8.5, margin: [2, 2, 2, 2] },
                       ],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Calibration Range : ' + (inst?.range || '-'),
-                          style: 'kvPair',
-                        },
-                        {
-                          text:
-                            'Location : ' +
-                            (inst?.location || 'Permanent Laboratory'),
-                          style: 'kvPair',
-                        },
-                      ],
-                    },
-                  ],
-                  margin: [4, 4, 4, 4],
+                      [
+                        { text: 'Calibration Range', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.range || '-', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: 'Location', bold: true, fontSize: 8.5, margin: [2, 2, 2, 2] },
+                        { text: inst?.location || 'Permanent Laboratory', fontSize: 8.5, margin: [2, 2, 2, 2] },
+                      ]
+                    ]
+                  },
+                  layout: {
+                    hLineWidth: () => 0.5,
+                    vLineWidth: () => 0.5,
+                    hLineColor: () => '#000000',
+                    vLineColor: () => '#000000',
+                  },
+                  margin: [0, 0, 0, 0],
                 },
-              ],
+              ]
+            ],
+          },
+          layout: {
+            hLineWidth: () => 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#000',
+            vLineColor: () => '#000',
+            paddingLeft: () => 0,
+            paddingRight: () => 0,
+            paddingTop: () => 0,
+            paddingBottom: () => 0,
+          },
+          margin: [0, 0, 0, 6] as [number, number, number, number],
+        },
+
+        // Procedure & Environmental Conditions Box
+        {
+          table: {
+            widths: ['*'],
+            body: [
               [
                 {
                   stack: [
                     {
-                      text: `Procedure reference : ${procedureReference}`,
-                      style: 'subNote',
+                      columns: [
+                        { text: 'Procedure reference', bold: true, fontSize: 8, width: 140 },
+                        { text: `: ${procedureReference}`, fontSize: 8 },
+                      ],
+                      margin: [0, 1, 0, 1],
                     },
                     {
-                      text: `Environmental Conditions : Temperature at ${env.temperature}° C  RH ${env.humidity} %`,
-                      style: 'subNote',
+                      columns: [
+                        { text: 'Environmental Conditions', bold: true, fontSize: 8, width: 140 },
+                        { text: `: Temperature at ${env.temperature}° C  RH ${env.humidity} %`, fontSize: 8 },
+                      ],
+                      margin: [0, 1, 0, 1],
                     },
                     {
-                      text: 'Standard Reference : IS / ISO Standard Calibration Guidelines',
-                      style: 'subNote',
+                      columns: [
+                        { text: 'Standard Reference', bold: true, fontSize: 8, width: 140 },
+                        { text: ': IS / ISO Standard Calibration Guidelines', fontSize: 8 },
+                      ],
+                      margin: [0, 1, 0, 1],
                     },
                     {
-                      text: 'Discipline : DIMENSION (Basic Measuring Instrument, Gauge etc)',
-                      style: 'subNote',
+                      columns: [
+                        { text: 'Discipline', bold: true, fontSize: 8, width: 140 },
+                        { text: ': DIMENSION (Basic Measuring Instrument, Gauge etc)', fontSize: 8 },
+                      ],
+                      margin: [0, 1, 0, 1],
                     },
                   ],
-                  fillColor: '#f8fafc',
                   margin: [4, 4, 4, 4],
                 },
               ],
@@ -532,8 +559,8 @@ export class CertificateService {
           layout: {
             hLineWidth: () => 0.5,
             vLineWidth: () => 0.5,
-            hLineColor: () => '#000',
-            vLineColor: () => '#000',
+            hLineColor: () => '#000000',
+            vLineColor: () => '#000000',
           },
           margin: [0, 0, 0, 6] as [number, number, number, number],
         },
@@ -698,14 +725,6 @@ export class CertificateService {
                       fontSize: 7.5,
                       color: '#475569',
                     },
-                    calibration.ulr_number
-                      ? {
-                          text: `ULR : ${calibration.ulr_number}`,
-                          alignment: 'center',
-                          fontSize: 7,
-                          bold: true,
-                        }
-                      : { text: '' },
                   ],
                   margin: [2, 2, 2, 2],
                 },
@@ -820,6 +839,7 @@ export class CertificateService {
           fontSize: 7.5,
           bold: true,
           alignment: 'center' as const,
+          fillColor: '#f1f5f9',
           margin: [0, 2, 0, 2] as [number, number, number, number],
         },
         gridTd: {
@@ -862,6 +882,7 @@ export class CertificateService {
           bold: true,
           color: '#000',
           alignment: 'center' as const,
+          fillColor: '#f1f5f9',
           margin: [0, 2, 0, 2] as [number, number, number, number],
         },
         tdCell: {

@@ -41,9 +41,11 @@ interface CalibrationDataGridProps {
   tolerance: number;
   onToleranceChange: (tolerance: number) => void;
   initialCustomColumns?: CustomColumn[];
+  initialStandardColumnConfigs?: Record<string, CustomColumn>;
   initialColumnOrder?: string[];
   initialHiddenColumns?: string[];
   onCustomColumnsChange?: (columns: CustomColumn[]) => void;
+  onStandardColumnConfigsChange?: (configs: Record<string, CustomColumn>) => void;
   onColumnOrderChange?: (order: string[]) => void;
   onHiddenColumnsChange?: (hidden: string[]) => void;
   acceptanceCriteria?: {
@@ -79,9 +81,11 @@ export function CalibrationDataGrid({
   tolerance,
   onToleranceChange,
   initialCustomColumns = [],
+  initialStandardColumnConfigs = {},
   initialColumnOrder = [],
   initialHiddenColumns = [],
   onCustomColumnsChange,
+  onStandardColumnConfigsChange,
   onColumnOrderChange,
   onHiddenColumnsChange,
   acceptanceCriteria,
@@ -98,6 +102,7 @@ export function CalibrationDataGrid({
 
   // Dynamic custom columns & hidden columns state
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>(initialCustomColumns);
+  const [standardColumnConfigs, setStandardColumnConfigs] = useState<Record<string, CustomColumn>>(initialStandardColumnConfigs);
   const [columnOrder, setColumnOrder] = useState<string[]>(initialColumnOrder);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>(initialHiddenColumns);
 
@@ -115,6 +120,10 @@ export function CalibrationDataGrid({
   useEffect(() => {
     setCustomColumns(initialCustomColumns || []);
   }, [initialCustomColumns]);
+
+  useEffect(() => {
+    setStandardColumnConfigs(initialStandardColumnConfigs || {});
+  }, [initialStandardColumnConfigs]);
 
   useEffect(() => {
     setColumnOrder(initialColumnOrder || []);
@@ -160,15 +169,20 @@ export function CalibrationDataGrid({
 
   // Edit Column Dialog State
   const [editingCol, setEditingCol] = useState<CustomColumn | null>(null);
+  const [editingColIsStandard, setEditingColIsStandard] = useState(false);
   const [editColName, setEditColName] = useState("");
   const [editColType, setEditColType] = useState<"text" | "number" | "formula">("text");
   const [editFormulaType, setEditFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("custom");
   const [editCustomFormula, setEditCustomFormula] = useState("");
-
   // Notify parent component on state changes
   const updateCustomColumnsState = (cols: CustomColumn[]) => {
     setCustomColumns(cols);
     if (onCustomColumnsChange) onCustomColumnsChange(cols);
+  };
+
+  const updateStandardColumnConfigsState = (configs: Record<string, CustomColumn>) => {
+    setStandardColumnConfigs(configs);
+    if (onStandardColumnConfigsChange) onStandardColumnConfigsChange(configs);
   };
 
   const updateColumnOrderState = (order: string[]) => {
@@ -305,9 +319,10 @@ export function CalibrationDataGrid({
       return "FAIL";
     }
 
-    // Default rule: If custom formula column named 'ERROR' or formula column exists, use its computed value!
+    // Default rule: If standard column error is a formula, its value is already in pt.error.
+    // Otherwise check if a custom formula column named 'ERROR' exists.
     let errVal = pt.error;
-    const formulaErrCol = currentColumns.find((c) => c.type === "formula");
+    const formulaErrCol = currentColumns.find((c) => c.type === "formula" && c.name.toLowerCase() === "error");
     if (formulaErrCol) {
       const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, currentOrder, rowTol);
       const parsed = parseFloat(calcStr.replace("%", ""));
@@ -337,7 +352,12 @@ export function CalibrationDataGrid({
     const desc = pt.descending_reading !== undefined ? parseNum(pt.descending_reading) : undefined;
 
     // Auto-calculate error
-    if (hasDescending && desc !== undefined) {
+    const errConfig = standardColumnConfigs["error"];
+    if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
+       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, activeOrder, tolerance);
+       const parsed = parseFloat(calcVal.replace("%", ""));
+       pt.error = isNaN(parsed) ? 0 : parsed;
+    } else if (hasDescending && desc !== undefined) {
       const avg = (asc + desc) / 2;
       pt.error = parseFloat((avg - nom).toFixed(6));
     } else {
@@ -426,6 +446,11 @@ export function CalibrationDataGrid({
     );
     if (customDuplicate) return true;
 
+    const standardDuplicate = Object.values(standardColumnConfigs).some(
+      (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
+    );
+    if (standardDuplicate) return true;
+
     const standardNames = [
       "pt",
       "sl.no",
@@ -439,7 +464,7 @@ export function CalibrationDataGrid({
       "error",
       "status",
     ];
-    return standardNames.includes(normalized);
+    return excludeColId && standardNames.includes(excludeColId) ? false : standardNames.includes(normalized);
   };
 
   const isAddNameDuplicate = isColumnNameTaken(newColName);
@@ -496,8 +521,9 @@ export function CalibrationDataGrid({
   };
 
   // Edit Dynamic Column
-  const handleOpenEditColumn = (col: CustomColumn) => {
+  const handleOpenEditColumn = (col: CustomColumn, isStandard: boolean = false) => {
     setEditingCol(col);
+    setEditingColIsStandard(isStandard);
     setEditColName(col.name);
     setEditColType(col.type);
     setEditFormulaType(col.formulaType || "custom");
@@ -507,21 +533,34 @@ export function CalibrationDataGrid({
   const handleSaveEditColumn = () => {
     if (!editingCol || !editColName.trim() || isEditNameDuplicate) return;
 
-    const updatedCols = customColumns.map((c) => {
-      if (c.id === editingCol.id) {
-        return {
-          ...c,
-          name: editColName.trim(),
-          type: editColType,
-          formulaType: editColType === "formula" ? editFormulaType : undefined,
-          customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
-        };
-      }
-      return c;
-    });
+    if (editingColIsStandard) {
+      const updatedConfigs = { ...standardColumnConfigs };
+      updatedConfigs[editingCol.id] = {
+        ...editingCol,
+        name: editColName.trim(),
+        type: editColType,
+        formulaType: editColType === "formula" ? editFormulaType : undefined,
+        customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
+      };
+      updateStandardColumnConfigsState(updatedConfigs);
+    } else {
+      const updatedCols = customColumns.map((c) => {
+        if (c.id === editingCol.id) {
+          return {
+            ...c,
+            name: editColName.trim(),
+            type: editColType,
+            formulaType: editColType === "formula" ? editFormulaType : undefined,
+            customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
+          };
+        }
+        return c;
+      });
+      updateCustomColumnsState(updatedCols);
+    }
 
-    updateCustomColumnsState(updatedCols);
     setEditingCol(null);
+    setEditingColIsStandard(false);
   };
 
   const handleRemoveColumn = (colId: string) => {
@@ -843,114 +882,71 @@ export function CalibrationDataGrid({
                   const dataIdx = dataColumns.indexOf(colKey);
                   const excelLetter = getExcelColumnLetter(dataIdx);
 
-                  if (colKey === "description") return (
-                    <TableHead key="description" className="font-semibold min-w-[120px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "description")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>Description</span>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("description")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
+                  const renderStandardColumn = (id: string, defaultName: string) => {
+                    const config = standardColumnConfigs[id];
+                    const displayName = config?.name || defaultName;
+                    const isFormula = config?.type === "formula";
+                    const isStatus = id === "status";
 
-                  if (colKey === "nominal") return (
-                    <TableHead key="nominal" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "nominal")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>{nominalCol?.label || "Nominal"} ({unit})</span>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("nominal")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
+                    const getDefaultStandardConfig = (): CustomColumn => {
+                      if (id === "error") {
+                        return {
+                          id,
+                          name: displayName,
+                          type: "formula",
+                          formulaType: "custom",
+                          customFormula: hasDescending ? "=((Actual + Descending) / 2) - Nominal" : "=Actual - Nominal",
+                        };
+                      }
+                      if (["nominal", "tolerance", "ascending_reading", "descending_reading"].includes(id)) {
+                        return { id, name: displayName, type: "number" };
+                      }
+                      return { id, name: displayName, type: "text" };
+                    };
 
-                  if (colKey === "tolerance") return (
-                    <TableHead key="tolerance" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "tolerance")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>Tolerance (±)</span>
+                    return (
+                      <TableHead
+                        key={id}
+                        draggable={!isStatus}
+                        onDragStart={!isStatus ? (e) => handleDragStart(e, id) : undefined}
+                        onDragOver={handleDragOver}
+                        onDrop={(e) => handleDropOnHeader(e, id)}
+                        className={`font-semibold min-w-[120px] ${!isStatus ? "cursor-grab active:cursor-grabbing hover:bg-muted/50" : ""} select-none transition-colors border-x`}
+                      >
+                        <div className="flex items-center justify-between gap-1 py-1 group">
+                          <div className="flex items-center gap-1 min-w-0 truncate">
+                            {!isStatus && <GripVertical className="w-3.5 h-3.5 text-muted-foreground shrink-0 opacity-50 group-hover:opacity-100" />}
+                            <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                            {isFormula && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
+                            <span className="truncate">{displayName}</span>
+                          </div>
+                          <div className={`flex items-center gap-0.5 shrink-0 ${isStatus ? "opacity-0 group-hover:opacity-100" : ""}`}>
+                            {!isStatus && (
+                              <>
+                                <Button variant="outline" size="icon" className="h-5 w-5 bg-background text-muted-foreground hover:text-foreground shadow-xs opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); moveColumnInOrder(id, "left"); }} title="Move left"><ChevronLeft className="w-3 h-3" /></Button>
+                                <Button variant="outline" size="icon" className="h-5 w-5 bg-background text-muted-foreground hover:text-foreground shadow-xs opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); moveColumnInOrder(id, "right"); }} title="Move right"><ChevronRight className="w-3 h-3" /></Button>
+                                <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); handleOpenEditColumn(config || getDefaultStandardConfig(), true); }} title="Edit Column & Formula"><Edit className="w-3 h-3" /></Button>
+                              </>
+                            )}
+                            {isStatus && (
+                               <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-primary" onClick={() => { setEditStatusRuleType(statusRuleType); setEditStatusFormula(statusFormula || "=ABS(C) <= tolerance"); setIsEditStatusOpen(true); }} title="Configure Status Rule & Formula"><Edit className="w-3 h-3" /></Button>
+                            )}
+                            <Button variant="ghost" size="icon" className="h-5 w-5 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); toggleColumnHide(id); }} title="Hide column"><X className="w-3 h-3" /></Button>
+                          </div>
                         </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("tolerance")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
+                      </TableHead>
+                    );
+                  };
 
-                  if (colKey === "ascending_reading") return (
-                    <TableHead key="ascending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "ascending_reading")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>{ascCol?.label || "Actual"} ({unit})</span>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("ascending_reading")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
+                  if (colKey === "description") return renderStandardColumn("description", "Description");
+                  if (colKey === "nominal") return renderStandardColumn("nominal", `${nominalCol?.label || "Nominal"} (${unit})`);
+                  if (colKey === "tolerance") return renderStandardColumn("tolerance", "Tolerance (±)");
+                  if (colKey === "ascending_reading") return renderStandardColumn("ascending_reading", `${ascCol?.label || "Actual"} (${unit})`);
+                  if (colKey === "descending_reading") return renderStandardColumn("descending_reading", `${descCol?.label || "Descending"} (${unit})`);
+                  if (colKey === "error") return renderStandardColumn("error", `${errorCol?.label || "Error"} (${unit})`);
+                  if (colKey === "status") return renderStandardColumn("status", "Status");
 
-                  if (colKey === "descending_reading") return (
-                    <TableHead key="descending_reading" className="font-semibold min-w-[110px]" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "descending_reading")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>{descCol?.label || "Descending"} ({unit})</span>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("descending_reading")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
 
-                  if (colKey === "error") return (
-                    <TableHead key="error" className="font-semibold" onDragOver={handleDragOver} onDrop={(e) => handleDropOnHeader(e, "error")}>
-                      <div className="flex items-center justify-between group">
-                        <div className="flex items-center gap-1">
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                          <span>{errorCol?.label || "Error"} ({unit})</span>
-                        </div>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("error")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
-
-                  if (colKey === "status") return (
-                    <TableHead key="status" className="font-semibold text-center select-none">
-                      <div className="flex items-center justify-center gap-1 group">
-                        <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
-                        <span>Status</span>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => {
-                            setEditStatusRuleType(statusRuleType);
-                            setEditStatusFormula(statusFormula || "=ABS(C) <= tolerance");
-                            setIsEditStatusOpen(true);
-                          }}
-                          title="Configure Status Rule & Formula"
-                        >
-                          <Edit className="w-3 h-3" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive" onClick={() => toggleColumnHide("status")} title="Hide column">
-                          <X className="w-3 h-3" />
-                        </Button>
-                      </div>
-                    </TableHead>
-                  );
 
                   if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
 
@@ -1034,6 +1030,17 @@ export function CalibrationDataGrid({
                 <TableRow key={idx} className="hover:bg-muted/30 border-b">
                   {activeOrder.map((colKey) => {
                     if (colKey === "pt") return <TableCell key="pt" className="font-mono text-center text-muted-foreground font-medium text-xs border-r w-12">{pt.point_number}</TableCell>;
+
+                    const isStandardFormula = standardColumnConfigs[colKey]?.type === "formula";
+                    if (isStandardFormula && colKey !== "status") {
+                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, activeOrder, tolerance);
+                      return (
+                        <TableCell key={colKey} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
+                          <span className="text-primary font-bold">{calculatedVal}</span>
+                        </TableCell>
+                      );
+                    }
+
                     if (colKey === "description") return <TableCell key="description"><Input value={getInputValue(idx, "description", pt.description)} onChange={(e) => handleInputChange(idx, "description", e.target.value)} placeholder="e.g. GO" className="h-9 text-xs" /></TableCell>;
                     if (colKey === "nominal") return <TableCell key="nominal"><Input type="number" step="any" value={getInputValue(idx, "nominal", pt.nominal)} onChange={(e) => handleInputChange(idx, "nominal", e.target.value)} className="h-9 text-xs font-mono" /></TableCell>;
                     if (colKey === "tolerance") return <TableCell key="tolerance"><Input type="number" step="any" value={getInputValue(idx, "tolerance", pt.tolerance ?? tolerance)} onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)} className="h-9 text-xs font-mono" placeholder={String(tolerance)} /></TableCell>;

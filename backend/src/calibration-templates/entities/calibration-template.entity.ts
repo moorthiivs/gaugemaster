@@ -47,6 +47,9 @@ export class CalibrationTemplate {
   custom_columns: any[]; // Saved custom column definitions (id, name, type, formulaType, customFormula)
 
   @Column({ type: 'jsonb', nullable: true })
+  standard_columns_config?: Record<string, any>; // Saved configuration for standard columns (id: { name, type, formulaType, customFormula })
+
+  @Column({ type: 'jsonb', nullable: true })
   column_order: string[]; // Saved column order IDs
 
   @Column({ type: 'jsonb', nullable: true })
