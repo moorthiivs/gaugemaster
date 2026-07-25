@@ -4,7 +4,7 @@ import { CalibrationPoint, CalibrationTypeConfig } from "@/types/calibration";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -57,6 +57,8 @@ interface CalibrationDataGridProps {
   initialStatusRuleType?: "default" | "custom_formula";
   initialStatusFormula?: string;
   onStatusRuleChange?: (ruleType: "default" | "custom_formula", formula: string) => void;
+  initialDecimalPlaces?: number;
+  onDecimalPlacesChange?: (dp: number) => void;
 }
 
 const ALL_STANDARD_COLUMNS = [
@@ -93,12 +95,15 @@ export function CalibrationDataGrid({
   initialStatusRuleType = "default",
   initialStatusFormula = "",
   onStatusRuleChange,
+  initialDecimalPlaces = 4,
+  onDecimalPlacesChange,
 }: CalibrationDataGridProps) {
   const hasDescending = typeConfig.columns.some((c) => c.key === "descending_reading");
 
   // Raw input strings for decimal inputs
   const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
   const [rawTolerance, setRawTolerance] = useState<string | null>(null);
+  const [decimalPlaces, setDecimalPlaces] = useState<number>(initialDecimalPlaces);
 
   // Dynamic custom columns & hidden columns state
   const [customColumns, setCustomColumns] = useState<CustomColumn[]>(initialCustomColumns);
@@ -143,11 +148,6 @@ export function CalibrationDataGrid({
     setEditStatusFormula(initialStatusFormula);
   }, [initialStatusFormula]);
 
-  // Reset raw text inputs when points array changes (e.g. when applying a template)
-  useEffect(() => {
-    setRawInputs({});
-  }, [points]);
-
   // TanStack Virtualizer for high-performance rendering of large point sets
   const rowVirtualizer = useVirtualizer({
     count: points.length,
@@ -163,6 +163,7 @@ export function CalibrationDataGrid({
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
   const [newColName, setNewColName] = useState("");
   const [newColType, setNewColType] = useState<"text" | "number" | "formula">("text");
+  const [newColUnit, setNewColUnit] = useState("");
   const [newColPlacement, setNewColPlacement] = useState<"after_actual" | "after_desc" | "after_nom" | "after_tol" | "first" | "before_error">("after_actual");
   const [newFormulaType, setNewFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("avg");
   const [newCustomFormula, setNewCustomFormula] = useState("=Actual - Nominal");
@@ -172,8 +173,12 @@ export function CalibrationDataGrid({
   const [editingColIsStandard, setEditingColIsStandard] = useState(false);
   const [editColName, setEditColName] = useState("");
   const [editColType, setEditColType] = useState<"text" | "number" | "formula">("text");
+  const [editColUnit, setEditColUnit] = useState("");
   const [editFormulaType, setEditFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("custom");
   const [editCustomFormula, setEditCustomFormula] = useState("");
+
+  // Template Settings Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   // Notify parent component on state changes
   const updateCustomColumnsState = (cols: CustomColumn[]) => {
     setCustomColumns(cols);
@@ -417,6 +422,26 @@ export function CalibrationDataGrid({
     });
   };
 
+  const handleInputBlur = (index: number, field: string, text: string) => {
+    const parsed = parseFloat(text);
+    if (!isNaN(parsed) && text.trim() !== "") {
+      const formatted = parsed.toFixed(decimalPlaces);
+      const key = `${index}_${field}`;
+      setRawInputs((prev) => ({ ...prev, [key]: formatted }));
+      updatePoint(index, field, parsed);
+    }
+  };
+
+  const handleCustomFieldBlur = (index: number, colId: string, text: string, isNumber: boolean) => {
+    if (!isNumber) return;
+    const parsed = parseFloat(text);
+    if (!isNaN(parsed) && text.trim() !== "") {
+      const formatted = parsed.toFixed(decimalPlaces);
+      const key = `${index}_custom_${colId}`;
+      setRawInputs((prev) => ({ ...prev, [key]: formatted }));
+    }
+  };
+
   const addMultiplePoints = (count: number) => {
     const newPoints: CalibrationPoint[] = [];
     for (let i = 0; i < count; i++) {
@@ -441,45 +466,85 @@ export function CalibrationDataGrid({
     const normalized = nameToCheck.trim().toLowerCase();
     if (!normalized) return false;
 
+    // Check custom columns duplicates (excluding current editing column)
     const customDuplicate = customColumns.some(
       (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
     );
     if (customDuplicate) return true;
 
-    const standardDuplicate = Object.values(standardColumnConfigs).some(
-      (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
+    // Check standard column config duplicates (excluding current editing column)
+    const standardDuplicate = Object.entries(standardColumnConfigs).some(
+      ([id, c]) => id !== excludeColId && c.name && c.name.trim().toLowerCase() === normalized
     );
     if (standardDuplicate) return true;
 
-    const standardNames = [
-      "pt",
-      "sl.no",
-      "sl no",
-      "description",
-      "nominal",
-      "tolerance",
-      "actual",
-      "ascending",
-      "descending",
-      "error",
-      "status",
-    ];
-    return excludeColId && standardNames.includes(excludeColId) ? false : standardNames.includes(normalized);
+    // Standard column IDs mapped to their default names & aliases
+    const standardIdToNames: Record<string, string[]> = {
+      description: ["description"],
+      nominal: ["nominal"],
+      tolerance: ["tolerance"],
+      ascending_reading: ["actual", "ascending", "actual reading", "ascending reading"],
+      descending_reading: ["descending", "descending reading"],
+      error: ["error"],
+      status: ["status"],
+      pt: ["pt", "sl.no", "sl no", "sr.no", "sr no"],
+    };
+
+    // If editing an existing standard column, allow its own default names & aliases
+    if (excludeColId) {
+      const selfNames = standardIdToNames[excludeColId] || [];
+      if (selfNames.includes(normalized) || excludeColId === normalized) {
+        return false;
+      }
+    }
+
+    // Reserved names across all OTHER standard columns
+    const allReservedNames = Object.entries(standardIdToNames).flatMap(([id, names]) =>
+      id === excludeColId ? [] : names
+    );
+
+    return allReservedNames.includes(normalized);
   };
 
   const isAddNameDuplicate = isColumnNameTaken(newColName);
   const isEditNameDuplicate = editingCol ? isColumnNameTaken(editColName, editingCol.id) : false;
 
-  // Add Dynamic Column
+  // Add Dynamic Column  // Helper to extract clean base name without trailing bracketed units like " (inch)"
+  const getCleanBaseName = (name: string): string => {
+    if (!name) return "";
+    return name.replace(/\s*\([^)]*\)$/, "").trim();
+  };
+
+  // Helper to format display title: HEADERNAME (UNIT) if unit present, or HEADERNAME only
+  const getHeaderDisplayTitle = (rawName: string, colUnitSetting?: string): string => {
+    const baseName = getCleanBaseName(rawName);
+    let activeUnit = "";
+    if (!colUnitSetting || colUnitSetting === "inherit") {
+      activeUnit = unit || "";
+    } else if (colUnitSetting === "none") {
+      activeUnit = "";
+    } else {
+      activeUnit = colUnitSetting;
+    }
+
+    if (activeUnit && activeUnit.trim()) {
+      return `${baseName} (${activeUnit.trim()})`;
+    }
+    return baseName;
+  };
+
   const handleAddColumn = () => {
     if (!newColName.trim() || isAddNameDuplicate) return;
+
     const colId = `col_${Date.now()}`;
+    const cleanName = getCleanBaseName(newColName);
     const newCol: CustomColumn = {
       id: colId,
-      name: newColName.trim(),
+      name: cleanName,
       type: newColType,
       formulaType: newColType === "formula" ? newFormulaType : undefined,
       customFormula: newColType === "formula" && newFormulaType === "custom" ? newCustomFormula : undefined,
+      unit: newColUnit.trim() || undefined,
     };
 
     const nextCols = [...customColumns, newCol];
@@ -514,6 +579,7 @@ export function CalibrationDataGrid({
     // Reset dialog
     setNewColName("");
     setNewColType("text");
+    setNewColUnit("inherit");
     setNewColPlacement("after_actual");
     setNewFormulaType("avg");
     setNewCustomFormula("=Actual - Nominal");
@@ -524,23 +590,27 @@ export function CalibrationDataGrid({
   const handleOpenEditColumn = (col: CustomColumn, isStandard: boolean = false) => {
     setEditingCol(col);
     setEditingColIsStandard(isStandard);
-    setEditColName(col.name);
+    setEditColName(getCleanBaseName(col.name));
     setEditColType(col.type);
     setEditFormulaType(col.formulaType || "custom");
     setEditCustomFormula(col.customFormula || "=Actual - Nominal");
+    setEditColUnit(col.unit || "inherit");
   };
 
   const handleSaveEditColumn = () => {
     if (!editingCol || !editColName.trim() || isEditNameDuplicate) return;
 
+    const cleanName = getCleanBaseName(editColName);
+
     if (editingColIsStandard) {
       const updatedConfigs = { ...standardColumnConfigs };
       updatedConfigs[editingCol.id] = {
         ...editingCol,
-        name: editColName.trim(),
+        name: cleanName,
         type: editColType,
         formulaType: editColType === "formula" ? editFormulaType : undefined,
         customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
+        unit: editColUnit.trim() || undefined,
       };
       updateStandardColumnConfigsState(updatedConfigs);
     } else {
@@ -548,10 +618,11 @@ export function CalibrationDataGrid({
         if (c.id === editingCol.id) {
           return {
             ...c,
-            name: editColName.trim(),
+            name: cleanName,
             type: editColType,
             formulaType: editColType === "formula" ? editFormulaType : undefined,
             customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
+            unit: editColUnit.trim() || undefined,
           };
         }
         return c;
@@ -659,12 +730,13 @@ export function CalibrationDataGrid({
     return (
       <TableCell key={col.id} className="border-x border-primary/10">
         <Input
-          type={isNum ? "number" : "text"}
-          step={isNum ? "any" : undefined}
+          type={isNum ? "text" : "text"}
+          inputMode={isNum ? "decimal" : undefined}
           value={getCustomInputValue(idx, col.id, rawVal)}
           onChange={(e) => handleCustomFieldChange(idx, col.id, e.target.value, isNum)}
-          className="h-9 text-xs"
-          placeholder={isNum ? "0.00" : "Text..."}
+          onBlur={(e) => handleCustomFieldBlur(idx, col.id, e.target.value, isNum)}
+          className="h-9 text-xs font-mono"
+          placeholder={isNum ? "0.000" : "Text..."}
         />
       </TableCell>
     );
@@ -762,9 +834,50 @@ export function CalibrationDataGrid({
               className="w-[120px] h-9 text-xs"
             />
           </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground font-semibold">
+              Decimal Places
+            </Label>
+            <Select
+              value={String(decimalPlaces)}
+              onValueChange={(val) => {
+                const dp = parseInt(val, 10);
+                setDecimalPlaces(dp);
+                if (onDecimalPlacesChange) onDecimalPlacesChange(dp);
+              }}
+            >
+              <SelectTrigger className="w-[120px] h-9 text-xs bg-background font-mono font-bold">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">1 Dec (.0)</SelectItem>
+                <SelectItem value="2">2 Dec (.00)</SelectItem>
+                <SelectItem value="3">3 Dec (.000)</SelectItem>
+                <SelectItem value="4">4 Dec (.0000)</SelectItem>
+                <SelectItem value="5">5 Dec (.00000)</SelectItem>
+                <SelectItem value="6">6 Dec (.000000)</SelectItem>
+                <SelectItem value="7">7 Dec (.0000000)</SelectItem>
+                <SelectItem value="8">8 Dec (.00000000)</SelectItem>
+                <SelectItem value="9">9 Dec (.000000000)</SelectItem>
+                <SelectItem value="10">10 Dec (.0000000000)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <div className="flex items-end gap-2 ml-auto flex-wrap">
+          {/* Template & Grid Settings Modal Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs gap-1.5"
+            onClick={() => setIsSettingsOpen(true)}
+            title="Configure Template & Grid Settings"
+          >
+            <Settings2 className="w-3.5 h-3.5 text-primary" />
+            Template Settings
+          </Button>
           {/* Columns & Visibility Popover */}
           <Popover>
             <PopoverTrigger asChild>
@@ -880,11 +993,23 @@ export function CalibrationDataGrid({
 
                   const dataColumns = activeOrder.filter((k) => k !== "pt" && k !== "actions");
                   const dataIdx = dataColumns.indexOf(colKey);
-                  const excelLetter = getExcelColumnLetter(dataIdx);
-
-                  const renderStandardColumn = (id: string, defaultName: string) => {
+                  const excelLetter = getExcelColumnLetter(dataIdx);                  const renderStandardColumn = (id: string, defaultBaseName: string, supportsUnit: boolean = true) => {
                     const config = standardColumnConfigs[id];
-                    const displayName = config?.name || defaultName;
+                    const rawName = config?.name || defaultBaseName;
+                    const baseName = getCleanBaseName(rawName);
+                    
+                    let colUnitSetting = "inherit";
+                    if (!supportsUnit || config?.unit === "none") {
+                      colUnitSetting = "none";
+                    } else if (config?.unit && config.unit !== "inherit" && config.unit !== "none") {
+                      if (typeConfig.units.includes(config.unit)) {
+                        colUnitSetting = "inherit";
+                      } else {
+                        colUnitSetting = config.unit;
+                      }
+                    }
+
+                    const displayTitle = getHeaderDisplayTitle(baseName, colUnitSetting);
                     const isFormula = config?.type === "formula";
                     const isStatus = id === "status";
 
@@ -892,16 +1017,16 @@ export function CalibrationDataGrid({
                       if (id === "error") {
                         return {
                           id,
-                          name: displayName,
+                          name: baseName,
                           type: "formula",
                           formulaType: "custom",
                           customFormula: hasDescending ? "=((Actual + Descending) / 2) - Nominal" : "=Actual - Nominal",
                         };
                       }
                       if (["nominal", "tolerance", "ascending_reading", "descending_reading"].includes(id)) {
-                        return { id, name: displayName, type: "number" };
+                        return { id, name: baseName, type: "number" };
                       }
-                      return { id, name: displayName, type: "text" };
+                      return { id, name: baseName, type: "text" };
                     };
 
                     return (
@@ -918,7 +1043,7 @@ export function CalibrationDataGrid({
                             {!isStatus && <GripVertical className="w-3.5 h-3.5 text-muted-foreground shrink-0 opacity-50 group-hover:opacity-100" />}
                             <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
                             {isFormula && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
-                            <span className="truncate">{displayName}</span>
+                            <span className="truncate">{displayTitle}</span>
                           </div>
                           <div className={`flex items-center gap-0.5 shrink-0 ${isStatus ? "opacity-0 group-hover:opacity-100" : ""}`}>
                             {!isStatus && (
@@ -938,20 +1063,23 @@ export function CalibrationDataGrid({
                     );
                   };
 
-                  if (colKey === "description") return renderStandardColumn("description", "Description");
-                  if (colKey === "nominal") return renderStandardColumn("nominal", `${nominalCol?.label || "Nominal"} (${unit})`);
-                  if (colKey === "tolerance") return renderStandardColumn("tolerance", "Tolerance (±)");
-                  if (colKey === "ascending_reading") return renderStandardColumn("ascending_reading", `${ascCol?.label || "Actual"} (${unit})`);
-                  if (colKey === "descending_reading") return renderStandardColumn("descending_reading", `${descCol?.label || "Descending"} (${unit})`);
-                  if (colKey === "error") return renderStandardColumn("error", `${errorCol?.label || "Error"} (${unit})`);
-                  if (colKey === "status") return renderStandardColumn("status", "Status");
-
-
+                  if (colKey === "description") return renderStandardColumn("description", "Description", false);
+                  if (colKey === "nominal") return renderStandardColumn("nominal", nominalCol?.label || "Nominal", true);
+                  if (colKey === "tolerance") return renderStandardColumn("tolerance", "Tolerance (±)", true);
+                  if (colKey === "ascending_reading") return renderStandardColumn("ascending_reading", ascCol?.label || "Actual", true);
+                  if (colKey === "descending_reading") return renderStandardColumn("descending_reading", descCol?.label || "Descending", true);
+                  if (colKey === "error") return renderStandardColumn("error", errorCol?.label || "Error", true);
+                  if (colKey === "status") return renderStandardColumn("status", "Status", false);
 
                   if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
 
                   const col = customColumns.find((c) => c.id === colKey);
                   if (!col) return null;
+
+                  const colUnitSetting = col.unit && col.unit !== "inherit" && col.unit !== "none"
+                    ? (typeConfig.units.includes(col.unit) ? "inherit" : col.unit)
+                    : (col.type === "number" || col.type === "formula" ? "inherit" : "none");
+                  const customDisplayTitle = getHeaderDisplayTitle(col.name, colUnitSetting);
 
                   return (
                     <TableHead
@@ -967,7 +1095,7 @@ export function CalibrationDataGrid({
                           <GripVertical className="w-3.5 h-3.5 text-primary/70 shrink-0" />
                           <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
                           {col.type === "formula" && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
-                          <span className="truncate text-xs font-bold text-primary">{col.name}</span>
+                          <span className="truncate text-xs font-bold text-primary">{customDisplayTitle}</span>
                         </div>
                         <div className="flex items-center gap-0.5 shrink-0">
                           <Button
@@ -1042,11 +1170,11 @@ export function CalibrationDataGrid({
                     }
 
                     if (colKey === "description") return <TableCell key="description"><Input value={getInputValue(idx, "description", pt.description)} onChange={(e) => handleInputChange(idx, "description", e.target.value)} placeholder="e.g. GO" className="h-9 text-xs" /></TableCell>;
-                    if (colKey === "nominal") return <TableCell key="nominal"><Input type="number" step="any" value={getInputValue(idx, "nominal", pt.nominal)} onChange={(e) => handleInputChange(idx, "nominal", e.target.value)} className="h-9 text-xs font-mono" /></TableCell>;
-                    if (colKey === "tolerance") return <TableCell key="tolerance"><Input type="number" step="any" value={getInputValue(idx, "tolerance", pt.tolerance ?? tolerance)} onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)} className="h-9 text-xs font-mono" placeholder={String(tolerance)} /></TableCell>;
-                    if (colKey === "ascending_reading") return <TableCell key="ascending_reading"><Input type="number" step="any" value={getInputValue(idx, "ascending_reading", pt.ascending_reading)} onChange={(e) => handleInputChange(idx, "ascending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" /></TableCell>;
-                    if (colKey === "descending_reading" && hasDescending) return <TableCell key="descending_reading"><Input type="number" step="any" value={getInputValue(idx, "descending_reading", pt.descending_reading ?? 0)} onChange={(e) => handleInputChange(idx, "descending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" /></TableCell>;
-                    if (colKey === "error") return <TableCell key="error" className="font-mono text-xs font-semibold">{pt.error !== undefined ? pt.error.toFixed(4) : "-"}</TableCell>;
+                    if (colKey === "nominal") return <TableCell key="nominal"><Input type="text" inputMode="decimal" value={getInputValue(idx, "nominal", pt.nominal)} onChange={(e) => handleInputChange(idx, "nominal", e.target.value)} onBlur={(e) => handleInputBlur(idx, "nominal", e.target.value)} className="h-9 text-xs font-mono" placeholder="0.000" /></TableCell>;
+                    if (colKey === "tolerance") return <TableCell key="tolerance"><Input type="text" inputMode="decimal" value={getInputValue(idx, "tolerance", pt.tolerance ?? tolerance)} onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)} onBlur={(e) => handleInputBlur(idx, "tolerance", e.target.value)} className="h-9 text-xs font-mono" placeholder={String(tolerance)} /></TableCell>;
+                    if (colKey === "ascending_reading") return <TableCell key="ascending_reading"><Input type="text" inputMode="decimal" value={getInputValue(idx, "ascending_reading", pt.ascending_reading)} onChange={(e) => handleInputChange(idx, "ascending_reading", e.target.value)} onBlur={(e) => handleInputBlur(idx, "ascending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" placeholder="0.000" /></TableCell>;
+                    if (colKey === "descending_reading" && hasDescending) return <TableCell key="descending_reading"><Input type="text" inputMode="decimal" value={getInputValue(idx, "descending_reading", pt.descending_reading ?? 0)} onChange={(e) => handleInputChange(idx, "descending_reading", e.target.value)} onBlur={(e) => handleInputBlur(idx, "descending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" placeholder="0.000" /></TableCell>;
+                    if (colKey === "error") return <TableCell key="error" className="font-mono text-xs font-semibold">{pt.error !== undefined ? pt.error.toFixed(decimalPlaces) : "-"}</TableCell>;
                     if (colKey === "status") return <TableCell key="status" className="text-center">{pt.status ? <Badge variant={pt.status === "PASS" ? "default" : "destructive"} className="text-[10px] uppercase font-bold">{pt.status}</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>;
                     if (colKey === "actions") return <TableCell key="actions" className="text-center border-l w-12"><Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => removePoint(idx)} title="Delete row"><Trash2 className="w-4 h-4" /></Button></TableCell>;
 
@@ -1082,10 +1210,6 @@ export function CalibrationDataGrid({
               </>
             )}
           </div>
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground bg-muted/30 px-2 py-0.5 rounded border">
-            <Sparkles className="w-3 h-3 text-amber-500" />
-            <span>Powered by <strong>TanStack Virtual Engine</strong> (High Performance Virtual Scroll)</span>
-          </div>
         </div>
       )}
 
@@ -1103,20 +1227,40 @@ export function CalibrationDataGrid({
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Column Header Name</Label>
-              <Input
-                value={newColName}
-                onChange={(e) => setNewColName(e.target.value)}
-                placeholder="e.g., DUC READING in rpm"
-                className={`text-xs ${isAddNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
-              />
-              {isAddNameDuplicate && (
-                <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  A column with this name already exists. Please enter a unique name.
-                </p>
-              )}
+            <div className="flex gap-2 items-start">
+              <div className="flex-1 space-y-1.5">
+                <Label className="text-xs font-semibold">Column Header Name</Label>
+                <Input
+                  value={newColName}
+                  onChange={(e) => setNewColName(e.target.value)}
+                  placeholder="e.g., Nominal, Actual, Error"
+                  className={`text-xs ${isAddNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                />
+                {isAddNameDuplicate && (
+                  <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    A column with this name already exists. Please enter a unique name.
+                  </p>
+                )}
+              </div>
+              <div className="w-36 space-y-1.5 shrink-0">
+                <Label className="text-xs font-semibold">Unit Option</Label>
+                <Select value={newColUnit || "inherit"} onValueChange={setNewColUnit}>
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">Global ({unit || "None"})</SelectItem>
+                    {typeConfig.units.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                    {!typeConfig.units.includes("%") && <SelectItem value="%">% Percentage</SelectItem>}
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -1235,20 +1379,40 @@ export function CalibrationDataGrid({
           </DialogHeader>
 
           <div className="space-y-4 py-2 text-xs">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Column Header Name</Label>
-              <Input
-                value={editColName}
-                onChange={(e) => setEditColName(e.target.value)}
-                placeholder="e.g., Error % in rpm"
-                className={`text-xs ${isEditNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
-              />
-              {isEditNameDuplicate && (
-                <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
-                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                  A column with this name already exists. Please enter a unique name.
-                </p>
-              )}
+            <div className="flex gap-2 items-start">
+              <div className="flex-1 space-y-1.5">
+                <Label className="text-xs font-semibold">Column Header Name</Label>
+                <Input
+                  value={editColName}
+                  onChange={(e) => setEditColName(e.target.value)}
+                  placeholder="e.g., TEST"
+                  className={`text-xs ${isEditNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                />
+                {isEditNameDuplicate && (
+                  <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    A column with this name already exists. Please enter a unique name.
+                  </p>
+                )}
+              </div>
+              <div className="w-36 space-y-1.5 shrink-0">
+                <Label className="text-xs font-semibold">Unit Option</Label>
+                <Select value={editColUnit || "inherit"} onValueChange={setEditColUnit}>
+                  <SelectTrigger className="text-xs h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">Global ({unit || "None"})</SelectItem>
+                    {typeConfig.units.map((u) => (
+                      <SelectItem key={u} value={u}>
+                        {u}
+                      </SelectItem>
+                    ))}
+                    {!typeConfig.units.includes("%") && <SelectItem value="%">% Percentage</SelectItem>}
+                    <SelectItem value="none">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -1503,6 +1667,173 @@ export function CalibrationDataGrid({
               }}
             >
               Apply Status Rule
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Template & Grid Settings Modal */}
+      <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Settings2 className="w-5 h-5 text-primary" />
+              Template & Grid Settings
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Configure decimal precision (1 to 10), measurement units, default tolerances & MPE criteria.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            {/* Decimal Precision */}
+            <div className="space-y-1.5 border-b pb-3">
+              <Label className="text-xs font-semibold">Decimal Precision (1 to 10)</Label>
+              <p className="text-[11px] text-muted-foreground">
+                Set number of decimal places for calculations and automatic formatting on blur.
+              </p>
+              <Select
+                value={String(decimalPlaces)}
+                onValueChange={(val) => {
+                  const dp = parseInt(val, 10);
+                  setDecimalPlaces(dp);
+                  if (onDecimalPlacesChange) onDecimalPlacesChange(dp);
+                }}
+              >
+                <SelectTrigger className="w-full h-9 text-xs font-mono font-bold">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 Decimal (.0)</SelectItem>
+                  <SelectItem value="2">2 Decimals (.00)</SelectItem>
+                  <SelectItem value="3">3 Decimals (.000)</SelectItem>
+                  <SelectItem value="4">4 Decimals (.0000)</SelectItem>
+                  <SelectItem value="5">5 Decimals (.00000)</SelectItem>
+                  <SelectItem value="6">6 Decimals (.000000)</SelectItem>
+                  <SelectItem value="7">7 Decimals (.0000000)</SelectItem>
+                  <SelectItem value="8">8 Decimals (.00000000)</SelectItem>
+                  <SelectItem value="9">9 Decimals (.000000000)</SelectItem>
+                  <SelectItem value="10">10 Decimals (.0000000000)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Measurement Unit */}
+            <div className="space-y-1.5 border-b pb-3">
+              <Label className="text-xs font-semibold">Default Measurement Unit</Label>
+              <Select value={unit} onValueChange={onUnitChange}>
+                <SelectTrigger className="w-full h-9 text-xs">
+                  <SelectValue placeholder="Unit" />
+                </SelectTrigger>
+                <SelectContent>
+                  {typeConfig.units.map((u) => (
+                    <SelectItem key={u} value={u}>
+                      {u}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Default Tolerance */}
+            <div className="space-y-1.5 border-b pb-3">
+              <Label className="text-xs font-semibold">Default Tolerance (±)</Label>
+              <Input
+                type="number"
+                step="any"
+                value={
+                  rawTolerance !== null
+                    ? rawTolerance
+                    : tolerance !== undefined && tolerance !== null
+                    ? String(tolerance)
+                    : ""
+                }
+                onChange={(e) => {
+                  const text = e.target.value;
+                  setRawTolerance(text);
+                  const parsed = parseFloat(text);
+                  const newTol = isNaN(parsed) ? 0 : parsed;
+                  onToleranceChange(newTol);
+
+                  const updated = points.map((pt) => {
+                    const ptTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : newTol;
+                    const newPt = { ...pt };
+                    if (ptTol > 0) {
+                      newPt.status = Math.abs(newPt.error) <= ptTol ? "PASS" : "FAIL";
+                    } else {
+                      newPt.status = undefined;
+                    }
+                    return newPt;
+                  });
+                  onPointsChange(updated);
+                }}
+                placeholder="0.001"
+                className="h-9 text-xs font-mono"
+              />
+            </div>
+
+            {/* Acceptance Criteria (MPE) */}
+            {onAcceptanceCriteriaChange && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Acceptance Criteria (MPE Limit)</Label>
+                  <Checkbox
+                    id="modal_acc_check"
+                    checked={!!acceptanceCriteria?.enabled}
+                    onCheckedChange={(c) =>
+                      onAcceptanceCriteriaChange({
+                        ...acceptanceCriteria,
+                        enabled: !!c,
+                      })
+                    }
+                  />
+                </div>
+                {acceptanceCriteria?.enabled && (
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Criteria Limit</Label>
+                      <Input
+                        type="number"
+                        step="any"
+                        value={acceptanceCriteria.value ?? 2}
+                        onChange={(e) =>
+                          onAcceptanceCriteriaChange({
+                            ...acceptanceCriteria,
+                            value: parseFloat(e.target.value) || 0,
+                          })
+                        }
+                        className="h-8 text-xs font-mono font-bold"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-[10px] text-muted-foreground">Limit Unit</Label>
+                      <Select
+                        value={acceptanceCriteria.type || "percentage"}
+                        onValueChange={(val: any) =>
+                          onAcceptanceCriteriaChange({
+                            ...acceptanceCriteria,
+                            type: val,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="percentage">% Percentage</SelectItem>
+                          <SelectItem value="absolute">± Absolute Unit</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button onClick={() => setIsSettingsOpen(false)} className="w-full">
+              Save Settings
             </Button>
           </DialogFooter>
         </DialogContent>

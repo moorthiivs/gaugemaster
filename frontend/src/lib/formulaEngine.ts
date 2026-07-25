@@ -7,6 +7,7 @@ export interface CustomColumn {
   type: "text" | "number" | "formula";
   formulaType?: "avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom";
   customFormula?: string;
+  unit?: string;
 }
 
 export interface VariableSuggestion {
