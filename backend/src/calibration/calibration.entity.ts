@@ -82,6 +82,19 @@ export class Calibration {
   @Column({ type: 'jsonb', nullable: true })
   hidden_columns?: string[];
 
+  @Column({ type: 'jsonb', nullable: true })
+  standard_columns_config?: Record<string, any>;
+
+  @Column({ type: 'int', nullable: true })
+  decimal_places?: number;
+
+  @Column({ type: 'jsonb', nullable: true })
+  acceptance_criteria?: {
+    enabled?: boolean;
+    value?: number;
+    type?: 'percentage' | 'absolute';
+  };
+
   // ── Results ──────────────────────────────────────────────────
   @Column({ nullable: true })
   uncertainty: string;

@@ -170,6 +170,20 @@ export function CalibrationDataGrid({
     return false;
   };
 
+  // Helper to resolve specific column decimal places (or fallback to global template decimalPlaces)
+  const getColumnDecimalPlaces = (colKeyOrId: string): number => {
+    const stdConfig = standardColumnConfigs[colKeyOrId];
+    // Allow 0 (no decimal) explicitly set at column level
+    if (stdConfig && stdConfig.decimalPlaces !== undefined && stdConfig.decimalPlaces >= 0) {
+      return stdConfig.decimalPlaces;
+    }
+    const customCol = customColumns.find((c) => c.id === colKeyOrId);
+    if (customCol && customCol.decimalPlaces !== undefined && customCol.decimalPlaces >= 0) {
+      return customCol.decimalPlaces;
+    }
+    return decimalPlaces;
+  };
+
   // Whenever decimalPlaces setting changes, dynamically re-format all numeric & formula raw inputs
   useEffect(() => {
     setRawInputs((prev) => {
@@ -180,7 +194,10 @@ export function CalibrationDataGrid({
         if (val !== undefined && val !== null && val.trim() !== "") {
           const parsed = parseFloat(val);
           if (!isNaN(parsed)) {
-            updated[key] = parsed.toFixed(decimalPlaces);
+            // Extract column ID from key (e.g. "0_nominal" -> "nominal", "0_custom_123" -> "123")
+            const colId = key.includes("_custom_") ? key.split("_custom_")[1] : key.split("_").slice(1).join("_");
+            const colDec = getColumnDecimalPlaces(colId);
+            updated[key] = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
           }
         }
       });
@@ -204,6 +221,7 @@ export function CalibrationDataGrid({
   const [newColName, setNewColName] = useState("");
   const [newColType, setNewColType] = useState<"text" | "number" | "formula">("text");
   const [newColUnit, setNewColUnit] = useState("");
+  const [newColGroup, setNewColGroup] = useState("");
   const [newColDecimalPlaces, setNewColDecimalPlaces] = useState<number | undefined>(undefined);
   const [newColPlacement, setNewColPlacement] = useState<"after_actual" | "after_desc" | "after_nom" | "after_tol" | "first" | "before_error">("after_actual");
   const [newFormulaType, setNewFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("avg");
@@ -215,6 +233,7 @@ export function CalibrationDataGrid({
   const [editColName, setEditColName] = useState("");
   const [editColType, setEditColType] = useState<"text" | "number" | "formula">("text");
   const [editColUnit, setEditColUnit] = useState("");
+  const [editColGroup, setEditColGroup] = useState("");
   const [editColDecimalPlaces, setEditColDecimalPlaces] = useState<number | undefined>(undefined);
   const [editFormulaType, setEditFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("custom");
   const [editCustomFormula, setEditCustomFormula] = useState("");
@@ -251,7 +270,7 @@ export function CalibrationDataGrid({
 
   // Calculate active unified column order filtered by hiddenColumns
   // ALWAYS returns: ["pt", ...middleColumns, "actions"]
-  const getActiveColumnOrder = (): string[] => {
+  const getFullColumnOrder = (): string[] => {
     const standardKeys = ["description", "nominal", "tolerance", "ascending_reading"];
     if (hasDescending) standardKeys.push("descending_reading");
     standardKeys.push("error", "status");
@@ -259,6 +278,10 @@ export function CalibrationDataGrid({
     const customIds = customColumns.map((c) => c.id);
 
     let fullOrder = columnOrder.length > 0 ? [...columnOrder] : [];
+    
+    // Safety filter to remove 'pt' and 'actions' if they accidentally got saved into state
+    fullOrder = fullOrder.filter((k) => k !== "pt" && k !== "actions");
+
     if (fullOrder.length === 0) {
       fullOrder = ["description", "nominal", "tolerance", "ascending_reading"];
       if (hasDescending) fullOrder.push("descending_reading");
@@ -281,13 +304,14 @@ export function CalibrationDataGrid({
       fullOrder = fullOrder.filter((k) => k !== "descending_reading");
     }
 
-    // Filter out 'pt', 'actions', and any hidden columns
-    const middleOrder = fullOrder.filter(
-      (key) => key !== "pt" && key !== "actions" && !hiddenColumns.includes(key)
-    );
+    return ["pt", ...fullOrder, "actions"];
+  };
 
-    // ALWAYS return 'pt' as Column 1 and 'actions' as the VERY LAST column
-    return ["pt", ...middleOrder, "actions"];
+  const getActiveColumnOrder = (): string[] => {
+    const fullOrder = getFullColumnOrder();
+    return fullOrder.filter(
+      (key) => key === "pt" || key === "actions" || !hiddenColumns.includes(key)
+    );
   };
 
   const addPoint = () => {
@@ -351,7 +375,9 @@ export function CalibrationDataGrid({
         customFormula: formulaStr,
       };
 
-      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, currentOrder, rowTol);
+      const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+      const fullOrder = getFullColumnOrder();
+      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
 
       if (resultStr === "TRUE" || resultStr === "1" || resultStr.toLowerCase() === "pass" || resultStr === "true") {
         return "PASS";
@@ -371,7 +397,9 @@ export function CalibrationDataGrid({
     let errVal = pt.error;
     const formulaErrCol = currentColumns.find((c) => c.type === "formula" && c.name.toLowerCase() === "error");
     if (formulaErrCol) {
-      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, currentOrder, rowTol);
+      const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+      const fullOrder = getFullColumnOrder();
+      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
       const parsed = parseFloat(calcStr.replace("%", ""));
       if (!isNaN(parsed)) {
         errVal = parsed;
@@ -401,7 +429,9 @@ export function CalibrationDataGrid({
     // Auto-calculate error
     const errConfig = standardColumnConfigs["error"];
     if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
-       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, activeOrder, tolerance);
+       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+       const fullOrder = getFullColumnOrder();
+       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
        const parsed = parseFloat(calcVal.replace("%", ""));
        pt.error = isNaN(parsed) ? 0 : parsed;
     } else if (hasDescending && desc !== undefined) {
@@ -419,7 +449,9 @@ export function CalibrationDataGrid({
       const computedFields: Record<string, any> = {};
       customColumns.forEach((col) => {
         if (col.type === "formula") {
-          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance);
+          const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+          const fullOrder = getFullColumnOrder();
+          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
           computedFields[col.id] = { name: col.name, value: val };
         } else {
           const existing = currentFields[col.id];
@@ -437,18 +469,7 @@ export function CalibrationDataGrid({
     onPointsChange(updated);
   };
 
-  // Helper to resolve specific column decimal places (or fallback to global template decimalPlaces)
-  const getColumnDecimalPlaces = (colKeyOrId: string): number => {
-    const stdConfig = standardColumnConfigs[colKeyOrId];
-    if (stdConfig && stdConfig.decimalPlaces !== undefined && stdConfig.decimalPlaces > 0) {
-      return stdConfig.decimalPlaces;
-    }
-    const customCol = customColumns.find((c) => c.id === colKeyOrId);
-    if (customCol && customCol.decimalPlaces !== undefined && customCol.decimalPlaces > 0) {
-      return customCol.decimalPlaces;
-    }
-    return decimalPlaces;
-  };
+
 
   const handleInputChange = (index: number, field: string, text: string) => {
     const key = `${index}_${field}`;
@@ -457,7 +478,14 @@ export function CalibrationDataGrid({
     if (field === "description") {
       updatePoint(index, field, text);
     } else {
-      const parsed = parseFloat(text);
+      // Allow empty / partial inputs (e.g. "-", ".", "-0.") without saving 0
+      // Only commit a real number when it's actually parseable
+      const trimmed = text.trim();
+      if (trimmed === "" || trimmed === "-" || trimmed === "." || trimmed === "-.") {
+        // Don't overwrite the saved value while the user is mid-edit
+        return;
+      }
+      const parsed = parseFloat(trimmed);
       updatePoint(index, field, isNaN(parsed) ? 0 : parsed);
     }
   };
@@ -465,6 +493,12 @@ export function CalibrationDataGrid({
   const handleCustomFieldChange = (index: number, colId: string, text: string, isNumber: boolean) => {
     const key = `${index}_custom_${colId}`;
     setRawInputs((prev) => ({ ...prev, [key]: text }));
+
+    if (isNumber) {
+      const trimmed = text.trim();
+      // Allow partial/empty input without saving 0 mid-type
+      if (trimmed === "" || trimmed === "-" || trimmed === "." || trimmed === "-.") return;
+    }
 
     const currentFields = points[index]?.customFields || {};
     const col = customColumns.find((c) => c.id === colId);
@@ -478,11 +512,18 @@ export function CalibrationDataGrid({
   };
 
   const handleInputBlur = (index: number, field: string, text: string) => {
-    const parsed = parseFloat(text);
-    if (!isNaN(parsed) && text.trim() !== "") {
+    const key = `${index}_${field}`;
+    const trimmed = text.trim();
+    if (trimmed === "" || trimmed === "-" || trimmed === ".") {
+      // Reset to the actual saved value on blur if user left it invalid
+      const savedVal = (points[field as any] as any) ?? 0;
+      setRawInputs((prev) => ({ ...prev, [key]: String(savedVal) }));
+      return;
+    }
+    const parsed = parseFloat(trimmed);
+    if (!isNaN(parsed)) {
       const colDec = getColumnDecimalPlaces(field);
-      const formatted = parsed.toFixed(colDec);
-      const key = `${index}_${field}`;
+      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
       setRawInputs((prev) => ({ ...prev, [key]: formatted }));
       updatePoint(index, field, parsed);
     }
@@ -490,11 +531,16 @@ export function CalibrationDataGrid({
 
   const handleCustomFieldBlur = (index: number, colId: string, text: string, isNumber: boolean) => {
     if (!isNumber) return;
-    const parsed = parseFloat(text);
-    if (!isNaN(parsed) && text.trim() !== "") {
+    const trimmed = text.trim();
+    const key = `${index}_custom_${colId}`;
+    if (trimmed === "" || trimmed === "-" || trimmed === ".") {
+      setRawInputs((prev) => ({ ...prev, [key]: "0" }));
+      return;
+    }
+    const parsed = parseFloat(trimmed);
+    if (!isNaN(parsed)) {
       const colDec = getColumnDecimalPlaces(colId);
-      const formatted = parsed.toFixed(colDec);
-      const key = `${index}_custom_${colId}`;
+      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
       setRawInputs((prev) => ({ ...prev, [key]: formatted }));
     }
   };
@@ -603,6 +649,7 @@ export function CalibrationDataGrid({
       customFormula: newColType === "formula" && newFormulaType === "custom" ? newCustomFormula : undefined,
       unit: newColUnit.trim() || undefined,
       decimalPlaces: newColDecimalPlaces,
+      groupName: newColGroup.trim() || undefined,
     };
 
     const nextCols = [...customColumns, newCol];
@@ -639,6 +686,7 @@ export function CalibrationDataGrid({
     setNewColType("text");
     setNewColUnit("inherit");
     setNewColDecimalPlaces(undefined);
+    setNewColGroup("");
     setNewColPlacement("after_actual");
     setNewFormulaType("avg");
     setNewCustomFormula("=Actual - Nominal");
@@ -654,6 +702,7 @@ export function CalibrationDataGrid({
     setEditFormulaType(col.formulaType || "custom");
     setEditCustomFormula(col.customFormula || "=Actual - Nominal");
     setEditColUnit(col.unit || "inherit");
+    setEditColGroup(col.groupName || "");
     setEditColDecimalPlaces(col.decimalPlaces);
   };
 
@@ -672,6 +721,7 @@ export function CalibrationDataGrid({
         customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
         unit: editColUnit.trim() || undefined,
         decimalPlaces: editColDecimalPlaces,
+        groupName: editColGroup.trim() || undefined,
       };
       updateStandardColumnConfigsState(updatedConfigs);
     } else {
@@ -685,6 +735,7 @@ export function CalibrationDataGrid({
             customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
             unit: editColUnit.trim() || undefined,
             decimalPlaces: editColDecimalPlaces,
+            groupName: editColGroup.trim() || undefined,
           };
         }
         return c;
@@ -792,7 +843,9 @@ export function CalibrationDataGrid({
 
   const renderCustomCell = (col: CustomColumn, pt: CalibrationPoint, idx: number) => {
     if (col.type === "formula") {
-      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance);
+      const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+      const fullOrder = getFullColumnOrder();
+      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
       return (
         <TableCell key={col.id} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -928,6 +981,7 @@ export function CalibrationDataGrid({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="0">None (Integer)</SelectItem>
                 <SelectItem value="1">1 Dec (.0)</SelectItem>
                 <SelectItem value="2">2 Dec (.00)</SelectItem>
                 <SelectItem value="3">3 Dec (.000)</SelectItem>
@@ -1058,19 +1112,58 @@ export function CalibrationDataGrid({
         >
           <Table>
             <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10 shadow-xs">
-              <TableRow>
-                {activeOrder.map((colKey) => {
+              {(() => {
+                const getColGroup = (colKey: string): string | undefined => {
+                  if (colKey === "pt" || colKey === "actions" || colKey === "status") return undefined;
+                  const stdConfig = standardColumnConfigs[colKey];
+                  if (stdConfig?.groupName) return stdConfig.groupName;
+                  const customCol = customColumns.find((c) => c.id === colKey);
+                  if (customCol?.groupName) return customCol.groupName;
+                  return undefined;
+                };
+
+                const hasAnyGroups = activeOrder.some((key) => getColGroup(key));
+
+                const topRowCells: { type: "group" | "single"; groupName?: string; colSpan: number; colKeys: string[] }[] = [];
+                if (hasAnyGroups) {
+                  let currentGroup: string | undefined = undefined;
+                  let currentGroupKeys: string[] = [];
+                  for (const colKey of activeOrder) {
+                    const g = getColGroup(colKey);
+                    if (g) {
+                      if (currentGroup === g) {
+                        currentGroupKeys.push(colKey);
+                      } else {
+                        if (currentGroup) topRowCells.push({ type: "group", groupName: currentGroup, colSpan: currentGroupKeys.length, colKeys: currentGroupKeys });
+                        currentGroup = g;
+                        currentGroupKeys = [colKey];
+                      }
+                    } else {
+                      if (currentGroup) {
+                        topRowCells.push({ type: "group", groupName: currentGroup, colSpan: currentGroupKeys.length, colKeys: currentGroupKeys });
+                        currentGroup = undefined;
+                        currentGroupKeys = [];
+                      }
+                      topRowCells.push({ type: "single", colSpan: 1, colKeys: [colKey] });
+                    }
+                  }
+                  if (currentGroup) topRowCells.push({ type: "group", groupName: currentGroup, colSpan: currentGroupKeys.length, colKeys: currentGroupKeys });
+                }
+
+                const renderColHeader = (colKey: string, rowSpan: number = 1, isSubHeader: boolean = false) => {
                   if (colKey === "pt") return (
-                    <TableHead key="pt" className="w-12 text-center font-semibold border-r">
+                    <TableHead key="pt" rowSpan={rowSpan} className="w-12 text-center font-semibold border-r">
                       <span>Pt</span>
                     </TableHead>
                   );
 
-                  if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
+                  if (colKey === "actions") return <TableHead key="actions" rowSpan={rowSpan} className="w-12 text-center border-l"></TableHead>;
 
                   const dataColumns = activeOrder.filter((k) => k !== "pt" && k !== "actions");
                   const dataIdx = dataColumns.indexOf(colKey);
-                  const excelLetter = getExcelColumnLetter(dataIdx);                  const renderStandardColumn = (id: string, defaultBaseName: string, supportsUnit: boolean = true) => {
+                  const excelLetter = getExcelColumnLetter(dataIdx);
+
+                  const renderStandardColumn = (id: string, defaultBaseName: string, supportsUnit: boolean = true) => {
                     const config = standardColumnConfigs[id];
                     const rawName = config?.name || defaultBaseName;
                     const baseName = getCleanBaseName(rawName);
@@ -1109,16 +1202,19 @@ export function CalibrationDataGrid({
                     return (
                       <TableHead
                         key={id}
+                        rowSpan={rowSpan}
                         draggable={!isStatus}
                         onDragStart={!isStatus ? (e) => handleDragStart(e, id) : undefined}
                         onDragOver={handleDragOver}
                         onDrop={(e) => handleDropOnHeader(e, id)}
-                        className={`font-semibold min-w-[120px] ${!isStatus ? "cursor-grab active:cursor-grabbing hover:bg-muted/50" : ""} select-none transition-colors border-x`}
+                        className={`font-semibold min-w-[120px] ${!isStatus ? "cursor-grab active:cursor-grabbing hover:bg-muted/50" : ""} select-none transition-colors border-x ${isSubHeader ? "bg-muted/30 border-t" : ""}`}
                       >
                         <div className="flex items-center justify-between gap-1 py-1 group">
                           <div className="flex items-center gap-1 min-w-0 truncate">
                             {!isStatus && <GripVertical className="w-3.5 h-3.5 text-muted-foreground shrink-0 opacity-50 group-hover:opacity-100" />}
-                            <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                            <div className="flex items-center justify-center w-5 h-5 rounded shadow-sm bg-primary/10 border border-primary/20 text-primary font-mono font-bold text-[11px] shrink-0 leading-none select-none" title={`Formula Alias: ${excelLetter}`}>
+                              {excelLetter}
+                            </div>
                             {isFormula && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
                             <span className="truncate">{displayTitle}</span>
                           </div>
@@ -1148,8 +1244,6 @@ export function CalibrationDataGrid({
                   if (colKey === "error") return renderStandardColumn("error", errorCol?.label || "Error", true);
                   if (colKey === "status") return renderStandardColumn("status", "Status", false);
 
-                  if (colKey === "actions") return <TableHead key="actions" className="w-12 text-center border-l"></TableHead>;
-
                   const col = customColumns.find((c) => c.id === colKey);
                   if (!col) return null;
 
@@ -1161,28 +1255,28 @@ export function CalibrationDataGrid({
                   return (
                     <TableHead
                       key={col.id}
+                      rowSpan={rowSpan}
                       draggable
                       onDragStart={(e) => handleDragStart(e, col.id)}
                       onDragOver={handleDragOver}
                       onDrop={(e) => handleDropOnHeader(e, col.id)}
-                      className="font-semibold min-w-[150px] bg-primary/10 border-x border-primary/20 select-none cursor-grab active:cursor-grabbing hover:bg-primary/15 transition-colors"
+                      className={`font-semibold min-w-[150px] border-x border-primary/20 select-none cursor-grab active:cursor-grabbing transition-colors ${isSubHeader ? "bg-primary/5 hover:bg-primary/10 border-t" : "bg-primary/10 hover:bg-primary/15"}`}
                     >
                       <div className="flex items-center justify-between gap-1 py-1">
                         <div className="flex items-center gap-1 min-w-0 truncate">
                           <GripVertical className="w-3.5 h-3.5 text-primary/70 shrink-0" />
-                          <Badge className="bg-primary text-primary-foreground font-mono font-bold text-[9px] px-1 py-0 h-4 shrink-0">{excelLetter}</Badge>
+                          <div className="flex items-center justify-center w-5 h-5 rounded shadow-sm bg-primary/10 border border-primary/20 text-primary font-mono font-bold text-[11px] shrink-0 leading-none select-none" title={`Formula Alias: ${excelLetter}`}>
+                            {excelLetter}
+                          </div>
                           {col.type === "formula" && <Calculator className="w-3.5 h-3.5 text-primary shrink-0" />}
                           <span className="truncate text-xs font-bold text-primary">{customDisplayTitle}</span>
                         </div>
-                        <div className="flex items-center gap-0.5 shrink-0">
+                        <div className="flex items-center gap-0.5 shrink-0 opacity-0 hover:opacity-100 transition-opacity [&:has(:hover)]:opacity-100 group-hover:opacity-100 focus-within:opacity-100" style={{opacity: 1 /* Temp fix for hover states */}}>
                           <Button
                             variant="outline"
                             size="icon"
                             className="h-5 w-5 bg-background text-muted-foreground hover:text-foreground shadow-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              moveColumnInOrder(col.id, "left");
-                            }}
+                            onClick={(e) => { e.stopPropagation(); moveColumnInOrder(col.id, "left"); }}
                             title="Move left"
                           >
                             <ChevronLeft className="w-3 h-3" />
@@ -1191,10 +1285,7 @@ export function CalibrationDataGrid({
                             variant="outline"
                             size="icon"
                             className="h-5 w-5 bg-background text-muted-foreground hover:text-foreground shadow-xs"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              moveColumnInOrder(col.id, "right");
-                            }}
+                            onClick={(e) => { e.stopPropagation(); moveColumnInOrder(col.id, "right"); }}
                             title="Move right"
                           >
                             <ChevronRight className="w-3 h-3" />
@@ -1203,10 +1294,7 @@ export function CalibrationDataGrid({
                             variant="ghost"
                             size="icon"
                             className="h-5 w-5 text-muted-foreground hover:text-primary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenEditColumn(col);
-                            }}
+                            onClick={(e) => { e.stopPropagation(); handleOpenEditColumn(col); }}
                             title="Edit Column & Formula"
                           >
                             <Edit className="w-3 h-3" />
@@ -1215,10 +1303,7 @@ export function CalibrationDataGrid({
                             variant="ghost"
                             size="icon"
                             className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRemoveColumn(col.id);
-                            }}
+                            onClick={(e) => { e.stopPropagation(); handleRemoveColumn(col.id); }}
                             title="Remove column"
                           >
                             <X className="w-3 h-3" />
@@ -1227,8 +1312,37 @@ export function CalibrationDataGrid({
                       </div>
                     </TableHead>
                   );
-                })}
-              </TableRow>
+                };
+
+                if (!hasAnyGroups) {
+                  return (
+                    <TableRow>
+                      {activeOrder.map(colKey => renderColHeader(colKey, 1, false))}
+                    </TableRow>
+                  );
+                } else {
+                  return (
+                    <>
+                      <TableRow>
+                        {topRowCells.map((cell, idx) => {
+                          if (cell.type === "group") {
+                            return (
+                              <TableHead key={`group-${idx}`} colSpan={cell.colSpan} className="text-center font-bold bg-primary/10 border-x border-b border-primary/20 text-primary">
+                                {cell.groupName}
+                              </TableHead>
+                            );
+                          } else {
+                            return renderColHeader(cell.colKeys[0], 2, false);
+                          }
+                        })}
+                      </TableRow>
+                      <TableRow>
+                        {activeOrder.filter(k => getColGroup(k)).map(k => renderColHeader(k, 1, true))}
+                      </TableRow>
+                    </>
+                  );
+                }
+              })()}
             </TableHeader>
             <TableBody>
               {points.map((pt, idx) => (
@@ -1238,7 +1352,9 @@ export function CalibrationDataGrid({
 
                     const isStandardFormula = standardColumnConfigs[colKey]?.type === "formula";
                     if (isStandardFormula && colKey !== "status") {
-                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, activeOrder, tolerance);
+                      const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+                      const fullOrder = getFullColumnOrder();
+                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
                       return (
                         <TableCell key={colKey} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
                           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -1347,6 +1463,17 @@ export function CalibrationDataGrid({
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Column Group (Optional)</Label>
+              <Input
+                value={newColGroup}
+                onChange={(e) => setNewColGroup(e.target.value)}
+                placeholder="e.g., Actual Reading"
+                className="text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">Adjacent columns with the identical group name will be merged under a single header.</p>
+            </div>
+
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Column Data Type</Label>
@@ -1374,6 +1501,7 @@ export function CalibrationDataGrid({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="inherit">Inherit Global ({decimalPlaces} Dec)</SelectItem>
+                      <SelectItem value="0">None (Integer — no decimal)</SelectItem>
                       <SelectItem value="1">1 Dec (.0)</SelectItem>
                       <SelectItem value="2">2 Dec (.00)</SelectItem>
                       <SelectItem value="3">3 Dec (.000)</SelectItem>
@@ -1528,6 +1656,17 @@ export function CalibrationDataGrid({
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Column Group (Optional)</Label>
+              <Input
+                value={editColGroup}
+                onChange={(e) => setEditColGroup(e.target.value)}
+                placeholder="e.g., Actual Reading"
+                className="text-xs"
+              />
+              <p className="text-[10px] text-muted-foreground">Adjacent columns with the identical group name will be merged under a single header.</p>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Column Data Type</Label>
@@ -1555,6 +1694,7 @@ export function CalibrationDataGrid({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="inherit">Inherit Global ({decimalPlaces} Dec)</SelectItem>
+                      <SelectItem value="0">None (Integer — no decimal)</SelectItem>
                       <SelectItem value="1">1 Dec (.0)</SelectItem>
                       <SelectItem value="2">2 Dec (.00)</SelectItem>
                       <SelectItem value="3">3 Dec (.000)</SelectItem>
@@ -1758,18 +1898,19 @@ export function CalibrationDataGrid({
                         }
 
                         return (
-                          <Badge
+                          <div
                             key={colKey}
-                            variant="secondary"
                             onClick={() => {
                               setEditStatusFormula((prev) => (prev ? `${prev} ${excelLetter}` : `=${excelLetter}`));
                             }}
-                            className="cursor-pointer hover:bg-primary/20 text-[10px] font-mono gap-1 py-1"
+                            className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-secondary/50 hover:bg-primary/10 border border-transparent hover:border-primary/20 cursor-pointer transition-colors shadow-sm"
                             title={`Insert Column ${excelLetter} (${name})`}
                           >
-                            <span className="font-bold text-primary">{excelLetter}</span>
-                            <span className="text-muted-foreground font-sans">({name})</span>
-                          </Badge>
+                            <div className="flex items-center justify-center w-5 h-5 rounded bg-primary/10 border border-primary/20 text-primary font-mono font-bold text-[11px] shrink-0 leading-none shadow-sm">
+                              {excelLetter}
+                            </div>
+                            <span className="text-xs text-muted-foreground font-medium font-sans truncate">{name}</span>
+                          </div>
                         );
                       })}
                   </div>
@@ -1846,6 +1987,7 @@ export function CalibrationDataGrid({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="0">None — Integer (no decimal)</SelectItem>
                   <SelectItem value="1">1 Decimal (.0)</SelectItem>
                   <SelectItem value="2">2 Decimals (.00)</SelectItem>
                   <SelectItem value="3">3 Decimals (.000)</SelectItem>

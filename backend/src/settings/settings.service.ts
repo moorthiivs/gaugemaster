@@ -25,7 +25,16 @@ export class SettingsService {
       });
 
       if (existing) {
-        await this.settingsRepository.update(existing.id, createSettingDto);
+        const mergedCertConfig = createSettingDto.certificateConfig
+          ? { ...(existing.certificateConfig || {}), ...createSettingDto.certificateConfig }
+          : existing.certificateConfig;
+
+        const updatePayload = {
+          ...createSettingDto,
+          ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
+        };
+
+        await this.settingsRepository.update(existing.id, updatePayload);
         return await this.settingsRepository.findOne({ where: { id: existing.id } });
       }
 

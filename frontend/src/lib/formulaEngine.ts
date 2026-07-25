@@ -9,6 +9,7 @@ export interface CustomColumn {
   customFormula?: string;
   unit?: string;
   decimalPlaces?: number;
+  groupName?: string;
 }
 
 export interface VariableSuggestion {
@@ -27,6 +28,7 @@ export const FORMULA_VARIABLE_SUGGESTIONS: VariableSuggestion[] = [
   { label: "Descending", value: "Descending", description: "Descending reading" },
   { label: "Error", value: "Error", description: "Calculated error (Actual - Nominal)" },
   { label: "Tolerance", value: "Tolerance", description: "Row tolerance limit (±)" },
+  { label: "Accept. Criteria", value: "MPE", description: "Global template acceptance criteria limit (Alias: MPE, Limit, AC, AcceptanceCriteria)" },
 ];
 
 /**
@@ -89,7 +91,7 @@ export function validateFormulaSyntax(formulaStr: string): { valid: boolean; mes
   const testExpr = expr
     .replace(/(MIN_VAL|MAX_VAL|NOMINAL)\([a-zA-Z]+\)/gi, "1")
     .replace(/\b[A-Z]{1,2}\b/gi, "1")
-    .replace(/\b(Nominal|Actual|Ascending|Descending|Error|Tolerance|STD|DUC)\b/gi, "1");
+    .replace(/\b(Nominal|Actual|Ascending|Descending|Error|Tolerance|STD|DUC|AcceptanceCriteria|MPE|Limit|AC)\b/gi, "1");
 
   try {
     const hf = HyperFormula.buildFromArray([[1]], { licenseKey: "gpl-v3" });
@@ -124,6 +126,7 @@ export function evaluateFormulaValue(
   customColumns: CustomColumn[] = [],
   activeColumnOrder: string[] = [],
   defaultTolerance: number = 0,
+  acceptanceCriteriaValue: number = 0
 ): string {
   const nom = parseNum(pt.nominal);
   const asc = parseNum(pt.ascending_reading);
@@ -172,7 +175,10 @@ export function evaluateFormulaValue(
       Ascending: pt.ascending_reading,
       Descending: pt.descending_reading,
       Error: pt.error,
-      AcceptanceCriteria: defaultTolerance,
+      AcceptanceCriteria: acceptanceCriteriaValue,
+      MPE: acceptanceCriteriaValue,
+      Limit: acceptanceCriteriaValue,
+      AC: acceptanceCriteriaValue,
     };
 
     // Standard named variables map
@@ -184,7 +190,10 @@ export function evaluateFormulaValue(
       Ascending: asc,
       Descending: desc || 0,
       Error: err,
-      AcceptanceCriteria: parseNum(defaultTolerance),
+      AcceptanceCriteria: parseNum(acceptanceCriteriaValue),
+      MPE: parseNum(acceptanceCriteriaValue),
+      Limit: parseNum(acceptanceCriteriaValue),
+      AC: parseNum(acceptanceCriteriaValue),
     };
 
     // Filter out 'pt' and 'actions' so Excel letters (A, B, C, D...) start at the 1st actual data column

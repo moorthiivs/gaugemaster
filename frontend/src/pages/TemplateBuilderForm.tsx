@@ -66,6 +66,7 @@ export default function TemplateBuilderForm() {
   const [standardColumnConfigs, setStandardColumnConfigs] = useState<Record<string, CustomColumn>>({});
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
+  const [decimalPlaces, setDecimalPlaces] = useState<number>(4);
   const [remarks, setRemarks] = useState("Standard calibration per ISO/IEC 17025");
   
   // Status Formula
@@ -160,6 +161,9 @@ export default function TemplateBuilderForm() {
         if ((tpl as any).hidden_columns) {
           setHiddenColumns((tpl as any).hidden_columns);
         }
+        if ((tpl as any).decimal_places !== undefined) {
+          setDecimalPlaces((tpl as any).decimal_places);
+        }
         setIsDirty(false);
       })
       .catch(() => toast.error("Failed to load template"))
@@ -211,6 +215,7 @@ export default function TemplateBuilderForm() {
         standard_columns_config: standardColumnConfigs,
         column_order: columnOrder,
         hidden_columns: hiddenColumns,
+        decimal_places: decimalPlaces,
         remarks,
         status_rule_type: statusRuleType,
         status_formula: statusFormula,
@@ -316,7 +321,7 @@ export default function TemplateBuilderForm() {
           <Button variant="outline" size="sm" onClick={handleBackNavigation}>
             Cancel
           </Button>
-          <Button size="sm" onClick={() => handleSave()} disabled={saving || isNameDuplicate || !name.trim()} className="gap-2 shadow-md">
+          <Button size="sm" onClick={handleSave} disabled={saving || isNameDuplicate || !name.trim()} className="gap-2 shadow-md">
             <Save className="w-4 h-4" />
             {saving ? "Saving..." : templateId ? "Update Template" : "Save Template"}
           </Button>
@@ -553,6 +558,8 @@ export default function TemplateBuilderForm() {
               onStandardColumnConfigsChange={(configs) => { setStandardColumnConfigs(configs); markDirty(); }}
               onColumnOrderChange={(order) => { setColumnOrder(order); markDirty(); }}
               onHiddenColumnsChange={(hidden) => { setHiddenColumns(hidden); markDirty(); }}
+              initialDecimalPlaces={decimalPlaces}
+              onDecimalPlacesChange={(dp) => { setDecimalPlaces(dp); markDirty(); }}
               acceptanceCriteria={{
                 enabled: enableAcceptance,
                 value: typeof acceptanceValue === "number" ? acceptanceValue : 0,

@@ -46,6 +46,8 @@ export interface CalibrationRecord {
   // Data
   calibration_points: CalibrationPoint[];
   custom_columns?: any[];
+  standard_columns_config?: Record<string, any>;
+  acceptance_criteria?: any;
   column_order?: string[];
   hidden_columns?: string[];
 

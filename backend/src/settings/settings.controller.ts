@@ -1,9 +1,12 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile } from '@nestjs/common';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { MailerService } from '../mail/mailer.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 
 @ApiTags('api/settings')
 @Controller('api/settings')
@@ -12,6 +15,18 @@ export class SettingsController {
     private readonly settingsService: SettingsService,
     private readonly mailerService: MailerService
   ) { }
+
+  @Get()
+  getSettingsByQuery(
+    @Query('userId') userId: string,
+    @Query('companyId') companyId: string,
+  ) {
+    if (!userId) return null;
+    if (companyId) {
+      return this.settingsService.findOne(userId, companyId);
+    }
+    return this.settingsService.findOneByUserId(userId);
+  }
 
   @Post()
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
@@ -58,6 +73,29 @@ export class SettingsController {
     @Body('targetEmail') targetEmail: string,
   ) {
     return this.mailerService.sendTestMail(userId, targetEmail);
+  }
+
+  @Post('upload-logo')
+  @UseInterceptors(FileInterceptor('logo', {
+    storage: diskStorage({
+      destination: './uploads/logos',
+      filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'logo-' + uniqueSuffix + extname(file.originalname));
+      }
+    }),
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|svg\+xml)$/)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only image files are allowed'), false);
+      }
+    },
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  }))
+  async uploadLogo(@UploadedFile() file: any) {
+    const logoUrl = `/uploads/logos/${file.filename}`;
+    return { message: 'Logo uploaded successfully', url: logoUrl };
   }
 
 }

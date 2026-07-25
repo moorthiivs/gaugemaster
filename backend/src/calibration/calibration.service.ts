@@ -447,6 +447,12 @@ export class CalibrationService {
     if (dto.reference_standards !== undefined) existing.reference_standards = dto.reference_standards;
     if (dto.environmental_conditions !== undefined) existing.environmental_conditions = dto.environmental_conditions;
     if (dto.calibration_points !== undefined) existing.calibration_points = dto.calibration_points;
+    if (dto.custom_columns !== undefined) existing.custom_columns = dto.custom_columns;
+    if (dto.standard_columns_config !== undefined) existing.standard_columns_config = dto.standard_columns_config;
+    if (dto.column_order !== undefined) existing.column_order = dto.column_order;
+    if (dto.hidden_columns !== undefined) existing.hidden_columns = dto.hidden_columns;
+    if (dto.decimal_places !== undefined) existing.decimal_places = dto.decimal_places;
+    if (dto.acceptance_criteria !== undefined) existing.acceptance_criteria = dto.acceptance_criteria;
     if (dto.uncertainty !== undefined) existing.uncertainty = dto.uncertainty;
     if (dto.verdict !== undefined) existing.verdict = dto.verdict;
     if (dto.remarks !== undefined) existing.remarks = dto.remarks;

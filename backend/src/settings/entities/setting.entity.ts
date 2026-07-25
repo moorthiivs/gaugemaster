@@ -76,5 +76,11 @@ export class Setting {
         footerLine1?: string;
         footerLine2?: string;
         footerLine3?: string;
+
+        // Certificate Appearance
+        borderColor?: string;          // Default: "#0369a1" — top/bottom strip color
+        headerBgColor?: string;        // Default: "#54c6f3" — header/footer banner background color
+        headerDisplayMode?: string;    // "name" | "logo" | "both"
+        companyLogoPath?: string;      // Path to uploaded logo image
     };
 }

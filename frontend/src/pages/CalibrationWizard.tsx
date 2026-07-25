@@ -143,14 +143,24 @@ export default function CalibrationWizard() {
   }, [user, selectedType]);
 
   const [wizardCustomColumns, setWizardCustomColumns] = useState<CustomColumn[]>([]);
+  const [wizardStandardColumnConfigs, setWizardStandardColumnConfigs] = useState<Record<string, CustomColumn>>({});
   const [wizardColumnOrder, setWizardColumnOrder] = useState<string[]>([]);
   const [wizardHiddenColumns, setWizardHiddenColumns] = useState<string[]>([]);
+  const [wizardDecimalPlaces, setWizardDecimalPlaces] = useState<number>(4);
+  const [wizardAcceptanceCriteria, setWizardAcceptanceCriteria] = useState<{
+    enabled?: boolean;
+    value?: number;
+    type?: "percentage" | "absolute";
+  }>({});
 
   const handleClearTemplate = () => {
     setSelectedTemplateId("none");
     setWizardCustomColumns([]);
+    setWizardStandardColumnConfigs({});
     setWizardColumnOrder([]);
     setWizardHiddenColumns([]);
+    setWizardDecimalPlaces(4);
+    setWizardAcceptanceCriteria({});
     toast.info("Cleared template selection (Custom Grid)");
   };
 
@@ -177,8 +187,11 @@ export default function CalibrationWizard() {
 
     // Always reset/set custom columns, column order, and hidden columns from selected template
     setWizardCustomColumns((tpl as any).custom_columns || []);
+    setWizardStandardColumnConfigs((tpl as any).standard_columns_config || {});
     setWizardColumnOrder((tpl as any).column_order || []);
     setWizardHiddenColumns((tpl as any).hidden_columns || []);
+    setWizardDecimalPlaces(tpl.decimal_places ?? 4);
+    setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
 
     if (tpl.calibration_points && tpl.calibration_points.length > 0) {
       const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
@@ -277,8 +290,11 @@ export default function CalibrationWizard() {
         }
 
         if (cal.custom_columns) setWizardCustomColumns(cal.custom_columns);
+        if ((cal as any).standard_columns_config) setWizardStandardColumnConfigs((cal as any).standard_columns_config);
         if (cal.column_order) setWizardColumnOrder(cal.column_order);
         if (cal.hidden_columns) setWizardHiddenColumns(cal.hidden_columns);
+        if ((cal as any).decimal_places !== undefined) setWizardDecimalPlaces((cal as any).decimal_places);
+        if ((cal as any).acceptance_criteria) setWizardAcceptanceCriteria((cal as any).acceptance_criteria);
 
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
@@ -331,8 +347,11 @@ export default function CalibrationWizard() {
         procedureReference,
         calPoints,
         wizardCustomColumns,
+        wizardStandardColumnConfigs,
         wizardColumnOrder,
         wizardHiddenColumns,
+        wizardDecimalPlaces,
+        wizardAcceptanceCriteria,
         calUnit,
         calTolerance,
         uncertainty,
@@ -381,8 +400,11 @@ export default function CalibrationWizard() {
           setProcedureReference(d.procedureReference || "");
           setCalPoints(d.calPoints || []);
           setWizardCustomColumns(d.wizardCustomColumns || []);
+          setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
           setWizardColumnOrder(d.wizardColumnOrder || []);
           setWizardHiddenColumns(d.wizardHiddenColumns || []);
+          setWizardDecimalPlaces(d.wizardDecimalPlaces ?? 4);
+          setWizardAcceptanceCriteria(d.wizardAcceptanceCriteria || {});
           setCalUnit(d.calUnit || "");
           setCalTolerance(d.calTolerance || 0);
           setUncertainty(d.uncertainty || "");
@@ -587,8 +609,11 @@ export default function CalibrationWizard() {
         procedure_reference: procedureReference || undefined,
         calibration_points: calPoints,
         custom_columns: wizardCustomColumns,
+        standard_columns_config: wizardStandardColumnConfigs,
         column_order: wizardColumnOrder,
         hidden_columns: wizardHiddenColumns,
+        decimal_places: wizardDecimalPlaces,
+        acceptance_criteria: wizardAcceptanceCriteria,
         uncertainty,
         verdict,
         remarks,
@@ -1099,11 +1124,17 @@ export default function CalibrationWizard() {
                 tolerance={calTolerance}
                 onToleranceChange={setCalTolerance}
                 initialCustomColumns={wizardCustomColumns}
+                initialStandardColumnConfigs={wizardStandardColumnConfigs}
                 initialColumnOrder={wizardColumnOrder}
                 initialHiddenColumns={wizardHiddenColumns}
+                initialDecimalPlaces={wizardDecimalPlaces}
+                acceptanceCriteria={wizardAcceptanceCriteria}
                 onCustomColumnsChange={setWizardCustomColumns}
+                onStandardColumnConfigsChange={setWizardStandardColumnConfigs}
                 onColumnOrderChange={setWizardColumnOrder}
                 onHiddenColumnsChange={setWizardHiddenColumns}
+                onDecimalPlacesChange={setWizardDecimalPlaces}
+                onAcceptanceCriteriaChange={setWizardAcceptanceCriteria}
                 initialStatusRuleType={statusRuleType}
                 initialStatusFormula={statusFormula}
                 onStatusRuleChange={(type, formula) => {
@@ -1277,6 +1308,8 @@ export default function CalibrationWizard() {
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
                       custom_columns: wizardCustomColumns as any,
+                      standard_columns_config: wizardStandardColumnConfigs,
+                      acceptance_criteria: wizardAcceptanceCriteria,
                     }}
                   />
                 </div>

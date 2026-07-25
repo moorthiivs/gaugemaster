@@ -73,6 +73,17 @@ export class CreateCalibrationDto {
   @IsArray()
   hidden_columns?: string[];
 
+  @IsOptional()
+  @IsObject()
+  standard_columns_config?: Record<string, any>;
+
+  @IsOptional()
+  decimal_places?: number;
+
+  @IsOptional()
+  @IsObject()
+  acceptance_criteria?: any;
+
   // Results
   @IsOptional()
   @IsString()
