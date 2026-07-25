@@ -71,6 +71,9 @@ export class CalibrationTemplate {
   @Column({ type: 'text', nullable: true })
   status_formula?: string;
 
+  @Column({ type: 'int', nullable: true })
+  decimal_places?: number;
+
   @Column({ nullable: true })
   userId: string;
 

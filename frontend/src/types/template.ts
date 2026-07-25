@@ -25,7 +25,10 @@ export interface CalibrationTemplate {
     pressure?: string;
   };
   calibration_points?: CalibrationTemplatePoint[];
+  custom_columns?: any[];
   standard_columns_config?: Record<string, any>;
+  column_order?: string[];
+  hidden_columns?: string[];
   acceptance_criteria?: {
     enabled?: boolean;
     value?: number;
@@ -34,7 +37,9 @@ export interface CalibrationTemplate {
   remarks?: string;
   status_rule_type?: string;
   status_formula?: string;
+  decimal_places?: number;
   userId?: string;
+  user?: any;
   companyId?: string;
   createdAt?: string;
   updatedAt?: string;

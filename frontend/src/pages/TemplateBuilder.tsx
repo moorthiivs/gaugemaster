@@ -93,17 +93,12 @@ export default function TemplateBuilder() {
   const handleDuplicate = async (tpl: CalibrationTemplate) => {
     try {
       const duplicateData: Partial<CalibrationTemplate> = {
+        ...tpl,
+        id: undefined,
         name: `${tpl.name} (Copy)`,
-        description: tpl.description,
-        instrument_type: tpl.instrument_type,
-        calibration_type: tpl.calibration_type,
-        default_unit: tpl.default_unit,
-        default_tolerance: tpl.default_tolerance,
-        environmental_defaults: tpl.environmental_defaults,
-        calibration_points: tpl.calibration_points,
-        custom_columns: (tpl as any).custom_columns,
-        column_order: (tpl as any).column_order,
-        remarks: tpl.remarks,
+        createdAt: undefined,
+        updatedAt: undefined,
+        user: undefined,
         userId: user?.id,
       };
       await createTemplate(duplicateData);

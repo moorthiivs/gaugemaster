@@ -148,6 +148,46 @@ export function CalibrationDataGrid({
     setEditStatusFormula(initialStatusFormula);
   }, [initialStatusFormula]);
 
+  // Helper to dynamically check if a column key belongs to a numeric or formula column
+  const isNumericOrFormulaColumnKey = (key: string): boolean => {
+    if (key.includes("_custom_")) {
+      const colId = key.split("_custom_")[1];
+      const customCol = customColumns.find((c) => c.id === colId);
+      if (customCol) {
+        return customCol.type === "number" || customCol.type === "formula";
+      }
+    } else {
+      const parts = key.split("_");
+      const field = parts.slice(1).join("_");
+      const config = standardColumnConfigs[field];
+      if (config) {
+        return config.type === "number" || config.type === "formula";
+      }
+      if (["nominal", "tolerance", "ascending_reading", "descending_reading", "error"].includes(field)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Whenever decimalPlaces setting changes, dynamically re-format all numeric & formula raw inputs
+  useEffect(() => {
+    setRawInputs((prev) => {
+      const updated = { ...prev };
+      Object.keys(updated).forEach((key) => {
+        if (!isNumericOrFormulaColumnKey(key)) return;
+        const val = updated[key];
+        if (val !== undefined && val !== null && val.trim() !== "") {
+          const parsed = parseFloat(val);
+          if (!isNaN(parsed)) {
+            updated[key] = parsed.toFixed(decimalPlaces);
+          }
+        }
+      });
+      return updated;
+    });
+  }, [decimalPlaces, customColumns, standardColumnConfigs]);
+
   // TanStack Virtualizer for high-performance rendering of large point sets
   const rowVirtualizer = useVirtualizer({
     count: points.length,
@@ -164,6 +204,7 @@ export function CalibrationDataGrid({
   const [newColName, setNewColName] = useState("");
   const [newColType, setNewColType] = useState<"text" | "number" | "formula">("text");
   const [newColUnit, setNewColUnit] = useState("");
+  const [newColDecimalPlaces, setNewColDecimalPlaces] = useState<number | undefined>(undefined);
   const [newColPlacement, setNewColPlacement] = useState<"after_actual" | "after_desc" | "after_nom" | "after_tol" | "first" | "before_error">("after_actual");
   const [newFormulaType, setNewFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("avg");
   const [newCustomFormula, setNewCustomFormula] = useState("=Actual - Nominal");
@@ -174,6 +215,7 @@ export function CalibrationDataGrid({
   const [editColName, setEditColName] = useState("");
   const [editColType, setEditColType] = useState<"text" | "number" | "formula">("text");
   const [editColUnit, setEditColUnit] = useState("");
+  const [editColDecimalPlaces, setEditColDecimalPlaces] = useState<number | undefined>(undefined);
   const [editFormulaType, setEditFormulaType] = useState<"avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom">("custom");
   const [editCustomFormula, setEditCustomFormula] = useState("");
 
@@ -395,6 +437,19 @@ export function CalibrationDataGrid({
     onPointsChange(updated);
   };
 
+  // Helper to resolve specific column decimal places (or fallback to global template decimalPlaces)
+  const getColumnDecimalPlaces = (colKeyOrId: string): number => {
+    const stdConfig = standardColumnConfigs[colKeyOrId];
+    if (stdConfig && stdConfig.decimalPlaces !== undefined && stdConfig.decimalPlaces > 0) {
+      return stdConfig.decimalPlaces;
+    }
+    const customCol = customColumns.find((c) => c.id === colKeyOrId);
+    if (customCol && customCol.decimalPlaces !== undefined && customCol.decimalPlaces > 0) {
+      return customCol.decimalPlaces;
+    }
+    return decimalPlaces;
+  };
+
   const handleInputChange = (index: number, field: string, text: string) => {
     const key = `${index}_${field}`;
     setRawInputs((prev) => ({ ...prev, [key]: text }));
@@ -425,7 +480,8 @@ export function CalibrationDataGrid({
   const handleInputBlur = (index: number, field: string, text: string) => {
     const parsed = parseFloat(text);
     if (!isNaN(parsed) && text.trim() !== "") {
-      const formatted = parsed.toFixed(decimalPlaces);
+      const colDec = getColumnDecimalPlaces(field);
+      const formatted = parsed.toFixed(colDec);
       const key = `${index}_${field}`;
       setRawInputs((prev) => ({ ...prev, [key]: formatted }));
       updatePoint(index, field, parsed);
@@ -436,7 +492,8 @@ export function CalibrationDataGrid({
     if (!isNumber) return;
     const parsed = parseFloat(text);
     if (!isNaN(parsed) && text.trim() !== "") {
-      const formatted = parsed.toFixed(decimalPlaces);
+      const colDec = getColumnDecimalPlaces(colId);
+      const formatted = parsed.toFixed(colDec);
       const key = `${index}_custom_${colId}`;
       setRawInputs((prev) => ({ ...prev, [key]: formatted }));
     }
@@ -545,6 +602,7 @@ export function CalibrationDataGrid({
       formulaType: newColType === "formula" ? newFormulaType : undefined,
       customFormula: newColType === "formula" && newFormulaType === "custom" ? newCustomFormula : undefined,
       unit: newColUnit.trim() || undefined,
+      decimalPlaces: newColDecimalPlaces,
     };
 
     const nextCols = [...customColumns, newCol];
@@ -580,6 +638,7 @@ export function CalibrationDataGrid({
     setNewColName("");
     setNewColType("text");
     setNewColUnit("inherit");
+    setNewColDecimalPlaces(undefined);
     setNewColPlacement("after_actual");
     setNewFormulaType("avg");
     setNewCustomFormula("=Actual - Nominal");
@@ -595,6 +654,7 @@ export function CalibrationDataGrid({
     setEditFormulaType(col.formulaType || "custom");
     setEditCustomFormula(col.customFormula || "=Actual - Nominal");
     setEditColUnit(col.unit || "inherit");
+    setEditColDecimalPlaces(col.decimalPlaces);
   };
 
   const handleSaveEditColumn = () => {
@@ -611,6 +671,7 @@ export function CalibrationDataGrid({
         formulaType: editColType === "formula" ? editFormulaType : undefined,
         customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
         unit: editColUnit.trim() || undefined,
+        decimalPlaces: editColDecimalPlaces,
       };
       updateStandardColumnConfigsState(updatedConfigs);
     } else {
@@ -623,6 +684,7 @@ export function CalibrationDataGrid({
             formulaType: editColType === "formula" ? editFormulaType : undefined,
             customFormula: editColType === "formula" && editFormulaType === "custom" ? editCustomFormula : undefined,
             unit: editColUnit.trim() || undefined,
+            decimalPlaces: editColDecimalPlaces,
           };
         }
         return c;
@@ -701,6 +763,16 @@ export function CalibrationDataGrid({
       return rawInputs[key];
     }
     if (pointValue === undefined || pointValue === null) return "";
+    
+    const config = standardColumnConfigs[field];
+    const isNumType = config
+      ? (config.type === "number" || config.type === "formula")
+      : ["nominal", "tolerance", "ascending_reading", "descending_reading", "error"].includes(field);
+
+    if (isNumType && typeof pointValue === "number" && !isNaN(pointValue)) {
+      const colDec = getColumnDecimalPlaces(field);
+      return pointValue.toFixed(colDec);
+    }
     return String(pointValue);
   };
 
@@ -710,6 +782,11 @@ export function CalibrationDataGrid({
       return rawInputs[key];
     }
     if (fieldValue === undefined || fieldValue === null) return "";
+    const col = customColumns.find((c) => c.id === colId);
+    if (col?.type === "number" && typeof fieldValue === "number" && !isNaN(fieldValue)) {
+      const colDec = getColumnDecimalPlaces(colId);
+      return fieldValue.toFixed(colDec);
+    }
     return String(fieldValue);
   };
 
@@ -1174,7 +1251,14 @@ export function CalibrationDataGrid({
                     if (colKey === "tolerance") return <TableCell key="tolerance"><Input type="text" inputMode="decimal" value={getInputValue(idx, "tolerance", pt.tolerance ?? tolerance)} onChange={(e) => handleInputChange(idx, "tolerance", e.target.value)} onBlur={(e) => handleInputBlur(idx, "tolerance", e.target.value)} className="h-9 text-xs font-mono" placeholder={String(tolerance)} /></TableCell>;
                     if (colKey === "ascending_reading") return <TableCell key="ascending_reading"><Input type="text" inputMode="decimal" value={getInputValue(idx, "ascending_reading", pt.ascending_reading)} onChange={(e) => handleInputChange(idx, "ascending_reading", e.target.value)} onBlur={(e) => handleInputBlur(idx, "ascending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" placeholder="0.000" /></TableCell>;
                     if (colKey === "descending_reading" && hasDescending) return <TableCell key="descending_reading"><Input type="text" inputMode="decimal" value={getInputValue(idx, "descending_reading", pt.descending_reading ?? 0)} onChange={(e) => handleInputChange(idx, "descending_reading", e.target.value)} onBlur={(e) => handleInputBlur(idx, "descending_reading", e.target.value)} className="h-9 text-xs font-mono font-medium" placeholder="0.000" /></TableCell>;
-                    if (colKey === "error") return <TableCell key="error" className="font-mono text-xs font-semibold">{pt.error !== undefined ? pt.error.toFixed(decimalPlaces) : "-"}</TableCell>;
+                    if (colKey === "error") {
+                      const colDec = getColumnDecimalPlaces("error");
+                      return (
+                        <TableCell key="error" className="font-mono text-xs font-semibold">
+                          {pt.error !== undefined ? pt.error.toFixed(colDec) : "-"}
+                        </TableCell>
+                      );
+                    }
                     if (colKey === "status") return <TableCell key="status" className="text-center">{pt.status ? <Badge variant={pt.status === "PASS" ? "default" : "destructive"} className="text-[10px] uppercase font-bold">{pt.status}</Badge> : <span className="text-xs text-muted-foreground">—</span>}</TableCell>;
                     if (colKey === "actions") return <TableCell key="actions" className="text-center border-l w-12"><Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => removePoint(idx)} title="Delete row"><Trash2 className="w-4 h-4" /></Button></TableCell>;
 
@@ -1263,7 +1347,7 @@ export function CalibrationDataGrid({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Column Data Type</Label>
                 <Select value={newColType} onValueChange={(val: any) => setNewColType(val)}>
@@ -1277,6 +1361,35 @@ export function CalibrationDataGrid({
                   </SelectContent>
                 </Select>
               </div>
+
+              {(newColType === "number" || newColType === "formula") ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Decimal Precision</Label>
+                  <Select
+                    value={newColDecimalPlaces !== undefined ? String(newColDecimalPlaces) : "inherit"}
+                    onValueChange={(val) => setNewColDecimalPlaces(val === "inherit" ? undefined : parseInt(val))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">Inherit Global ({decimalPlaces} Dec)</SelectItem>
+                      <SelectItem value="1">1 Dec (.0)</SelectItem>
+                      <SelectItem value="2">2 Dec (.00)</SelectItem>
+                      <SelectItem value="3">3 Dec (.000)</SelectItem>
+                      <SelectItem value="4">4 Dec (.0000)</SelectItem>
+                      <SelectItem value="5">5 Dec (.00000)</SelectItem>
+                      <SelectItem value="6">6 Dec (.000000)</SelectItem>
+                      <SelectItem value="7">7 Dec (.0000000)</SelectItem>
+                      <SelectItem value="8">8 Dec (.00000000)</SelectItem>
+                      <SelectItem value="9">9 Dec (.000000000)</SelectItem>
+                      <SelectItem value="10">10 Dec (.0000000000)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div></div>
+              )}
 
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Placement</Label>
@@ -1415,18 +1528,47 @@ export function CalibrationDataGrid({
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Column Data Type</Label>
-              <Select value={editColType} onValueChange={(val: any) => setEditColType(val)}>
-                <SelectTrigger className="text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="text">Text Input (Manual)</SelectItem>
-                  <SelectItem value="number">Numeric Input (Manual)</SelectItem>
-                  <SelectItem value="formula">Calculated Formula (Auto-Computed)</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Column Data Type</Label>
+                <Select value={editColType} onValueChange={(val: any) => setEditColType(val)}>
+                  <SelectTrigger className="text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="text">Text Input (Manual)</SelectItem>
+                    <SelectItem value="number">Numeric Input (Manual)</SelectItem>
+                    <SelectItem value="formula">Calculated Formula (Auto-Computed)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {(editColType === "number" || editColType === "formula") && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Decimal Precision</Label>
+                  <Select
+                    value={editColDecimalPlaces !== undefined ? String(editColDecimalPlaces) : "inherit"}
+                    onValueChange={(val) => setEditColDecimalPlaces(val === "inherit" ? undefined : parseInt(val))}
+                  >
+                    <SelectTrigger className="text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="inherit">Inherit Global ({decimalPlaces} Dec)</SelectItem>
+                      <SelectItem value="1">1 Dec (.0)</SelectItem>
+                      <SelectItem value="2">2 Dec (.00)</SelectItem>
+                      <SelectItem value="3">3 Dec (.000)</SelectItem>
+                      <SelectItem value="4">4 Dec (.0000)</SelectItem>
+                      <SelectItem value="5">5 Dec (.00000)</SelectItem>
+                      <SelectItem value="6">6 Dec (.000000)</SelectItem>
+                      <SelectItem value="7">7 Dec (.0000000)</SelectItem>
+                      <SelectItem value="8">8 Dec (.00000000)</SelectItem>
+                      <SelectItem value="9">9 Dec (.000000000)</SelectItem>
+                      <SelectItem value="10">10 Dec (.0000000000)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             {editColType === "formula" && (

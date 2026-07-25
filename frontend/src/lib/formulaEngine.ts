@@ -8,6 +8,7 @@ export interface CustomColumn {
   formulaType?: "avg" | "stddev" | "abs_error" | "pct_error" | "bias" | "custom";
   customFormula?: string;
   unit?: string;
+  decimalPlaces?: number;
 }
 
 export interface VariableSuggestion {

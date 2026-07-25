@@ -73,6 +73,14 @@ export class CreateCalibrationTemplateDto {
   status_formula?: string;
 
   @IsOptional()
+  @IsObject()
+  standard_columns_config?: Record<string, any>;
+
+  @IsOptional()
+  @IsNumber()
+  decimal_places?: number;
+
+  @IsOptional()
   @IsString()
   userId?: string;
 
