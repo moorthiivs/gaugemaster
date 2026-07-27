@@ -16,7 +16,7 @@ function createCrcTable() {
   for (let n = 0; n < 256; n++) {
     let c = n;
     for (let k = 0; k < 8; k++) {
-      c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
     }
     cTable[n] = c;
   }
@@ -42,7 +42,11 @@ function makeChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([lenBuf, typeAndData, crcBuf]);
 }
 
-function encodeRgbaPng(width: number, height: number, rgbaBuffer: Buffer): Buffer {
+function encodeRgbaPng(
+  width: number,
+  height: number,
+  rgbaBuffer: Buffer,
+): Buffer {
   const header = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const ihdrData = Buffer.alloc(13);
   ihdrData.writeUInt32BE(width, 0);
@@ -124,6 +128,9 @@ export class CertificateService {
   ): Promise<Buffer> {
     const inst = calibration.instrument;
     const points = calibration.calibration_points || [];
+    const numPoints = points.length;
+    const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
+    const sheetNoText = `1 of ${totalPages}`;
     const env = calibration.environmental_conditions || {
       temperature: '-',
       humidity: '-',
@@ -880,7 +887,7 @@ export class CertificateService {
                       text: fmtDate(calibration.calibration_date),
                       style: 'gridTd',
                     },
-                    { text: '1 of 1', style: 'gridTd' },
+                    { text: sheetNoText, style: 'gridTd' },
                   ],
                 ]
               : [
@@ -908,7 +915,7 @@ export class CertificateService {
                       text: fmtDate(calibration.calibration_date),
                       style: 'gridTd',
                     },
-                    { text: '1 of 1', style: 'gridTd' },
+                    { text: sheetNoText, style: 'gridTd' },
                   ],
                 ],
           },
@@ -930,13 +937,12 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text:
-                        inst?.location || 'M/s Deepshikha Casting Pvt. Ltd.',
+                      text: inst?.location || '-',
                       bold: true,
                       fontSize: 8.5,
                     },
                     {
-                      text: '116/1, Nagalwadi, Waddhamna, Tah. Hingna, Nagpur',
+                      text: 'Calibration Customer',
                       fontSize: 7.5,
                       color: '#334155',
                       margin: [0, 2, 0, 0],
@@ -947,21 +953,15 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'Customer Reference',
-                      fontSize: 8.5,
+                      text: 'IN - HOUSE',
                       bold: true,
-                      alignment: 'center',
-                      margin: [0, 0, 0, 2],
+                      fontSize: 8.5,
                     },
                     {
-                      columns: [
-                        { text: 'SRF No.', fontSize: 8, bold: true, width: 60 },
-                        {
-                          text: `: ${(calibration as any).srf_number || 'AE/JC/22-23/573'}`,
-                          fontSize: 8,
-                        },
-                      ],
-                      margin: [2, 2, 0, 0],
+                      text: 'Calibration Location',
+                      fontSize: 7.5,
+                      color: '#334155',
+                      margin: [0, 2, 0, 0],
                     },
                   ],
                   margin: [2, 2, 2, 2],
@@ -1142,7 +1142,7 @@ export class CertificateService {
                         },
                         { text: `: ${procedureReference}`, fontSize: 8 },
                       ],
-                      margin: [0, 1, 0, 1],
+                      margin: [0, 3, 0, 3],
                     },
                     {
                       columns: [
@@ -1157,7 +1157,7 @@ export class CertificateService {
                           fontSize: 8,
                         },
                       ],
-                      margin: [0, 1, 0, 1],
+                      margin: [0, 3, 0, 3],
                     },
                     {
                       columns: [
@@ -1172,7 +1172,7 @@ export class CertificateService {
                           fontSize: 8,
                         },
                       ],
-                      margin: [0, 1, 0, 1],
+                      margin: [0, 3, 0, 3],
                     },
                     {
                       columns: [
@@ -1187,7 +1187,7 @@ export class CertificateService {
                           fontSize: 8,
                         },
                       ],
-                      margin: [0, 1, 0, 1],
+                      margin: [0, 3, 0, 3],
                     },
                   ],
                   margin: [4, 3, 4, 3],
@@ -1240,9 +1240,7 @@ export class CertificateService {
                   style: 'tdCell',
                 },
                 {
-                  text: fmtDate(
-                    ref.cal_date || calibration.calibration_date,
-                  ),
+                  text: fmtDate(ref.cal_date || calibration.calibration_date),
                   style: 'tdCell',
                 },
                 { text: fmtDate(ref.validity), style: 'tdCell' },
@@ -1281,8 +1279,12 @@ export class CertificateService {
           ? {
               table: {
                 headerRows: (calibration as any).acceptance_criteria?.enabled
-                  ? (hasAnyGroups ? 4 : 3)
-                  : (hasAnyGroups ? 3 : 2),
+                  ? hasAnyGroups
+                    ? 4
+                    : 3
+                  : hasAnyGroups
+                    ? 3
+                    : 2,
                 widths: tableWidths,
                 body: [
                   [
@@ -1326,9 +1328,13 @@ export class CertificateService {
               },
               layout: {
                 fillColor: (rowIndex: number) => {
-                  const headerStartIdx = (calibration as any).acceptance_criteria?.enabled ? 2 : 1;
+                  const headerStartIdx = (calibration as any)
+                    .acceptance_criteria?.enabled
+                    ? 2
+                    : 1;
                   const headerEndIdx = headerStartIdx + (hasAnyGroups ? 2 : 1);
-                  if (rowIndex >= headerStartIdx && rowIndex < headerEndIdx) return '#f1f5f9';
+                  if (rowIndex >= headerStartIdx && rowIndex < headerEndIdx)
+                    return '#f1f5f9';
                   return null;
                 },
                 hLineWidth: () => 0.5,

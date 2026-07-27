@@ -204,6 +204,10 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
     );
   };
 
+  const numPoints = points.length;
+  const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
+  const sheetNoText = `1 of ${totalPages}`;
+
   return (
     <div className="bg-white text-black border border-slate-300 rounded-md shadow-2xl overflow-hidden text-[10px] leading-tight font-sans mx-auto flex flex-col w-[794px] max-w-full min-h-[1123px] print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0">
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
@@ -263,7 +267,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                 <td className="border-r border-black p-1 font-bold">{calibration.certificate_number || "—"}</td>
                 {calibration.ulr_number && <td className="border-r border-black p-1 font-bold text-slate-800">{calibration.ulr_number}</td>}
                 <td className="border-r border-black p-1">{fmtDate(calibration.calibration_date)}</td>
-                <td className="p-1">1 of 1</td>
+                <td className="p-1">{sheetNoText}</td>
               </tr>
             </tbody>
           </table>
