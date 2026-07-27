@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useReactToPrint } from "react-to-print";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
@@ -51,6 +52,7 @@ export default function CalibrationWizard() {
   const navigate = useNavigate();
   const { instrumentId } = useParams();
   const { user } = useAuth();
+  const printRef = useRef<HTMLDivElement>(null);
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -698,11 +700,11 @@ export default function CalibrationWizard() {
     }
   };
 
-  const handlePrint = () => {
-    if (!savedCalibrationId) return;
-    const BASE_URL = (httpClient.defaults.baseURL || "http://localhost:5000/api").replace(/\/api$/, "");
-    window.open(`${BASE_URL}/api/calibrations/${savedCalibrationId}/certificate/download`, "_blank");
-  };
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `Certificate-${nextCertNumber.replace(/\//g, "-")}`,
+    pageStyle: "@page { size: A4 portrait; margin: 0; } body { margin: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }",
+  });
 
   const canProceed = () => {
     switch (step) {
@@ -1280,7 +1282,7 @@ export default function CalibrationWizard() {
               {/* Certificate Preview */}
               <div>
                 <h4 className="text-sm font-semibold mb-3">Certificate Preview</h4>
-                <div className="flex justify-center">
+                <div className="flex justify-center" ref={printRef}>
                   <CertificatePreview
                     calibration={{
                       instrument: selectedInstrument as any,

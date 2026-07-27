@@ -134,12 +134,12 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
     };
 
     return (
-      <div className="border border-black">
-        <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5 border-b border-black">
+      <div className="border border-black flex flex-col divide-y divide-black">
+        <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5">
           Calibration Result (ALL VALUES ARE IN {unit})
         </div>
         {(calibration as any).acceptance_criteria?.enabled && (
-          <div className="bg-amber-100 text-black text-[9px] font-bold px-2 py-0.5 text-center border-b border-black">
+          <div className="bg-amber-100 text-black text-[9px] font-bold px-2 py-0.5 text-center">
             Acceptance Criteria: {(calibration as any).acceptance_criteria.value} {(calibration as any).acceptance_criteria.type === 'percentage' ? '%' : unit}
           </div>
         )}
@@ -176,19 +176,19 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
           </thead>
           <tbody>
             {points.map((pt: any, idx: number) => (
-              <tr key={idx} className="text-center border-b border-slate-200 font-mono">
-                <td className="border-r border-slate-300 p-1 font-sans">{String(pt.point_number || idx + 1).padStart(2, "0")}</td>
+              <tr key={idx} className="text-center border-b border-black font-mono">
+                <td className="border-r border-black p-1 font-sans">{String(pt.point_number || idx + 1).padStart(2, "0")}</td>
                 {activeColumns.map(k => {
-                  if (k === "description") return <td key={k} className="border-r border-slate-300 p-1 font-sans">{pt.description || "-"}</td>;
-                  if (k === "nominal") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.nominal ?? 0).toFixed(4))}</td>;
-                  if (k === "tolerance") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.tolerance ?? 0).toFixed(4))}</td>;
-                  if (k === "ascending_reading") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.ascending_reading ?? 0).toFixed(4))}</td>;
-                  if (k === "descending_reading") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.descending_reading ?? 0).toFixed(4))}</td>;
-                  if (k === "error") return <td key={k} className="border-r border-slate-300 p-1">{parseFloat(Number(pt.error ?? 0).toFixed(4))}</td>;
+                  if (k === "description") return <td key={k} className="border-r border-black p-1 font-sans">{pt.description || "-"}</td>;
+                  if (k === "nominal") return <td key={k} className="border-r border-black p-1">{parseFloat(Number(pt.nominal ?? 0).toFixed(4))}</td>;
+                  if (k === "tolerance") return <td key={k} className="border-r border-black p-1">{parseFloat(Number(pt.tolerance ?? 0).toFixed(4))}</td>;
+                  if (k === "ascending_reading") return <td key={k} className="border-r border-black p-1">{parseFloat(Number(pt.ascending_reading ?? 0).toFixed(4))}</td>;
+                  if (k === "descending_reading") return <td key={k} className="border-r border-black p-1">{parseFloat(Number(pt.descending_reading ?? 0).toFixed(4))}</td>;
+                  if (k === "error") return <td key={k} className="border-r border-black p-1">{parseFloat(Number(pt.error ?? 0).toFixed(4))}</td>;
                   if (k === "status") return null;
                   const obj = pt.customFields?.[k];
                   const displayVal = typeof obj === "object" && obj !== null && "value" in obj ? obj.value : (obj ?? "-");
-                  return <td key={k} className="border-r border-slate-300 p-1">{String(displayVal)}</td>;
+                  return <td key={k} className="border-r border-black p-1">{String(displayVal)}</td>;
                 })}
                 <td className={`p-1 font-bold font-sans ${pt.status === "PASS" ? "text-emerald-700" : pt.status === "FAIL" ? "text-red-700" : ""}`}>
                   {pt.status || "-"}
@@ -197,7 +197,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
             ))}
           </tbody>
         </table>
-        <div className="p-1.5 text-[9px] font-bold border-t border-black text-center bg-slate-50">
+        <div className="p-1.5 text-[9px] font-bold text-center bg-slate-50 mt-auto">
           Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ±{calibration.uncertainty || "0.00"} {unit}
         </div>
       </div>
@@ -205,7 +205,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
   };
 
   return (
-    <div className="bg-white text-black border border-black rounded-sm shadow-lg overflow-hidden text-[10px] leading-tight font-sans mx-auto flex flex-col min-h-[900px]" style={{ maxWidth: 780 }}>
+    <div className="bg-white text-black border border-slate-300 rounded-md shadow-2xl overflow-hidden text-[10px] leading-tight font-sans mx-auto flex flex-col w-[794px] max-w-full min-h-[1123px] print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0">
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div className="p-3 text-black w-full" style={{ backgroundColor: headerBgColor }}>
         <div className="flex items-center justify-between gap-2">
@@ -230,7 +230,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
             )}
           </div>
           <div className="text-center flex-1">
-            <h2 className="text-base font-extrabold tracking-wider uppercase text-white drop-shadow-sm">
+            <h2 className="text-[25px] font-black tracking-tighter uppercase text-white leading-none scale-y-110 origin-center">
               CALIBRATION CERTIFICATE
             </h2>
           </div>
@@ -355,8 +355,8 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
           </div>
 
           {/* Traceability of Master Used */}
-          <div className="border border-black">
-            <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5 border-b border-black">
+          <div className="border border-black flex flex-col divide-y divide-black">
+            <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5">
               TRACEABILITY OF MASTER USED :
             </div>
             {calibration.reference_standards?.length > 0 ? (
@@ -374,13 +374,13 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                 </thead>
                 <tbody>
                   {calibration.reference_standards.map((ref: any, idx: number) => (
-                    <tr key={idx} className="text-center border-b border-slate-200">
-                      <td className="border-r border-slate-300 p-1">{ref.name || "-"}</td>
-                      <td className="border-r border-slate-300 p-1">{ref.make || "-"}</td>
-                      <td className="border-r border-slate-300 p-1">{ref.id || "-"}</td>
-                      <td className="border-r border-slate-300 p-1">{ref.cert_no || "AE/CC/REF/01"}</td>
-                      <td className="border-r border-slate-300 p-1">{fmtDate(ref.cal_date || calibration.calibration_date)}</td>
-                      <td className="border-r border-slate-300 p-1">{fmtDate(ref.validity)}</td>
+                    <tr key={idx} className="text-center ">
+                      <td className="border-r border-black p-1">{ref.name || "-"}</td>
+                      <td className="border-r border-black p-1">{ref.make || "-"}</td>
+                      <td className="border-r border-black p-1">{ref.id || "-"}</td>
+                      <td className="border-r border-black p-1">{ref.cert_no || "AE/CC/REF/01"}</td>
+                      <td className="border-r border-black p-1">{fmtDate(ref.cal_date || calibration.calibration_date)}</td>
+                      <td className="border-r border-black p-1">{fmtDate(ref.validity)}</td>
                       <td className="p-1">NABL Lab</td>
                     </tr>
                   ))}
@@ -401,18 +401,18 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                 </thead>
                 <tbody>
                   <tr className="text-center">
-                    <td className="border-r border-slate-300 p-1">{calibration.reference_standard_name || "Gauge Block Set"}</td>
-                    <td className="border-r border-slate-300 p-1">Standard</td>
-                    <td className="border-r border-slate-300 p-1">{calibration.reference_standard_id || "REF-01"}</td>
-                    <td className="border-r border-slate-300 p-1">AE/CC/REF/101</td>
-                    <td className="border-r border-slate-300 p-1">{fmtDate(calibration.calibration_date)}</td>
-                    <td className="border-r border-slate-300 p-1">{fmtDate(calibration.reference_standard_validity)}</td>
+                    <td className="border-r border-black p-1">{calibration.reference_standard_name || "Gauge Block Set"}</td>
+                    <td className="border-r border-black p-1">Standard</td>
+                    <td className="border-r border-black p-1">{calibration.reference_standard_id || "REF-01"}</td>
+                    <td className="border-r border-black p-1">AE/CC/REF/101</td>
+                    <td className="border-r border-black p-1">{fmtDate(calibration.calibration_date)}</td>
+                    <td className="border-r border-black p-1">{fmtDate(calibration.reference_standard_validity)}</td>
                     <td className="p-1">NABL Accredited Lab</td>
                   </tr>
                 </tbody>
               </table>
             )}
-            <div className="p-1 text-[8px] italic border-t border-black text-slate-700 bg-slate-50">
+            <div className="p-1 text-[8px] italic text-slate-700 bg-slate-50 mt-auto">
               All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.
             </div>
           </div>

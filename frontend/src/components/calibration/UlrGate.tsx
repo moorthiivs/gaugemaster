@@ -100,7 +100,7 @@ export function UlrGate({
           {certificateGenerated ? "Re-generate Certificate" : "Generate Certificate"}
         </Button>
 
-        <Button
+        {/* <Button
           variant="outline"
           onClick={onPrint}
           disabled={!certificateGenerated}
@@ -109,7 +109,7 @@ export function UlrGate({
         >
           <Printer className="w-4 h-4" />
           Print
-        </Button>
+        </Button> */}
       </div>
     </div>
   );
