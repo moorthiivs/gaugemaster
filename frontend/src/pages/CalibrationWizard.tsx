@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown } from "lucide-react";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
@@ -154,7 +154,9 @@ export default function CalibrationWizard() {
     value?: number;
     type?: "percentage" | "absolute";
   }>({});
-
+  const [step1Collapsed, setStep1Collapsed] = useState(true);
+  const [step2Collapsed, setStep2Collapsed] = useState(true);
+  const [step3Collapsed, setStep3Collapsed] = useState(true);
   const handleClearTemplate = () => {
     setSelectedTemplateId("none");
     setWizardCustomColumns([]);
@@ -764,6 +766,175 @@ export default function CalibrationWizard() {
           <CardTitle className="text-lg">{STEPS[step]}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* ── Collapsible Step 1 & Step 2 Summaries for Step 3 (step 2) & Step 4 (step 3) ── */}
+          {(step === 2 || step === 3) && (
+            <div className="space-y-3 mb-6">
+              {/* Step 1 Summary Card */}
+              <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20">
+                <button
+                  type="button"
+                  onClick={() => setStep1Collapsed(!step1Collapsed)}
+                  className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                      <Check className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Step 1: Instrument</span>
+                        {selectedType && (
+                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-semibold">
+                            {selectedType.label}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm font-semibold text-foreground">
+                        {selectedInstrument ? `${selectedInstrument.name} (${selectedInstrument.id_code})` : "No instrument selected"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <span>{step1Collapsed ? "View Details" : "Hide Details"}</span>
+                    <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !step1Collapsed && "rotate-180")} />
+                  </div>
+                </button>
+
+                {!step1Collapsed && selectedInstrument && (
+                  <div className="p-4 border-t bg-card text-xs grid grid-cols-2 sm:grid-cols-4 gap-3 animate-in fade-in-50 duration-200">
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Instrument Name</span><span className="font-semibold text-sm">{selectedInstrument.name}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">ID Code</span><span className="font-medium">{selectedInstrument.id_code}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Make</span><span className="font-medium">{selectedInstrument.make || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Range</span><span className="font-medium">{selectedInstrument.range || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Least Count</span><span className="font-medium">{selectedInstrument.least_count || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Serial No</span><span className="font-medium">{selectedInstrument.serial_no || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Location</span><span className="font-medium">{selectedInstrument.location || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Calibration Type</span><span className="font-medium text-primary">{selectedType?.label || "-"}</span></div>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2 Summary Card */}
+              <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20">
+                <button
+                  type="button"
+                  onClick={() => setStep2Collapsed(!step2Collapsed)}
+                  className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                      <Check className="w-3.5 h-3.5" />
+                    </span>
+                    <div>
+                      <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Step 2: Reference Standard</span>
+                      <p className="text-sm font-semibold text-foreground">
+                        {referenceStandards.filter(r => r.name || r.id).length > 0
+                          ? referenceStandards.filter(r => r.name || r.id).map(r => r.name || r.id).join(", ")
+                          : "Standard / In-house Reference"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                    <span>{step2Collapsed ? "View Details" : "Hide Details"}</span>
+                    <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !step2Collapsed && "rotate-180")} />
+                  </div>
+                </button>
+
+                {!step2Collapsed && (
+                  <div className="p-4 border-t bg-card text-xs space-y-3 animate-in fade-in-50 duration-200">
+                    {referenceStandards.map((ref, idx) => (
+                      <div key={idx} className="p-3 border rounded-lg bg-muted/20 space-y-2">
+                        <div className="font-semibold text-xs text-primary flex items-center justify-between">
+                          <span>Reference Standard {idx + 1}: {ref.name || "Default Standard"}</span>
+                          {ref.id && <Badge variant="secondary" className="text-[10px]">{ref.id}</Badge>}
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                          <div><span className="text-muted-foreground block text-[10px]">Traceable To</span><span className="font-medium">{ref.traceable_to || "NABL Accredited Lab"}</span></div>
+                          <div><span className="text-muted-foreground block text-[10px]">Validity</span><span className="font-medium">{ref.validity ? ref.validity.split('T')[0] : "-"}</span></div>
+                          <div><span className="text-muted-foreground block text-[10px]">Range</span><span className="font-medium">{ref.range || "-"}</span></div>
+                          <div><span className="text-muted-foreground block text-[10px]">Least Count</span><span className="font-medium">{ref.least_count || "-"}</span></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Step 3 Summary Card (Shown in Step 4) */}
+              {step === 3 && (
+                <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20">
+                  <button
+                    type="button"
+                    onClick={() => setStep3Collapsed(!step3Collapsed)}
+                    className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-6 h-6 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                        <Check className="w-3.5 h-3.5" />
+                      </span>
+                      <div>
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Step 3: Calibration Data</span>
+                        <p className="text-sm font-semibold text-foreground">
+                          {calPoints.length} Test Points • Unit: {calUnit || "mm"} {procedureReference ? `• SOP: ${procedureReference}` : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                      <span>{step3Collapsed ? "View Details" : "Hide Details"}</span>
+                      <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !step3Collapsed && "rotate-180")} />
+                    </div>
+                  </button>
+
+                  {!step3Collapsed && (
+                    <div className="p-4 border-t bg-card text-xs space-y-3 animate-in fade-in-50 duration-200">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-muted/20 p-2.5 rounded-lg border">
+                        <div><span className="text-muted-foreground block text-[10px]">Procedure SOP</span><span className="font-medium">{procedureReference || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Temperature</span><span className="font-medium">{envTemp || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Humidity</span><span className="font-medium">{envHumidity || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Pressure</span><span className="font-medium">{envPressure || "-"}</span></div>
+                      </div>
+
+                      {calPoints.length > 0 && (
+                        <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
+                          <table className="w-full text-xs text-left border-collapse">
+                            <thead className="bg-muted text-muted-foreground font-semibold sticky top-0 text-[10px] uppercase">
+                              <tr>
+                                <th className="p-2 border-b border-r">Pt</th>
+                                <th className="p-2 border-b border-r">Description</th>
+                                <th className="p-2 border-b border-r">Nominal ({calUnit})</th>
+                                <th className="p-2 border-b border-r">Actual ({calUnit})</th>
+                                <th className="p-2 border-b border-r">Error ({calUnit})</th>
+                                <th className="p-2 border-b">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                              {calPoints.map((pt, i) => (
+                                <tr key={i} className="hover:bg-muted/30">
+                                  <td className="p-2 border-r font-medium text-center">{pt.point_number || i + 1}</td>
+                                  <td className="p-2 border-r">{pt.description || `Point ${i + 1}`}</td>
+                                  <td className="p-2 border-r font-mono">{pt.nominal ?? (pt as any).nominal_value ?? "-"}</td>
+                                  <td className="p-2 border-r font-mono">{pt.ascending_reading ?? (pt as any).actual_reading ?? "-"}</td>
+                                  <td className="p-2 border-r font-mono">{pt.error ?? "-"}</td>
+                                  <td className="p-2">
+                                    <span className={cn(
+                                      "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
+                                      pt.status?.toUpperCase() === "PASS" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"
+                                    )}>
+                                      {pt.status || "PASS"}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {/* ═══ Step 1: Select Instrument ═══ */}
           {step === 0 && (
             <>
