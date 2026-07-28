@@ -44,15 +44,19 @@ export default function Instruments() {
   const initialDueDateEnd = searchParams.get("due_date_end") || "";
   const initialLastCalStart = searchParams.get("last_cal_start") || "";
   const initialLastCalEnd = searchParams.get("last_cal_end") || "";
+  const initialCalibratedInRangeStart = searchParams.get("calibrated_in_range_start") || "";
+  const initialCalibratedInRangeEnd = searchParams.get("calibrated_in_range_end") || "";
+  const initialCalibrationSource = searchParams.get("calibration_source") || "All";
   const initialItemStatus = searchParams.get("item_status") || "Active";
   const initialLocation = searchParams.get("location") || "All";
   
   const initialIsReferenceStandard = searchParams.get("is_reference_standard") || "All";
 
   const [filters, setFilters] = useState<InstrumentQuery>({ 
-    status: initialStatus as any, item_status: initialItemStatus as any, location: initialLocation, frequency: "All", search: initialSearch, 
+    status: initialStatus as any, item_status: initialItemStatus as any, location: initialLocation, frequency: "All", calibration_source: initialCalibrationSource, search: initialSearch, 
     due_date: initialDueDate, due_date_start: initialDueDateStart, due_date_end: initialDueDateEnd,
     last_cal_start: initialLastCalStart, last_cal_end: initialLastCalEnd,
+    calibrated_in_range_start: initialCalibratedInRangeStart, calibrated_in_range_end: initialCalibratedInRangeEnd,
     is_reference_standard: initialIsReferenceStandard,
     page: 1, pageSize, limit: 10 
   });
@@ -107,6 +111,8 @@ export default function Instruments() {
   const [FrequencyFillter, setFrequencyFilter] = useState([])
 
   const [LocationFillter, setLocationFilter] = useState([])
+
+  const [CalibrationSourceFilter, setCalibrationSourceFilter] = useState<string[]>([])
 
   const [isOpenupload, setisOpenupload] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
@@ -163,12 +169,15 @@ export default function Instruments() {
       if (filters.item_status && filters.item_status !== "All") queryParams.append("item_status", filters.item_status);
       if (filters.location && filters.location !== "All") queryParams.append("location", filters.location);
       if (filters.frequency && filters.frequency !== "All") queryParams.append("frequency", filters.frequency);
+      if (filters.calibration_source && filters.calibration_source !== "All") queryParams.append("calibration_source", filters.calibration_source);
       if (filters.search) queryParams.append("search", filters.search);
       if (filters.due_date) queryParams.append("due_date", filters.due_date);
       if (filters.due_date_start) queryParams.append("due_date_start", filters.due_date_start);
       if (filters.due_date_end) queryParams.append("due_date_end", filters.due_date_end);
       if (filters.last_cal_start) queryParams.append("last_cal_start", filters.last_cal_start);
       if (filters.last_cal_end) queryParams.append("last_cal_end", filters.last_cal_end);
+      if (filters.calibrated_in_range_start) queryParams.append("calibrated_in_range_start", filters.calibrated_in_range_start);
+      if (filters.calibrated_in_range_end) queryParams.append("calibrated_in_range_end", filters.calibrated_in_range_end);
       if (filters.page) queryParams.append("page", String(filters.page));
       if (filters.pageSize) queryParams.append("pageSize", String(filters.pageSize));
       if (filters.is_reference_standard && filters.is_reference_standard !== "All") queryParams.append("is_reference_standard", filters.is_reference_standard);
@@ -198,6 +207,7 @@ export default function Instruments() {
       setStatusFilter(["All", ...filterData.status]);
       setFrequencyFilter(["All", ...filterData.frequency]);
       setLocationFilter(["All", ...filterData.location]);
+      setCalibrationSourceFilter(["All", ...(filterData.calibration_source || [])]);
       await fetchData();
       toast({
         title: "Data Refreshed 🔄",
@@ -217,8 +227,28 @@ export default function Instruments() {
   };
 
   useEffect(() => {
+    setFilters(f => ({
+      ...f,
+      search: searchParams.get("search") || "",
+      due_date: searchParams.get("due_date") || "",
+      status: (searchParams.get("status") || "All") as any,
+      due_date_start: searchParams.get("due_date_start") || "",
+      due_date_end: searchParams.get("due_date_end") || "",
+      last_cal_start: searchParams.get("last_cal_start") || "",
+      last_cal_end: searchParams.get("last_cal_end") || "",
+      calibrated_in_range_start: searchParams.get("calibrated_in_range_start") || "",
+      calibrated_in_range_end: searchParams.get("calibrated_in_range_end") || "",
+      item_status: (searchParams.get("item_status") || "Active") as any,
+      location: searchParams.get("location") || "All",
+      calibration_source: searchParams.get("calibration_source") || "All",
+      is_reference_standard: searchParams.get("is_reference_standard") || "All",
+      page: 1
+    }));
+  }, [searchParams]);
+
+  useEffect(() => {
     fetchData();
-  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.pageSize, filters.search, filters.due_date, filters.is_reference_standard]);
+  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.pageSize, filters.search, filters.due_date, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
 
   useEffect(() => {
     const handleUploadComplete = () => {
@@ -285,6 +315,7 @@ export default function Instruments() {
       setStatusFilter(["All", ...data.status]);
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
+      setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
     });
   }, [user]);
 
@@ -967,13 +998,29 @@ export default function Instruments() {
               </Select>
             </div>
 
+            <div className="md:col-span-2">
+              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
+                <Badge className="h-4 w-4 p-0 flex items-center justify-center text-[10px]">C</Badge> Calibration Source
+              </Label>
+              <Select value={filters.calibration_source as any} onValueChange={(v) => setFilters((f) => ({ ...f, calibration_source: v as any, page: 1 }))}>
+                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                  <SelectValue placeholder="All Sources" />
+                </SelectTrigger>
+                <SelectContent>
+                  {CalibrationSourceFilter.filter(c => c && c.trim() !== "").map((source) => (
+                    <SelectItem key={source} value={source}>{source}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="md:col-span-1 flex items-end">
               <Button 
                 variant="glass" 
                 className="w-full h-11 text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all flex gap-2 font-bold"
                 onClick={() => {
                   setLocalSearch("");
-                  setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", search: "", due_date: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
+                  setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
                   navigate("/instruments", { replace: true });
                 }}
               >
@@ -1016,6 +1063,19 @@ export default function Instruments() {
                     setFilters(f => ({ ...f, last_cal_start: "", last_cal_end: "", page: 1 }));
                     navigate("/instruments", { replace: true });
                   }} className="ml-2 hover:text-blue-800 focus:outline-none font-bold">×</button>
+                </Badge>
+              </div>
+            )}
+
+            {(filters.calibrated_in_range_start || filters.calibrated_in_range_end) && (
+              <div className="md:col-span-12 flex items-center mt-2">
+                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-3 py-1.5 flex gap-2 items-center">
+                  <CalendarDays className="h-4 w-4" />
+                  Showing instruments calibrated in range: {filters.calibrated_in_range_start ? new Date(filters.calibrated_in_range_start).toLocaleDateString() : 'Any'} to {filters.calibrated_in_range_end ? new Date(filters.calibrated_in_range_end).toLocaleDateString() : 'Any'}
+                  <button onClick={() => {
+                    setFilters(f => ({ ...f, calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 }));
+                    navigate("/instruments", { replace: true });
+                  }} className="ml-2 hover:text-emerald-800 focus:outline-none font-bold">×</button>
                 </Badge>
               </div>
             )}

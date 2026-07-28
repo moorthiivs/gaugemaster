@@ -2,8 +2,19 @@ import { Navigate, useLocation } from "react-router-dom";
 import { ReactNode } from "react";
 import { useAuth } from "@/lib/auth";
 
-export default function ProtectedRoute({ children }: { children: ReactNode }) {
+import { usePermissions } from "@/hooks/usePermissions";
+
+export default function ProtectedRoute({
+  children,
+  module,
+  action = "view",
+}: {
+  children: ReactNode;
+  module?: string;
+  action?: "create" | "edit" | "view" | "delete";
+}) {
   const { token, loading, isNewCustomer } = useAuth();
+  const { canAccess } = usePermissions();
   const location = useLocation();
 
   if (loading) {
@@ -25,6 +36,11 @@ export default function ProtectedRoute({ children }: { children: ReactNode }) {
 
   // Prevent accessing onboarding if setup is complete
   if (!isNewCustomer && location.pathname === "/onboarding") {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Module level permission guard
+  if (module && !canAccess(module, action)) {
     return <Navigate to="/dashboard" replace />;
   }
 

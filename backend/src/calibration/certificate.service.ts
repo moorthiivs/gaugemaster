@@ -108,6 +108,10 @@ const fonts = {
  * Generates professional calibration certificate PDFs using pdfmake.
  * Reuses the existing report template system for company branding (header/footer).
  */
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from '../users/user.entity';
+
 @Injectable()
 export class CertificateService {
   private printer = new PdfPrinter(fonts);
@@ -115,6 +119,8 @@ export class CertificateService {
   constructor(
     private readonly settingsService: SettingsService,
     private readonly reportTemplatesService: ReportTemplatesService,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
 
   /**
@@ -126,6 +132,27 @@ export class CertificateService {
     userId?: string,
     templateId?: string,
   ): Promise<Buffer> {
+    let calibratedSig = calibration.calibrated_by_signature;
+    let approvedSig = calibration.approved_by_signature || calibration.reviewed_by_signature;
+
+    if (!calibratedSig && calibration.calibrated_by) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: { name: calibration.calibrated_by },
+        });
+        if (u && u.signature) calibratedSig = u.signature;
+      } catch (e) {}
+    }
+
+    const approvedName = calibration.approved_by || calibration.reviewed_by;
+    if (!approvedSig && approvedName) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: { name: approvedName },
+        });
+        if (u && u.signature) approvedSig = u.signature;
+      } catch (e) {}
+    }
     const inst = calibration.instrument;
     const points = calibration.calibration_points || [];
     const numPoints = points.length;
@@ -884,7 +911,7 @@ export class CertificateService {
                       style: 'gridTdBold',
                     },
                     {
-                      text: fmtDate(calibration.calibration_date),
+                      text: fmtDate(calibration.certificate_issue_date || calibration.calibration_date),
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
@@ -912,7 +939,7 @@ export class CertificateService {
                       style: 'gridTdBold',
                     },
                     {
-                      text: fmtDate(calibration.calibration_date),
+                      text: fmtDate(calibration.certificate_issue_date || calibration.calibration_date),
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
@@ -1354,12 +1381,9 @@ export class CertificateService {
               [
                 {
                   stack: [
-                    { text: ' ', margin: [0, 8, 0, 0] },
-                    {
-                      text: '________________________',
-                      alignment: 'center',
-                      fontSize: 8,
-                    },
+                    calibratedSig && calibratedSig.startsWith('data:image')
+                      ? { image: calibratedSig, fit: [80, 26], alignment: 'center' }
+                      : { text: '________________________', alignment: 'center', fontSize: 8 },
                     {
                       text: calibration.calibrated_by || 'Calibrated By',
                       alignment: 'center',
@@ -1398,12 +1422,9 @@ export class CertificateService {
                 },
                 {
                   stack: [
-                    { text: ' ', margin: [0, 8, 0, 0] },
-                    {
-                      text: '________________________',
-                      alignment: 'center',
-                      fontSize: 8,
-                    },
+                    approvedSig && approvedSig.startsWith('data:image')
+                      ? { image: approvedSig, fit: [80, 26], alignment: 'center' }
+                      : { text: '________________________', alignment: 'center', fontSize: 8 },
                     {
                       text:
                         calibration.approved_by ||

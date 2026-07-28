@@ -20,6 +20,9 @@ const fonts = {
 };
 
 
+import { User } from 'src/users/user.entity';
+import { In } from 'typeorm';
+
 @Injectable()
 export class ReportsService {
     private printer = new PdfPrinter(fonts);
@@ -27,9 +30,24 @@ export class ReportsService {
     constructor(
         @InjectRepository(Instrument)
         private readonly instrumentRepository: Repository<Instrument>,
+        @InjectRepository(User)
+        private readonly userRepository: Repository<User>,
         private readonly settingsService: SettingsService,
         private readonly reportTemplatesService: ReportTemplatesService,
     ) { }
+
+    private async getCompanyUserIds(userId?: string): Promise<string[]> {
+        if (!userId) return [];
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (user && user.companyId) {
+            const companyUsers = await this.userRepository.find({
+                where: { companyId: user.companyId },
+                select: ['id'],
+            });
+            return companyUsers.map(u => u.id);
+        }
+        return [userId];
+    }
 
     private async generatePdfReport(
         instruments: Instrument[],
@@ -319,10 +337,13 @@ export class ReportsService {
         columnsStr?: string,
         templateId?: string
     ): Promise<Buffer> {
+        const userIds = await this.getCompanyUserIds(userid);
+        const targetUserIds = userIds.length > 0 ? userIds : [userid];
+
         const instruments = await this.instrumentRepository.find({
             where: {
                 due_date: Between(new Date(from), new Date(to)),
-                created_by: { id: userid },
+                created_by: { id: In(targetUserIds) },
             },
             relations: ['created_by'],
             order: {
@@ -714,9 +735,12 @@ export class ReportsService {
         pageSize: number = 10,
         filters: Record<string, string | undefined> = {}
     ): Promise<{ items: Instrument[], total: number }> {
+        const userIds = await this.getCompanyUserIds(userid);
+        const targetUserIds = userIds.length > 0 ? userIds : [userid];
+
         const where: any = {
             due_date: Between(new Date(from), new Date(to)),
-            created_by: { id: userid },
+            created_by: { id: In(targetUserIds) },
         };
 
         // Apply dynamic filters

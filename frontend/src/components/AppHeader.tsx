@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays } from "lucide-react";
+import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck } from "lucide-react";
 import { useNavigate, NavLink } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -438,7 +438,6 @@ export function AppHeader() {
             <DropdownMenuContent align="end">
               <DropdownMenuLabel>Signed in as {user?.email}</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/profile")}>Profile</DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/settings")}>Settings</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -475,13 +474,13 @@ export function AppHeader() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <User className="mr-2 h-4 w-4" />
-                <span>Profile</span>
+              <DropdownMenuItem onClick={() => navigate("/users")}>
+                <UserCheck className="mr-2 h-4 w-4" />
+                <span>User & Access Control</span>
               </DropdownMenuItem>
-              <DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/settings")}>
                 <Settings className="mr-2 h-4 w-4" />
-                <span>Settings</span>
+                <span>System Configuration</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => {

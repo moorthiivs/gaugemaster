@@ -35,10 +35,15 @@ export class CalibrationTemplatesService {
     calibrationType?: string;
   }): Promise<CalibrationTemplate[]> {
     const { userId, companyId, calibrationType } = filters;
+
     const where: any = {};
 
-    if (userId) where.userId = userId;
-    if (companyId) where.companyId = companyId;
+    if (companyId) {
+      where.companyId = companyId;
+    } else if (userId) {
+      where.userId = userId;
+    }
+
     if (calibrationType && calibrationType !== 'All') {
       where.calibration_type = calibrationType;
     }

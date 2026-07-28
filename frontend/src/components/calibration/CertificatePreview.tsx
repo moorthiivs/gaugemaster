@@ -16,6 +16,18 @@ interface CertificatePreviewProps {
 export function CertificatePreview({ calibration, instrumentName }: CertificatePreviewProps) {
   const { user } = useAuth();
   const [certConfig, setCertConfig] = useState<any>(null);
+  const [usersList, setUsersList] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (user?.companyId) {
+      httpClient
+        .get(`/users?companyId=${user.companyId}`)
+        .then((res) => {
+          if (Array.isArray(res.data)) setUsersList(res.data);
+        })
+        .catch(() => {});
+    }
+  }, [user?.companyId]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -28,7 +40,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
         }
       })
       .catch(() => {});
-  }, [user]);
+  }, [user?.id, user?.companyId]);
 
   const fmtDate = (d?: string) => {
     if (!d) return "-";
@@ -266,7 +278,7 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
                 <td className="border-r border-black p-1">{fmtDate(calibration.next_calibration_date)}</td>
                 <td className="border-r border-black p-1 font-bold">{calibration.certificate_number || "—"}</td>
                 {calibration.ulr_number && <td className="border-r border-black p-1 font-bold text-slate-800">{calibration.ulr_number}</td>}
-                <td className="border-r border-black p-1">{fmtDate(calibration.calibration_date)}</td>
+                <td className="border-r border-black p-1">{fmtDate(calibration.certificate_issue_date || calibration.calibration_date)}</td>
                 <td className="p-1">{sheetNoText}</td>
               </tr>
             </tbody>
@@ -425,35 +437,90 @@ export function CertificatePreview({ calibration, instrumentName }: CertificateP
           {renderCalibrationResult()}
 
           {/* Signature & Authentication Block */}
-          <div className="border border-black p-2 mt-4 grid grid-cols-3 gap-2 items-end">
-            <div className="text-center space-y-1">
-              <div className="h-8 flex items-end justify-center font-cursive italic text-slate-700 text-xs">
-                {calibration.calibrated_by || "Sign"}
-              </div>
-              <div className="border-t border-black pt-0.5">
-                <p className="font-bold text-[9.5px]">{calibration.calibrated_by || "Calibrated By"}</p>
-                <p className="text-[8.5px] text-slate-600">{calibration.calibrated_by_designation || "Calibration Engineer"}</p>
-              </div>
-            </div>
+          {(() => {
+            const calibratedSig =
+              (calibration as any).calibrated_by_signature ||
+              usersList.find(
+                (u) =>
+                  u.name === calibration.calibrated_by ||
+                  u.id === calibration.calibrated_by
+              )?.signature;
 
-            <div className="text-center flex flex-col items-center justify-center space-y-1">
-              <div className="w-14 h-14 rounded-full border-2 border-dashed border-sky-800 flex items-center justify-center text-[7px] font-bold text-sky-900 text-center leading-none p-1">
-                CALIBRATION
-                <br />
-                SEAL / STAMP
-              </div>
-            </div>
+            const approvedSig =
+              (calibration as any).approved_by_signature ||
+              (calibration as any).reviewed_by_signature ||
+              usersList.find(
+                (u) =>
+                  u.name === calibration.approved_by ||
+                  u.name === calibration.reviewed_by ||
+                  u.id === calibration.approved_by
+              )?.signature;
 
-            <div className="text-center space-y-1">
-              <div className="h-8 flex items-end justify-center font-cursive italic text-slate-700 text-xs">
-                {calibration.approved_by || calibration.reviewed_by || "Sign"}
+            return (
+              <div className="border border-black p-2 mt-4 grid grid-cols-3 gap-2 items-end">
+                <div className="text-center space-y-1">
+                  <div className="h-10 flex items-end justify-center">
+                    {calibratedSig ? (
+                      <img
+                        src={calibratedSig}
+                        alt="Signature"
+                        className="max-h-9 max-w-[120px] object-contain mx-auto"
+                      />
+                    ) : (
+                      <span className="font-cursive italic text-slate-700 text-xs">
+                        {calibration.calibrated_by || "Sign"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="border-t border-black pt-0.5">
+                    <p className="font-bold text-[9.5px]">
+                      {calibration.calibrated_by || "Calibrated By"}
+                    </p>
+                    <p className="text-[8.5px] text-slate-600">
+                      {calibration.calibrated_by_designation ||
+                        "Calibration Engineer"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-center flex flex-col items-center justify-center space-y-1">
+                  <div className="w-14 h-14 rounded-full border-2 border-dashed border-sky-800 flex items-center justify-center text-[7px] font-bold text-sky-900 text-center leading-none p-1">
+                    CALIBRATION
+                    <br />
+                    SEAL / STAMP
+                  </div>
+                </div>
+
+                <div className="text-center space-y-1">
+                  <div className="h-10 flex items-end justify-center">
+                    {approvedSig ? (
+                      <img
+                        src={approvedSig}
+                        alt="Signature"
+                        className="max-h-9 max-w-[120px] object-contain mx-auto"
+                      />
+                    ) : (
+                      <span className="font-cursive italic text-slate-700 text-xs">
+                        {calibration.approved_by ||
+                          calibration.reviewed_by ||
+                          "Sign"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="border-t border-black pt-0.5">
+                    <p className="font-bold text-[9.5px]">
+                      {calibration.approved_by ||
+                        calibration.reviewed_by ||
+                        "Authorized By"}
+                    </p>
+                    <p className="text-[8.5px] text-slate-600">
+                      {calibration.approved_by_designation || "Quality Manager"}
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="border-t border-black pt-0.5">
-                <p className="font-bold text-[9.5px]">{calibration.approved_by || calibration.reviewed_by || "Authorized By"}</p>
-                <p className="text-[8.5px] text-slate-600">{calibration.approved_by_designation || "Quality Manager"}</p>
-              </div>
-            </div>
-          </div>
+            );
+          })()}
         </div>
       </div>
 

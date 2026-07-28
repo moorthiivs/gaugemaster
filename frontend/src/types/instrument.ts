@@ -67,12 +67,15 @@ export type InstrumentQuery = {
   item_status?: string | "All";
   location?: string | "All";
   frequency?: string | "All";
+  calibration_source?: string | "All";
   search?: string;
   due_date?: string;
   due_date_start?: string;
   due_date_end?: string;
   last_cal_start?: string;
   last_cal_end?: string;
+  calibrated_in_range_start?: string;
+  calibrated_in_range_end?: string;
   is_reference_standard?: string; // "true", "false", or "all"
   page?: number;
   pageSize?: number;

@@ -3,7 +3,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Instrument } from 'src/instruments/instrument.entity';
 import { CalibrationHistory } from 'src/instruments/calibration-history.entity';
-import { Between, LessThan, MoreThan, Repository, ILike } from 'typeorm';
+import { User } from 'src/users/user.entity';
+import { Between, LessThan, MoreThan, Repository, ILike, In } from 'typeorm';
 
 @Injectable()
 export class DashboardService {
@@ -12,109 +13,27 @@ export class DashboardService {
         private readonly instrumentRepository: Repository<Instrument>,
         @InjectRepository(CalibrationHistory)
         private readonly calibrationHistoryRepository: Repository<CalibrationHistory>,
+        @InjectRepository(User)
+        private readonly userRepository: Repository<User>,
     ) { }
 
-    // async fetchDashboard(id: string) {
-    //     const now = new Date();
-    //     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    //     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-
-    //     // 1. Total instruments count
-    //     const total = await this.instrumentRepository.count();
-
-    //     // 2. Instruments due this month
-    //     const dueThisMonth = await this.instrumentRepository.count({
-    //         where: {
-    //             due_date: Between(startOfMonth, endOfMonth),
-    //         },
-    //     });
-
-    //     // 3. Instruments overdue (due date before now)
-    //     const overdue = await this.instrumentRepository.count({
-    //         where: {
-    //             due_date: LessThan(now),
-    //         },
-    //     });
-
-    //     // 4. Next calibration instrument (earliest due_date in future)
-    //     const nextCalibrationInstrument = await this.instrumentRepository.findOne({
-    //         where: {
-    //             due_date: MoreThan(now),
-    //         },
-    //         order: {
-    //             due_date: 'ASC',
-    //         },
-    //     });
-
-    //     // 5. Due dates by month for last 6 months + next 6 months
-    //     const monthsCount: { month: string; count: number }[] = [];
-
-    //     for (let i = -5; i <= 6; i++) {
-    //         const firstDay = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    //         const lastDay = new Date(now.getFullYear(), now.getMonth() + i + 1, 0);
-
-    //         const count = await this.instrumentRepository.count({
-    //             where: {
-    //                 due_date: Between(firstDay, lastDay),
-    //             },
-    //         });
-
-    //         monthsCount.push({
-    //             month: firstDay.toLocaleString('default', { month: 'short' }),
-    //             count,
-    //         });
-    //     }
-
-    //     // 6. Detailed instruments due in next 30 days
-    //     const next30Days = new Date(now);
-    //     next30Days.setDate(now.getDate() + 30);
-
-    //     const dueSoonInstruments = await this.instrumentRepository.find({
-    //         where: {
-    //             due_date: Between(now, next30Days),
-    //         },
-    //         order: {
-    //             due_date: 'ASC',
-    //         },
-    //         select: ['id', 'name', 'due_date'],
-    //     });
-
-    //     const dueSoonList = dueSoonInstruments.map((inst) => ({
-    //         id: inst.id,
-    //         name: inst.name,
-    //         dueDate: inst.due_date,
-    //     }));
-
-    //     // 7. Recent activity — example: last 10 instruments updated, map to action "Calibrated"
-    //     const recentActivityRaw = await this.instrumentRepository.find({
-    //         take: 10,
-    //         order: {
-    //             updated_at: 'DESC',
-    //         },
-    //         select: ['id', 'name', 'updated_at'],
-    //     });
-
-    //     const recentActivityFormatted = recentActivityRaw.map((r) => ({
-    //         id: r.id,
-    //         name: r.name,
-    //         action: 'Calibrated',
-    //         at: r.updated_at,
-    //     }));
-
-    //     // Return all data
-    //     return {
-    //         total,
-    //         dueThisMonth,
-    //         overdue,
-    //         nextCalibrationDate: nextCalibrationInstrument?.due_date || null,
-    //         dueDatesByMonth: monthsCount,
-    //         dueSoonList,
-    //         recentActivity: recentActivityFormatted,
-    //     };
-    // }
-
+    private async getCompanyUserIds(userId?: string): Promise<string[]> {
+        if (!userId) return [];
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (user && user.companyId) {
+            const companyUsers = await this.userRepository.find({
+                where: { companyId: user.companyId },
+                select: ['id'],
+            });
+            return companyUsers.map(u => u.id);
+        }
+        return [userId];
+    }
 
     async fetchDashboard(userid: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string) {
+        const userIds = await this.getCompanyUserIds(userid);
+        const targetUserIds = userIds.length > 0 ? userIds : [userid];
+
         const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
         const now = new Date();
         let startRange: Date;
@@ -138,7 +57,7 @@ export class DashboardService {
 
         // Helper to construct where filter with optional item_status and calibration status
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
-            created_by: { id: userid },
+            created_by: { id: In(targetUserIds) },
             ...(itemStatus ? { item_status: ILike(itemStatus) } : {}),
             ...(status ? { status: ILike(status) } : {}),
             ...(location ? { location: ILike(location) } : {}),
@@ -150,7 +69,7 @@ export class DashboardService {
             const query = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
                 .select('COUNT(DISTINCT instrument.id)', 'count')
-                .where('instrument.created_by = :userid', { userid });
+                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
 
             if (itemStatus) {
                 query.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });

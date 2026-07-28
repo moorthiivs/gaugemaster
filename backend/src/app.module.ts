@@ -20,6 +20,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { ReportTemplatesModule } from './report-templates/report-templates.module';
 import { CalibrationModule } from './calibration/calibration.module';
 import { CalibrationTemplatesModule } from './calibration-templates/calibration-templates.module';
+import { RolesModule } from './roles/roles.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { CalibrationTemplatesModule } from './calibration-templates/calibration-
 
     AuthModule,
     UsersModule,
+    RolesModule,
     InstrumentsModule,
     ReportsModule,
     DashboardModule,

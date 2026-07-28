@@ -26,6 +26,7 @@ import CalibrationWizard from "./pages/CalibrationWizard";
 import CalibrationHistory from "./pages/CalibrationHistory";
 import TemplateBuilder from "./pages/TemplateBuilder";
 import TemplateBuilderForm from "./pages/TemplateBuilderForm";
+import UserManagement from "./pages/UserManagement";
 
 const queryClient = new QueryClient();
 
@@ -75,19 +76,20 @@ const App = () => (
                   }
                 >
                   <Route path="/dashboard" element={<Index />} />
-                  <Route path="/instruments" element={<Instruments />} />
-                  <Route path="/instruments/new" element={<InstrumentForm />} />
-                  <Route path="/instruments/:id/edit" element={<InstrumentForm />} />
-                  <Route path="/reports" element={<Reports />} />
-                  <Route path="/calibration" element={<Calibration />} />
-                  <Route path="/calibration/templates" element={<TemplateBuilder />} />
-                  <Route path="/calibration/templates/builder" element={<TemplateBuilderForm />} />
-                  <Route path="/calibration/new" element={<CalibrationWizard />} />
-                  <Route path="/calibration/new/:instrumentId" element={<CalibrationWizard />} />
-                  <Route path="/calibration/history/:id" element={<CalibrationHistory />} />
-                  <Route path="/calendar" element={<CalendarPage />} />
+                  <Route path="/instruments" element={<ProtectedRoute module="instruments" action="view"><Instruments /></ProtectedRoute>} />
+                  <Route path="/instruments/new" element={<ProtectedRoute module="instruments" action="create"><InstrumentForm /></ProtectedRoute>} />
+                  <Route path="/instruments/:id/edit" element={<ProtectedRoute module="instruments" action="edit"><InstrumentForm /></ProtectedRoute>} />
+                  <Route path="/reports" element={<ProtectedRoute module="reports" action="view"><Reports /></ProtectedRoute>} />
+                  <Route path="/calibration" element={<ProtectedRoute module="calibrations" action="view"><Calibration /></ProtectedRoute>} />
+                  <Route path="/calibration/templates" element={<ProtectedRoute module="templates" action="view"><TemplateBuilder /></ProtectedRoute>} />
+                  <Route path="/calibration/templates/builder" element={<ProtectedRoute module="templates" action="edit"><TemplateBuilderForm /></ProtectedRoute>} />
+                  <Route path="/calibration/new" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
+                  <Route path="/calibration/new/:instrumentId" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
+                  <Route path="/calibration/history/:id" element={<ProtectedRoute module="calibrations" action="view"><CalibrationHistory /></ProtectedRoute>} />
+                  <Route path="/calendar" element={<ProtectedRoute module="instruments" action="view"><CalendarPage /></ProtectedRoute>} />
+                  <Route path="/users" element={<ProtectedRoute module="users" action="view"><UserManagement /></ProtectedRoute>} />
                   <Route path="/profile" element={<Profile />} />
-                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/settings" element={<ProtectedRoute module="settings" action="view"><Settings /></ProtectedRoute>} />
                 </Route>
 
                 {/* Catch-all */}

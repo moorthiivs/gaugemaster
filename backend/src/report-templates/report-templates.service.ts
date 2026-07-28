@@ -15,9 +15,13 @@ export class ReportTemplatesService {
     return this.repository.save(template);
   }
 
-  async findAll(userId: string) {
+  async findAll(userId: string, companyId?: string) {
+    const whereCondition = companyId
+      ? [{ companyId }, { userId }]
+      : [{ userId }];
+
     return this.repository.find({
-      where: { userId },
+      where: whereCondition,
       order: { createdAt: 'DESC' },
     });
   }

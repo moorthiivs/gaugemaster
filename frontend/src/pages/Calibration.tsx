@@ -99,6 +99,7 @@ export default function Calibration() {
       const [calData, statsData, draftData] = await Promise.all([
         listCalibrations({
           userId: user.id,
+          companyId: user.companyId,
           verdict: verdictFilter !== "All" ? verdictFilter : undefined,
           calibrationType: typeFilter !== "All" ? typeFilter : undefined,
           search: searchQuery.trim() ? searchQuery.trim() : undefined,

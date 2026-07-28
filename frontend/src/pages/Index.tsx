@@ -95,23 +95,17 @@ const Index = () => {
 
     if (type === 'overdue') {
       params.set('status', 'Overdue');
-    } else if (type === 'calibrated') {
-      params.set('status', 'OK');
-      if (startDate) params.append('last_cal_start', format(startDate, "yyyy-MM-dd"));
-      if (endDate) params.append('last_cal_end', format(endDate, "yyyy-MM-dd"));
-    } else if (type === 'due') {
-      // Due in range or this month
-      if (startDate) params.append('due_date_start', format(startDate, "yyyy-MM-dd"));
+    } else if (type === 'calibrated' || type === 'due') {
+      if (startDate) params.append('calibrated_in_range_start', format(startDate, "yyyy-MM-dd"));
       else {
-        // Due this month by default
         const now = new Date();
-        params.append('due_date_start', format(new Date(now.getFullYear(), now.getMonth(), 1), "yyyy-MM-dd"));
+        params.append('calibrated_in_range_start', format(new Date(now.getFullYear(), now.getMonth(), 1), "yyyy-MM-dd"));
       }
 
-      if (endDate) params.append('due_date_end', format(endDate, "yyyy-MM-dd"));
+      if (endDate) params.append('calibrated_in_range_end', format(endDate, "yyyy-MM-dd"));
       else {
         const now = new Date();
-        params.append('due_date_end', format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "yyyy-MM-dd"));
+        params.append('calibrated_in_range_end', format(new Date(now.getFullYear(), now.getMonth() + 1, 0), "yyyy-MM-dd"));
       }
     }
 

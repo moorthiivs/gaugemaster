@@ -6,9 +6,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SettingsModule } from '../settings/settings.module';
 import { ReportTemplatesModule } from '../report-templates/report-templates.module';
 
+import { User } from 'src/users/user.entity';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Instrument]),
+    TypeOrmModule.forFeature([Instrument, User]),
     SettingsModule,
     ReportTemplatesModule,
   ],

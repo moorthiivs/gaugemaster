@@ -121,17 +121,26 @@ export class Calibration {
   @Column({ nullable: true })
   calibrated_by_designation: string;
 
+  @Column({ type: 'text', nullable: true })
+  calibrated_by_signature: string;
+
   @Column({ nullable: true })
   reviewed_by: string;
 
   @Column({ nullable: true })
   reviewed_by_designation: string;
 
+  @Column({ type: 'text', nullable: true })
+  reviewed_by_signature: string;
+
   @Column({ nullable: true })
   approved_by: string;
 
   @Column({ nullable: true })
   approved_by_designation: string;
+
+  @Column({ type: 'text', nullable: true })
+  approved_by_signature: string;
 
   // ── Certificate & ULR Numbers ────────────────────────────────
   @Column({ nullable: true })
@@ -151,6 +160,9 @@ export class Calibration {
 
   @Column({ type: 'timestamp', nullable: true })
   next_calibration_date: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  certificate_issue_date?: Date;
 
   // ── Audit & Ownership ────────────────────────────────────────
   @ManyToOne(() => Company, { eager: true })

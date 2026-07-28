@@ -7,11 +7,12 @@ import {
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Like, Between, LessThan, LessThanOrEqual, Repository } from 'typeorm';
+import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
+import { User } from 'src/users/user.entity';
 import { ValidationService } from 'src/validation/validation.service';
 import { MailerService } from 'src/mail/mailer.service';
 
@@ -20,12 +21,15 @@ interface InstrumentFilters {
     item_status?: string;
     location?: string;
     frequency?: string;
+    calibration_source?: string;
     search?: string;
     due_date?: string;
     due_date_start?: string;
     due_date_end?: string;
     last_cal_start?: string;
     last_cal_end?: string;
+    calibrated_in_range_start?: string;
+    calibrated_in_range_end?: string;
     is_reference_standard?: string;
     page: number;
     pageSize: number;
@@ -39,15 +43,30 @@ export class InstrumentsService {
         private readonly instrumentRepository: Repository<Instrument>,
         @InjectRepository(CalibrationHistory)
         private readonly calibrationHistoryRepository: Repository<CalibrationHistory>,
+        @InjectRepository(User)
+        private readonly userRepository: Repository<User>,
         private readonly mailerService: MailerService,
         private readonly validationService: ValidationService,
     ) { }
 
+    private async getCompanyUserIds(userId?: string): Promise<string[]> {
+        if (!userId) return [];
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+        if (user && user.companyId) {
+            const companyUsers = await this.userRepository.find({
+                where: { companyId: user.companyId },
+                select: ['id'],
+            });
+            return companyUsers.map(u => u.id);
+        }
+        return [userId];
+    }
 
     async findFilterParams(createdById: string) {
+        const userIds = await this.getCompanyUserIds(createdById);
         const instruments = await this.instrumentRepository.find({
-            where: { created_by: { id: createdById } },
-            select: ['status', 'frequency', 'location'],
+            where: userIds.length > 0 ? { created_by: { id: In(userIds) } } : {},
+            select: ['status', 'frequency', 'location', 'calibration_source'],
         });
 
         const unique = (arr: string[]) => {
@@ -64,6 +83,7 @@ export class InstrumentsService {
             status: unique(instruments.map(i => i.status)),
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),
+            calibration_source: unique(instruments.map(i => i.calibration_source)),
         };
     }
 
@@ -79,7 +99,12 @@ export class InstrumentsService {
     }
 
     async findAll(filters: InstrumentFilters) {
-        const { status, item_status, location, frequency, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, is_reference_standard, page, pageSize, createdBy } = filters;
+        const { status, item_status, location, frequency, calibration_source, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy } = filters;
+
+        // If calibrated_in_range filter is active, use QueryBuilder with subquery on calibration_history
+        if (calibrated_in_range_start && calibrated_in_range_end) {
+            return this.findAllCalibratedInRange(filters);
+        }
 
         const baseWhere: any = {};
 
@@ -94,7 +119,13 @@ export class InstrumentsService {
         if (item_status && item_status !== 'All') baseWhere.item_status = ILike(item_status);
         if (location && location !== 'All') baseWhere.location = ILike(location);
         if (frequency && frequency !== 'All') baseWhere.frequency = ILike(frequency);
-        if (createdBy) baseWhere.created_by = { id: createdBy };
+        if (calibration_source && calibration_source !== 'All') baseWhere.calibration_source = ILike(calibration_source);
+        if (createdBy) {
+            const userIds = await this.getCompanyUserIds(createdBy);
+            if (userIds.length > 0) {
+                baseWhere.created_by = { id: In(userIds) };
+            }
+        }
         
         if (due_date) {
             const start = new Date(`${due_date}T00:00:00.000Z`);
@@ -163,6 +194,88 @@ export class InstrumentsService {
             take: pageSize,
             order: { due_date: 'ASC' },
         });
+
+        return {
+            data,
+            total,
+            page,
+            pageSize,
+            totalPages: Math.ceil(total / pageSize),
+        };
+    }
+
+    /**
+     * Finds instruments that have at least one calibration_history entry
+     * with created_at in the given date range. This matches the dashboard's
+     * countHistoryCalibrations() logic exactly.
+     */
+    private async findAllCalibratedInRange(filters: InstrumentFilters) {
+        const { item_status, location, frequency, calibration_source, search, is_reference_standard, calibrated_in_range_start, calibrated_in_range_end, page, pageSize, createdBy } = filters;
+
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+        const sParts = calibrated_in_range_start!.split('-').map(Number);
+        const eParts = calibrated_in_range_end!.split('-').map(Number);
+        const startRange = new Date(Date.UTC(sParts[0], sParts[1] - 1, sParts[2], 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+        const endRange = new Date(Date.UTC(eParts[0], eParts[1] - 1, eParts[2], 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+
+        // Step 1: Get distinct instrument IDs from calibration_history 
+        // (matches dashboard's countHistoryCalibrations logic exactly)
+        const userIds = await this.getCompanyUserIds(createdBy);
+        const historyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+            .innerJoin('history.instrument', 'instrument')
+            .select('DISTINCT instrument.id', 'id')
+            .where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] })
+            .andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+
+        if (item_status && item_status !== 'All') {
+            historyQuery.andWhere('instrument.item_status ILIKE :item_status', { item_status });
+        }
+        if (location && location !== 'All') {
+            historyQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+
+        const instrumentIds = await historyQuery.getRawMany();
+        const ids = instrumentIds.map(r => r.id);
+
+        if (ids.length === 0) {
+            return {
+                data: [],
+                total: 0,
+                page,
+                pageSize,
+                totalPages: 0,
+            };
+        }
+
+        // Step 2: Fetch full instrument records for those IDs with pagination
+        const query = this.instrumentRepository.createQueryBuilder('instrument')
+            .where('instrument.id IN (:...ids)', { ids });
+
+        if (frequency && frequency !== 'All') {
+            query.andWhere('instrument.frequency ILIKE :frequency', { frequency });
+        }
+        if (calibration_source && calibration_source !== 'All') {
+            query.andWhere('instrument.calibration_source ILIKE :calibration_source', { calibration_source });
+        }
+        if (is_reference_standard === 'true') {
+            query.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (is_reference_standard === 'false') {
+            query.andWhere('instrument.is_reference_standard = :isRef', { isRef: false });
+        }
+        if (search) {
+            query.andWhere(
+                '(instrument.name ILIKE :search OR instrument.id_code ILIKE :search OR instrument.make ILIKE :search OR instrument.serial_no ILIKE :search)',
+                { search: `%${search}%` }
+            );
+        }
+
+        query.orderBy('instrument.due_date', 'ASC');
+
+        const total = await query.getCount();
+        const data = await query
+            .skip((page - 1) * pageSize)
+            .take(pageSize)
+            .getMany();
 
         return {
             data,

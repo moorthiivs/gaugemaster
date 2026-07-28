@@ -15,6 +15,10 @@ export class CreateCalibrationDto {
   calibration_date: string;
 
   @IsOptional()
+  @IsDateString()
+  certificate_issue_date?: string;
+
+  @IsOptional()
   @IsString()
   calibration_type?: string;
 
@@ -120,6 +124,10 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calibrated_by_signature?: string;
+
+  @IsOptional()
+  @IsString()
   reviewed_by?: string;
 
   @IsOptional()
@@ -128,11 +136,19 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  reviewed_by_signature?: string;
+
+  @IsOptional()
+  @IsString()
   approved_by?: string;
 
   @IsOptional()
   @IsString()
   approved_by_designation?: string;
+
+  @IsOptional()
+  @IsString()
+  approved_by_signature?: string;
 
   // ULR
   @IsOptional()

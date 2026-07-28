@@ -2,6 +2,7 @@ import { Entity, PrimaryColumn, Column, UpdateDateColumn, CreateDateColumn, Many
 import { ApiProperty } from '@nestjs/swagger';
 import { v4 as uuidv4 } from 'uuid';
 import { Company } from '../company/entities/company.entity';
+import { Role } from '../roles/role.entity';
 
 @Entity('users')
 export class User {
@@ -35,6 +36,22 @@ export class User {
 
   @Column({ nullable: true })
   companyId: string;
+
+  @ManyToOne(() => Role, { eager: true, nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'roleId' })
+  role?: Role;
+
+  @Column({ nullable: true })
+  roleId?: string;
+
+  @Column({ nullable: true })
+  designation?: string;
+
+  @Column({ type: 'text', nullable: true })
+  signature?: string;
+
+  @Column({ type: 'jsonb', default: [] })
+  additionalEmails: string[];
 
   @Column({ default: false })   
   onboarded: boolean;

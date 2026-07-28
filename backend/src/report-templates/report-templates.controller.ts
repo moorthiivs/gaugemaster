@@ -13,8 +13,11 @@ export class ReportTemplatesController {
   }
 
   @Get()
-  async findAll(@Query('userId') userId: string) {
-    return this.service.findAll(userId);
+  async findAll(
+    @Query('userId') userId: string,
+    @Query('companyId') companyId?: string,
+  ) {
+    return this.service.findAll(userId, companyId);
   }
 
   @Get(':id')

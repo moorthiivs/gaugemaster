@@ -5,7 +5,11 @@ export type User = {
   id: string;
   name: string;
   email: string;
-  role: string;
+  role: string | any;
+  userRole?: any;
+  designation?: string;
+  signature?: string;
+  additionalEmails?: string[];
   avatarUrl?: string;
   provider?: string;
   companyId: string;
@@ -110,7 +114,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: user.sub,
             name: user.name,
             email: user.email,
-            role: user.role || "operator",
+            role: user.role || "Admin",
+            userRole: user.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
             provider: "password",
             isNewCustomer: user.onboarded,

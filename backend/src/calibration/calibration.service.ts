@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between } from 'typeorm';
+import { Repository, Between, In } from 'typeorm';
 import { Calibration } from './calibration.entity';
 import { CalibrationDraft } from './calibration-draft.entity';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
@@ -12,6 +12,8 @@ import { InstrumentsService } from '../instruments/instruments.service';
  * Handles calibration CRUD, auto-generates certificate and ULR numbers
  * based on the company's certificate configuration in Settings.
  */
+import { User } from 'src/users/user.entity';
+
 @Injectable()
 export class CalibrationService {
   constructor(
@@ -21,9 +23,24 @@ export class CalibrationService {
     private readonly draftRepository: Repository<CalibrationDraft>,
     @InjectRepository(CalibrationAuditLog)
     private readonly auditLogRepository: Repository<CalibrationAuditLog>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly settingsService: SettingsService,
     private readonly instrumentsService: InstrumentsService,
   ) {}
+
+  private async getCompanyUserIds(userId?: string): Promise<string[]> {
+    if (!userId) return [];
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (user && user.companyId) {
+      const companyUsers = await this.userRepository.find({
+        where: { companyId: user.companyId },
+        select: ['id'],
+      });
+      return companyUsers.map(u => u.id);
+    }
+    return [userId];
+  }
 
   // ── Defaults ─────────────────────────────────────────────────
   private readonly DEFAULT_CERT_PREFIX = 'CAL/CERT';
@@ -184,6 +201,11 @@ export class CalibrationService {
       certificate_number,
       ulr_number,
       calibration_date: new Date(dto.calibration_date),
+      certificate_issue_date: dto.certificate_issue_date
+        ? new Date(dto.certificate_issue_date)
+        : dto.calibration_date
+          ? new Date(dto.calibration_date)
+          : new Date(),
       reference_standard_validity: dto.reference_standard_validity
         ? new Date(dto.reference_standard_validity)
         : undefined,
@@ -240,8 +262,16 @@ export class CalibrationService {
       .leftJoinAndSelect('cal.instrument', 'instrument')
       .leftJoinAndSelect('cal.created_by', 'created_by');
 
-    if (userId) qb.andWhere('created_by.id = :userId', { userId });
-    if (companyId) qb.andWhere('cal.companyId = :companyId', { companyId });
+    const userIds = await this.getCompanyUserIds(userId);
+    if (userIds.length > 0) {
+      if (companyId) {
+        qb.andWhere('(created_by.id IN (:...userIds) OR cal.companyId = :companyId)', { userIds, companyId });
+      } else {
+        qb.andWhere('created_by.id IN (:...userIds)', { userIds });
+      }
+    } else if (companyId) {
+      qb.andWhere('cal.companyId = :companyId', { companyId });
+    }
     if (instrumentId) qb.andWhere('cal.instrument_id = :instrumentId', { instrumentId });
     if (calibrationType) qb.andWhere('cal.calibration_type = :calibrationType', { calibrationType });
     if (verdict) qb.andWhere('cal.verdict = :verdict', { verdict });
@@ -316,17 +346,20 @@ export class CalibrationService {
   }
 
   async getStats(userId: string) {
+    const userIds = await this.getCompanyUserIds(userId);
+    const targetUserIds = userIds.length > 0 ? userIds : [userId];
+
     const total = await this.calibrationRepository.count({
-      where: { created_by: { id: userId } },
+      where: { created_by: { id: In(targetUserIds) } },
     });
     const passed = await this.calibrationRepository.count({
-      where: { created_by: { id: userId }, verdict: 'PASS' },
+      where: { created_by: { id: In(targetUserIds) }, verdict: 'PASS' },
     });
     const failed = await this.calibrationRepository.count({
-      where: { created_by: { id: userId }, verdict: 'FAIL' },
+      where: { created_by: { id: In(targetUserIds) }, verdict: 'FAIL' },
     });
     const pendingCerts = await this.calibrationRepository.count({
-      where: { created_by: { id: userId }, certificate_generated: false },
+      where: { created_by: { id: In(targetUserIds) }, certificate_generated: false },
     });
 
     return {
@@ -341,8 +374,10 @@ export class CalibrationService {
   // ── Drafts ───────────────────────────────────────────────────
 
   async getAllDrafts(userId: string): Promise<CalibrationDraft[]> {
+    const userIds = await this.getCompanyUserIds(userId);
+    const targetUserIds = userIds.length > 0 ? userIds : [userId];
     return this.draftRepository.find({
-      where: { user_id: userId },
+      where: { user_id: In(targetUserIds) },
       order: { updated_at: 'DESC' },
     });
   }

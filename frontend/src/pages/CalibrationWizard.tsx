@@ -28,16 +28,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CalendarPicker } from "@/components/ui/calendar";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 const STEPS = [
   "Select Instrument",
@@ -46,6 +36,30 @@ const STEPS = [
   "Results & Verdict",
   "Certificate",
 ];
+
+const parseFrequencyMonths = (freq?: string): number => {
+  if (!freq) return 6;
+  const normalized = freq.trim().toLowerCase();
+  const match = normalized.match(/(\d+)/);
+  if (!match) return 6;
+  let val = parseInt(match[1], 10);
+  if (normalized.includes("year")) {
+    val *= 12;
+  }
+  return val > 0 ? val : 6;
+};
+
+const computeNextDueDate = (baseDateStr: string, frequencyStr?: string): string => {
+  if (!baseDateStr) return "";
+  const baseDate = new Date(baseDateStr);
+  if (isNaN(baseDate.getTime())) return "";
+  
+  const monthsToAdd = parseFrequencyMonths(frequencyStr);
+  const nextDate = new Date(baseDate);
+  nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+  
+  return format(nextDate, "yyyy-MM-dd");
+};
 
 export default function CalibrationWizard() {
   useSEO({ title: "New Calibration — GaugeMaster", description: "Perform instrument calibration" });
@@ -88,12 +102,68 @@ export default function CalibrationWizard() {
   const [remarks, setRemarks] = useState("");
   const [calibratedBy, setCalibratedBy] = useState("");
   const [calibratedByDesignation, setCalibratedByDesignation] = useState("");
+  const [calibratedBySignature, setCalibratedBySignature] = useState("");
   const [reviewedBy, setReviewedBy] = useState("");
   const [reviewedByDesignation, setReviewedByDesignation] = useState("");
+  const [reviewedBySignature, setReviewedBySignature] = useState("");
   const [approvedBy, setApprovedBy] = useState("");
   const [approvedByDesignation, setApprovedByDesignation] = useState("");
+  const [approvedBySignature, setApprovedBySignature] = useState("");
   const [calDate, setCalDate] = useState(new Date().toISOString().split("T")[0]);
+  const [certIssueDate, setCertIssueDate] = useState(new Date().toISOString().split("T")[0]);
   const [nextCalDate, setNextCalDate] = useState("");
+  const [systemUsers, setSystemUsers] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchSystemUsers = async () => {
+      try {
+        const res = await httpClient.get(`/users?companyId=${user?.companyId || ""}`);
+        setSystemUsers(Array.isArray(res.data) ? res.data : []);
+      } catch (err) {
+        console.error("Failed to load users for signatories", err);
+      }
+    };
+    fetchSystemUsers();
+  }, [user?.companyId]);
+
+  // Auto-resolve signatures from systemUsers if missing
+  useEffect(() => {
+    if (systemUsers.length > 0) {
+      if (calibratedBy && !calibratedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
+        if (u?.signature) setCalibratedBySignature(u.signature);
+      }
+      if (reviewedBy && !reviewedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
+        if (u?.signature) setReviewedBySignature(u.signature);
+      }
+      if (approvedBy && !approvedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
+        if (u?.signature) setApprovedBySignature(u.signature);
+      }
+    }
+  }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
+
+  // Draft & Edit state params
+  const [searchParams] = useSearchParams();
+  const draftIdParam = searchParams.get("draftId");
+  const editIdParam = searchParams.get("editId");
+  const typeParam = searchParams.get("type");
+
+  // Sync certIssueDate to calDate by default (for new calibrations)
+  useEffect(() => {
+    if (calDate && !editIdParam && !draftIdParam) {
+      setCertIssueDate(calDate);
+    }
+  }, [calDate, editIdParam, draftIdParam]);
+
+  // Auto-calculate Next Calibration Due Date based on Instrument Frequency
+  useEffect(() => {
+    if (calDate && selectedInstrument) {
+      const computed = computeNextDueDate(calDate, selectedInstrument.frequency);
+      setNextCalDate(computed);
+    }
+  }, [calDate, selectedInstrument]);
 
   // Step 5 — ULR & Certificate
   const [ulrEnabled, setUlrEnabled] = useState(false);
@@ -102,11 +172,6 @@ export default function CalibrationWizard() {
   const [savedCalibrationId, setSavedCalibrationId] = useState<string | null>(null);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
 
-  // Draft & Edit state
-  const [searchParams] = useSearchParams();
-  const draftIdParam = searchParams.get("draftId");
-  const editIdParam = searchParams.get("editId");
-  const typeParam = searchParams.get("type");
   const [isEditMode, setIsEditMode] = useState(!!editIdParam);
   const [availableTemplates, setAvailableTemplates] = useState<CalibrationTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
@@ -305,14 +370,24 @@ export default function CalibrationWizard() {
         setRemarks(cal.remarks || "");
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
+        setCalibratedBySignature((cal as any).calibrated_by_signature || "");
         setReviewedBy(cal.reviewed_by || "");
         setReviewedByDesignation(cal.reviewed_by_designation || "");
+        setReviewedBySignature((cal as any).reviewed_by_signature || "");
         setApprovedBy(cal.approved_by || "");
         setApprovedByDesignation(cal.approved_by_designation || "");
+        setApprovedBySignature((cal as any).approved_by_signature || "");
         setCalDate(
           cal.calibration_date
             ? cal.calibration_date.split("T")[0]
             : new Date().toISOString().split("T")[0]
+        );
+        setCertIssueDate(
+          (cal as any).certificate_issue_date
+            ? (cal as any).certificate_issue_date.split("T")[0]
+            : cal.calibration_date
+              ? cal.calibration_date.split("T")[0]
+              : new Date().toISOString().split("T")[0]
         );
         setNextCalDate(
           cal.next_calibration_date ? cal.next_calibration_date.split("T")[0] : ""
@@ -368,6 +443,7 @@ export default function CalibrationWizard() {
         approvedBy,
         approvedByDesignation,
         calDate,
+        certIssueDate,
         nextCalDate,
       };
       saveDraft(user.id, draftData, draftIdRef.current || undefined).then((saved) => {
@@ -381,7 +457,7 @@ export default function CalibrationWizard() {
   }, [
     step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envPressure, procedureReference,
     calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
-    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, nextCalDate, user, savedCalibrationId, isInitializing
+    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
 
   // Load specific draft on mount
@@ -421,6 +497,7 @@ export default function CalibrationWizard() {
           setApprovedBy(d.approvedBy || "");
           setApprovedByDesignation(d.approvedByDesignation || "");
           setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
+          setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
           setNextCalDate(d.nextCalDate || "");
         }
         setIsInitializing(false);
@@ -603,6 +680,7 @@ export default function CalibrationWizard() {
       const data = {
         instrument_id: selectedInstrument.id,
         calibration_date: calDate,
+        certificate_issue_date: certIssueDate || calDate,
         calibration_type: selectedType.type,
         reference_standards: referenceStandards.filter(r => r.name || r.id),
         environmental_conditions: {
@@ -625,10 +703,13 @@ export default function CalibrationWizard() {
         status_formula: statusFormula,
         calibrated_by: calibratedBy,
         calibrated_by_designation: calibratedByDesignation,
+        calibrated_by_signature: calibratedBySignature,
         reviewed_by: reviewedBy,
         reviewed_by_designation: reviewedByDesignation,
+        reviewed_by_signature: reviewedBySignature,
         approved_by: approvedBy,
         approved_by_designation: approvedByDesignation,
+        approved_by_signature: approvedBySignature,
         ulr_enabled: ulrEnabled,
         next_calibration_date: nextCalDate || undefined,
         companyId: user?.companyId,
@@ -1321,57 +1402,60 @@ export default function CalibrationWizard() {
           {/* ═══ Step 4: Results & Verdict ═══ */}
           {step === 3 && (
             <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-1.5 flex flex-col">
+                  <Label className="text-xs font-medium flex items-center gap-1.5">
+                    <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Date of Calibration
+                  </Label>
+                  <div className="h-10 px-3 py-2 bg-muted/40 border rounded-md flex items-center text-sm font-medium select-none text-foreground cursor-not-allowed">
+                    {calDate ? format(parseISO(calDate), "PPP") : format(new Date(), "PPP")}
+                  </div>
+                </div>
+                <div className="space-y-1.5 flex flex-col">
+                  <Label className="text-xs font-medium flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Next Calibration Due
+                    </span>
+                    {selectedInstrument?.frequency && (
+                      <span className="text-[11px] font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded-full">
+                        {selectedInstrument.frequency}
+                      </span>
+                    )}
+                  </Label>
+                  <div className="h-10 px-3 py-2 bg-muted/40 border rounded-md flex items-center text-sm font-medium select-none text-foreground cursor-not-allowed">
+                    {nextCalDate ? format(parseISO(nextCalDate), "PPP") : "—"}
+                  </div>
+                </div>
+                <div className="space-y-1.5 flex flex-col">
+                  <Label className="text-xs font-medium flex items-center gap-1.5">
+                    <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Certificate Issue Date
+                  </Label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-full justify-start text-left font-normal h-10 bg-background border-input hover:border-primary/50 transition-all",
+                          !certIssueDate && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                        {certIssueDate ? format(parseISO(certIssueDate), "PPP") : <span>Pick a date</span>}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <CalendarPicker
+                        mode="single"
+                        selected={certIssueDate ? parseISO(certIssueDate) : undefined}
+                        onSelect={(d: Date | undefined) => setCertIssueDate(d ? format(d, "yyyy-MM-dd") : "")}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5 flex flex-col">
-                  <Label className="text-xs">Date of Calibration</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !calDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {calDate ? format(parseISO(calDate), "PPP") : <span>Pick a date</span>}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <CalendarPicker
-                        mode="single"
-                        selected={calDate ? parseISO(calDate) : undefined}
-                        onSelect={(d: Date | undefined) => setCalDate(d ? format(d, "yyyy-MM-dd") : "")}
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <div className="space-y-1.5 flex flex-col">
-                  <Label className="text-xs">Next Calibration Due Date</Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !nextCalDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {nextCalDate ? format(parseISO(nextCalDate), "PPP") : <span>Pick a date</span>}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0">
-                      <CalendarPicker
-                        mode="single"
-                        selected={nextCalDate ? parseISO(nextCalDate) : undefined}
-                        onSelect={(d: Date | undefined) => setNextCalDate(d ? format(d, "yyyy-MM-dd") : "")}
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
-                </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs">Measurement Uncertainty</Label>
                   <Input value={uncertainty} onChange={(e) => setUncertainty(e.target.value)} placeholder="e.g., ±0.03 Bar" />
@@ -1401,19 +1485,99 @@ export default function CalibrationWizard() {
                 <h4 className="text-sm font-semibold mb-3">Signatories</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2">
-                    <Label className="text-xs">Calibrated By</Label>
-                    <Input value={calibratedBy} onChange={(e) => setCalibratedBy(e.target.value)} placeholder="Name" />
-                    <Input value={calibratedByDesignation} onChange={(e) => setCalibratedByDesignation(e.target.value)} placeholder="Designation" />
+                    <Label className="text-xs font-semibold">Calibrated By</Label>
+                    <Select
+                      value={systemUsers.find((u) => u.name === calibratedBy)?.id || ""}
+                      onValueChange={(val) => {
+                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
+                        if (u) {
+                          setCalibratedBy(u.name);
+                          setCalibratedByDesignation(u.designation || "");
+                          setCalibratedBySignature(u.signature || "");
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs bg-background">
+                        <SelectValue placeholder="Select Calibrated By User..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {systemUsers.map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name} {u.designation ? `(${u.designation})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {calibratedByDesignation && (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
+                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{calibratedByDesignation}</span>
+                      </div>
+                    )}
                   </div>
+
                   <div className="space-y-2">
-                    <Label className="text-xs">Reviewed By</Label>
-                    <Input value={reviewedBy} onChange={(e) => setReviewedBy(e.target.value)} placeholder="Name" />
-                    <Input value={reviewedByDesignation} onChange={(e) => setReviewedByDesignation(e.target.value)} placeholder="Designation" />
+                    <Label className="text-xs font-semibold">Reviewed By</Label>
+                    <Select
+                      value={systemUsers.find((u) => u.name === reviewedBy)?.id || ""}
+                      onValueChange={(val) => {
+                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
+                        if (u) {
+                          setReviewedBy(u.name);
+                          setReviewedByDesignation(u.designation || "");
+                          setReviewedBySignature(u.signature || "");
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs bg-background">
+                        <SelectValue placeholder="Select Reviewed By User..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {systemUsers.map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name} {u.designation ? `(${u.designation})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {reviewedByDesignation && (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
+                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{reviewedByDesignation}</span>
+                      </div>
+                    )}
                   </div>
+
                   <div className="space-y-2">
-                    <Label className="text-xs">Approved By</Label>
-                    <Input value={approvedBy} onChange={(e) => setApprovedBy(e.target.value)} placeholder="Name" />
-                    <Input value={approvedByDesignation} onChange={(e) => setApprovedByDesignation(e.target.value)} placeholder="Designation" />
+                    <Label className="text-xs font-semibold">Approved By</Label>
+                    <Select
+                      value={systemUsers.find((u) => u.name === approvedBy)?.id || ""}
+                      onValueChange={(val) => {
+                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
+                        if (u) {
+                          setApprovedBy(u.name);
+                          setApprovedByDesignation(u.designation || "");
+                          setApprovedBySignature(u.signature || "");
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-9 text-xs bg-background">
+                        <SelectValue placeholder="Select Approved By User..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {systemUsers.map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name} {u.designation ? `(${u.designation})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {approvedByDesignation && (
+                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
+                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{approvedByDesignation}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1460,6 +1624,7 @@ export default function CalibrationWizard() {
                       certificate_number: nextCertNumber,
                       ulr_number: ulrEnabled ? nextUlrNumber : undefined,
                       calibration_date: calDate,
+                      certificate_issue_date: certIssueDate || calDate,
                       next_calibration_date: nextCalDate,
                       reference_standards: referenceStandards,
                       reference_standard_name: referenceStandards[0]?.name,
@@ -1473,10 +1638,13 @@ export default function CalibrationWizard() {
                       remarks,
                       calibrated_by: calibratedBy,
                       calibrated_by_designation: calibratedByDesignation,
+                      calibrated_by_signature: calibratedBySignature,
                       reviewed_by: reviewedBy,
                       reviewed_by_designation: reviewedByDesignation,
+                      reviewed_by_signature: reviewedBySignature,
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
+                      approved_by_signature: approvedBySignature,
                       procedure_reference: procedureReference,
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,

@@ -50,9 +50,12 @@ export class SettingsService {
 
   }
 
-  findOne(userId: string, companyId: string) {
-    const response = this.settingsRepository.findOne({ where: { userId, companyId } })
-    return response
+  async findOne(userId: string, companyId: string) {
+    let setting = await this.settingsRepository.findOne({ where: { userId, companyId } });
+    if (!setting && companyId) {
+      setting = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    return setting;
   }
 
   findOneByUserId(userId: string) {

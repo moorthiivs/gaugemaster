@@ -61,10 +61,13 @@ export interface CalibrationRecord {
   // Signatories
   calibrated_by: string;
   calibrated_by_designation?: string;
+  calibrated_by_signature?: string;
   reviewed_by: string;
   reviewed_by_designation?: string;
+  reviewed_by_signature?: string;
   approved_by: string;
   approved_by_designation?: string;
+  approved_by_signature?: string;
 
   // Certificate & ULR
   certificate_number: string;
@@ -73,6 +76,7 @@ export interface CalibrationRecord {
   certificate_generated: boolean;
   certificate_file?: string;
   next_calibration_date?: string;
+  certificate_issue_date?: string;
 
   // Audit
   companyId?: string;

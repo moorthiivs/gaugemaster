@@ -69,6 +69,7 @@ export default function TemplateBuilder() {
     try {
       const data = await getTemplates({
         userId: user.id,
+        companyId: user.companyId,
         calibrationType: selectedType !== "All" ? selectedType : undefined,
       });
       setTemplates(data || []);

@@ -1,5 +1,17 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Wrench, PlusCircle, BarChart3, User, Settings, LogOut, Activity, CalendarDays, ShieldCheck, Layers } from "lucide-react";
+import {
+  LayoutDashboard,
+  Gauge,
+  PlusCircle,
+  FileCheck2,
+  Layers,
+  LineChart,
+  CalendarRange,
+  UserCheck,
+  Sliders,
+  LogOut,
+  ShieldCheck,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,19 +25,24 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
+import { usePermissions } from "@/hooks/usePermissions";
+
 const items = [
-  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Instruments", url: "/instruments", icon: Wrench },
-  { title: "Add Instrument", url: "/instruments/new", icon: PlusCircle },
-  { title: "Calibration", url: "/calibration", icon: Activity },
-  { title: "Templates", url: "/calibration/templates", icon: Layers },
-  { title: "Reports", url: "/reports", icon: BarChart3 },
-  { title: "Calendar", url: "/calendar", icon: CalendarDays },
-  { title: "Profile", url: "/profile", icon: User },
-  { title: "Settings", url: "/settings", icon: Settings },
+  { title: "Analytics Dashboard", url: "/dashboard", icon: LayoutDashboard, module: "dashboard", action: "view" },
+  { title: "Instrument Master", url: "/instruments", icon: Gauge, module: "instruments", action: "view" },
+  { title: "Register Instrument", url: "/instruments/new", icon: PlusCircle, module: "instruments", action: "create" },
+  { title: "Calibration Execution", url: "/calibration", icon: FileCheck2, module: "calibrations", action: "view" },
+  { title: "Calibration Templates", url: "/calibration/templates", icon: Layers, module: "templates", action: "view" },
+  { title: "Reports & Analytics", url: "/reports", icon: LineChart, module: "reports", action: "view" },
+  { title: "Calibration Schedule", url: "/calendar", icon: CalendarRange, module: "instruments", action: "view" },
+  { title: "User & Access Control", url: "/users", icon: UserCheck, module: "users", action: "view" },
+  { title: "System Configuration", url: "/settings", icon: Sliders, module: "settings", action: "view" },
 ];
 
 export function AppSidebar() {
+  const { canAccess } = usePermissions();
+  const visibleItems = items.filter((item) => canAccess(item.module, item.action as any));
+
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border bg-sidebar shadow-2xl transition-all duration-500">
       <SidebarHeader className="p-6 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-4">
@@ -44,7 +61,7 @@ export function AppSidebar() {
         <SidebarGroup className="group-data-[collapsible=icon]:px-0">
           <SidebarGroupContent>
             <SidebarMenu className="gap-1 group-data-[collapsible=icon]:items-center">
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
                   <SidebarMenuButton asChild tooltip={item.title} className="h-10 relative overflow-hidden group/btn group-data-[collapsible=icon]:mx-auto">
                     <NavLink 
