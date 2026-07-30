@@ -19,13 +19,52 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw } from "lucide-react";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import * as XLSX from "xlsx";
 
 import TooltipProv from "@/components/TooltipProv";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+
+export interface ColumnConfig {
+  id: string;
+  label: string;
+  visible: boolean;
+}
+
+const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
+  { id: "sino", label: "S.No", visible: true },
+  { id: "name", label: "Name", visible: true },
+  { id: "id_code", label: "ID Code", visible: true },
+  { id: "location", label: "Location", visible: true },
+  { id: "last_calibration_date", label: "Last Calibration Date", visible: true },
+  { id: "due_date", label: "Due Date", visible: true },
+  { id: "frequency", label: "Frequency", visible: true },
+  { id: "status", label: "Status", visible: true },
+  { id: "item_status", label: "Item Status", visible: true },
+  { id: "range", label: "Range", visible: false },
+  { id: "serial_no", label: "Serial No", visible: false },
+  { id: "least_count", label: "Least Count", visible: false },
+  { id: "make", label: "Make", visible: false },
+  { id: "item_type", label: "Item Type", visible: false },
+  { id: "part_no", label: "Part No", visible: false },
+  { id: "part_name", label: "Part Name", visible: false },
+  { id: "calibration_source", label: "Calibration Source", visible: false },
+  { id: "customer", label: "Customer", visible: false },
+  { id: "sector", label: "Sector", visible: false },
+  { id: "criticality_level", label: "Criticality Level", visible: false },
+  { id: "cert_no", label: "Cert. No.", visible: false },
+  { id: "remarks", label: "Remarks", visible: false },
+  { id: "gauge_issue_date", label: "Gauge Issue Date", visible: false },
+  { id: "gauges_received_by", label: "Gauges Received By", visible: false },
+  { id: "gauges_issued_by", label: "Gauges Issued By", visible: false },
+  { id: "calibration_procedure", label: "Calibration Procedure", visible: false },
+  { id: "traceable", label: "Traceable", visible: false },
+  { id: "certificate", label: "Certificate", visible: true },
+];
 
 const pageSize = 10;
 const BASE_URL = (httpClient.defaults.baseURL || "http://localhost:5000/api").replace(/\/api$/, "");
@@ -64,6 +103,8 @@ export default function Instruments() {
   const [allData, setAllData] = useState<Instrument[]>([]); // store original data
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [selectedObjects, setSelectedObjects] = useState<Record<string, Instrument>>({});
+  const [selectedReviewModalOpen, setSelectedReviewModalOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
     range: false,
     serial_no: false,
@@ -121,6 +162,90 @@ export default function Instruments() {
 
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [instrumentsToPrint, setInstrumentsToPrint] = useState<Instrument[]>([]);
+
+  const [columnConfigs, setColumnConfigs] = useState<ColumnConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem("gaugemaster_instrument_columns_config");
+      if (saved) {
+        const parsed: ColumnConfig[] = JSON.parse(saved);
+        const existingIds = new Set(parsed.map((c) => c.id));
+        const missing = DEFAULT_INSTRUMENT_COLUMNS.filter((c) => !existingIds.has(c.id));
+        return [...parsed, ...missing];
+      }
+    } catch (e) {
+      console.error("Failed to load saved column config", e);
+    }
+    return DEFAULT_INSTRUMENT_COLUMNS;
+  });
+
+  const [columnModalOpen, setColumnModalOpen] = useState(false);
+  const [tempColumnConfigs, setTempColumnConfigs] = useState<ColumnConfig[]>([]);
+  const [columnSearchQuery, setColumnSearchQuery] = useState("");
+
+  const handleOpenColumnModal = () => {
+    setTempColumnConfigs([...columnConfigs]);
+    setColumnSearchQuery("");
+    setColumnModalOpen(true);
+  };
+
+  const handleSaveColumnConfigs = () => {
+    setColumnConfigs(tempColumnConfigs);
+    try {
+      localStorage.setItem(
+        "gaugemaster_instrument_columns_config",
+        JSON.stringify(tempColumnConfigs)
+      );
+    } catch (e) {
+      console.error("Failed to save column config", e);
+    }
+    setColumnModalOpen(false);
+    toast({
+      title: "Column Preferences Saved",
+      description: "Your column selection and order have been updated.",
+      variant: "success",
+    });
+  };
+
+  const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedColIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetIndex: number) => {
+    e.preventDefault();
+    if (draggedColIndex === null || draggedColIndex === targetIndex) return;
+
+    setTempColumnConfigs((prev) => {
+      const updated = [...prev];
+      const draggedItem = updated[draggedColIndex];
+      updated.splice(draggedColIndex, 1);
+      updated.splice(targetIndex, 0, draggedItem);
+      return updated;
+    });
+    setDraggedColIndex(targetIndex);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedColIndex(null);
+  };
+
+  const handleMoveColumn = (index: number, direction: "up" | "down") => {
+    const newConfigs = [...tempColumnConfigs];
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= newConfigs.length) return;
+    const temp = newConfigs[index];
+    newConfigs[index] = newConfigs[targetIndex];
+    newConfigs[targetIndex] = temp;
+    setTempColumnConfigs(newConfigs);
+  };
+
+  const handleToggleColumnVisibility = (id: string, checked: boolean) => {
+    setTempColumnConfigs((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, visible: checked } : c))
+    );
+  };
 
   const [isOpenCalibagency, setisOpenCalibagency] = useState(false);
   const [selectedAgency, setSelectedAgency] = useState("");
@@ -192,7 +317,16 @@ export default function Instruments() {
         total: result.total
       });
       setAllData(result.data); // keep original copy
-      setSelected({});
+      // Cache loaded items if they are currently selected
+      setSelectedObjects((prev) => {
+        const next = { ...prev };
+        result.data.forEach((item: Instrument) => {
+          if (selected[item.id]) {
+            next[item.id] = item;
+          }
+        });
+        return next;
+      });
     } catch (error) {
       toast({ title: 'error', description: String(error), variant: 'destructive' })
     } finally {
@@ -319,51 +453,193 @@ export default function Instruments() {
     });
   }, [user]);
 
+  const handleRowSelectionChange = (
+    updaterOrValue: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)
+  ) => {
+    setSelected((prevSelected) => {
+      const nextSelected = typeof updaterOrValue === "function" ? updaterOrValue(prevSelected) : updaterOrValue;
+      
+      setSelectedObjects((prevObjects) => {
+        const nextObjects = { ...prevObjects };
+        // Sync items currently loaded in data.items
+        data.items.forEach((item) => {
+          if (nextSelected[item.id]) {
+            nextObjects[item.id] = item;
+          } else {
+            delete nextObjects[item.id];
+          }
+        });
+        
+        // Clean up any items explicitly falsy in nextSelected
+        Object.keys(nextSelected).forEach((id) => {
+          if (!nextSelected[id]) {
+            delete nextObjects[id];
+          }
+        });
+
+        return nextObjects;
+      });
+
+      return nextSelected;
+    });
+  };
+
+  const handleDeselectItem = (id: string) => {
+    setSelected((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setSelectedObjects((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const handleClearAllSelections = () => {
+    setSelected({});
+    setSelectedObjects({});
+  };
 
   const toggleAll = (checked: boolean) => {
-    const map: Record<string, boolean> = {};
-    for (const i of data.items) map[i.id] = checked;
-    setSelected(map);
-  };
-
-  const selectedIds = useMemo(() => Object.entries(selected).filter(([, v]) => v).map(([id]) => id), [selected]);
-
-  const markCalibrated = async () => {
-    const today = new Date();
-    for (const id of selectedIds) {
-      await updateInstrument(id, {
-        last_calibration_date: today.toISOString(),
-        due_date: new Date(today.getFullYear(), today.getMonth() + 6, today.getDate()).toISOString(),
-      });
+    const map: Record<string, boolean> = { ...selected };
+    for (const i of data.items) {
+      if (checked) {
+        map[i.id] = true;
+      } else {
+        delete map[i.id];
+      }
     }
-    fetchData();
+    handleRowSelectionChange(map);
   };
 
+  const selectedIds = useMemo(() => Object.keys(selectedObjects), [selectedObjects]);
+  const selectedItemsList = useMemo(() => Object.values(selectedObjects), [selectedObjects]);
 
+  const handleExportData = async (
+    exportType: "all" | "selected", 
+    specificItems?: Instrument[], 
+    selectedFieldIds?: string[]
+  ) => {
+    try {
+      let itemsToExport: Instrument[] = [];
+      if (specificItems) {
+        itemsToExport = specificItems;
+      } else if (exportType === "selected") {
+        itemsToExport = selectedItemsList;
+      } else {
+        const res = await listInstruments({
+          ...filters,
+          page: 1,
+          pageSize: 99999,
+          limit: 99999,
+          createdBy: user?.id,
+        });
+        itemsToExport = res.data || res.items || [];
+      }
+
+      if (!itemsToExport || itemsToExport.length === 0) {
+        toast({ title: "No data to export", variant: "destructive" });
+        return;
+      }
+
+      let exportCols: { id: string; label: string }[] = [];
+
+      if (selectedFieldIds && selectedFieldIds.length > 0) {
+        const labelMap: Record<string, string> = {
+          sino: "S.No",
+          id_code: "ID Code",
+          name: "Name",
+          location: "Location",
+          last_calibration_date: "Last Calibration Date",
+          due_date: "Due Date",
+          frequency: "Frequency",
+          status: "Status",
+          item_status: "Item Status",
+          make: "Make",
+          range: "Range",
+          serial_no: "Serial No.",
+          least_count: "Least Count",
+          calibration_source: "Calibration Source",
+          cert_no: "Cert. No.",
+          item_type: "Item Type",
+          part_no: "Part No",
+          part_name: "Part Name",
+          customer: "Customer",
+          sector: "Sector",
+          criticality_level: "Criticality Level",
+          remarks: "Remarks",
+        };
+
+        exportCols = [
+          { id: "sino", label: "S.No" },
+          ...selectedFieldIds.map((id) => ({
+            id,
+            label: labelMap[id] || columnConfigs.find((c) => c.id === id)?.label || id,
+          })),
+        ];
+      } else {
+        // Fallback to active visible table columns in configured order
+        exportCols = columnConfigs
+          .filter((c) => c.visible && c.id !== "select" && c.id !== "certificate")
+          .map((c) => ({ id: c.id, label: c.label }));
+      }
+
+      const exportRows = itemsToExport.map((item, idx) => {
+        const rowObj: Record<string, any> = {};
+        exportCols.forEach((col) => {
+          let val: any = "";
+          if (col.id === "sino") {
+            val = idx + 1;
+          } else if (col.id === "last_calibration_date") {
+            val = item.last_calibration_date ? format(new Date(item.last_calibration_date), "dd-MM-yyyy") : "";
+          } else if (col.id === "due_date") {
+            val = item.due_date ? format(new Date(item.due_date), "dd-MM-yyyy") : "";
+          } else if (col.id === "gauge_issue_date") {
+            val = item.gauge_issue_date ? format(new Date(item.gauge_issue_date), "dd-MM-yyyy") : "";
+          } else {
+            val = (item as any)[col.id] ?? "";
+          }
+          rowObj[col.label] = val;
+        });
+        return rowObj;
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Instruments");
+      XLSX.writeFile(
+        workbook,
+        `Instruments_Export_${exportType}_${format(new Date(), "yyyyMMdd_HHmmss")}.xlsx`
+      );
+      toast({ title: "Export Successful", description: `Exported ${itemsToExport.length} instrument(s) to Excel.` });
+    } catch (err: any) {
+      console.error("Export error:", err);
+      toast({ title: "Export Failed", description: err?.message || "Failed to export data", variant: "destructive" });
+    }
+  };
 
   const handleSendMail = async () => {
-    setisSendCalibration(true)
+    setisSendCalibration(true);
     try {
-      const selectedItems = data.items.filter((i) => selected[i.id]);
       const payload = {
         to: selectedAgency,
         description,
-        instruments: selectedItems,
+        instruments: selectedItemsList,
         userId: user.id,
         columns: selectedEmailColumns,
       };
 
-      console.log(payload, "payload");
-      const res = await httpClient.post(`/instruments/send-calibration-agency`, payload);
-      console.log("Mail Payload:", res);
+      await httpClient.post(`/instruments/send-calibration-agency`, payload);
       setisOpenCalibagency(false);
 
       toast({
         title: "Mail Sent Successfully",
         description: "Calibration request has been sent to the selected agency.",
-        variant: 'success',
+        variant: "success",
       });
-      setisSendCalibration(false)
+      setisSendCalibration(false);
     } catch (error: any) {
       console.log(error);
       const errorMessage = error.response?.data?.message || "Unable to send calibration mail. Please try again.";
@@ -376,9 +652,8 @@ export default function Instruments() {
         variant: "destructive",
       });
     } finally {
-      setisSendCalibration(false)
+      setisSendCalibration(false);
     }
-
   };
 
   const parseFrequencyMonths = (freq: string) => {
@@ -407,7 +682,6 @@ export default function Instruments() {
   const handleOpenDateModal = (inst: Instrument) => {
     setDateUpdateInstrument(inst);
     
-    // Default Last Calibration Date to the instrument's current due_date, or today if missing
     let baseDate = new Date();
     if (inst.due_date) {
       const parsedDue = new Date(inst.due_date);
@@ -419,7 +693,6 @@ export default function Instruments() {
     setNewLastCalDate(format(baseDate, 'yyyy-MM-dd'));
     setCertificateFile(null);
 
-    // Calculate the next due date based on baseDate + frequency
     const freqMonths = parseFrequencyMonths(inst.frequency);
     if (freqMonths > 0) {
       const due = new Date(baseDate);
@@ -515,9 +788,10 @@ export default function Instruments() {
       await deleteInstrumentsBulk(selectedIds);
       toast({
         title: "Success",
-        description: `${selectedIds.length} instruments deleted successfully.`,
+        description: "Selected instruments deleted successfully.",
       });
       setSelected({});
+      setSelectedObjects({});
       setBulkDeleteModalOpen(false);
       fetchData();
     } catch (error: any) {
@@ -531,68 +805,37 @@ export default function Instruments() {
     }
   };
 
-  const columns: ColumnDef<Instrument>[] = [
-    {
-      id: "select",
-      header: ({ table }) => (
-        <Checkbox
-          checked={table.getIsAllPageRowsSelected()}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
-          onClick={(e) => e.stopPropagation()}
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-    },
-    {
-      accessorKey: "sino",
+  const COLUMN_DEF_MAP: Record<string, Partial<ColumnDef<Instrument>>> = {
+    sino: {
       header: "S.No",
       cell: ({ row }) => {
         const index = row.index;
-        return row.original.sino || (filters.page - 1) * filters.limit + index + 1;
-      }
+        return row.original.sino || (filters.page - 1) * (filters.pageSize || 10) + index + 1;
+      },
     },
-    {
-      accessorKey: "name",
-      header: "Name",
-    },
-    {
-      accessorKey: "id_code",
-      header: "ID Code",
-    },
-    {
-      accessorKey: "location",
-      header: "Location",
-    },
-    {
+    name: { accessorKey: "name", header: "Name" },
+    id_code: { accessorKey: "id_code", header: "ID Code" },
+    location: { accessorKey: "location", header: "Location" },
+    last_calibration_date: {
       accessorKey: "last_calibration_date",
       header: "Last Calibration",
       cell: ({ row }) => {
+        if (!row.original.last_calibration_date) return "-";
         const d = new Date(row.original.last_calibration_date);
         return isNaN(d.getTime()) ? "-" : format(d, 'dd-MM-yyyy');
       },
     },
-    {
+    due_date: {
       accessorKey: "due_date",
       header: "Due Date",
       cell: ({ row }) => {
+        if (!row.original.due_date) return "-";
         const d = new Date(row.original.due_date);
         return isNaN(d.getTime()) ? "-" : format(d, 'dd-MM-yyyy');
       },
     },
-    {
-      accessorKey: "frequency",
-      header: "Frequency",
-    },
-    {
+    frequency: { accessorKey: "frequency", header: "Frequency" },
+    status: {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
@@ -615,7 +858,7 @@ export default function Instruments() {
         );
       },
     },
-    {
+    item_status: {
       accessorKey: "item_status",
       header: "Item Status",
       cell: ({ row }) => {
@@ -635,25 +878,33 @@ export default function Instruments() {
         );
       },
     },
-    { accessorKey: "range", header: "Range" },
-    { accessorKey: "serial_no", header: "Serial No" },
-    { accessorKey: "least_count", header: "Least Count" },
-    { accessorKey: "make", header: "Make" },
-    { accessorKey: "item_type", header: "Item Type" },
-    { accessorKey: "part_no", header: "Part No" },
-    { accessorKey: "part_name", header: "Part Name" },
-    { accessorKey: "calibration_source", header: "Calibration Source" },
-    { accessorKey: "customer", header: "Customer" },
-    { accessorKey: "sector", header: "Sector" },
-    { accessorKey: "criticality_level", header: "Criticality Level" },
-    { accessorKey: "cert_no", header: "Cert. No." },
-    { accessorKey: "remarks", header: "Remarks" },
-    { accessorKey: "gauge_issue_date", header: "Gauge Issue Date" },
-    { accessorKey: "gauges_received_by", header: "Gauges Received By" },
-    { accessorKey: "gauges_issued_by", header: "Gauges Issued By" },
-    { accessorKey: "calibration_procedure", header: "Calibration Procedure" },
-    { accessorKey: "traceable", header: "Traceable" },
-    {
+    range: { accessorKey: "range", header: "Range" },
+    serial_no: { accessorKey: "serial_no", header: "Serial No" },
+    least_count: { accessorKey: "least_count", header: "Least Count" },
+    make: { accessorKey: "make", header: "Make" },
+    item_type: { accessorKey: "item_type", header: "Item Type" },
+    part_no: { accessorKey: "part_no", header: "Part No" },
+    part_name: { accessorKey: "part_name", header: "Part Name" },
+    calibration_source: { accessorKey: "calibration_source", header: "Calibration Source" },
+    customer: { accessorKey: "customer", header: "Customer" },
+    sector: { accessorKey: "sector", header: "Sector" },
+    criticality_level: { accessorKey: "criticality_level", header: "Criticality Level" },
+    cert_no: { accessorKey: "cert_no", header: "Cert. No." },
+    remarks: { accessorKey: "remarks", header: "Remarks" },
+    gauge_issue_date: {
+      accessorKey: "gauge_issue_date",
+      header: "Gauge Issue Date",
+      cell: ({ row }) => {
+        if (!row.original.gauge_issue_date) return "-";
+        const d = new Date(row.original.gauge_issue_date);
+        return isNaN(d.getTime()) ? "-" : format(d, 'dd-MM-yyyy');
+      },
+    },
+    gauges_received_by: { accessorKey: "gauges_received_by", header: "Gauges Received By" },
+    gauges_issued_by: { accessorKey: "gauges_issued_by", header: "Gauges Issued By" },
+    calibration_procedure: { accessorKey: "calibration_procedure", header: "Calibration Procedure" },
+    traceable: { accessorKey: "traceable", header: "Traceable" },
+    certificate: {
       id: "certificate",
       header: "Certificate",
       cell: ({ row }) => {
@@ -725,151 +976,218 @@ export default function Instruments() {
         );
       }
     },
-    {
+    action: {
       id: "update_date",
       header: "Action",
       cell: ({ row }) => {
         const isUploading = uploadingId === row.original.id;
         return (
-        <div className="flex items-center gap-2">
-          <TooltipProv content="Calibrate Instrument">
-            <Button 
-              variant="outline" 
-              size="icon"
-              disabled={isUploading}
-              className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(`/calibration/new/${row.original.id}`);
-              }}
-            >
-              <Activity className="h-4 w-4 text-primary" />
-            </Button>
-          </TooltipProv>
-          <TooltipProv content="Log External Calibration (Upload Certificate)">
-            <Button 
-              variant="outline" 
-              size="icon"
-              disabled={isUploading}
-              className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenDateModal(row.original);
-              }}
-            >
-              <Upload className="h-4 w-4 text-emerald-600" />
-            </Button>
-          </TooltipProv>
-          <TooltipProv content="View Calibration History">
-            <Button 
-              variant="outline" 
-              size="icon"
-              disabled={isUploading}
-              className="h-8 w-8"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenHistory(row.original);
-              }}
-            >
-              <History className="h-4 w-4 text-muted-foreground" />
-            </Button>
-          </TooltipProv>
-          <TooltipProv content="Print Label">
-            <Button 
-              variant="outline" 
-              size="icon"
-              disabled={isUploading}
-              className="h-8 w-8 hover:text-primary"
-              onClick={(e) => {
-                e.stopPropagation();
-                setInstrumentsToPrint([row.original]);
-                setPrintModalOpen(true);
-              }}
-            >
-              <Printer className="h-4 w-4" />
-            </Button>
-          </TooltipProv>
-          <TooltipProv content="Delete Instrument">
-            <Button 
-              variant="outline" 
-              size="icon"
-              disabled={isUploading}
-              className="h-8 w-8 hover:bg-destructive/10 group"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenDeleteModal(row.original);
-              }}
-            >
-              <Trash2 className="h-4 w-4 text-destructive group-hover:text-destructive" />
-            </Button>
-          </TooltipProv>
-        </div>
-      )},
+          <div className="flex items-center gap-2">
+            <TooltipProv content="Calibrate Instrument">
+              <Button 
+                variant="outline" 
+                size="icon"
+                disabled={isUploading}
+                className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/calibration/new/${row.original.id}`);
+                }}
+              >
+                <Activity className="h-4 w-4 text-primary" />
+              </Button>
+            </TooltipProv>
+            <TooltipProv content="Log External Calibration (Upload Certificate)">
+              <Button 
+                variant="outline" 
+                size="icon"
+                disabled={isUploading}
+                className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenDateModal(row.original);
+                }}
+              >
+                <Upload className="h-4 w-4 text-emerald-600" />
+              </Button>
+            </TooltipProv>
+            <TooltipProv content="View Calibration History">
+              <Button 
+                variant="outline" 
+                size="icon"
+                disabled={isUploading}
+                className="h-8 w-8"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenHistory(row.original);
+                }}
+              >
+                <History className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </TooltipProv>
+            <TooltipProv content="Print Label">
+              <Button 
+                variant="outline" 
+                size="icon"
+                disabled={isUploading}
+                className="h-8 w-8 hover:text-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setInstrumentsToPrint([row.original]);
+                  setPrintModalOpen(true);
+                }}
+              >
+                <Printer className="h-4 w-4" />
+              </Button>
+            </TooltipProv>
+            <TooltipProv content="Delete Instrument">
+              <Button 
+                variant="outline" 
+                size="icon"
+                disabled={isUploading}
+                className="h-8 w-8 hover:bg-destructive/10 group"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenDeleteModal(row.original);
+                }}
+              >
+                <Trash2 className="h-4 w-4 text-destructive group-hover:text-destructive" />
+              </Button>
+            </TooltipProv>
+          </div>
+        );
+      }
     }
-  ];
+  };
+
+  const columns: ColumnDef<Instrument>[] = useMemo(() => {
+    const activeCols: ColumnDef<Instrument>[] = [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+            aria-label="Select all"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label="Select row"
+            onClick={(e) => e.stopPropagation()}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+    ];
+
+    columnConfigs
+      .filter((c) => c.visible)
+      .forEach((c) => {
+        const def = COLUMN_DEF_MAP[c.id];
+        if (def) {
+          activeCols.push({
+            id: c.id,
+            accessorKey: (def as any).accessorKey || c.id,
+            header: c.label,
+            cell: def.cell || (({ row }: any) => {
+              const val = (row.original as any)[c.id];
+              return val !== undefined && val !== null && val !== "" ? String(val) : "-";
+            }),
+          } as ColumnDef<Instrument>);
+        }
+      });
+
+    if (COLUMN_DEF_MAP.action) {
+      activeCols.push({
+        id: "action",
+        header: COLUMN_DEF_MAP.action.header,
+        cell: COLUMN_DEF_MAP.action.cell,
+      } as ColumnDef<Instrument>);
+    }
+    return activeCols;
+  }, [columnConfigs, filters.page, filters.pageSize, uploadingId]);
 
   return (
     <>
-      <div className="space-y-8 max-w-[1600px] mx-auto animate-in fade-in duration-700">
-        <header className="relative overflow-hidden bg-gradient-to-br from-primary/90 via-primary to-primary/80 text-primary-foreground p-8 rounded-2xl shadow-2xl">
-          <div className="relative z-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <h1 className="text-4xl font-extrabold tracking-tight">Instruments</h1>
-              <p className="text-primary-foreground/80 text-lg">
-                Manage and track your calibration inventory with precision.
-              </p>
+      <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-500">
+        {/* ─── Header Banner (Industrial Precision + Subtle Glass) ─── */}
+        <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Instruments Inventory</h1>
+              <Badge variant="outline" className="text-[10px] font-mono font-bold bg-background text-primary border-primary/30">
+                {data.total} Total
+              </Badge>
             </div>
-
-            <div className="flex items-center gap-4">
-              <Button 
-                size="lg" 
-                variant="secondary"
-                className="shadow-lg hover:scale-105 transition-transform font-bold px-8" 
-                onClick={() => navigate("/instruments/new")}
-              >
-                <PlusCircle className="h-5 w-5 mr-2" /> Add Instrument
-              </Button>
-            </div>
+            <p className="text-xs sm:text-sm text-muted-foreground font-medium">
+              Manage and track your calibration inventory with precision.
+            </p>
           </div>
-          
-          {/* Decorative background element */}
-          <div className="absolute top-0 right-0 -mr-20 -mt-20 h-64 w-64 bg-white/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-0 left-0 -ml-20 -mb-20 h-64 w-64 bg-black/10 rounded-full blur-3xl" />
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <Button 
+              size="sm" 
+              className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl shadow-xs gap-2 w-full sm:w-auto" 
+              onClick={() => navigate("/instruments/new")}
+            >
+              <PlusCircle className="h-4 w-4" /> Add Instrument
+            </Button>
+          </div>
         </header>
 
-        <div className="bg-card/50 backdrop-blur-sm p-6 rounded-2xl border shadow-xl space-y-6">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b pb-4 border-primary/10">
+        {/* ─── Filter Inventory Section ─── */}
+        <div className="bg-card/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-border/70 shadow-xs space-y-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b pb-3 border-border/50">
             <div className="flex items-center gap-2">
-              <div className="h-8 w-1 bg-primary rounded-full" />
-              <h2 className="text-xl font-bold">Filter Inventory</h2>
+              <div className="h-5 w-1 bg-primary rounded-full" />
+              <h2 className="text-base font-bold text-foreground">Filter Inventory</h2>
+              {(filters.status !== "All" || filters.item_status !== "Active" || filters.location !== "All" || filters.frequency !== "All" || filters.calibration_source !== "All" || localSearch || filters.due_date || filters.due_date_start) && (
+                <Button 
+                  variant="ghost" 
+                  size="sm"
+                  className="h-7 px-2 text-xs font-semibold text-muted-foreground hover:text-red-600 hover:bg-red-50/50 gap-1 transition-colors"
+                  onClick={() => {
+                    setLocalSearch("");
+                    setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
+                    navigate("/instruments", { replace: true });
+                  }}
+                >
+                  <RotateCcw className="h-3 w-3" /> Reset
+                </Button>
+              )}
             </div>
             
-            <div className="bg-muted p-1 rounded-lg inline-flex items-center">
+            <div className="bg-muted p-1 rounded-lg inline-flex items-center self-stretch sm:self-auto justify-center">
               <button 
                 onClick={() => setFilters(f => ({ ...f, is_reference_standard: "false", page: 1 }))}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${(!filters.is_reference_standard || filters.is_reference_standard === "false") ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${(!filters.is_reference_standard || filters.is_reference_standard === "false") ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 Instruments
               </button>
               <button 
                 onClick={() => setFilters(f => ({ ...f, is_reference_standard: "true", page: 1 }))}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${filters.is_reference_standard === "true" ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${filters.is_reference_standard === "true" ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 Reference Standards
               </button>
               <button 
                 onClick={() => setFilters(f => ({ ...f, is_reference_standard: "All", page: 1 }))}
-                className={`px-4 py-1.5 text-sm font-semibold rounded-md transition-all ${filters.is_reference_standard === "All" ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${filters.is_reference_standard === "All" ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 All
               </button>
             </div>
           </div>
           
-          <div className="grid gap-6 md:grid-cols-12">
-            <div className="md:col-span-3 relative">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <Search className="h-4 w-4" /> Search
+          <div className="flex flex-wrap items-end gap-3">
+            {/* Search Input - Increased Width! */}
+            <div className="flex-1 min-w-[240px] sm:min-w-[280px] relative">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Search className="h-3.5 w-3.5 text-primary" /> Search
               </Label>
               <Popover open={showSuggestions && suggestions.length > 0} onOpenChange={setShowSuggestions}>
                 <PopoverTrigger asChild>
@@ -885,9 +1203,9 @@ export default function Instruments() {
                       onBlur={() => {
                         setTimeout(() => setShowSuggestions(false), 200);
                       }}
-                      className="h-11 bg-background/50 border-muted-foreground/20 focus:ring-primary/20 transition-all pl-10 pr-10"
+                      className="h-9 text-xs bg-background border-border/70 focus:ring-primary/20 transition-all pl-8 pr-8 rounded-lg"
                     />
-                    <Search className="absolute left-3 top-3 h-5 w-5 text-muted-foreground/50" />
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground/60" />
                     {localSearch && (
                       <button
                         type="button"
@@ -898,23 +1216,23 @@ export default function Instruments() {
                           setFilters(f => ({ ...f, search: "", page: 1 }));
                           setShowSuggestions(false);
                         }}
-                        className="absolute right-3 top-3 h-5 w-5 flex items-center justify-center text-muted-foreground/50 hover:text-foreground transition-colors focus:outline-none"
+                        className="absolute right-2.5 top-2.5 h-4 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors focus:outline-none"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
                 </PopoverTrigger>
                 <PopoverContent 
-                  className="w-[var(--radix-popover-trigger-width)] p-0 border-muted-foreground/20 shadow-lg bg-popover text-popover-foreground z-[100]" 
+                  className="w-[var(--radix-popover-trigger-width)] p-0 border-border/70 shadow-lg bg-popover text-popover-foreground z-[100]" 
                   align="start" 
                   onOpenAutoFocus={(e) => e.preventDefault()}
                 >
-                  <div className="max-h-60 overflow-auto">
+                  <div className="max-h-60 overflow-auto divide-y divide-border/30">
                     {suggestions.map((code, idx) => (
                       <div 
                         key={idx} 
-                        className="px-4 py-2 hover:bg-muted cursor-pointer text-sm transition-colors"
+                        className="px-3 py-2 hover:bg-primary/10 cursor-pointer text-xs transition-colors"
                         onClick={() => {
                           setLocalSearch(code);
                           setShowSuggestions(false);
@@ -928,15 +1246,16 @@ export default function Instruments() {
               </Popover>
             </div>
             
-            <div className="md:col-span-2">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <Badge className="h-4 w-4 p-0 flex items-center justify-center text-[10px]">S</Badge> Status
+            {/* Status Filter */}
+            <div className="w-full sm:w-[130px] md:w-[140px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">S</Badge> Status
               </Label>
               <Select
                 value={filters.status as any}
                 onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}
               >
-                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -947,15 +1266,16 @@ export default function Instruments() {
               </Select>
             </div>
 
-            <div className="md:col-span-2">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <Badge className="h-4 w-4 p-0 flex items-center justify-center text-[10px]">I</Badge> Item Status
+            {/* Item Status Filter */}
+            <div className="w-full sm:w-[130px] md:w-[140px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">I</Badge> Item Status
               </Label>
               <Select
                 value={filters.item_status as any}
                 onValueChange={(v) => setFilters((f) => ({ ...f, item_status: v as any, page: 1 }))}
               >
-                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Item Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -966,12 +1286,13 @@ export default function Instruments() {
               </Select>
             </div>
 
-            <div className="md:col-span-2">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <CalendarDays className="h-4 w-4" /> Frequency
+            {/* Frequency Filter */}
+            <div className="w-full sm:w-[130px] md:w-[140px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <CalendarDays className="h-3.5 w-3.5 text-primary" /> Frequency
               </Label>
               <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
-                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Frequencies" />
                 </SelectTrigger>
                 <SelectContent>
@@ -982,12 +1303,13 @@ export default function Instruments() {
               </Select>
             </div>
 
-            <div className="md:col-span-2">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <Activity className="h-4 w-4" /> Location
+            {/* Location Filter */}
+            <div className="w-full sm:w-[130px] md:w-[140px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5 text-primary" /> Location
               </Label>
               <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
-                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Locations" />
                 </SelectTrigger>
                 <SelectContent>
@@ -998,12 +1320,13 @@ export default function Instruments() {
               </Select>
             </div>
 
-            <div className="md:col-span-2">
-              <Label className="text-sm font-bold text-foreground/70 mb-2 flex items-center gap-2">
-                <Badge className="h-4 w-4 p-0 flex items-center justify-center text-[10px]">C</Badge> Calibration Source
+            {/* Calibration Source Filter */}
+            <div className="w-full sm:w-[130px] md:w-[140px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">C</Badge> Source
               </Label>
               <Select value={filters.calibration_source as any} onValueChange={(v) => setFilters((f) => ({ ...f, calibration_source: v as any, page: 1 }))}>
-                <SelectTrigger className="h-11 bg-background/50 border-muted-foreground/20">
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Sources" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1014,74 +1337,78 @@ export default function Instruments() {
               </Select>
             </div>
 
-            <div className="md:col-span-1 flex items-end">
+            {/* Compact Reset Icon Button */}
+            <div>
               <Button 
-                variant="glass" 
-                className="w-full h-11 text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-all flex gap-2 font-bold"
+                variant="outline" 
+                size="icon"
+                title="Reset all filters"
+                className="h-9 w-9 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50/50 border-border/70 rounded-lg transition-all"
                 onClick={() => {
                   setLocalSearch("");
                   setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
                   navigate("/instruments", { replace: true });
                 }}
               >
-                Reset
+                <RotateCcw className="h-4 w-4" />
               </Button>
             </div>
-            
-            {filters.due_date && (
-              <div className="md:col-span-12 flex items-center">
-                <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-3 py-1.5 flex gap-2 items-center">
-                  <CalendarDays className="h-4 w-4" />
-                  Showing instruments due on: {new Date(filters.due_date).toLocaleDateString()}
-                  <button onClick={() => {
-                    setFilters(f => ({ ...f, due_date: "", page: 1 }));
-                    navigate("/instruments", { replace: true });
-                  }} className="ml-2 hover:text-amber-800 focus:outline-none font-bold">×</button>
-                </Badge>
-              </div>
-            )}
-
-            {(filters.due_date_start || filters.due_date_end) && (
-              <div className="md:col-span-12 flex items-center mt-2">
-                <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-3 py-1.5 flex gap-2 items-center">
-                  <CalendarDays className="h-4 w-4" />
-                  Showing instruments due from: {filters.due_date_start ? new Date(filters.due_date_start).toLocaleDateString() : 'Any'} to {filters.due_date_end ? new Date(filters.due_date_end).toLocaleDateString() : 'Any'}
-                  <button onClick={() => {
-                    setFilters(f => ({ ...f, due_date_start: "", due_date_end: "", page: 1 }));
-                    navigate("/instruments", { replace: true });
-                  }} className="ml-2 hover:text-amber-800 focus:outline-none font-bold">×</button>
-                </Badge>
-              </div>
-            )}
-
-            {(filters.last_cal_start || filters.last_cal_end) && (
-              <div className="md:col-span-12 flex items-center mt-2">
-                <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/30 px-3 py-1.5 flex gap-2 items-center">
-                  <CalendarDays className="h-4 w-4" />
-                  Showing calibrated from: {filters.last_cal_start ? new Date(filters.last_cal_start).toLocaleDateString() : 'Any'} to {filters.last_cal_end ? new Date(filters.last_cal_end).toLocaleDateString() : 'Any'}
-                  <button onClick={() => {
-                    setFilters(f => ({ ...f, last_cal_start: "", last_cal_end: "", page: 1 }));
-                    navigate("/instruments", { replace: true });
-                  }} className="ml-2 hover:text-blue-800 focus:outline-none font-bold">×</button>
-                </Badge>
-              </div>
-            )}
-
-            {(filters.calibrated_in_range_start || filters.calibrated_in_range_end) && (
-              <div className="md:col-span-12 flex items-center mt-2">
-                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-3 py-1.5 flex gap-2 items-center">
-                  <CalendarDays className="h-4 w-4" />
-                  Showing instruments calibrated in range: {filters.calibrated_in_range_start ? new Date(filters.calibrated_in_range_start).toLocaleDateString() : 'Any'} to {filters.calibrated_in_range_end ? new Date(filters.calibrated_in_range_end).toLocaleDateString() : 'Any'}
-                  <button onClick={() => {
-                    setFilters(f => ({ ...f, calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 }));
-                    navigate("/instruments", { replace: true });
-                  }} className="ml-2 hover:text-emerald-800 focus:outline-none font-bold">×</button>
-                </Badge>
-              </div>
-            )}
           </div>
+            
+          {filters.due_date && (
+            <div className="flex items-center mt-1">
+              <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
+                <CalendarDays className="h-3.5 w-3.5" />
+                Showing instruments due on: {new Date(filters.due_date).toLocaleDateString()}
+                <button onClick={() => {
+                  setFilters(f => ({ ...f, due_date: "", page: 1 }));
+                  navigate("/instruments", { replace: true });
+                }} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
+              </Badge>
+            </div>
+          )}
+
+          {(filters.due_date_start || filters.due_date_end) && (
+            <div className="flex items-center mt-1">
+              <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
+                <CalendarDays className="h-3.5 w-3.5" />
+                Showing instruments due from: {filters.due_date_start ? new Date(filters.due_date_start).toLocaleDateString() : 'Any'} to {filters.due_date_end ? new Date(filters.due_date_end).toLocaleDateString() : 'Any'}
+                <button onClick={() => {
+                  setFilters(f => ({ ...f, due_date_start: "", due_date_end: "", page: 1 }));
+                  navigate("/instruments", { replace: true });
+                }} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
+              </Badge>
+            </div>
+          )}
+
+          {(filters.last_cal_start || filters.last_cal_end) && (
+            <div className="flex items-center mt-1">
+              <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
+                <CalendarDays className="h-3.5 w-3.5" />
+                Showing calibrated from: {filters.last_cal_start ? new Date(filters.last_cal_start).toLocaleDateString() : 'Any'} to {filters.last_cal_end ? new Date(filters.last_cal_end).toLocaleDateString() : 'Any'}
+                <button onClick={() => {
+                  setFilters(f => ({ ...f, last_cal_start: "", last_cal_end: "", page: 1 }));
+                  navigate("/instruments", { replace: true });
+                }} className="ml-1 hover:text-blue-800 focus:outline-none font-bold">×</button>
+              </Badge>
+            </div>
+          )}
+
+          {(filters.calibrated_in_range_start || filters.calibrated_in_range_end) && (
+            <div className="flex items-center mt-1">
+              <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
+                <CalendarDays className="h-3.5 w-3.5" />
+                Showing instruments calibrated in range: {filters.calibrated_in_range_start ? new Date(filters.calibrated_in_range_start).toLocaleDateString() : 'Any'} to {filters.calibrated_in_range_end ? new Date(filters.calibrated_in_range_end).toLocaleDateString() : 'Any'}
+                <button onClick={() => {
+                  setFilters(f => ({ ...f, calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 }));
+                  navigate("/instruments", { replace: true });
+                }} className="ml-1 hover:text-emerald-800 focus:outline-none font-bold">×</button>
+              </Badge>
+            </div>
+          )}
         </div>
 
+        {/* ─── Data Table & Header Actions Bar ─── */}
         <DataTable
           columns={columns}
           data={data.items}
@@ -1094,129 +1421,114 @@ export default function Instruments() {
           onPageSizeChange={(pageSize) => setFilters((f) => ({ ...f, pageSize, page: 1 }))}
           onRowClick={(row) => navigate(`/instruments/${row.id}/edit`)}
           rowSelection={selected}
-          onRowSelectionChange={setSelected}
-          columnVisibility={columnVisibility}
-          onColumnVisibilityChange={setColumnVisibility}
+          onRowSelectionChange={handleRowSelectionChange}
           hideSearch={true}
+          hideColumnToggle={true}
           headerActions={
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 flex gap-2"
-                onClick={handleRefresh}
-                disabled={refreshing || loading}
-              >
-                <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
-                <span>Refresh</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 flex gap-2"
-                onClick={() => setisOpenupload(true)}
-              >
-                <Upload className="h-4 w-4" />
-                <span>Bulk Upload</span>
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 flex gap-2"
-                disabled={!data.items.length}
-                onClick={() => {
-                  const allPossibleHeaders = [
-                    "sino", "name", "id_code", "location", "last_calibration_date", "due_date", "frequency", 
-                    "agency", "status", "item_status", "range", "serial_no", "least_count", "make", 
-                    "item_type", "part_no", "part_name", "calibration_source", "customer", 
-                    "sector", "criticality_level", "cert_no", "remarks", "gauge_issue_date", 
-                    "gauges_received_by", "gauges_issued_by", "calibration_procedure", "traceable", "certificate_file"
-                  ];
-                  
-                  // Only export columns that are currently visible in the table
-                  const allHeaders = allPossibleHeaders.filter(h => columnVisibility[h as keyof VisibilityState] !== false);
+            <div className="flex flex-wrap items-center justify-between w-full gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-semibold gap-1.5"
+                  onClick={handleRefresh}
+                  disabled={refreshing || loading}
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+                  <span>Refresh</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-semibold gap-1.5"
+                  onClick={() => setisOpenupload(true)}
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Bulk Upload</span>
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs font-semibold gap-1.5"
+                      disabled={!data.items.length}
+                    >
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Export</span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuItem onClick={() => handleExportData("all")} className="gap-2 cursor-pointer text-xs">
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>Export All Data ({data.total})</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={selectedIds.length === 0}
+                      onClick={() => handleExportData("selected")}
+                      className="gap-2 cursor-pointer text-xs"
+                    >
+                      <FileSpreadsheet className="h-3.5 w-3.5 text-blue-600" />
+                      <span>Export Selected ({selectedIds.length})</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
-                  const itemsToExport = selectedIds.length > 0 
-                    ? data.items.filter((item: Instrument) => selectedIds.includes(item.id)) 
-                    : data.items;
+                {selectedIds.length > 0 && (
+                  <>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="h-8 text-xs font-bold animate-in fade-in gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                      onClick={() => setSelectedReviewModalOpen(true)}
+                    >
+                      <FileCheck className="h-3.5 w-3.5" />
+                      <span>Selected Items ({selectedIds.length})</span>
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-8 text-xs font-semibold animate-in fade-in slide-in-from-left-2 gap-1.5 text-primary hover:bg-primary/5 border-primary/30"
+                      onClick={() => setisOpenCalibagency(true)}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      <span>Send {selectedIds.length} Selected</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs font-semibold animate-in fade-in gap-1.5 border-border/70 hover:bg-muted/50 text-foreground"
+                      onClick={() => {
+                        setInstrumentsToPrint(selectedItemsList);
+                        setPrintModalOpen(true);
+                      }}
+                    >
+                      <Printer className="h-3.5 w-3.5 text-primary" />
+                      <span>Print {selectedIds.length} Labels</span>
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="h-8 text-xs font-semibold animate-in fade-in gap-1.5 text-destructive hover:bg-destructive/10 border-destructive/30"
+                      onClick={handleBulkDelete}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Delete {selectedIds.length} Selected</span>
+                    </Button>
+                  </>
+                )}
+              </div>
 
-                  const headerMap: Record<string, string> = {
-                    sino: "S.No", name: "Name", id_code: "ID Code", location: "Location", 
-                    last_calibration_date: "Last Calibration Date", due_date: "Due Date", 
-                    frequency: "Frequency", agency: "Agency", status: "Status", item_status: "Item Status", 
-                    range: "Range", serial_no: "Serial No", least_count: "Least Count", make: "Make", 
-                    item_type: "Item Type", part_no: "Part No", part_name: "Part Name", 
-                    calibration_source: "Calibration Source", customer: "Customer", sector: "Sector", 
-                    criticality_level: "Criticality Level", cert_no: "Cert. No.", remarks: "Remarks", 
-                    gauge_issue_date: "Gauge Issue Date", gauges_received_by: "Gauges Received By", 
-                    gauges_issued_by: "Gauges Issued By", calibration_procedure: "Calibration Procedure", 
-                    traceable: "Traceable", certificate_file: "Certificate File"
-                  };
-
-                  const csv = [
-                    allHeaders.map(h => `"${headerMap[h] || h}"`).join(","), 
-                    ...itemsToExport.map((r: any) => allHeaders.map((h) => {
-                      let val = r[h] !== undefined && r[h] !== null ? String(r[h]) : "";
-                      if ((h === 'last_calibration_date' || h === 'due_date' || h === 'gauge_issue_date') && val) {
-                        try {
-                           const d = new Date(val);
-                           if (!isNaN(d.getTime())) {
-                             val = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
-                           }
-                        } catch(e) {}
-                      }
-                      val = val.replace(/"/g, '""');
-                      return `"${val}"`;
-                    }).join(","))
-                  ].join("\n");
-                  const blob = new Blob([csv], { type: "text/csv" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `instruments_page_${filters.page}.csv`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                <FileSpreadsheet className="h-4 w-4" />
-                <span>Export CSV</span>
-              </Button>
-              {selectedIds.length > 0 && (
-                <>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="h-9 animate-in fade-in slide-in-from-left-2 flex gap-2 text-primary hover:bg-primary/5 hover:text-primary border-primary/20"
-                    onClick={() => setisOpenCalibagency(true)}
-                  >
-                    <Mail className="h-4 w-4" />
-                    <span>Send {selectedIds.length} Selected</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-9 animate-in fade-in flex gap-2 border-muted-foreground/30 hover:bg-muted/50"
-                    onClick={() => {
-                      const selectedItems = data.items.filter((item: Instrument) => selectedIds.includes(item.id));
-                      setInstrumentsToPrint(selectedItems);
-                      setPrintModalOpen(true);
-                    }}
-                  >
-                    <Printer className="h-4 w-4 text-muted-foreground" />
-                    <span>Print {selectedIds.length} Labels</span>
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="h-9 animate-in fade-in slide-in-from-left-2 flex gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive border-destructive/30 hover:border-destructive/50"
-                    onClick={handleBulkDelete}
-                    disabled={deleting}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    <span>Delete {selectedIds.length} Selected</span>
-                  </Button>
-                </>
-              )}
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleOpenColumnModal} 
+                  className="h-8 text-xs font-semibold gap-1.5"
+                >
+                  <Settings2 className="h-3.5 w-3.5" /> Columns
+                </Button>
+              </div>
             </div>
           }
         />
@@ -1620,11 +1932,258 @@ export default function Instruments() {
         </DialogContent>
       </Dialog>
       
+      {/* ─── Selected Instruments Review & Action Modal ─── */}
+      <Dialog open={selectedReviewModalOpen} onOpenChange={setSelectedReviewModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCheck className="w-5 h-5 text-primary" />
+                <span>Review Selected Instruments ({selectedItemsList.length})</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30 gap-1"
+                onClick={handleClearAllSelections}
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Clear All
+              </Button>
+            </DialogTitle>
+            <DialogDescription>
+              Review all items selected across search & pagination. Deselect any item not required, then print labels or download in XLSX format.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto border rounded-xl max-h-[50vh] scrollbar-thin">
+            <Table>
+              <TableHeader className="bg-muted/50 sticky top-0 z-10">
+                <TableRow>
+                  <TableHead className="w-12 text-center">S.No</TableHead>
+                  <TableHead>ID Code</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Location</TableHead>
+                  <TableHead>Last Cal. Date</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {selectedItemsList.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8 text-xs">
+                      No items selected. Select items from the inventory table to review or print.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  selectedItemsList.map((item, idx) => (
+                    <TableRow key={item.id} className="hover:bg-muted/30 text-xs">
+                      <TableCell className="text-center font-mono text-muted-foreground">{idx + 1}</TableCell>
+                      <TableCell className="font-semibold text-foreground">{item.id_code}</TableCell>
+                      <TableCell className="font-medium">{item.name}</TableCell>
+                      <TableCell>{item.location || "-"}</TableCell>
+                      <TableCell>
+                        {item.last_calibration_date ? format(new Date(item.last_calibration_date), "dd-MM-yyyy") : "-"}
+                      </TableCell>
+                      <TableCell>
+                        {item.due_date ? format(new Date(item.due_date), "dd-MM-yyyy") : "-"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={item.status === "OK" ? "success" : item.status === "Overdue" ? "destructive" : "warning"} className="text-[10px]">
+                          {item.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          title="Deselect this item"
+                          onClick={() => handleDeselectItem(item.id)}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <DialogFooter className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
+            <div className="text-xs text-muted-foreground font-medium">
+              {selectedItemsList.length} item(s) selected
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setSelectedReviewModalOpen(false)}>
+                Close
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={selectedItemsList.length === 0}
+                onClick={() => handleExportData("selected")}
+                className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-600/30 hover:bg-emerald-50"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                <span>Download XLSX ({selectedItemsList.length})</span>
+              </Button>
+              <Button
+                disabled={selectedItemsList.length === 0}
+                size="sm"
+                onClick={() => {
+                  setInstrumentsToPrint(selectedItemsList);
+                  setPrintModalOpen(true);
+                }}
+                className="gap-1.5 bg-primary text-primary-foreground"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Print Labels ({selectedItemsList.length})</span>
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <PrintLabelModal 
         open={printModalOpen}
         onOpenChange={setPrintModalOpen}
         instruments={instrumentsToPrint}
+        onExportXlsx={(items, selectedFields) => handleExportData("selected", items, selectedFields)}
       />
+
+      <Dialog open={columnModalOpen} onOpenChange={setColumnModalOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5 text-primary" />
+              <span>Customize Instrument Columns</span>
+            </DialogTitle>
+            <DialogDescription>
+              Drag & drop columns to re-order, or use the checkboxes to toggle visibility.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Search & Quick Actions */}
+          <div className="space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search columns..."
+                value={columnSearchQuery}
+                onChange={(e) => setColumnSearchQuery(e.target.value)}
+                className="pl-9 h-9 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs px-2"
+                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: true })))}
+                >
+                  Select All
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs px-2 text-muted-foreground"
+                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: c.id === "sino" || c.id === "name" || c.id === "id_code" })))}
+                >
+                  Deselect All
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 text-xs px-2 text-primary font-medium"
+                onClick={() => setTempColumnConfigs([...DEFAULT_INSTRUMENT_COLUMNS])}
+              >
+                Reset Default
+              </Button>
+            </div>
+          </div>
+
+          {/* Drag & Drop Re-orderable & Selectable Columns List */}
+          <div className="flex-1 overflow-y-auto space-y-1.5 border rounded-xl p-2 max-h-[45vh] scrollbar-thin">
+            {tempColumnConfigs
+              .map((col, index) => ({ col, originalIndex: index }))
+              .filter(({ col }) => col.label.toLowerCase().includes(columnSearchQuery.toLowerCase()))
+              .map(({ col, originalIndex }) => (
+                <div
+                  key={col.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, originalIndex)}
+                  onDragOver={(e) => handleDragOver(e, originalIndex)}
+                  onDragEnd={handleDragEnd}
+                  className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition-all duration-150 select-none ${
+                    draggedColIndex === originalIndex
+                      ? "bg-primary/10 border-primary shadow-md scale-[1.01] z-10"
+                      : col.visible
+                      ? "bg-card border-border hover:border-primary/40 shadow-2xs"
+                      : "bg-muted/30 border-transparent opacity-60 hover:opacity-80"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div
+                      className="cursor-grab active:cursor-grabbing p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Drag to reorder"
+                    >
+                      <GripVertical className="w-4 h-4" />
+                    </div>
+                    <Checkbox
+                      id={`col-cfg-${col.id}`}
+                      checked={col.visible}
+                      onCheckedChange={(checked) => handleToggleColumnVisibility(col.id, !!checked)}
+                    />
+                    <label htmlFor={`col-cfg-${col.id}`} className="font-medium text-xs truncate cursor-pointer select-none">
+                      {col.label}
+                    </label>
+                  </div>
+
+                  {/* Up / Down Re-order Buttons */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                      disabled={originalIndex === 0}
+                      onClick={() => handleMoveColumn(originalIndex, "up")}
+                      title="Move Up"
+                    >
+                      <ArrowUp className="w-3 h-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                      disabled={originalIndex === tempColumnConfigs.length - 1}
+                      onClick={() => handleMoveColumn(originalIndex, "down")}
+                      title="Move Down"
+                    >
+                      <ArrowDown className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+          </div>
+
+          {/* Footer Actions */}
+          <DialogFooter className="flex items-center justify-end gap-2 pt-2 border-t">
+            <Button variant="outline" size="sm" onClick={() => setColumnModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={handleSaveColumnConfigs} className="gap-1.5">
+              <Check className="w-4 h-4" />
+              <span>Save Configuration</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
 
   );

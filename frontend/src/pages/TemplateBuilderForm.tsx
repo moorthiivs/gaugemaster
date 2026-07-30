@@ -68,6 +68,8 @@ export default function TemplateBuilderForm() {
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [decimalPlaces, setDecimalPlaces] = useState<number>(4);
   const [remarks, setRemarks] = useState("Standard calibration per ISO/IEC 17025");
+  const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
+  const [procedureReference, setProcedureReference] = useState("AE/CAL-SOP/01");
   
   // Status Formula
   const [statusRuleType, setStatusRuleType] = useState<"default" | "custom_formula">("default");
@@ -124,6 +126,8 @@ export default function TemplateBuilderForm() {
         setEnvHumidity(tpl.environmental_defaults?.humidity || "55");
         setEnvPressure(tpl.environmental_defaults?.pressure || "");
         setRemarks(tpl.remarks || "");
+        setStandardReference((tpl as any).standard_reference || tpl.remarks || "Standard calibration per ISO/IEC 17025");
+        setProcedureReference(tpl.procedure_reference || "AE/CAL-SOP/01");
         setStatusRuleType((tpl.status_rule_type as "default" | "custom_formula") || "default");
         setStatusFormula(tpl.status_formula || "");
 
@@ -217,6 +221,8 @@ export default function TemplateBuilderForm() {
         hidden_columns: hiddenColumns,
         decimal_places: decimalPlaces,
         remarks,
+        standard_reference: standardReference,
+        procedure_reference: procedureReference,
         status_rule_type: statusRuleType,
         status_formula: statusFormula,
         userId: user?.id,
@@ -321,7 +327,7 @@ export default function TemplateBuilderForm() {
           <Button variant="outline" size="sm" onClick={handleBackNavigation}>
             Cancel
           </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || isNameDuplicate || !name.trim()} className="gap-2 shadow-md">
+          <Button size="sm" onClick={()=>handleSave()} disabled={saving || isNameDuplicate || !name.trim()} className="gap-2 shadow-md">
             <Save className="w-4 h-4" />
             {saving ? "Saving..." : templateId ? "Update Template" : "Save Template"}
           </Button>
@@ -501,6 +507,32 @@ export default function TemplateBuilderForm() {
               )}
             </div>
 
+            {/* Procedure Reference Template */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Procedure Reference (SOP)</Label>
+              <Input
+                placeholder="e.g., AE/CAL-SOP/01"
+                value={procedureReference}
+                onChange={(e) => { setProcedureReference(e.target.value); markDirty(); }}
+                className="text-xs"
+              />
+            </div>
+
+            {/* Standard Reference Template */}
+            <div className="space-y-1.5">
+              <Label className="text-xs">Standard Reference / Guideline</Label>
+              <Input
+                placeholder="Standard calibration per ISO/IEC 17025"
+                value={standardReference}
+                onChange={(e) => {
+                  setStandardReference(e.target.value);
+                  setRemarks(e.target.value);
+                  markDirty();
+                }}
+                className="text-xs font-medium"
+              />
+            </div>
+
             {/* Remarks Template */}
             <div className="space-y-1.5">
               <Label className="text-xs">Certificate Remarks Template</Label>
@@ -509,7 +541,7 @@ export default function TemplateBuilderForm() {
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
                 className="text-xs resize-none"
-                rows={3}
+                rows={2}
               />
             </div>
           </CardContent>

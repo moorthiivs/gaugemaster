@@ -9,10 +9,13 @@ import {
   ManyToOne,
   JoinColumn,
   PrimaryColumn,
+  Index,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 
 @Entity('instruments')
+@Index('idx_inst_company_due_status', ['companyId', 'due_date', 'status'])
+@Index('idx_inst_company_location', ['companyId', 'location', 'item_status'])
 export class Instrument {
   @PrimaryColumn('uuid')
   id: string = uuidv4();

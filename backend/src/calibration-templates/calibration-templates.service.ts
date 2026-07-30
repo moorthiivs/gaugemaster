@@ -36,22 +36,34 @@ export class CalibrationTemplatesService {
   }): Promise<CalibrationTemplate[]> {
     const { userId, companyId, calibrationType } = filters;
 
-    const where: any = {};
+    const qb = this.repository.createQueryBuilder('template');
 
-    if (companyId) {
-      where.companyId = companyId;
+    if (companyId && userId) {
+      qb.where('(template.companyId = :companyId OR template.userId = :userId)', {
+        companyId,
+        userId,
+      });
+    } else if (companyId) {
+      qb.where('template.companyId = :companyId', { companyId });
     } else if (userId) {
-      where.userId = userId;
+      qb.where('template.userId = :userId', { userId });
     }
 
     if (calibrationType && calibrationType !== 'All') {
-      where.calibration_type = calibrationType;
+      const typeLower = calibrationType.toLowerCase().trim();
+      const firstWord = typeLower.split('/')[0].split(' ')[0].trim();
+      qb.andWhere(
+        '(LOWER(template.calibration_type) LIKE :typeFull OR LOWER(template.calibration_type) LIKE :typeWord)',
+        {
+          typeFull: `%${typeLower}%`,
+          typeWord: `%${firstWord}%`,
+        },
+      );
     }
 
-    return this.repository.find({
-      where,
-      order: { createdAt: 'DESC' },
-    });
+    qb.orderBy('template.createdAt', 'DESC');
+
+    return qb.getMany();
   }
 
   async findOne(id: string): Promise<CalibrationTemplate> {

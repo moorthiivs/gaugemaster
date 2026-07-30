@@ -20,9 +20,13 @@ export class SettingsService {
       }
 
       const { userId, companyId } = createSettingDto;
-      const existing = await this.settingsRepository.findOne({
-        where: { userId, companyId },
-      });
+      let existing: Setting | null = null;
+      if (companyId) {
+        existing = await this.settingsRepository.findOne({ where: { companyId } });
+      }
+      if (!existing && userId) {
+        existing = await this.settingsRepository.findOne({ where: { userId } });
+      }
 
       if (existing) {
         const mergedCertConfig = createSettingDto.certificateConfig
@@ -43,17 +47,17 @@ export class SettingsService {
       return saved;
 
     } catch (error) {
-
       console.log(error);
-
     }
-
   }
 
   async findOne(userId: string, companyId: string) {
-    let setting = await this.settingsRepository.findOne({ where: { userId, companyId } });
-    if (!setting && companyId) {
+    let setting: Setting | null = null;
+    if (companyId) {
       setting = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    if (!setting && userId) {
+      setting = await this.settingsRepository.findOne({ where: { userId } });
     }
     return setting;
   }

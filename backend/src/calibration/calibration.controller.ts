@@ -61,6 +61,7 @@ export class CalibrationController {
     @Query('instrumentId') instrumentId?: string,
     @Query('calibrationType') calibrationType?: string,
     @Query('verdict') verdict?: string,
+    @Query('approvalStatus') approvalStatus?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('search') search?: string,
@@ -73,12 +74,37 @@ export class CalibrationController {
       instrumentId,
       calibrationType,
       verdict,
+      approvalStatus,
       dateFrom,
       dateTo,
       search,
       page: parseInt(page, 10),
       pageSize: parseInt(pageSize, 10),
     });
+  }
+
+  @Post(':id/approve')
+  async approve(
+    @Param('id') id: string,
+    @Body() body: { reviewerId: string; reviewerName: string; reviewerDesignation?: string; signature?: string },
+  ) {
+    return this.calibrationService.approve(
+      id,
+      { id: body.reviewerId, name: body.reviewerName, designation: body.reviewerDesignation },
+      body.signature,
+    );
+  }
+
+  @Post(':id/reject')
+  async reject(
+    @Param('id') id: string,
+    @Body() body: { reviewerId: string; reviewerName: string; rejectionReason: string },
+  ) {
+    return this.calibrationService.reject(
+      id,
+      { id: body.reviewerId, name: body.reviewerName },
+      body.rejectionReason,
+    );
   }
 
   @Get('stats/:userId')

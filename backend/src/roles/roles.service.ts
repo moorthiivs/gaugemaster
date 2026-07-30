@@ -39,6 +39,15 @@ const LAB_TECHNICIAN_PERMISSIONS: RolePermissions = {
   settings: { create: false, edit: false, view: false, delete: false },
 };
 
+const CALIBRATION_ENGINEER_PERMISSIONS: RolePermissions = {
+  instruments: { create: true, edit: true, view: true, delete: false },
+  calibrations: { create: true, edit: true, view: true, delete: false },
+  reports: { create: true, edit: false, view: true, delete: false },
+  templates: { create: false, edit: false, view: true, delete: false },
+  users: { create: false, edit: false, view: false, delete: false },
+  settings: { create: false, edit: false, view: false, delete: false },
+};
+
 const VIEWER_PERMISSIONS: RolePermissions = {
   instruments: { create: false, edit: false, view: true, delete: false },
   calibrations: { create: false, edit: false, view: true, delete: false },
@@ -73,6 +82,12 @@ export class RolesService implements OnModuleInit {
           name: 'Quality Manager',
           description: 'Full access to instruments & calibrations, view-only access to system users',
           permissions: QUALITY_MANAGER_PERMISSIONS,
+          isSystemDefault: true,
+        },
+        {
+          name: 'Calibration Engineer',
+          description: 'Performs calibration activities for assigned instruments and submits records for approval',
+          permissions: CALIBRATION_ENGINEER_PERMISSIONS,
           isSystemDefault: true,
         },
         {

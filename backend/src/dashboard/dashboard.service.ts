@@ -30,7 +30,7 @@ export class DashboardService {
         return [userId];
     }
 
-    async fetchDashboard(userid: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string) {
+    async fetchDashboard(userid: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string) {
         const userIds = await this.getCompanyUserIds(userid);
         const targetUserIds = userIds.length > 0 ? userIds : [userid];
 
@@ -55,51 +55,127 @@ export class DashboardService {
             endRange = new Date(Date.UTC(startYear, startMonth + 1, 0, 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
         }
 
-        // Helper to construct where filter with optional item_status and calibration status
+        // Helper to construct where filter with optional item_status, calibration status, and reference standard
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
             created_by: { id: In(targetUserIds) },
-            ...(itemStatus ? { item_status: ILike(itemStatus) } : {}),
-            ...(status ? { status: ILike(status) } : {}),
-            ...(location ? { location: ILike(location) } : {}),
+            ...(itemStatus && itemStatus !== 'All' ? { item_status: ILike(itemStatus) } : {}),
+            ...(status && status !== 'All' ? { status: ILike(status) } : {}),
+            ...(location && location !== 'All' ? { location: ILike(location) } : {}),
+            ...(isReferenceStandard === 'true' ? { is_reference_standard: true } : isReferenceStandard === 'false' ? { is_reference_standard: false } : {}),
             ...extraConditions,
         });
 
         // Helper to count distinct instruments with history calibrations
-        const countHistoryCalibrations = async (startDate: Date, endDate: Date) => {
-            const query = this.calibrationHistoryRepository.createQueryBuilder('history')
+        const countHistoryCalibrations = async (sDate: Date, eDate: Date) => {
+            const q = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
                 .select('COUNT(DISTINCT instrument.id)', 'count')
-                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
+                .andWhere('history.created_at BETWEEN :sDate AND :eDate', { sDate, eDate });
 
-            if (itemStatus) {
-                query.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+            if (itemStatus && itemStatus !== 'All') {
+                q.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
             }
-            if (status) {
-                query.andWhere('instrument.status ILIKE :status', { status });
+            if (status && status !== 'All') {
+                q.andWhere('instrument.status ILIKE :status', { status });
             }
-            if (location) {
-                query.andWhere('instrument.location ILIKE :location', { location });
+            if (location && location !== 'All') {
+                q.andWhere('instrument.location ILIKE :location', { location });
             }
-            
-            query.andWhere('history.created_at BETWEEN :startDate AND :endDate', { startDate, endDate });
+            if (isReferenceStandard === 'true') {
+                q.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+            } else if (isReferenceStandard === 'false') {
+                q.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+            }
 
-            const result = await query.getRawOne();
-            return Number(result.count || 0);
+            const res = await q.getRawOne();
+            return Number(res?.count || 0);
         };
 
-        // 1. Total instruments count for this user
-        const total = await this.instrumentRepository.count({
-            where: getBaseWhere(),
-        });
+        // ═══════════════════════════════════════════════════════════════
+        // Single query for KPI summary counts & Working vs Reference standard breakdowns
+        // ═══════════════════════════════════════════════════════════════
+        const kpiQuery = this.instrumentRepository.createQueryBuilder('instrument')
+            .select('COUNT(*)', 'total')
+            .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL THEN 1 ELSE 0 END)`, 'workingTotal')
+            .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceTotal')
 
-        // 3. Instruments overdue for this user
-        const overdue = await this.instrumentRepository.count({
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :now THEN 1 ELSE 0 END)`, 'overdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :now AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :now AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
+
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon')
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+
+        const dueSoonEnd = new Date(now);
+        dueSoonEnd.setDate(now.getDate() + 30);
+        kpiQuery.setParameter('now', now);
+        kpiQuery.setParameter('dueSoonEnd', dueSoonEnd);
+
+        if (itemStatus && itemStatus !== 'All') {
+            kpiQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            kpiQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            kpiQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            kpiQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            kpiQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+
+        const kpiResult = await kpiQuery.getRawOne();
+        const total = Number(kpiResult.total || 0);
+        const overdue = Number(kpiResult.overdue || 0);
+        const dueSoonCount = Number(kpiResult.dueSoon || 0);
+
+        // Calibrated count for selected range (from calibration history)
+        const calibratedCount = await countHistoryCalibrations(startRange, endRange);
+
+        // Pending (due in range) count
+        const pendingCount = await this.instrumentRepository.count({
             where: getBaseWhere({
-                due_date: LessThan(now),
+                due_date: Between(startRange, endRange),
             }),
         });
 
-        // 4. Next calibration instrument for this user
+        const dueThisMonth = pendingCount + calibratedCount;
+
+        // Today's due and completed counts
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        const todayEndLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 23, 59, 59, 999));
+        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+        const todayEnd = new Date(todayEndLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+
+        const dueTodayCount = await this.instrumentRepository.count({
+            where: getBaseWhere({
+                due_date: Between(todayStart, todayEnd),
+            }),
+        });
+
+        const workingDueTodayCount = await this.instrumentRepository.count({
+            where: getBaseWhere({
+                due_date: Between(todayStart, todayEnd),
+                is_reference_standard: false,
+            }),
+        });
+
+        const referenceDueTodayCount = await this.instrumentRepository.count({
+            where: getBaseWhere({
+                due_date: Between(todayStart, todayEnd),
+                is_reference_standard: true,
+            }),
+        });
+
+        const completedTodayCount = await countHistoryCalibrations(todayStart, todayEnd);
+
+        // Next calibration instrument
         const nextCalibrationInstrument = await this.instrumentRepository.findOne({
             where: getBaseWhere({
                 due_date: MoreThan(now),
@@ -107,82 +183,91 @@ export class DashboardService {
             order: { due_date: 'ASC' },
         });
 
-        // 5. Instruments calibrated in selected range (based on calibration history)
-        const calibratedCount = await countHistoryCalibrations(startRange, endRange);
-
-        // 2. Instruments currently due in selected range (pending)
-        const pendingCount = await this.instrumentRepository.count({
-            where: getBaseWhere({
-                due_date: Between(startRange, endRange),
-            }),
-        });
-
-        // The total target plan is pending + completed
-        const dueThisMonth = pendingCount + calibratedCount;
-
-        // 6. Due dates by month (dynamically generates months in the range, or default 12 months)
+        // ═══════════════════════════════════════════════════════════════
+        // OPTIMIZED: Monthly trend data via single GROUP BY query
+        // Replaces the 12-24 iteration loop (2 queries per iteration)
+        // ═══════════════════════════════════════════════════════════════
         const monthsCount: { month: string; plan: number; actual: number }[] = [];
 
+        // Determine month range
+        let monthStart: Date;
+        let monthEnd: Date;
         if (startDateStr && endDateStr) {
-            let current = new Date(startRange.getTime());
-            // Cap at 24 months to avoid performance issues
-            let monthsChecked = 0;
-            while (current <= endRange && monthsChecked < 24) {
-                const curLocal = new Date(current.getTime() + tzOffsetMinutes * 60 * 1000);
-                const firstDayLocal = new Date(Date.UTC(curLocal.getFullYear(), curLocal.getMonth(), 1, 0, 0, 0, 0));
-                const lastDayLocal = new Date(Date.UTC(curLocal.getFullYear(), curLocal.getMonth() + 1, 0, 23, 59, 59, 999));
-
-                const firstDay = new Date(firstDayLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-                const lastDay = new Date(lastDayLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-
-                const pendingCount = await this.instrumentRepository.count({
-                    where: getBaseWhere({
-                        due_date: Between(firstDay, lastDay),
-                    }),
-                });
-
-                const actualCount = await countHistoryCalibrations(firstDay, lastDay);
-                const planCount = pendingCount + actualCount;
-
-                monthsCount.push({
-                    month: firstDayLocal.toLocaleString('default', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
-                    plan: planCount,
-                    actual: actualCount,
-                });
-
-                const nextMonthLocal = new Date(Date.UTC(curLocal.getFullYear(), curLocal.getMonth() + 1, 1));
-                current = new Date(nextMonthLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-                monthsChecked++;
-            }
+            monthStart = startRange;
+            monthEnd = endRange;
         } else {
-            for (let i = -5; i <= 6; i++) {
-                const nowUtc = new Date();
-                const nowLocal = new Date(nowUtc.getTime() + tzOffsetMinutes * 60 * 1000);
-                
-                const firstDayLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth() + i, 1, 0, 0, 0, 0));
-                const lastDayLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth() + i + 1, 0, 23, 59, 59, 999));
-
-                const firstDay = new Date(firstDayLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-                const lastDay = new Date(lastDayLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-
-                const pendingCount = await this.instrumentRepository.count({
-                    where: getBaseWhere({
-                        due_date: Between(firstDay, lastDay),
-                    }),
-                });
-
-                const actualCount = await countHistoryCalibrations(firstDay, lastDay);
-                const planCount = pendingCount + actualCount;
-
-                monthsCount.push({
-                    month: firstDayLocal.toLocaleString('default', { month: 'short', timeZone: 'UTC' }),
-                    plan: planCount,
-                    actual: actualCount,
-                });
-            }
+            const nowUtc = new Date();
+            const nowLocal = new Date(nowUtc.getTime() + tzOffsetMinutes * 60 * 1000);
+            const fiveMonthsAgo = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth() - 5, 1, 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+            const sixMonthsAhead = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth() + 7, 0, 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+            monthStart = fiveMonthsAgo;
+            monthEnd = sixMonthsAhead;
         }
 
-        // 7. Detailed instruments due in selected range or next 30 days
+        // Plan counts (instruments due) grouped by month — single query
+        const planQuery = this.instrumentRepository.createQueryBuilder('instrument')
+            .select(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
+            .addSelect(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
+            .addSelect('COUNT(*)', 'count')
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
+            .andWhere('instrument.due_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
+
+        if (itemStatus) {
+            planQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status) {
+            planQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location) {
+            planQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+
+        planQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
+        const planRows = await planQuery.getRawMany();
+
+        // Actual completed counts grouped by month — single query
+        const actualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+            .innerJoin('history.instrument', 'instrument')
+            .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
+            .addSelect(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
+            .addSelect('COUNT(DISTINCT instrument.id)', 'count')
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
+            .andWhere('history.created_at BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
+
+        if (itemStatus) {
+            actualQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status) {
+            actualQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location) {
+            actualQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+
+        actualQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
+        const actualRows = await actualQuery.getRawMany();
+
+        // Merge plan + actual into monthly series
+        const planMap = new Map(planRows.map(r => [r.month_key, { label: r.month_label, count: Number(r.count) }]));
+        const actualMap = new Map(actualRows.map(r => [r.month_key, Number(r.count)]));
+
+        const allMonthKeys = new Set([...planMap.keys(), ...actualMap.keys()]);
+        const sortedKeys = [...allMonthKeys].sort();
+
+        for (const key of sortedKeys) {
+            const planInfo = planMap.get(key);
+            const actualCount = actualMap.get(key) || 0;
+            const planCount = (planInfo?.count || 0) + actualCount;
+            monthsCount.push({
+                month: planInfo?.label || key.split('-')[1] || key,
+                plan: planCount,
+                actual: actualCount,
+            });
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Due soon instruments (paginated, limited)
+        // ═══════════════════════════════════════════════════════════════
         let dueSoonInstruments;
         if (startDateStr && endDateStr) {
             dueSoonInstruments = await this.instrumentRepository.find({
@@ -190,7 +275,8 @@ export class DashboardService {
                     due_date: Between(startRange, endRange),
                 }),
                 order: { due_date: 'ASC' },
-                select: ['id', 'name', 'due_date'],
+                select: ['id', 'name', 'due_date', 'location', 'status'],
+                take: 50,
             });
         } else {
             const next30Days = new Date(now);
@@ -200,7 +286,8 @@ export class DashboardService {
                     due_date: Between(now, next30Days),
                 }),
                 order: { due_date: 'ASC' },
-                select: ['id', 'name', 'due_date'],
+                select: ['id', 'name', 'due_date', 'location', 'status'],
+                take: 50,
             });
         }
 
@@ -208,14 +295,18 @@ export class DashboardService {
             id: inst.id,
             name: inst.name,
             dueDate: inst.due_date,
+            location: inst.location,
+            status: inst.status,
         }));
 
-        // 8. Recent activity for this user
+        // ═══════════════════════════════════════════════════════════════
+        // Recent activity
+        // ═══════════════════════════════════════════════════════════════
         const recentActivityRaw = await this.instrumentRepository.find({
             where: getBaseWhere(),
             take: 10,
             order: { updated_at: 'DESC' },
-            select: ['id', 'name', 'status', 'updated_at'],
+            select: ['id', 'name', 'status', 'updated_at', 'id_code', 'location'],
         });
 
         const recentActivityFormatted = recentActivityRaw.map(r => {
@@ -230,21 +321,26 @@ export class DashboardService {
                 name: r.name,
                 action,
                 at: r.updated_at,
+                idCode: r.id_code,
+                location: r.location,
             };
         });
 
-        // 9. Fetch dynamic group counts for Status and Item Status
+        // ═══════════════════════════════════════════════════════════════
+        // FIXED: Status & Item Status distributions
+        // Now uses targetUserIds (company tenant) instead of single userid
+        // ═══════════════════════════════════════════════════════════════
         const statusQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select('instrument.status', 'status')
             .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by = :userid', { userid });
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
 
         const itemStatusQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select('instrument.item_status', 'item_status')
             .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by = :userid', { userid });
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
 
         if (startDateStr && endDateStr) {
             statusQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
@@ -252,13 +348,18 @@ export class DashboardService {
         }
 
         if (itemStatus) {
-            statusQuery.andWhere('instrument.item_status = :itemStatus', { itemStatus });
-            itemStatusQuery.andWhere('instrument.item_status = :itemStatus', { itemStatus });
+            statusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+            itemStatusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
         }
 
         if (status) {
-            statusQuery.andWhere('instrument.status = :status', { status });
-            itemStatusQuery.andWhere('instrument.status = :status', { status });
+            statusQuery.andWhere('instrument.status ILIKE :status', { status });
+            itemStatusQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+
+        if (location) {
+            statusQuery.andWhere('instrument.location ILIKE :location', { location });
+            itemStatusQuery.andWhere('instrument.location ILIKE :location', { location });
         }
 
         const statusGroups = await statusQuery.groupBy('instrument.status').getRawMany();
@@ -274,78 +375,111 @@ export class DashboardService {
             value: Number(g.count),
         }));
 
-        // 10. Week-wise completed calibrations (last_calibration_date in range)
+        // ═══════════════════════════════════════════════════════════════
+        // OPTIMIZED: Weekly completed — single GROUP BY query
+        // Replaces 52-iteration loop with single SQL
+        // ═══════════════════════════════════════════════════════════════
         const weeklyCompleted: { week: string; completed: number }[] = [];
         {
-            // Build weeks covering the selected range
-            const startRangeLocal = new Date(startRange.getTime() + tzOffsetMinutes * 60 * 1000);
-            const endRangeLocal = new Date(endRange.getTime() + tzOffsetMinutes * 60 * 1000);
+            const weeklyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+                .innerJoin('history.instrument', 'instrument')
+                .select(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
+                .addSelect(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
+                .addSelect('COUNT(DISTINCT instrument.id)', 'count')
+                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
+                .andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
 
-            const wStartLocal = new Date(Date.UTC(startRangeLocal.getFullYear(), startRangeLocal.getMonth(), startRangeLocal.getDate()));
-            const dayOfWeek = wStartLocal.getUTCDay();
-            const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-            
-            const weekCursorLocal = new Date(wStartLocal);
-            weekCursorLocal.setUTCDate(weekCursorLocal.getUTCDate() + mondayOffset);
+            if (itemStatus) {
+                weeklyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+            }
+            if (status) {
+                weeklyQuery.andWhere('instrument.status ILIKE :status', { status });
+            }
+            if (location) {
+                weeklyQuery.andWhere('instrument.location ILIKE :location', { location });
+            }
 
-            let weeksChecked = 0;
-            while (weekCursorLocal <= endRangeLocal && weeksChecked < 52) {
-                const wStartUtc = new Date(weekCursorLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-                const wEndUtc = new Date(weekCursorLocal.getTime() + 7 * 24 * 60 * 60 * 1000 - 1 - tzOffsetMinutes * 60 * 1000);
+            weeklyQuery.groupBy('week_start').addGroupBy('week_end')
+                .orderBy('MIN(history.created_at)', 'ASC');
 
-                const completed = await countHistoryCalibrations(wStartUtc, wEndUtc);
-
-                const weekStartLocal = new Date(weekCursorLocal);
-                const weekEndLocal = new Date(weekCursorLocal.getTime() + 6 * 24 * 60 * 60 * 1000);
-
-                const label = `${weekStartLocal.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })} - ${weekEndLocal.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}`;
-                weeklyCompleted.push({ week: label, completed });
-
-                weekCursorLocal.setUTCDate(weekCursorLocal.getUTCDate() + 7);
-                weeksChecked++;
+            const weeklyRows = await weeklyQuery.getRawMany();
+            for (const row of weeklyRows) {
+                weeklyCompleted.push({
+                    week: `${row.week_start} - ${row.week_end}`,
+                    completed: Number(row.count),
+                });
             }
         }
 
-        // 11. Day-wise completed calibrations (last 7 days from today, clamped to filter range)
+        // ═══════════════════════════════════════════════════════════════
+        // OPTIMIZED: Daily completed — single GROUP BY query
+        // Replaces 7-iteration loop
+        // ═══════════════════════════════════════════════════════════════
         const dailyCompleted: { day: string; date: string; completed: number }[] = [];
         {
             const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
             
             const nowUtc = new Date();
             const nowLocal = new Date(nowUtc.getTime() + tzOffsetMinutes * 60 * 1000);
-            
             const endRangeLocal = new Date(endRange.getTime() + tzOffsetMinutes * 60 * 1000);
             const anchorLocal = endRangeLocal < nowLocal ? endRangeLocal : nowLocal;
 
-            for (let i = 6; i >= 0; i--) {
-                const dLocal = new Date(anchorLocal);
-                dLocal.setDate(dLocal.getDate() - i);
+            const sevenDaysAgo = new Date(anchorLocal);
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
 
-                const dUtcStart = new Date(Date.UTC(dLocal.getFullYear(), dLocal.getMonth(), dLocal.getDate(), 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
-                const dUtcEnd = new Date(Date.UTC(dLocal.getFullYear(), dLocal.getMonth(), dLocal.getDate(), 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+            const dStart = new Date(Date.UTC(sevenDaysAgo.getFullYear(), sevenDaysAgo.getMonth(), sevenDaysAgo.getDate(), 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+            const dEnd = new Date(Date.UTC(anchorLocal.getFullYear(), anchorLocal.getMonth(), anchorLocal.getDate(), 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
 
-                if (dUtcEnd < startRange) continue;
+            // Clamp to filter range
+            const effectiveStart = dStart < startRange ? startRange : dStart;
 
-                const completed = await countHistoryCalibrations(dUtcStart, dUtcEnd);
+            const dailyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+                .innerJoin('history.instrument', 'instrument')
+                .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
+                .addSelect(`EXTRACT(DOW FROM history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
+                .addSelect('COUNT(DISTINCT instrument.id)', 'count')
+                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
+                .andWhere('history.created_at BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
 
-                const year = dLocal.getFullYear();
-                const month = String(dLocal.getMonth() + 1).padStart(2, '0');
-                const dateVal = String(dLocal.getDate()).padStart(2, '0');
-                const dateLabel = `${year}-${month}-${dateVal}`;
+            if (itemStatus) {
+                dailyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+            }
+            if (status) {
+                dailyQuery.andWhere('instrument.status ILIKE :status', { status });
+            }
+            if (location) {
+                dailyQuery.andWhere('instrument.location ILIKE :location', { location });
+            }
 
+            dailyQuery.groupBy('date_key').addGroupBy('dow').orderBy('date_key', 'ASC');
+
+            const dailyRows = await dailyQuery.getRawMany();
+            for (const row of dailyRows) {
+                const dow = Number(row.dow);
                 dailyCompleted.push({
-                    day: dayNames[dLocal.getDay()],
-                    date: dateLabel,
-                    completed,
+                    day: dayNames[dow] || 'N/A',
+                    date: row.date_key,
+                    completed: Number(row.count),
                 });
             }
         }
 
         return {
             total,
+            workingTotal: Number(kpiResult.workingTotal || 0),
+            referenceTotal: Number(kpiResult.referenceTotal || 0),
             dueThisMonth,
             overdue,
+            workingOverdue: Number(kpiResult.workingOverdue || 0),
+            referenceOverdue: Number(kpiResult.referenceOverdue || 0),
+            dueSoonCount,
+            workingDueSoonCount: Number(kpiResult.workingDueSoon || 0),
+            referenceDueSoonCount: Number(kpiResult.referenceDueSoon || 0),
             calibratedCount,
+            dueTodayCount,
+            workingDueTodayCount,
+            referenceDueTodayCount,
+            completedTodayCount,
             nextCalibrationDate: nextCalibrationInstrument?.due_date || null,
             dueDatesByMonth: monthsCount,
             dueSoonList,

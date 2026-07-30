@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -12,6 +12,7 @@ interface PrintLabelModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   instruments: Instrument[];
+  onExportXlsx?: (items: Instrument[], selectedFields?: string[]) => void;
 }
 
 const AVAILABLE_FIELDS = [
@@ -30,16 +31,25 @@ const AVAILABLE_FIELDS = [
   { id: "cert_no", label: "Cert. No." },
 ];
 
-export function PrintLabelModal({ open, onOpenChange, instruments }: PrintLabelModalProps) {
+export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx }: PrintLabelModalProps) {
   const [layout, setLayout] = useState<"grid" | "roll">("grid");
   const [selectedFields, setSelectedFields] = useState<string[]>([
     "id_code", "name", "last_calibration_date", "due_date"
   ]);
+  const [itemsToPrint, setItemsToPrint] = useState<Instrument[]>(instruments);
+
+  useEffect(() => {
+    setItemsToPrint(instruments);
+  }, [instruments, open]);
 
   const toggleField = (fieldId: string) => {
     setSelectedFields((prev) =>
       prev.includes(fieldId) ? prev.filter((id) => id !== fieldId) : [...prev, fieldId]
     );
+  };
+
+  const handleRemoveItem = (id: string) => {
+    setItemsToPrint((prev) => prev.filter((i) => i.id !== id));
   };
 
   const handlePrint = () => {
@@ -122,7 +132,7 @@ export function PrintLabelModal({ open, onOpenChange, instruments }: PrintLabelM
         `}
       </style>
       <div className={layout === "grid" ? "print-grid" : "print-roll"}>
-        {instruments.map((inst) => (
+        {itemsToPrint.map((inst) => (
           <div key={inst.id} className="print-label">
             {AVAILABLE_FIELDS.filter((f) => selectedFields.includes(f.id)).map((field) => (
               <div key={field.id} className="print-field">
@@ -142,16 +152,59 @@ export function PrintLabelModal({ open, onOpenChange, instruments }: PrintLabelM
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Printer className="h-5 w-5 text-primary" />
-              Print Labels ({instruments.length} items)
+            <DialogTitle className="flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Printer className="h-5 w-5 text-primary" />
+                Print Labels ({itemsToPrint.length} items)
+              </span>
             </DialogTitle>
             <DialogDescription>
-              Select the fields to include on the labels and choose a print layout.
+              Select the fields to include on the labels, review selected items, and choose a print layout.
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+            {/* Selected Items Quick List & Deselect */}
+            <div className="space-y-2">
+              <Label className="text-base font-bold flex justify-between items-center">
+                <span>Selected Items ({itemsToPrint.length})</span>
+                {itemsToPrint.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => setItemsToPrint([])}
+                  >
+                    Deselect All
+                  </Button>
+                )}
+              </Label>
+              <div className="max-h-36 overflow-y-auto border rounded-md p-2 bg-muted/20 space-y-1 scrollbar-thin">
+                {itemsToPrint.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-2">No items selected to print.</p>
+                ) : (
+                  itemsToPrint.map((inst) => (
+                    <div key={inst.id} className="flex items-center justify-between bg-card p-1.5 rounded border text-xs">
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="font-bold text-foreground">{inst.id_code}</span>
+                        <span className="text-muted-foreground truncate">{inst.name}</span>
+                        {inst.location && <span className="text-[10px] bg-muted px-1.5 py-0.5 rounded">{inst.location}</span>}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                        title="Remove from print list"
+                        onClick={() => handleRemoveItem(inst.id)}
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             <div className="space-y-3">
               <Label className="text-base font-bold">Layout Option</Label>
               <RadioGroup value={layout} onValueChange={(val: "grid" | "roll") => setLayout(val)} className="flex gap-4">
@@ -206,12 +259,12 @@ export function PrintLabelModal({ open, onOpenChange, instruments }: PrintLabelM
             <div className="space-y-2">
               <Label className="text-base font-bold">Preview (First Item)</Label>
               <div className="border border-dashed p-4 rounded-md bg-white text-black flex justify-center">
-                {instruments.length > 0 ? (
+                {itemsToPrint.length > 0 ? (
                   <div className="border border-black p-3 rounded text-sm w-full max-w-[300px]">
                     {AVAILABLE_FIELDS.filter((f) => selectedFields.includes(f.id)).map((field) => (
                       <div key={field.id} className="flex mb-1">
                         <span className="font-bold w-[100px] flex-shrink-0 text-xs">{field.label}:</span>
-                        <span className="text-xs">{renderValue(instruments[0], field.id)}</span>
+                        <span className="text-xs">{renderValue(itemsToPrint[0], field.id)}</span>
                       </div>
                     ))}
                     {selectedFields.length === 0 && (
@@ -225,11 +278,26 @@ export function PrintLabelModal({ open, onOpenChange, instruments }: PrintLabelM
             </div>
           </div>
 
-          <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={handlePrint} className="gap-2" disabled={selectedFields.length === 0 || instruments.length === 0}>
-              <Printer className="h-4 w-4" /> Print Labels
-            </Button>
+          <DialogFooter className="mt-4 flex items-center justify-between sm:justify-between">
+            <div className="flex gap-2">
+              {onExportXlsx && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={itemsToPrint.length === 0}
+                  onClick={() => onExportXlsx(itemsToPrint, selectedFields)}
+                  className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-600/30 hover:bg-emerald-50"
+                >
+                  Download XLSX
+                </Button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button onClick={handlePrint} className="gap-2" disabled={selectedFields.length === 0 || itemsToPrint.length === 0}>
+                <Printer className="h-4 w-4" /> Print Labels
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

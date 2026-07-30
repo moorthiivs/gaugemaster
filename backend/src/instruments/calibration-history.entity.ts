@@ -1,8 +1,9 @@
-import { Entity, PrimaryColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, PrimaryColumn, Column, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { Instrument } from './instrument.entity';
 import { v4 as uuidv4 } from 'uuid';
 
 @Entity('calibration_history')
+@Index('idx_cal_hist_instrument_date', ['instrument', 'created_at'])
 export class CalibrationHistory {
   @PrimaryColumn('uuid')
   id: string = uuidv4();

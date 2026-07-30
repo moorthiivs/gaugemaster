@@ -13,9 +13,10 @@ export class DashboardController {
         @Query('endDate') endDate?: string,
         @Query('itemStatus') itemStatus?: string,
         @Query('status') status?: string,
-        @Query('location') location?: string
+        @Query('location') location?: string,
+        @Query('isReferenceStandard') isReferenceStandard?: string
     ) {
-        return this.dashboardService.fetchDashboard(id, startDate, endDate, itemStatus, status, location);
+        return this.dashboardService.fetchDashboard(id, startDate, endDate, itemStatus, status, location, isReferenceStandard);
     }
 
     @Get(":id/list")

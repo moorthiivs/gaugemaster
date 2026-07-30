@@ -29,7 +29,16 @@ export class CalibrationService {
     private readonly instrumentsService: InstrumentsService,
   ) {}
 
-  private async getCompanyUserIds(userId?: string): Promise<string[]> {
+  private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+    if (companyId) {
+      const companyUsers = await this.userRepository.find({
+        where: { companyId },
+        select: ['id'],
+      });
+      if (companyUsers.length > 0) {
+        return companyUsers.map((u) => u.id);
+      }
+    }
     if (!userId) return [];
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (user && user.companyId) {
@@ -37,7 +46,7 @@ export class CalibrationService {
         where: { companyId: user.companyId },
         select: ['id'],
       });
-      return companyUsers.map(u => u.id);
+      return companyUsers.map((u) => u.id);
     }
     return [userId];
   }
@@ -60,6 +69,48 @@ export class CalibrationService {
     return format === 'YY' ? String(year).slice(-2) : String(year);
   }
 
+  private async getMaxCertSequence(companyId: string, userId: string): Promise<number> {
+    const userIds = await this.getCompanyUserIds(userId, companyId);
+    const calibrations = await this.calibrationRepository.find({
+      where: userIds.length > 0 ? userIds.map((id) => ({ created_by: { id } })) : [],
+      select: ['certificate_number'],
+    });
+
+    let maxSeq = 0;
+    for (const cal of calibrations) {
+      if (cal.certificate_number) {
+        const parts = cal.certificate_number.split('/');
+        const lastPart = parts[parts.length - 1];
+        const num = parseInt(lastPart, 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    }
+    return maxSeq;
+  }
+
+  private async getMaxUlrSequence(companyId: string, userId: string): Promise<number> {
+    const userIds = await this.getCompanyUserIds(userId, companyId);
+    const calibrations = await this.calibrationRepository.find({
+      where: userIds.length > 0 ? userIds.map((id) => ({ created_by: { id } })) : [],
+      select: ['ulr_number'],
+    });
+
+    let maxSeq = 0;
+    for (const cal of calibrations) {
+      if (cal.ulr_number) {
+        const parts = cal.ulr_number.split('/');
+        const lastPart = parts[parts.length - 1];
+        const num = parseInt(lastPart, 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
+      }
+    }
+    return maxSeq;
+  }
+
   /**
    * Generates the next certificate number based on company settings.
    * Increments the sequence counter atomically.
@@ -75,7 +126,10 @@ export class CalibrationService {
     const sep = config?.certSeparator || this.DEFAULT_CERT_SEPARATOR;
     const yearFmt = config?.certYearFormat || this.DEFAULT_CERT_YEAR_FORMAT;
     const seqLen = config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH;
-    const nextSeq = (config?.certNextSeq || 0) + 1;
+
+    const dbMaxSeq = await this.getMaxCertSequence(companyId, userId);
+    const configSeq = config?.certNextSeq || 0;
+    const nextSeq = Math.max(configSeq, dbMaxSeq) + 1;
 
     const year = this.formatYear(yearFmt);
     const seq = String(nextSeq).padStart(seqLen, '0');
@@ -118,7 +172,11 @@ export class CalibrationService {
     const sep = config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR;
     const yearFmt = config?.ulrYearFormat || this.DEFAULT_ULR_YEAR_FORMAT;
     const seqLen = config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
-    const nextSeq = (config?.ulrNextSeq || 0) + 1;
+
+    const dbMaxSeq = await this.getMaxUlrSequence(companyId, userId);
+    const dbMaxCertSeq = await this.getMaxCertSequence(companyId, userId);
+    const configSeq = config?.ulrNextSeq || 0;
+    const nextSeq = Math.max(configSeq, dbMaxSeq, dbMaxCertSeq) + 1;
 
     const year = this.formatYear(yearFmt);
     const seq = String(nextSeq).padStart(seqLen, '0');
@@ -157,12 +215,15 @@ export class CalibrationService {
     const settings = await this.settingsService.findOne(userId, companyId);
     const config = settings?.certificateConfig;
 
+    const dbMaxCertSeq = await this.getMaxCertSequence(companyId, userId);
+    const dbMaxUlrSeq = await this.getMaxUlrSequence(companyId, userId);
+
     // Certificate
     const certPrefix = config?.certPrefix || this.DEFAULT_CERT_PREFIX;
     const certSep = config?.certSeparator || this.DEFAULT_CERT_SEPARATOR;
     const certYearFmt = config?.certYearFormat || this.DEFAULT_CERT_YEAR_FORMAT;
     const certSeqLen = config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH;
-    const certNextSeq = (config?.certNextSeq || 0) + 1;
+    const certNextSeq = Math.max(config?.certNextSeq || 0, dbMaxCertSeq) + 1;
     const certYear = this.formatYear(certYearFmt);
     const nextCertNumber = `${certPrefix}${certSep}${certYear}${certSep}${String(certNextSeq).padStart(certSeqLen, '0')}`;
 
@@ -171,7 +232,7 @@ export class CalibrationService {
     const ulrSep = config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR;
     const ulrYearFmt = config?.ulrYearFormat || this.DEFAULT_ULR_YEAR_FORMAT;
     const ulrSeqLen = config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
-    const ulrNextSeq = (config?.ulrNextSeq || 0) + 1;
+    const ulrNextSeq = Math.max(config?.ulrNextSeq || 0, dbMaxUlrSeq, dbMaxCertSeq) + 1;
     const ulrYear = this.formatYear(ulrYearFmt);
     const nextUlrNumber = `${ulrPrefix}${ulrSep}${ulrYear}${ulrSep}${String(ulrNextSeq).padStart(ulrSeqLen, '0')}`;
 
@@ -196,10 +257,14 @@ export class CalibrationService {
       ulr_number = await this.generateUlrNumber(userId, companyId);
     }
 
+    const approval_status = dto.approval_status || 'Calibration Completed';
+
     const calibration = this.calibrationRepository.create({
       ...dto,
       certificate_number,
       ulr_number,
+      approval_status,
+      certificate_generated: approval_status === 'Approved',
       calibration_date: new Date(dto.calibration_date),
       certificate_issue_date: dto.certificate_issue_date
         ? new Date(dto.certificate_issue_date)
@@ -212,24 +277,103 @@ export class CalibrationService {
       next_calibration_date: dto.next_calibration_date
         ? new Date(dto.next_calibration_date)
         : undefined,
-      created_by: dto.created_by ? { id: dto.created_by } as any : undefined,
+      created_by: dto.created_by ? ({ id: dto.created_by } as any) : undefined,
     });
 
     const savedCalibration = await this.calibrationRepository.save(calibration);
 
-    // Automatically update the instrument's calibration dates and status
-    try {
-      await this.instrumentsService.update(dto.instrument_id, {
-        last_calibration_date: savedCalibration.calibration_date as any,
-        due_date: savedCalibration.next_calibration_date as any,
-        status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
-        calibration_source: 'In-House',
-      } as any);
-    } catch (err) {
-      console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
+    // Update Instrument Master schedule & status
+    if (dto.instrument_id) {
+      try {
+        await this.instrumentsService.update(dto.instrument_id, {
+          last_calibration_date: savedCalibration.calibration_date as any,
+          due_date: savedCalibration.next_calibration_date as any,
+          status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+          calibration_source: 'In-House',
+        } as any);
+      } catch (err) {
+        console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
+      }
     }
 
     return savedCalibration;
+  }
+
+  async approve(
+    id: string,
+    reviewer: { id: string; name: string; designation?: string },
+    signature?: string,
+  ): Promise<Calibration> {
+    const calibration = await this.findOne(id);
+    if (!calibration) throw new NotFoundException('Calibration record not found');
+
+    const oldStatus = calibration.approval_status;
+    calibration.approval_status = 'Approved';
+    calibration.approved_by = reviewer.name;
+    calibration.approved_by_designation = reviewer.designation || 'Quality Manager';
+    if (signature) {
+      calibration.approved_by_signature = signature;
+    }
+    calibration.approved_at = new Date();
+    calibration.certificate_generated = true;
+
+    const saved = await this.calibrationRepository.save(calibration);
+
+    // Update Instrument Master schedule now that it is Approved
+    if (calibration.instrument_id) {
+      try {
+        await this.instrumentsService.update(calibration.instrument_id, {
+          last_calibration_date: saved.calibration_date as any,
+          due_date: saved.next_calibration_date as any,
+          status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+          calibration_source: 'In-House',
+        } as any);
+      } catch (err) {
+        console.warn(`Failed to update instrument ${calibration.instrument_id} on approval`, err);
+      }
+    }
+
+    // Record audit log entry
+    const auditLog = this.auditLogRepository.create({
+      calibration_id: saved.id,
+      edited_by_id: reviewer.id,
+      edited_by_name: reviewer.name,
+      changes_summary: [{ field: 'approval_status', oldValue: oldStatus, newValue: 'Approved' }],
+      remarks: 'Calibration Record Approved by Reviewer',
+    });
+    await this.auditLogRepository.save(auditLog);
+
+    return saved;
+  }
+
+  async reject(
+    id: string,
+    reviewer: { id: string; name: string },
+    rejectionReason: string,
+  ): Promise<Calibration> {
+    const calibration = await this.findOne(id);
+    if (!calibration) throw new NotFoundException('Calibration record not found');
+
+    const oldStatus = calibration.approval_status;
+    calibration.approval_status = 'Rejected';
+    calibration.rejected_by = reviewer.name;
+    calibration.rejected_at = new Date();
+    calibration.rejection_reason = rejectionReason;
+    calibration.certificate_generated = false;
+
+    const saved = await this.calibrationRepository.save(calibration);
+
+    // Record audit log entry
+    const auditLog = this.auditLogRepository.create({
+      calibration_id: saved.id,
+      edited_by_id: reviewer.id,
+      edited_by_name: reviewer.name,
+      changes_summary: [{ field: 'approval_status', oldValue: oldStatus, newValue: 'Rejected' }],
+      remarks: `Calibration Rejected. Reason: ${rejectionReason}`,
+    });
+    await this.auditLogRepository.save(auditLog);
+
+    return saved;
   }
 
   async findAll(filters: {
@@ -238,6 +382,7 @@ export class CalibrationService {
     instrumentId?: string;
     calibrationType?: string;
     verdict?: string;
+    approvalStatus?: string;
     dateFrom?: string;
     dateTo?: string;
     search?: string;
@@ -250,6 +395,7 @@ export class CalibrationService {
       instrumentId,
       calibrationType,
       verdict,
+      approvalStatus,
       dateFrom,
       dateTo,
       search,
@@ -275,6 +421,13 @@ export class CalibrationService {
     if (instrumentId) qb.andWhere('cal.instrument_id = :instrumentId', { instrumentId });
     if (calibrationType) qb.andWhere('cal.calibration_type = :calibrationType', { calibrationType });
     if (verdict) qb.andWhere('cal.verdict = :verdict', { verdict });
+    if (approvalStatus) {
+      if (approvalStatus === 'Pending Approval') {
+        qb.andWhere("(cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Approval')");
+      } else {
+        qb.andWhere('cal.approval_status = :approvalStatus', { approvalStatus });
+      }
+    }
     if (dateFrom && dateTo) {
       qb.andWhere('cal.calibration_date BETWEEN :dateFrom AND :dateTo', { dateFrom, dateTo });
     }
@@ -486,6 +639,10 @@ export class CalibrationService {
     if (dto.standard_columns_config !== undefined) existing.standard_columns_config = dto.standard_columns_config;
     if (dto.column_order !== undefined) existing.column_order = dto.column_order;
     if (dto.hidden_columns !== undefined) existing.hidden_columns = dto.hidden_columns;
+    if (dto.template_id !== undefined) existing.template_id = dto.template_id;
+    if (dto.template_name !== undefined) existing.template_name = dto.template_name;
+    if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
+    if ((dto as any).standard_reference !== undefined) (existing as any).standard_reference = (dto as any).standard_reference;
     if (dto.decimal_places !== undefined) existing.decimal_places = dto.decimal_places;
     if (dto.acceptance_criteria !== undefined) existing.acceptance_criteria = dto.acceptance_criteria;
     if (dto.uncertainty !== undefined) existing.uncertainty = dto.uncertainty;
@@ -504,6 +661,20 @@ export class CalibrationService {
     }
 
     const saved = await this.calibrationRepository.save(existing);
+
+    // Sync Instrument Master schedule & status
+    if (saved.instrument_id) {
+      try {
+        await this.instrumentsService.update(saved.instrument_id, {
+          last_calibration_date: saved.calibration_date as any,
+          due_date: saved.next_calibration_date as any,
+          status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+          calibration_source: 'In-House',
+        } as any);
+      } catch (err) {
+        console.warn(`Failed to update instrument ${saved.instrument_id} on calibration update`, err);
+      }
+    }
 
     // Record audit log entry if changes were made
     if (changesSummary.length > 0) {

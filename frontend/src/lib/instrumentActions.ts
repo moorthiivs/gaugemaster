@@ -43,9 +43,9 @@ export async function deleteInstrumentsBulk(ids: string[]) {
 }
 
 /** Fetch dashboard statistics for a specific user */
-export async function getDashboardSummary(userId: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string): Promise<DashboardSummary> {
+export async function getDashboardSummary(userId: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string): Promise<DashboardSummary> {
   const res = await httpClient.get(`/dashboard/${userId}`, {
-    params: { startDate, endDate, itemStatus, status, location }
+    params: { startDate, endDate, itemStatus, status, location, isReferenceStandard }
   });
   return res.data;
 }

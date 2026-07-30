@@ -396,17 +396,17 @@ export class InstrumentsService {
                 await this.validationService.validateData(companyId, merged);
             }
 
-            // Automatically update status based on new due_date
+            // Automatically update status based on new due_date if not REJECTED
             const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
-            if (finalDueDate) {
+            if (finalDueDate && payload.status !== 'REJECTED') {
                 const parsedDueDate = this.parseDateSafe(finalDueDate);
                 if (parsedDueDate) {
                     const today = new Date();
                     today.setHours(0, 0, 0, 0);
                     if (parsedDueDate <= today) {
                         payload.status = 'Overdue';
-                    } else if (instrument.status === 'Overdue' && (!payload.status || payload.status === 'Overdue')) {
-                        // If it was overdue but now the date is extended into the future, reset to OK
+                    } else if ((instrument.status === 'Overdue' || instrument.status === 'REJECTED') && (!payload.status || payload.status === 'Overdue' || payload.status === 'REJECTED')) {
+                        // If it was overdue/rejected but now date is extended into the future and verdict passed, reset to OK
                         payload.status = 'OK';
                     }
                 }
@@ -571,41 +571,97 @@ export class InstrumentsService {
 
 
     async getCalendarDue(userId: string, year: number, month: number) {
-        const startDate = new Date(year, month - 1, 1);
-        const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+        const userIds = await this.getCompanyUserIds(userId);
+        const targetUserIds = userIds.length > 0 ? userIds : [userId];
 
         const instruments = await this.instrumentRepository.find({
             where: {
-                due_date: Between(startDate, endDate),
-                created_by: { id: userId },
+                created_by: { id: In(targetUserIds) },
             },
-            select: ['id', 'name', 'id_code', 'due_date', 'status', 'location', 'agency'],
+            select: ['id', 'name', 'id_code', 'due_date', 'last_calibration_date', 'frequency', 'status', 'location', 'agency'],
             order: { due_date: 'ASC' },
         });
 
+        const parseFreqMonths = (freq?: string): number => {
+            if (!freq) return 12;
+            const normalized = freq.trim().toLowerCase();
+            const match = normalized.match(/(\d+)/);
+            if (!match) return 12;
+            let val = parseInt(match[1], 10);
+            if (normalized.includes("year")) {
+                val *= 12;
+            }
+            return val > 0 ? val : 12;
+        };
+
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
         const grouped: Record<number, { count: number; instruments: any[] }> = {};
+        let totalCount = 0;
+
+        const targetYear = Number(year);
+        const targetMonth = Number(month); // 1-12
 
         for (const inst of instruments) {
-            const day = new Date(inst.due_date).getDate();
-            if (!grouped[day]) {
-                grouped[day] = { count: 0, instruments: [] };
+            const freqMonths = parseFreqMonths(inst.frequency);
+            const dateSources = [
+                { dateStr: inst.due_date, type: 'due' },
+                { dateStr: inst.last_calibration_date, type: 'last' },
+            ].filter(d => Boolean(d.dateStr));
+
+            if (dateSources.length === 0) continue;
+
+            let addedForThisInstrument = false;
+
+            for (const source of dateSources) {
+                if (addedForThisInstrument) break;
+
+                const utcDate = new Date(source.dateStr!);
+                if (isNaN(utcDate.getTime())) continue;
+
+                // Adjust UTC date to user's local timezone
+                const localDate = new Date(utcDate.getTime() + tzOffsetMinutes * 60 * 1000);
+                const baseYear = localDate.getUTCFullYear();
+                const baseMonth = localDate.getUTCMonth() + 1; // 1-12
+                const baseDay = localDate.getUTCDate();
+
+                // Difference in months between target month/year and base month/year
+                const totalMonthsDiff = (targetYear - baseYear) * 12 + (targetMonth - baseMonth);
+
+                // Check if target month falls on a frequency interval step
+                if (totalMonthsDiff >= 0 && totalMonthsDiff % freqMonths === 0) {
+                    const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
+                    const scheduledDay = Math.min(baseDay, daysInTargetMonth);
+                    const scheduledDateISO = new Date(Date.UTC(targetYear, targetMonth - 1, scheduledDay)).toISOString();
+
+                    if (!grouped[scheduledDay]) {
+                        grouped[scheduledDay] = { count: 0, instruments: [] };
+                    }
+
+                    // Prevent duplicate entries of the same instrument on the same day
+                    const exists = grouped[scheduledDay].instruments.some(i => i.id === inst.id);
+                    if (!exists) {
+                        grouped[scheduledDay].count++;
+                        grouped[scheduledDay].instruments.push({
+                            id: inst.id,
+                            name: inst.name,
+                            id_code: inst.id_code,
+                            due_date: scheduledDateISO,
+                            status: inst.status,
+                            location: inst.location,
+                            agency: inst.agency,
+                            frequency: inst.frequency || `${freqMonths} month(s)`,
+                        });
+                        totalCount++;
+                        addedForThisInstrument = true;
+                    }
+                }
             }
-            grouped[day].count++;
-            grouped[day].instruments.push({
-                id: inst.id,
-                name: inst.name,
-                id_code: inst.id_code,
-                due_date: inst.due_date,
-                status: inst.status,
-                location: inst.location,
-                agency: inst.agency,
-            });
         }
 
         return {
-            year,
-            month,
-            totalCount: instruments.length,
+            year: targetYear,
+            month: targetMonth,
+            totalCount,
             days: grouped,
         };
     }

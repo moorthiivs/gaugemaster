@@ -66,6 +66,14 @@ export class CreateCalibrationTemplateDto {
 
   @IsOptional()
   @IsString()
+  standard_reference?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_reference?: string;
+
+  @IsOptional()
+  @IsString()
   status_rule_type?: string;
 
   @IsOptional()

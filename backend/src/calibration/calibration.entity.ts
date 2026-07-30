@@ -85,6 +85,12 @@ export class Calibration {
   @Column({ type: 'jsonb', nullable: true })
   standard_columns_config?: Record<string, any>;
 
+  @Column({ nullable: true })
+  template_id?: string;
+
+  @Column({ nullable: true })
+  template_name?: string;
+
   @Column({ type: 'int', nullable: true })
   decimal_places?: number;
 
@@ -105,6 +111,9 @@ export class Calibration {
   @Column({ type: 'text', nullable: true })
   remarks: string;
 
+  @Column({ type: 'text', nullable: true })
+  standard_reference: string;
+
   @Column({ nullable: true })
   status_rule_type?: string;
 
@@ -113,6 +122,22 @@ export class Calibration {
 
   @Column({ nullable: true })
   procedure_reference?: string;
+
+  // ── Approval Workflow ────────────────────────────────────────
+  @Column({ default: 'Calibration Completed' })
+  approval_status: string; // 'Calibration Completed' | 'Approved' | 'Rejected'
+
+  @Column({ type: 'timestamp', nullable: true })
+  approved_at?: Date;
+
+  @Column({ type: 'timestamp', nullable: true })
+  rejected_at?: Date;
+
+  @Column({ nullable: true })
+  rejected_by?: string;
+
+  @Column({ type: 'text', nullable: true })
+  rejection_reason?: string;
 
   // ── Signatories ──────────────────────────────────────────────
   @Column({ nullable: true })

@@ -16,7 +16,8 @@ import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
 import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getCalibration, updateCalibration } from "@/lib/calibrationActions";
-import { getTemplates } from "@/lib/templateActions";
+import { getTemplates, getTemplate } from "@/lib/templateActions";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
 import { getInstrument } from "@/lib/instrumentActions";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
@@ -26,6 +27,7 @@ import { UlrGate } from "@/components/calibration/UlrGate";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPicker } from "@/components/ui/calendar";
+import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -90,6 +92,7 @@ export default function CalibrationWizard() {
   const [envHumidity, setEnvHumidity] = useState("");
   const [envPressure, setEnvPressure] = useState("");
   const [procedureReference, setProcedureReference] = useState("");
+  const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
   const [calUnit, setCalUnit] = useState("");
   const [calTolerance, setCalTolerance] = useState(0);
@@ -118,31 +121,20 @@ export default function CalibrationWizard() {
     const fetchSystemUsers = async () => {
       try {
         const res = await httpClient.get(`/users?companyId=${user?.companyId || ""}`);
-        setSystemUsers(Array.isArray(res.data) ? res.data : []);
+        const list = Array.isArray(res.data) ? res.data : [];
+        if (user?.name && !list.some((u: any) => u.name === user.name || u.id === user.id)) {
+          list.unshift({ id: user.id, name: user.name, designation: user.role || "Calibration Engineer", signature: (user as any).signature || user.name });
+        }
+        setSystemUsers(list);
       } catch (err) {
         console.error("Failed to load users for signatories", err);
+        if (user?.name) {
+          setSystemUsers([{ id: user.id, name: user.name, designation: user.role || "Calibration Engineer", signature: (user as any).signature || user.name }]);
+        }
       }
     };
     fetchSystemUsers();
-  }, [user?.companyId]);
-
-  // Auto-resolve signatures from systemUsers if missing
-  useEffect(() => {
-    if (systemUsers.length > 0) {
-      if (calibratedBy && !calibratedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
-        if (u?.signature) setCalibratedBySignature(u.signature);
-      }
-      if (reviewedBy && !reviewedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
-        if (u?.signature) setReviewedBySignature(u.signature);
-      }
-      if (approvedBy && !approvedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
-        if (u?.signature) setApprovedBySignature(u.signature);
-      }
-    }
-  }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
+  }, [user]);
 
   // Draft & Edit state params
   const [searchParams] = useSearchParams();
@@ -181,6 +173,36 @@ export default function CalibrationWizard() {
   const draftIdRef = useRef<string | null>(draftIdParam || null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [editLoading, setEditLoading] = useState(!!editIdParam);
+
+  // Auto-select logged-in user as default Calibrated By
+  useEffect(() => {
+    if (user?.name && !isEditMode && !draftIdParam && !calibratedBy) {
+      setCalibratedBy(user.name);
+      setCalibratedByDesignation(user.role || "Calibration Engineer");
+      if ((user as any).signature) {
+        setCalibratedBySignature((user as any).signature);
+      }
+    }
+  }, [user, isEditMode, draftIdParam, calibratedBy]);
+
+  // Auto-resolve signatures from systemUsers if missing
+  useEffect(() => {
+    if (systemUsers.length > 0) {
+      if (calibratedBy && !calibratedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
+        if (u?.signature) setCalibratedBySignature(u.signature);
+      }
+      if (reviewedBy && !reviewedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
+        if (u?.signature) setReviewedBySignature(u.signature);
+      }
+      if (approvedBy && !approvedBySignature) {
+        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
+        if (u?.signature) setApprovedBySignature(u.signature);
+      }
+    }
+  }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
 
   // Pre-select calibration type if type URL parameter is present
   useEffect(() => {
@@ -199,14 +221,24 @@ export default function CalibrationWizard() {
     }
   }, [typeParam, editIdParam, draftIdParam]);
 
-  // Fetch templates for selected Calibration Type
+  // Fetch templates for selected Calibration Type (with fallback to all company templates)
   useEffect(() => {
-    if (!user || !selectedType) return;
-    getTemplates({ userId: user.id, calibrationType: selectedType.type })
-      .then((tpls) => {
-        setAvailableTemplates(tpls || []);
+    if (!user) return;
+    const typeStr = selectedType?.type || "";
+    getTemplates({ userId: user.id, companyId: user.companyId, calibrationType: typeStr })
+      .then(async (tpls) => {
+        if (tpls && tpls.length > 0) {
+          setAvailableTemplates(tpls);
+        } else {
+          // Fallback to fetch all company templates
+          const allTpls = await getTemplates({ userId: user.id, companyId: user.companyId });
+          setAvailableTemplates(allTpls || []);
+        }
       })
-      .catch(console.error);
+      .catch((err) => {
+        console.error("Failed to fetch templates", err);
+        getTemplates({ userId: user.id, companyId: user.companyId }).then((allTpls) => setAvailableTemplates(allTpls || [])).catch(() => {});
+      });
   }, [user, selectedType]);
 
   const [wizardCustomColumns, setWizardCustomColumns] = useState<CustomColumn[]>([]);
@@ -233,16 +265,11 @@ export default function CalibrationWizard() {
     toast.info("Cleared template selection (Custom Grid)");
   };
 
-  // Apply Calibration Template helper
-  const handleApplyTemplate = (tplId: string) => {
-    if (tplId === "none") {
-      handleClearTemplate();
-      return;
-    }
-    const tpl = availableTemplates.find((t) => t.id === tplId);
+  // Apply Calibration Template Object helper
+  const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[]) => {
     if (!tpl) return;
 
-    setSelectedTemplateId(tplId);
+    setSelectedTemplateId(tpl.id);
     if (tpl.default_unit) setCalUnit(tpl.default_unit);
     if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
     if (tpl.environmental_defaults) {
@@ -251,10 +278,12 @@ export default function CalibrationWizard() {
       if (tpl.environmental_defaults.pressure) setEnvPressure(tpl.environmental_defaults.pressure);
     }
     if (tpl.remarks) setRemarks(tpl.remarks);
+    if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
+    if (tpl.procedure_reference) setProcedureReference(tpl.procedure_reference);
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
-    // Always reset/set custom columns, column order, and hidden columns from selected template
+    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria from template
     setWizardCustomColumns((tpl as any).custom_columns || []);
     setWizardStandardColumnConfigs((tpl as any).standard_columns_config || {});
     setWizardColumnOrder((tpl as any).column_order || []);
@@ -262,7 +291,9 @@ export default function CalibrationWizard() {
     setWizardDecimalPlaces(tpl.decimal_places ?? 4);
     setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
 
-    if (tpl.calibration_points && tpl.calibration_points.length > 0) {
+    if (isEdit && existingPoints && existingPoints.length > 0) {
+      setCalPoints(existingPoints);
+    } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
       const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
         point_number: pt.point_number || idx + 1,
         description: pt.description || `Point ${idx + 1}`,
@@ -277,6 +308,17 @@ export default function CalibrationWizard() {
       }));
       setCalPoints(formattedPoints);
     }
+  };
+
+  // Apply Calibration Template helper
+  const handleApplyTemplate = (tplId: string) => {
+    if (tplId === "none") {
+      handleClearTemplate();
+      return;
+    }
+    const tpl = availableTemplates.find((t) => t.id === tplId);
+    if (!tpl) return;
+    applyTemplateObject(tpl, false);
     toast.success(`Applied template "${tpl.name}"`);
   };
 
@@ -311,8 +353,10 @@ export default function CalibrationWizard() {
   useEffect(() => {
     if (!user || !editIdParam) return;
     setIsEditMode(true);
+    setEditLoading(true);
+
     getCalibration(editIdParam)
-      .then((cal) => {
+      .then(async (cal) => {
         setSavedCalibrationId(cal.id);
         setSelectedInstrument(cal.instrument);
         const typeMatch =
@@ -320,6 +364,45 @@ export default function CalibrationWizard() {
           CALIBRATION_TYPES[0];
         setSelectedType(typeMatch);
 
+        // Fetch available templates for this type
+        let tpls: CalibrationTemplate[] = [];
+        try {
+          tpls = await getTemplates({ userId: user.id, calibrationType: typeMatch.type });
+          setAvailableTemplates(tpls || []);
+        } catch (e) {
+          console.error("Failed to fetch templates on edit", e);
+        }
+
+        // Determine target template
+        let targetTplId = (cal as any).template_id;
+        let targetTpl: CalibrationTemplate | undefined;
+
+        if (targetTplId && tpls.length > 0) {
+          targetTpl = tpls.find((t) => t.id === targetTplId);
+        }
+        if (!targetTpl && targetTplId) {
+          try {
+            targetTpl = await getTemplate(targetTplId);
+          } catch (e) {}
+        }
+        if (!targetTpl && cal.instrument && tpls.length > 0) {
+          const instName = (cal.instrument.name || "").toLowerCase();
+          const instType = (cal.instrument.item_type || "").toLowerCase();
+          targetTpl = tpls.find(
+            (t) =>
+              t.instrument_type.toLowerCase() === instName ||
+              t.instrument_type.toLowerCase() === instType ||
+              (instName && instName.includes(t.name.toLowerCase())) ||
+              t.name.toLowerCase().includes(instName)
+          );
+          if (!targetTpl) targetTpl = tpls[0];
+        }
+
+        if (targetTpl) {
+          applyTemplateObject(targetTpl, true, cal.calibration_points);
+        }
+
+        // Overlay specific calibration values saved on cal record
         if (cal.reference_standards && cal.reference_standards.length > 0) {
           setReferenceStandards(cal.reference_standards);
         } else if (cal.reference_standard_name) {
@@ -338,12 +421,17 @@ export default function CalibrationWizard() {
         }
 
         if (cal.environmental_conditions) {
-          setEnvTemp(cal.environmental_conditions.temperature || "");
-          setEnvHumidity(cal.environmental_conditions.humidity || "");
-          setEnvPressure(cal.environmental_conditions.pressure || "");
+          if (cal.environmental_conditions.temperature) setEnvTemp(cal.environmental_conditions.temperature);
+          if (cal.environmental_conditions.humidity) setEnvHumidity(cal.environmental_conditions.humidity);
+          if (cal.environmental_conditions.pressure) setEnvPressure(cal.environmental_conditions.pressure);
         }
         if ((cal as any).procedure_reference) {
           setProcedureReference((cal as any).procedure_reference);
+        }
+        if ((cal as any).standard_reference) {
+          setStandardReference((cal as any).standard_reference);
+        } else if (cal.remarks) {
+          setStandardReference(cal.remarks);
         }
 
         if (cal.calibration_points && cal.calibration_points.length > 0) {
@@ -358,16 +446,16 @@ export default function CalibrationWizard() {
           if ((cal as any).status_formula) setStatusFormula((cal as any).status_formula);
         }
 
-        if (cal.custom_columns) setWizardCustomColumns(cal.custom_columns);
+        if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns);
         if ((cal as any).standard_columns_config) setWizardStandardColumnConfigs((cal as any).standard_columns_config);
-        if (cal.column_order) setWizardColumnOrder(cal.column_order);
-        if (cal.hidden_columns) setWizardHiddenColumns(cal.hidden_columns);
+        if (cal.column_order && cal.column_order.length > 0) setWizardColumnOrder(cal.column_order);
+        if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
         if ((cal as any).decimal_places !== undefined) setWizardDecimalPlaces((cal as any).decimal_places);
         if ((cal as any).acceptance_criteria) setWizardAcceptanceCriteria((cal as any).acceptance_criteria);
 
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
-        setRemarks(cal.remarks || "");
+        if (cal.remarks) setRemarks(cal.remarks);
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
         setCalibratedBySignature((cal as any).calibrated_by_signature || "");
@@ -403,11 +491,13 @@ export default function CalibrationWizard() {
         // Reopen workflow starting from Step 2 (Calibration Entry)
         setStep(2);
         toast.info(`Editing calibration ${cal.certificate_number}`);
-        setIsInitializing(false);
       })
       .catch((err) => {
         toast.error("Failed to load calibration for editing");
+      })
+      .finally(() => {
         setIsInitializing(false);
+        setEditLoading(false);
       });
   }, [user, editIdParam]);
 
@@ -689,11 +779,14 @@ export default function CalibrationWizard() {
           pressure: envPressure || undefined,
         },
         procedure_reference: procedureReference || undefined,
+        standard_reference: standardReference || remarks || undefined,
         calibration_points: calPoints,
         custom_columns: wizardCustomColumns,
         standard_columns_config: wizardStandardColumnConfigs,
         column_order: wizardColumnOrder,
         hidden_columns: wizardHiddenColumns,
+        template_id: selectedTemplateId && selectedTemplateId !== "none" ? selectedTemplateId : undefined,
+        template_name: selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.name : undefined,
         decimal_places: wizardDecimalPlaces,
         acceptance_criteria: wizardAcceptanceCriteria,
         uncertainty,
@@ -799,10 +892,96 @@ export default function CalibrationWizard() {
     }
   };
 
-  if (isInitializing) {
+  if (isInitializing || editLoading) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="flex-1 space-y-6 p-4 md:p-8 pt-6 overflow-y-auto animate-in fade-in-50 duration-200">
+        {/* Header Skeleton */}
+        <div className="flex items-center gap-4">
+          <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+        </div>
+
+        {/* Progress Steps Skeleton */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pb-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border">
+              <Skeleton className="h-5 w-5 rounded-full shrink-0" />
+              <Skeleton className="h-3 w-20 hidden sm:block" />
+            </div>
+          ))}
+        </div>
+
+        {/* Step Content Card Skeleton */}
+        <Card className="border rounded-xl shadow-xs overflow-hidden">
+          <CardHeader className="border-b bg-muted/20">
+            <Skeleton className="h-6 w-40" />
+          </CardHeader>
+          <CardContent className="p-6 space-y-6">
+            {/* Step Summaries Skeleton */}
+            <div className="space-y-3">
+              <Skeleton className="h-14 w-full rounded-xl" />
+              <Skeleton className="h-14 w-full rounded-xl" />
+            </div>
+
+            {/* Template Selector Bar Skeleton */}
+            <div className="p-4 border rounded-xl bg-muted/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <Skeleton className="h-10 w-full rounded-lg" />
+            </div>
+
+            {/* Inputs Row Skeleton */}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex-1 min-w-[260px] space-y-2">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+              <div className="w-48 sm:w-56 space-y-2">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+              <div className="w-24 space-y-2">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+              <div className="w-24 space-y-2">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+              <div className="w-28 space-y-2">
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-10 w-full rounded-lg" />
+              </div>
+            </div>
+
+            {/* Table Grid Skeleton */}
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between border-b pb-3">
+                <Skeleton className="h-8 w-44" />
+                <div className="flex gap-2">
+                  <Skeleton className="h-8 w-24" />
+                  <Skeleton className="h-8 w-24" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                {Array.from({ length: 4 }).map((_, idx) => (
+                  <div key={idx} className="flex items-center gap-3 p-3 bg-muted/20 rounded-lg">
+                    <Skeleton className="h-5 w-6" />
+                    <Skeleton className="h-6 flex-1" />
+                    <Skeleton className="h-6 w-24" />
+                    <Skeleton className="h-6 w-24" />
+                    <Skeleton className="h-6 w-20" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -1092,7 +1271,7 @@ export default function CalibrationWizard() {
           {step === 1 && (
             <div className="space-y-6">
               {referenceStandards.map((ref, index) => (
-                <div key={index} className="relative p-4 border rounded-xl bg-card relative">
+                <div key={index} className="relative p-4 border rounded-xl bg-card">
                   {referenceStandards.length > 1 && (
                     <Button 
                       variant="ghost" 
@@ -1120,11 +1299,14 @@ export default function CalibrationWizard() {
                             newRefs[index] = {
                               ...newRefs[index],
                               name: master.name,
-                              id: master.id_code,
+                              make: master.make || (master as any).manufacturer || (master as any).brand || "",
+                              id: master.id_code || master.id || "",
                               range: master.range || "",
                               least_count: master.least_count || "",
                               validity: master.due_date ? master.due_date.split('T')[0] : "",
-                              traceable_to: master.traceable || ""
+                              traceable_to: master.traceable || (master as any).certificate_no || "",
+                              cert_no: (master as any).certificate_no || (master as any).cert_no || master.traceable || "",
+                              agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
                             };
                             setReferenceStandards(newRefs);
                           }
@@ -1231,141 +1413,153 @@ export default function CalibrationWizard() {
           {step === 2 && selectedType && (
             <>
               {/* Calibration Template Selector */}
-              {availableTemplates.length > 0 && (
-                <div className="p-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2 mb-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Layers className="w-4 h-4 text-primary" />
-                      <span className="text-xs font-semibold">Calibration Template</span>
-                      <Badge variant="secondary" className="text-[10px] capitalize">
-                        {selectedType.label}
-                      </Badge>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground">
-                      Search and select a template to auto-fill test points & tolerances
-                    </span>
+              <div className="p-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2 mb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-semibold">Calibration Template</span>
+                    <Badge variant="secondary" className="text-[10px] capitalize">
+                      {selectedType.label}
+                    </Badge>
                   </div>
+                  <span className="text-[10px] text-muted-foreground">
+                    Search and select a template to auto-fill test points & tolerances
+                  </span>
+                </div>
 
-                  {/* Searchable Combobox Dropdown */}
-                  <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={templatePopoverOpen}
-                        className="w-full justify-between bg-background text-xs h-9 font-normal border-input"
-                      >
-                        {selectedTemplateId && selectedTemplateId !== "none" ? (
-                          <span className="truncate font-semibold text-foreground">
-                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
-                            {" "}
-                            <span className="text-muted-foreground font-normal">
-                              ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type}) — {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
-                            </span>
+                {/* Searchable Combobox Dropdown */}
+                <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={templatePopoverOpen}
+                      className="w-full justify-between bg-background text-xs h-9 font-normal border-input"
+                    >
+                      {selectedTemplateId && selectedTemplateId !== "none" ? (
+                        <span className="truncate font-semibold text-foreground">
+                          {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
+                          {" "}
+                          <span className="text-muted-foreground font-normal">
+                            ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type}) — {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
                           </span>
-                        ) : (
-                          <span className="text-muted-foreground font-medium">-- None / Custom (No Template) --</span>
-                        )}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2 space-y-2 z-50 bg-popover shadow-xl border">
-                      {/* Search Filter Input */}
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          value={templateSearchQuery}
-                          onChange={(e) => setTemplateSearchQuery(e.target.value)}
-                          placeholder="Search template name, instrument type..."
-                          className="pl-8 pr-7 h-8 text-xs bg-background"
-                        />
-                        {templateSearchQuery && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setTemplateSearchQuery("")}
-                            className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                          >
-                            <X className="w-3 h-3" />
-                          </Button>
-                        )}
-                      </div>
-
-                      {/* Filtered Suggestion List */}
-                      <div className="max-h-56 overflow-y-auto space-y-1">
-                        {/* Default Option: None */}
-                        <div
-                          onClick={() => {
-                            handleApplyTemplate("none");
-                            setTemplatePopoverOpen(false);
-                            setTemplateSearchQuery("");
-                          }}
-                          className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                            !selectedTemplateId || selectedTemplateId === "none"
-                              ? "bg-primary/10 text-primary font-bold"
-                              : "hover:bg-accent text-muted-foreground"
-                          }`}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground font-medium">
+                          {availableTemplates.length > 0
+                            ? "-- None / Custom (No Template Selected) --"
+                            : "-- No Templates Found (Using Custom Grid) --"}
+                        </span>
+                      )}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2 space-y-2 z-50 bg-popover shadow-xl border">
+                    {/* Search Filter Input */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={templateSearchQuery}
+                        onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                        placeholder="Search template name, instrument type..."
+                        className="pl-8 pr-7 h-8 text-xs bg-background"
+                      />
+                      {templateSearchQuery && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setTemplateSearchQuery("")}
+                          className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                         >
-                          <span>-- None / Custom (No Template) --</span>
-                          {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary" />}
-                        </div>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      )}
+                    </div>
 
-                        {/* Templates List */}
-                        {availableTemplates
-                          .filter((tpl) => {
-                            if (!templateSearchQuery.trim()) return true;
-                            const q = templateSearchQuery.toLowerCase();
-                            return (
-                              tpl.name.toLowerCase().includes(q) ||
-                              tpl.instrument_type.toLowerCase().includes(q)
-                            );
-                          })
-                          .map((tpl) => {
-                            const isSelected = selectedTemplateId === tpl.id;
-                            return (
-                              <div
-                                key={tpl.id}
-                                onClick={() => {
-                                  handleApplyTemplate(tpl.id);
-                                  setTemplatePopoverOpen(false);
-                                  setTemplateSearchQuery("");
-                                }}
-                                className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                                  isSelected ? "bg-primary/10 text-primary font-bold" : "hover:bg-accent"
-                                }`}
-                              >
-                                <div className="truncate pr-2">
-                                  <p className="font-semibold text-foreground">{tpl.name}</p>
-                                  <p className="text-[10px] text-muted-foreground truncate">
-                                    {tpl.instrument_type} • {tpl.calibration_points?.length || 0} test points
-                                  </p>
-                                </div>
-                                {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
-                              </div>
-                            );
-                          })}
+                    {/* Filtered Suggestion List */}
+                    <div className="max-h-56 overflow-y-auto space-y-1">
+                      {/* Default Option: None */}
+                      <div
+                        onClick={() => {
+                          handleApplyTemplate("none");
+                          setTemplatePopoverOpen(false);
+                          setTemplateSearchQuery("");
+                        }}
+                        className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
+                          !selectedTemplateId || selectedTemplateId === "none"
+                            ? "bg-primary/10 text-primary font-bold"
+                            : "hover:bg-accent text-muted-foreground"
+                        }`}
+                      >
+                        <span>-- None / Custom (No Template) --</span>
+                        {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary" />}
                       </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-              )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Procedure Reference</Label>
-                  <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" />
+                      {/* Templates List */}
+                      {availableTemplates
+                        .filter((tpl) => {
+                          if (!templateSearchQuery.trim()) return true;
+                          const q = templateSearchQuery.toLowerCase();
+                          return (
+                            tpl.name.toLowerCase().includes(q) ||
+                            tpl.instrument_type.toLowerCase().includes(q)
+                          );
+                        })
+                        .map((tpl) => {
+                          const isSelected = selectedTemplateId === tpl.id;
+                          return (
+                            <div
+                              key={tpl.id}
+                              onClick={() => {
+                                handleApplyTemplate(tpl.id);
+                                setTemplatePopoverOpen(false);
+                                setTemplateSearchQuery("");
+                              }}
+                              className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
+                                isSelected ? "bg-primary/10 text-primary font-bold" : "hover:bg-accent"
+                              }`}
+                            >
+                              <div className="truncate pr-2">
+                                <p className="font-semibold text-foreground">{tpl.name}</p>
+                                <p className="text-[10px] text-muted-foreground truncate">
+                                  {tpl.instrument_type} • {tpl.calibration_points?.length || 0} test points
+                                </p>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                            </div>
+                          );
+                        })}
+
+                      {availableTemplates.length === 0 && (
+                        <div className="p-3 text-center text-xs text-muted-foreground">
+                          No templates found. Go to <span className="font-semibold text-primary cursor-pointer hover:underline" onClick={() => navigate("/templates")}>Calibration Templates</span> to create one.
+                        </div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="flex flex-wrap items-end gap-3 mb-6">
+                <div className="space-y-1.5 flex-1 min-w-[260px]">
+                  <Label className="text-xs font-semibold">Standard Reference</Label>
+                  <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Temperature</Label>
-                  <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="e.g., 23°C ± 2°C" />
+                <div className="space-y-1.5 w-48 sm:w-56">
+                  <Label className="text-xs font-semibold">Procedure Reference</Label>
+                  <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" className="text-xs font-medium" />
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Humidity</Label>
-                  <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="e.g., 55% ± 5%" />
+                <div className="space-y-1.5 w-24">
+                  <Label className="text-xs font-medium">Temperature</Label>
+                  <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Pressure (optional)</Label>
-                  <Input value={envPressure} onChange={(e) => setEnvPressure(e.target.value)} placeholder="e.g., 1013 hPa" />
+                <div className="space-y-1.5 w-24">
+                  <Label className="text-xs font-medium">Humidity</Label>
+                  <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
+                </div>
+                <div className="space-y-1.5 w-28">
+                  <Label className="text-xs font-medium truncate" title="Pressure (optional)">Pressure (opt)</Label>
+                  <Input value={envPressure} onChange={(e) => setEnvPressure(e.target.value)} placeholder="1013" className="text-xs text-center font-medium" />
                 </div>
               </div>
 
@@ -1407,9 +1601,13 @@ export default function CalibrationWizard() {
                   <Label className="text-xs font-medium flex items-center gap-1.5">
                     <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Date of Calibration
                   </Label>
-                  <div className="h-10 px-3 py-2 bg-muted/40 border rounded-md flex items-center text-sm font-medium select-none text-foreground cursor-not-allowed">
-                    {calDate ? format(parseISO(calDate), "PPP") : format(new Date(), "PPP")}
-                  </div>
+                  <YearMonthDatePicker
+                    value={calDate}
+                    onChange={(newDate) => {
+                      setCalDate(newDate);
+                      setCertIssueDate(newDate);
+                    }}
+                  />
                 </div>
                 <div className="space-y-1.5 flex flex-col">
                   <Label className="text-xs font-medium flex items-center justify-between">
@@ -1422,36 +1620,19 @@ export default function CalibrationWizard() {
                       </span>
                     )}
                   </Label>
-                  <div className="h-10 px-3 py-2 bg-muted/40 border rounded-md flex items-center text-sm font-medium select-none text-foreground cursor-not-allowed">
-                    {nextCalDate ? format(parseISO(nextCalDate), "PPP") : "—"}
-                  </div>
+                  <YearMonthDatePicker
+                    value={nextCalDate}
+                    onChange={(newDate) => setNextCalDate(newDate)}
+                  />
                 </div>
                 <div className="space-y-1.5 flex flex-col">
                   <Label className="text-xs font-medium flex items-center gap-1.5">
                     <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Certificate Issue Date
                   </Label>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant={"outline"}
-                        className={cn(
-                          "w-full justify-start text-left font-normal h-10 bg-background border-input hover:border-primary/50 transition-all",
-                          !certIssueDate && "text-muted-foreground"
-                        )}
-                      >
-                        <CalendarIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                        {certIssueDate ? format(parseISO(certIssueDate), "PPP") : <span>Pick a date</span>}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <CalendarPicker
-                        mode="single"
-                        selected={certIssueDate ? parseISO(certIssueDate) : undefined}
-                        onSelect={(d: Date | undefined) => setCertIssueDate(d ? format(d, "yyyy-MM-dd") : "")}
-                        initialFocus
-                      />
-                    </PopoverContent>
-                  </Popover>
+                  <YearMonthDatePicker
+                    value={certIssueDate}
+                    onChange={(newDate) => setCertIssueDate(newDate)}
+                  />
                 </div>
               </div>
               
@@ -1484,100 +1665,42 @@ export default function CalibrationWizard() {
               <div>
                 <h4 className="text-sm font-semibold mb-3">Signatories</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Calibrated By (Auto-detected Engineer) */}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold">Calibrated By</Label>
-                    <Select
-                      value={systemUsers.find((u) => u.name === calibratedBy)?.id || ""}
-                      onValueChange={(val) => {
-                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
-                        if (u) {
-                          setCalibratedBy(u.name);
-                          setCalibratedByDesignation(u.designation || "");
-                          setCalibratedBySignature(u.signature || "");
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-xs bg-background">
-                        <SelectValue placeholder="Select Calibrated By User..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {systemUsers.map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name} {u.designation ? `(${u.designation})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {calibratedByDesignation && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
-                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
-                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{calibratedByDesignation}</span>
-                      </div>
-                    )}
+                    <Input
+                      value={calibratedBy || user?.name || "Calibration Engineer"}
+                      readOnly
+                      className="bg-muted/40 font-semibold cursor-not-allowed text-xs h-9"
+                    />
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs shadow-sm">
+                      <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                      <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-[11px]">
+                        {calibratedByDesignation || user?.role || "CALIBRATION ENGINEER"}
+                      </span>
+                    </div>
                   </div>
 
+                  {/* Reviewed By (Pending Manager Review) */}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold">Reviewed By</Label>
-                    <Select
-                      value={systemUsers.find((u) => u.name === reviewedBy)?.id || ""}
-                      onValueChange={(val) => {
-                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
-                        if (u) {
-                          setReviewedBy(u.name);
-                          setReviewedByDesignation(u.designation || "");
-                          setReviewedBySignature(u.signature || "");
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-xs bg-background">
-                        <SelectValue placeholder="Select Reviewed By User..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {systemUsers.map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name} {u.designation ? `(${u.designation})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {reviewedByDesignation && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
-                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
-                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{reviewedByDesignation}</span>
-                      </div>
-                    )}
+                    <Input
+                      value={reviewedBy || "Pending Review"}
+                      readOnly
+                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                    />
+                    <span className="text-[10px] text-muted-foreground block">Will be assigned upon Quality Review</span>
                   </div>
 
+                  {/* Approved By (Captured automatically on Approval) */}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold">Approved By</Label>
-                    <Select
-                      value={systemUsers.find((u) => u.name === approvedBy)?.id || ""}
-                      onValueChange={(val) => {
-                        const u = systemUsers.find((userItem) => userItem.id === val || userItem.name === val);
-                        if (u) {
-                          setApprovedBy(u.name);
-                          setApprovedByDesignation(u.designation || "");
-                          setApprovedBySignature(u.signature || "");
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="h-9 text-xs bg-background">
-                        <SelectValue placeholder="Select Approved By User..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {systemUsers.map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name} {u.designation ? `(${u.designation})` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {approvedByDesignation && (
-                      <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs mt-1.5 shadow-sm">
-                        <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
-                        <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-xs">{approvedByDesignation}</span>
-                      </div>
-                    )}
+                    <Input
+                      value={approvedBy || "Pending Approval"}
+                      readOnly
+                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                    />
+                    <span className="text-[10px] text-muted-foreground block">Captured automatically when Manager Approves</span>
                   </div>
                 </div>
               </div>
@@ -1646,6 +1769,7 @@ export default function CalibrationWizard() {
                       approved_by_designation: approvedByDesignation,
                       approved_by_signature: approvedBySignature,
                       procedure_reference: procedureReference,
+                      standard_reference: standardReference || remarks,
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
                       custom_columns: wizardCustomColumns as any,

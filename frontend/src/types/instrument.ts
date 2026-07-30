@@ -46,13 +46,24 @@ export type Instrument = {
  */
 export type DashboardSummary = {
   total: number;
+  workingTotal?: number;
+  referenceTotal?: number;
   dueThisMonth: number;
   overdue: number;
+  workingOverdue?: number;
+  referenceOverdue?: number;
+  dueSoonCount?: number;
+  workingDueSoonCount?: number;
+  referenceDueSoonCount?: number;
   calibratedCount?: number;
+  dueTodayCount?: number;
+  workingDueTodayCount?: number;
+  referenceDueTodayCount?: number;
+  completedTodayCount?: number;
   nextCalibrationDate: string | null;
   dueDatesByMonth: { month: string; plan: number; actual: number }[];
-  dueSoonList: { id: string; name: string; dueDate: string }[];
-  recentActivity: { id: string; name: string; action: string; at: string }[];
+  dueSoonList: { id: string; name: string; dueDate: string; location?: string; status?: string; is_reference_standard?: boolean }[];
+  recentActivity: { id: string; name: string; action: string; at: string; idCode?: string; location?: string }[];
   statusDistribution?: { name: string; value: number }[];
   itemStatusDistribution?: { name: string; value: number }[];
   weeklyCompleted?: { week: string; completed: number }[];

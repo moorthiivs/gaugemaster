@@ -65,6 +65,12 @@ export class CalibrationTemplate {
   @Column({ type: 'text', nullable: true })
   remarks?: string;
 
+  @Column({ type: 'text', nullable: true })
+  standard_reference?: string;
+
+  @Column({ nullable: true })
+  procedure_reference?: string;
+
   @Column({ nullable: true })
   status_rule_type?: string;
 

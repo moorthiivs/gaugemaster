@@ -73,6 +73,7 @@ interface DataTableProps<TData, TValue> {
   searchPlaceholder?: string
   searchTooltip?: string
   hideSearch?: boolean
+  hideColumnToggle?: boolean
 }
 
 export function DataTable<TData, TValue>({
@@ -96,6 +97,7 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "Search in results...",
   searchTooltip,
   hideSearch = false,
+  hideColumnToggle = false,
 }: DataTableProps<TData, TValue>) {
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [localColumnVisibility, setLocalColumnVisibility] = React.useState<VisibilityState>({})
@@ -194,7 +196,7 @@ export function DataTable<TData, TValue>({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-        <div className="flex flex-1 items-center gap-3 overflow-x-auto pb-1 scrollbar-none">
+        <div className="flex flex-1 items-center justify-between gap-3 overflow-x-auto pb-1 scrollbar-none w-full">
           {!hideSearch && (
             <div className="relative w-full max-w-md group shrink-0" title={searchTooltip}>
               <Popover open={searchOpen && suggestions.length > 0} onOpenChange={setSearchOpen}>
@@ -255,37 +257,39 @@ export function DataTable<TData, TValue>({
           )}
           {headerActions}
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="ml-auto h-9 flex gap-2">
-              <Settings2 className="h-4 w-4 text-muted-foreground" />
-              <span>Columns</span>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-[200px] max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => {
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={column.id}
-                    className="capitalize"
-                    checked={column.getIsVisible()}
-                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                  >
-                    {column.id.replace(/_/g, " ")}
-                  </DropdownMenuCheckboxItem>
-                )
-              })}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {!hideColumnToggle && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="ml-auto h-9 flex gap-2">
+                <Settings2 className="h-4 w-4 text-muted-foreground" />
+                <span>Columns</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[200px] max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20">
+              {table
+                .getAllColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => {
+                  return (
+                    <DropdownMenuCheckboxItem
+                      key={column.id}
+                      className="capitalize"
+                      checked={column.getIsVisible()}
+                      onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                    >
+                      {column.id.replace(/_/g, " ")}
+                    </DropdownMenuCheckboxItem>
+                  )
+                })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
-      <div className="rounded-xl border bg-card shadow-lg overflow-hidden transition-all duration-300 hover:shadow-xl border-muted/20">
+      <div className="glass-card rounded-xl border border-border/60 overflow-hidden transition-all duration-300">
         <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">
           <Table>
-            <TableHeader className="bg-gradient-to-r from-muted/50 to-muted/30">
+            <TableHeader className="bg-muted/40 backdrop-blur-md">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent border-b border-muted/20">
                   {headerGroup.headers.map((header, index) => {

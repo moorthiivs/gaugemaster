@@ -35,6 +35,8 @@ export interface CalibrationTemplate {
     type?: "percentage" | "absolute";
   };
   remarks?: string;
+  standard_reference?: string;
+  procedure_reference?: string;
   status_rule_type?: string;
   status_formula?: string;
   decimal_places?: number;

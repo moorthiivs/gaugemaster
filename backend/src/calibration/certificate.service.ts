@@ -133,24 +133,27 @@ export class CertificateService {
     templateId?: string,
   ): Promise<Buffer> {
     let calibratedSig = calibration.calibrated_by_signature;
-    let approvedSig = calibration.approved_by_signature || calibration.reviewed_by_signature;
-
-    if (!calibratedSig && calibration.calibrated_by) {
+    if ((!calibratedSig || !calibratedSig.startsWith('data:image')) && calibration.calibrated_by) {
       try {
         const u = await this.userRepository.findOne({
           where: { name: calibration.calibrated_by },
         });
-        if (u && u.signature) calibratedSig = u.signature;
+        if (u && u.signature && u.signature.startsWith('data:image')) {
+          calibratedSig = u.signature;
+        }
       } catch (e) {}
     }
 
+    let approvedSig = calibration.approved_by_signature || calibration.reviewed_by_signature;
     const approvedName = calibration.approved_by || calibration.reviewed_by;
-    if (!approvedSig && approvedName) {
+    if ((!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {
       try {
         const u = await this.userRepository.findOne({
           where: { name: approvedName },
         });
-        if (u && u.signature) approvedSig = u.signature;
+        if (u && u.signature && u.signature.startsWith('data:image')) {
+          approvedSig = u.signature;
+        }
       } catch (e) {}
     }
     const inst = calibration.instrument;
@@ -208,6 +211,8 @@ export class CertificateService {
 
     const procedureReference =
       calibration.procedure_reference || 'AE/CAL-SOP/01';
+    const standardReference =
+      (calibration as any).standard_reference || calibration.remarks || 'Standard calibration per ISO/IEC 17025';
 
     const resolveImagePath = (src: string) => {
       if (!src) return src;
@@ -321,10 +326,13 @@ export class CertificateService {
     const customColTypeMap = new Map<string, string>(); // colId -> 'text' | 'number' | 'formula'
 
     // Build from custom_columns definition (most authoritative source)
-    const customColDefs: any[] = (calibration as any).custom_columns || [];
+    const customColDefs: any[] = (calibration as any).custom_columns || (calibration as any).template?.custom_columns || [];
     customColDefs.forEach((col: any) => {
       if (col?.id) {
-        customColMap.set(col.id, col.name || col.id);
+        const colName = col.label || col.name || col.title || col.header;
+        if (colName && !colName.startsWith('col_')) {
+          customColMap.set(col.id, colName);
+        }
         customColTypeMap.set(col.id, col.type || 'text');
       }
     });
@@ -339,6 +347,12 @@ export class CertificateService {
       if (cfg?.type) customColTypeMap.set(key, cfg.type);
       if (cfg?.decimalPlaces !== undefined && cfg?.decimalPlaces >= 0) {
         colDecMap.set(key, cfg.decimalPlaces);
+      }
+      if (cfg && typeof cfg === 'object') {
+        const cfgName = cfg.label || cfg.name || cfg.title || cfg.header;
+        if (cfgName && !cfgName.startsWith('col_')) {
+          customColMap.set(key, cfgName);
+        }
       }
     });
 
@@ -356,20 +370,45 @@ export class CertificateService {
     points.forEach((pt: any) => {
       if (pt.customFields && typeof pt.customFields === 'object') {
         Object.entries(pt.customFields).forEach(([key, val]) => {
-          if (!customColMap.has(key)) {
-            if (val && typeof val === 'object' && 'name' in val) {
-              customColMap.set(key, (val as any).name);
-            } else if (
-              typeof val !== 'object' &&
-              val !== null &&
-              val !== undefined
-            ) {
-              customColMap.set(key, key);
+          if (!customColMap.has(key) || customColMap.get(key)?.startsWith('col_')) {
+            if (val && typeof val === 'object' && val !== null) {
+              const nameInVal = (val as any).name || (val as any).label || (val as any).title || (val as any).header;
+              if (nameInVal && !nameInVal.startsWith('col_')) {
+                customColMap.set(key, nameInVal);
+              }
             }
           }
         });
       }
     });
+
+    const resolveHeaderTitle = (k: string): string => {
+      if (k === 'description') return 'Description';
+      if (k === 'nominal') return 'Nominal';
+      if (k === 'tolerance') return 'Tolerance';
+      if (k === 'ascending_reading') return hasDescending ? 'Ascending' : 'Actual';
+      if (k === 'descending_reading') return 'Descending';
+      if (k === 'error') return 'Error';
+
+      const mapped = customColMap.get(k);
+      if (mapped && !mapped.startsWith('col_')) return mapped;
+
+      const def = customColDefs.find((c: any) => c.id === k || c.key === k || c.field === k);
+      if (def) {
+        const defName = def.label || def.name || def.title || def.header;
+        if (defName && !defName.startsWith('col_')) return defName;
+      }
+
+      const stdCfg = stdColConfig[k];
+      if (stdCfg) {
+        const stdName = stdCfg.label || stdCfg.name || stdCfg.title || stdCfg.header;
+        if (stdName && !stdName.startsWith('col_')) return stdName;
+      }
+
+      if (k.startsWith('col_')) return 'Remark';
+
+      return k;
+    };
 
     const hidden = new Set(calibration.hidden_columns || []);
     const columnOrder =
@@ -446,18 +485,8 @@ export class CertificateService {
           currentGroup = undefined;
           currentGroupCount = 0;
 
-          let headerText = k;
-          if (k === 'description') headerText = 'Description';
-          else if (k === 'nominal') headerText = 'Nominal';
-          else if (k === 'tolerance') headerText = 'Tolerance';
-          else if (k === 'ascending_reading')
-            headerText = hasDescending ? 'Ascending' : 'Actual';
-          else if (k === 'descending_reading') headerText = 'Descending';
-          else if (k === 'error') headerText = 'Error';
-          else headerText = customColMap.get(k) || k;
-
           dataTableHeader.push({
-            text: headerText,
+            text: resolveHeaderTitle(k),
             style: 'thCell',
             rowSpan: 2,
             margin: [0, 6, 0, 0],
@@ -466,16 +495,7 @@ export class CertificateService {
 
         // Populate sub-header inline to ensure exact matching indices
         if (g) {
-          let headerText = k;
-          if (k === 'description') headerText = 'Description';
-          else if (k === 'nominal') headerText = 'Nominal';
-          else if (k === 'tolerance') headerText = 'Tolerance';
-          else if (k === 'ascending_reading')
-            headerText = hasDescending ? 'Ascending' : 'Actual';
-          else if (k === 'descending_reading') headerText = 'Descending';
-          else if (k === 'error') headerText = 'Error';
-          else headerText = customColMap.get(k) || k;
-          dataTableSubHeader.push({ text: headerText, style: 'thCell' });
+          dataTableSubHeader.push({ text: resolveHeaderTitle(k), style: 'thCell' });
         } else {
           dataTableSubHeader.push({});
         }
@@ -492,26 +512,10 @@ export class CertificateService {
     } else {
       dataTableHeader = [{ text: 'Sr No.', style: 'thCell' }];
       activeColumnsNoStatus.forEach((k) => {
-        if (k === 'description')
-          dataTableHeader.push({ text: 'Description', style: 'thCell' });
-        else if (k === 'nominal')
-          dataTableHeader.push({ text: 'Nominal', style: 'thCell' });
-        else if (k === 'tolerance')
-          dataTableHeader.push({ text: 'Tolerance', style: 'thCell' });
-        else if (k === 'ascending_reading')
-          dataTableHeader.push({
-            text: hasDescending ? 'Ascending' : 'Actual',
-            style: 'thCell',
-          });
-        else if (k === 'descending_reading')
-          dataTableHeader.push({ text: 'Descending', style: 'thCell' });
-        else if (k === 'error')
-          dataTableHeader.push({ text: 'Error', style: 'thCell' });
-        else
-          dataTableHeader.push({
-            text: customColMap.get(k) || k,
-            style: 'thCell',
-          });
+        dataTableHeader.push({
+          text: resolveHeaderTitle(k),
+          style: 'thCell',
+        });
       });
       dataTableHeader.push({ text: 'Status', style: 'thCell' });
     }
@@ -626,13 +630,13 @@ export class CertificateService {
     } else {
       referenceStandards = [
         {
-          name: calibration.reference_standard_name || 'Gauge Block Set',
-          make: 'Standard',
-          id: calibration.reference_standard_id || 'REF-01',
-          cert_no: 'AE/CC/REF/101',
+          name: (calibration as any)?.reference_standard_name || 'Gauge Block Set',
+          make: (calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || 'Standard',
+          id: (calibration as any)?.reference_standard_id || 'REF-01',
+          cert_no: (calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/101',
           cal_date: calibration.calibration_date,
-          validity: calibration.reference_standard_validity,
-          agency: 'NABL Accredited Lab',
+          validity: (calibration as any)?.reference_standard_validity,
+          agency: (calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || 'NABL Accredited Lab',
         },
       ];
     }
@@ -740,6 +744,17 @@ export class CertificateService {
       pageSize: 'A4' as const,
       pageOrientation: 'portrait' as const,
       pageMargins: [23, 54, 23, 58] as [number, number, number, number],
+      ...(calibration.approval_status !== 'Approved'
+        ? {
+            watermark: {
+              text: 'DRAFT - PENDING APPROVAL',
+              color: '#ef4444',
+              opacity: 0.18,
+              bold: true,
+              italics: false,
+            },
+          }
+        : {}),
 
       // ── 0. BACKGROUND OUTLINE BORDER (Always surrounds content on EVERY page) ──
       background: (currentPage: number, pageCount: number) => {
@@ -1195,7 +1210,7 @@ export class CertificateService {
                           width: 140,
                         },
                         {
-                          text: ': IS / ISO Standard Calibration Guidelines',
+                          text: `: ${standardReference}`,
                           fontSize: 8,
                         },
                       ],
@@ -1259,19 +1274,34 @@ export class CertificateService {
                 { text: 'Cal.Agency', style: 'thCellDark' },
               ],
               ...referenceStandards.map((ref) => [
-                { text: ref.name || '-', style: 'tdCell' },
-                { text: ref.make || '-', style: 'tdCell' },
-                { text: ref.id || '-', style: 'tdCell' },
                 {
-                  text: ref.cert_no || 'AE/CC/REF/01',
+                  text: ref.name || ref.instrument_desc || ref.description || '-',
                   style: 'tdCell',
                 },
                 {
-                  text: fmtDate(ref.cal_date || calibration.calibration_date),
+                  text: ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || '-',
                   style: 'tdCell',
                 },
-                { text: fmtDate(ref.validity), style: 'tdCell' },
-                { text: ref.agency || 'NABL Lab', style: 'tdCell' },
+                {
+                  text: ref.id || ref.id_code || ref.serial_no || ref.sr_no || '-',
+                  style: 'tdCell',
+                },
+                {
+                  text: ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/01',
+                  style: 'tdCell',
+                },
+                {
+                  text: fmtDate(ref.cal_date || ref.calibration_date || calibration.calibration_date),
+                  style: 'tdCell',
+                },
+                {
+                  text: fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity),
+                  style: 'tdCell',
+                },
+                {
+                  text: ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || 'NABL Lab',
+                  style: 'tdCell',
+                },
               ]),
               [
                 {

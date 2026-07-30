@@ -26,6 +26,7 @@ import CalibrationWizard from "./pages/CalibrationWizard";
 import CalibrationHistory from "./pages/CalibrationHistory";
 import TemplateBuilder from "./pages/TemplateBuilder";
 import TemplateBuilderForm from "./pages/TemplateBuilderForm";
+import CalibrationApprovalList from "./pages/CalibrationApprovalList";
 import UserManagement from "./pages/UserManagement";
 
 const queryClient = new QueryClient();
@@ -80,12 +81,13 @@ const App = () => (
                   <Route path="/instruments/new" element={<ProtectedRoute module="instruments" action="create"><InstrumentForm /></ProtectedRoute>} />
                   <Route path="/instruments/:id/edit" element={<ProtectedRoute module="instruments" action="edit"><InstrumentForm /></ProtectedRoute>} />
                   <Route path="/reports" element={<ProtectedRoute module="reports" action="view"><Reports /></ProtectedRoute>} />
-                  <Route path="/calibration" element={<ProtectedRoute module="calibrations" action="view"><Calibration /></ProtectedRoute>} />
+                  <Route path="/calibration/approval" element={<ProtectedRoute module="calibrations" action="view"><CalibrationApprovalList /></ProtectedRoute>} />
                   <Route path="/calibration/templates" element={<ProtectedRoute module="templates" action="view"><TemplateBuilder /></ProtectedRoute>} />
                   <Route path="/calibration/templates/builder" element={<ProtectedRoute module="templates" action="edit"><TemplateBuilderForm /></ProtectedRoute>} />
                   <Route path="/calibration/new" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
                   <Route path="/calibration/new/:instrumentId" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
                   <Route path="/calibration/history/:id" element={<ProtectedRoute module="calibrations" action="view"><CalibrationHistory /></ProtectedRoute>} />
+                  <Route path="/calibration" element={<ProtectedRoute module="calibrations" action="view"><Calibration /></ProtectedRoute>} />
                   <Route path="/calendar" element={<ProtectedRoute module="instruments" action="view"><CalendarPage /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute module="users" action="view"><UserManagement /></ProtectedRoute>} />
                   <Route path="/profile" element={<Profile />} />

@@ -82,6 +82,14 @@ export class CreateCalibrationDto {
   standard_columns_config?: Record<string, any>;
 
   @IsOptional()
+  @IsString()
+  template_id?: string;
+
+  @IsOptional()
+  @IsString()
+  template_name?: string;
+
+  @IsOptional()
   decimal_places?: number;
 
   @IsOptional()
@@ -103,6 +111,10 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  standard_reference?: string;
+
+  @IsOptional()
+  @IsString()
   status_rule_type?: string;
 
   @IsOptional()
@@ -112,6 +124,27 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   procedure_reference?: string;
+
+  // Approval Workflow
+  @IsOptional()
+  @IsString()
+  approval_status?: string;
+
+  @IsOptional()
+  @IsDateString()
+  approved_at?: string;
+
+  @IsOptional()
+  @IsDateString()
+  rejected_at?: string;
+
+  @IsOptional()
+  @IsString()
+  rejected_by?: string;
+
+  @IsOptional()
+  @IsString()
+  rejection_reason?: string;
 
   // Signatories
   @IsOptional()

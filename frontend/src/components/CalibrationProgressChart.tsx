@@ -4,6 +4,7 @@ import { useTheme } from 'next-themes';
 import { ApexOptions } from 'apexcharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { CalendarDays, BarChart3, TrendingUp } from 'lucide-react';
 
 interface WeeklyData {
@@ -42,7 +43,7 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
       type: 'bar',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: 'inherit',
+      fontFamily: 'Inter, sans-serif',
       animations: {
         enabled: true,
         easing: 'easeinout',
@@ -52,21 +53,21 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
     plotOptions: {
       bar: {
         horizontal: true,
-        borderRadius: 6,
+        borderRadius: 5,
         borderRadiusApplication: 'end',
-        barHeight: '60%',
+        barHeight: '55%',
         distributed: true,
       },
     },
     colors: weeklyData.map((_, i) => {
-      const palette = ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#818cf8', '#7c3aed'];
+      const palette = ['#6366f1', '#818cf8', '#a78bfa', '#c4b5fd', '#8b5cf6', '#7c3aed'];
       return palette[i % palette.length];
     }),
     dataLabels: {
       enabled: true,
-      formatter: (val) => `${val}`,
+      formatter: (val) => val > 0 ? `${val}` : '',
       style: {
-        fontSize: '12px',
+        fontSize: '11px',
         fontWeight: 700,
         colors: ['#fff'],
       },
@@ -87,8 +88,9 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
       labels: {
         style: {
           colors: isDark ? '#94a3b8' : '#64748b',
-          fontSize: '11px',
+          fontSize: '10px',
         },
+        maxWidth: 120,
       },
     },
     grid: {
@@ -115,7 +117,7 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
       type: 'area',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: 'inherit',
+      fontFamily: 'Inter, sans-serif',
       animations: {
         enabled: true,
         easing: 'easeinout',
@@ -151,7 +153,7 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
     xaxis: {
       categories: dailyData.map(d => {
         const [year, month, day] = d.date.split('-');
-        return `${d.day}\n${day}-${month}-${year.slice(2)}`;
+        return `${d.day}\n${day}-${month}`;
       }),
       labels: {
         style: {
@@ -214,42 +216,43 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
   const chartHeight = view === 'week' ? Math.max(200, weeklyData.length * 48) : 260;
 
   return (
-    <Card className="animate-in border-none shadow-md overflow-hidden bg-gradient-to-b from-card to-card/50 hover:shadow-lg transition-all duration-300">
-      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4">
-        <div className="space-y-1">
-          <CardTitle className="text-xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-foreground to-foreground/70">
+    <Card className="border border-border/60 shadow-sm hover:shadow-md transition-all duration-300">
+      <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3">
+        <div>
+          <CardTitle className="text-base font-bold tracking-tight flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-primary" />
             Completed Calibrations
           </CardTitle>
-          <CardDescription className="text-muted-foreground">
+          <CardDescription className="text-xs">
             {view === 'week' ? 'Calibrations completed per week' : 'Calibrations completed per day (last 7 days)'}
           </CardDescription>
         </div>
 
         <div className="flex items-center gap-2">
           {/* Total badge */}
-          <div className="flex items-center gap-1.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-3 py-1.5 rounded-lg text-sm font-semibold">
-            <TrendingUp className="h-4 w-4" />
+          <Badge variant="secondary" className="gap-1.5 px-2.5 py-1 text-xs font-bold tabular-nums">
+            <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
             {totalCompleted} Total
-          </div>
+          </Badge>
 
           {/* View toggle */}
           <div className="flex bg-muted/50 rounded-lg p-0.5 gap-0.5">
             <Button
               variant={view === 'week' ? 'default' : 'ghost'}
               size="sm"
-              className={`h-8 px-3 text-xs font-medium transition-all ${view === 'week' ? 'shadow-sm' : 'hover:bg-muted'}`}
+              className={`h-7 px-2.5 text-[11px] font-semibold transition-all ${view === 'week' ? 'shadow-sm' : 'hover:bg-muted'}`}
               onClick={() => setView('week')}
             >
-              <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
+              <BarChart3 className="h-3.5 w-3.5 mr-1" />
               Weekly
             </Button>
             <Button
               variant={view === 'day' ? 'default' : 'ghost'}
               size="sm"
-              className={`h-8 px-3 text-xs font-medium transition-all ${view === 'day' ? 'shadow-sm' : 'hover:bg-muted'}`}
+              className={`h-7 px-2.5 text-[11px] font-semibold transition-all ${view === 'day' ? 'shadow-sm' : 'hover:bg-muted'}`}
               onClick={() => setView('day')}
             >
-              <CalendarDays className="h-3.5 w-3.5 mr-1.5" />
+              <CalendarDays className="h-3.5 w-3.5 mr-1" />
               Daily
             </Button>
           </div>

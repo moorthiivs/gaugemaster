@@ -50,11 +50,14 @@ export interface CalibrationRecord {
   acceptance_criteria?: any;
   column_order?: string[];
   hidden_columns?: string[];
+  template_id?: string;
+  template_name?: string;
 
   // Results
   uncertainty: string;
   verdict: "PASS" | "FAIL" | "CONDITIONAL";
   remarks?: string;
+  standard_reference?: string;
   status_rule_type?: string;
   status_formula?: string;
 
