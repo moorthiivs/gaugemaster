@@ -701,8 +701,23 @@ export class CalibrationService {
   async remove(id: string): Promise<void> {
     const calibration = await this.findOne(id);
     if (calibration) {
+      const instrumentId = calibration.instrument?.id;
       await this.auditLogRepository.delete({ calibration_id: id });
       await this.calibrationRepository.remove(calibration);
+
+      if (instrumentId) {
+        const latestCal = await this.calibrationRepository.findOne({
+          where: { instrument: { id: instrumentId } },
+          order: { calibration_date: 'DESC' },
+        });
+
+        if (latestCal) {
+          await this.instrumentsService.update(instrumentId, {
+            last_calibration_date: latestCal.calibration_date ? new Date(latestCal.calibration_date).toISOString() : undefined,
+            due_date: latestCal.next_calibration_date ? new Date(latestCal.next_calibration_date).toISOString() : undefined,
+          } as any);
+        }
+      }
     }
   }
 }

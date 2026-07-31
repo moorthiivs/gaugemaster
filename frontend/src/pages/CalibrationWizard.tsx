@@ -1304,8 +1304,8 @@ export default function CalibrationWizard() {
                               range: master.range || "",
                               least_count: master.least_count || "",
                               validity: master.due_date ? master.due_date.split('T')[0] : "",
-                              traceable_to: master.traceable || (master as any).certificate_no || "",
-                              cert_no: (master as any).certificate_no || (master as any).cert_no || master.traceable || "",
+                              traceable_to: master.cert_no || (master as any).certificate_no || master.traceable || "",
+                              cert_no: master.cert_no || (master as any).certificate_no || master.traceable || "",
                               agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
                             };
                             setReferenceStandards(newRefs);

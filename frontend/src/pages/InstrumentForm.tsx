@@ -88,7 +88,7 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Item Status",
     type: "select",
     col: 6,
-    options: ["Active", "Inactive", "Scrapped", "Lost", "Under Repair"]
+    options: ["Active", "Inactive", "Scrapped", "Lost", "Under Repair", "Rejected", "Stock"]
   }
 ];
 

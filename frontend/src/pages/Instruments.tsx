@@ -147,13 +147,11 @@ export default function Instruments() {
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  const [StatusFillter, setStatusFilter] = useState([])
-
-  const [FrequencyFillter, setFrequencyFilter] = useState([])
-
-  const [LocationFillter, setLocationFilter] = useState([])
-
-  const [CalibrationSourceFilter, setCalibrationSourceFilter] = useState<string[]>([])
+  const [StatusFillter, setStatusFilter] = useState<string[]>([]);
+  const [ItemStatusFilter, setItemStatusFilter] = useState<string[]>([]);
+  const [FrequencyFillter, setFrequencyFilter] = useState<string[]>([]);
+  const [LocationFillter, setLocationFilter] = useState<string[]>([]);
+  const [CalibrationSourceFilter, setCalibrationSourceFilter] = useState<string[]>([]);
 
   const [isOpenupload, setisOpenupload] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
@@ -339,6 +337,7 @@ export default function Instruments() {
       setRefreshing(true);
       const filterData = await getFilterParams(user.id);
       setStatusFilter(["All", ...filterData.status]);
+      setItemStatusFilter(["All", ...(filterData.item_status || [])]);
       setFrequencyFilter(["All", ...filterData.frequency]);
       setLocationFilter(["All", ...filterData.location]);
       setCalibrationSourceFilter(["All", ...(filterData.calibration_source || [])]);
@@ -447,6 +446,7 @@ export default function Instruments() {
   useEffect(() => {
     getFilterParams(user.id).then(data => {
       setStatusFilter(["All", ...data.status]);
+      setItemStatusFilter(["All", ...(data.item_status || [])]);
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
       setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
@@ -1279,9 +1279,9 @@ export default function Instruments() {
                   <SelectValue placeholder="All Item Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="All">All Item Status</SelectItem>
-                  <SelectItem value="Active">Active</SelectItem>
-                  <SelectItem value="Inactive">Inactive</SelectItem>
+                  {ItemStatusFilter.filter(s => s && s.trim() !== "").map((itemSt) => (
+                    <SelectItem key={itemSt} value={itemSt}>{itemSt === "All" ? "All Item Status" : itemSt}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

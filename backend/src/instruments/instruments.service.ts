@@ -66,7 +66,7 @@ export class InstrumentsService {
         const userIds = await this.getCompanyUserIds(createdById);
         const instruments = await this.instrumentRepository.find({
             where: userIds.length > 0 ? { created_by: { id: In(userIds) } } : {},
-            select: ['status', 'frequency', 'location', 'calibration_source'],
+            select: ['status', 'item_status', 'frequency', 'location', 'calibration_source'],
         });
 
         const unique = (arr: string[]) => {
@@ -81,6 +81,7 @@ export class InstrumentsService {
 
         return {
             status: unique(instruments.map(i => i.status)),
+            item_status: unique(instruments.map(i => i.item_status || 'Active')),
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),
             calibration_source: unique(instruments.map(i => i.calibration_source)),

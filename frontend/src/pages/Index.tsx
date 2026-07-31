@@ -354,6 +354,7 @@ const Index = () => {
   const [calibrationStatus, setCalibrationStatus] = useState<string | undefined>(undefined);
   const [location, setLocation] = useState<string | undefined>(undefined);
   const [locations, setLocations] = useState<string[]>([]);
+  const [itemStatuses, setItemStatuses] = useState<string[]>([]);
 
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -378,6 +379,7 @@ const Index = () => {
       try {
         const filters = await getFilterParams(user?.id);
         setLocations(filters.location || []);
+        setItemStatuses(filters.item_status || []);
 
         const startStr = startDate ? format(startDate, "yyyy-MM-dd") : undefined;
         const endStr = endDate ? format(endDate, "yyyy-MM-dd") : undefined;
@@ -644,9 +646,14 @@ const Index = () => {
               <SelectValue placeholder="Active Only" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="Active">Active Only</SelectItem>
               <SelectItem value="All">All Statuses</SelectItem>
-              <SelectItem value="Inactive">Inactive</SelectItem>
+              {itemStatuses.length > 0 ? (
+                itemStatuses.filter(s => s && s.trim() !== "").map((st) => (
+                  <SelectItem key={st} value={st}>{st === "Active" ? "Active Only" : st}</SelectItem>
+                ))
+              ) : (
+                <SelectItem value="Active">Active Only</SelectItem>
+              )}
             </SelectContent>
           </Select>
 

@@ -6,12 +6,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Download, FileText, Calendar, User, Edit, History } from "lucide-react";
-import { getCalibrationHistory, downloadCertificate, getCalibrationAuditLogs } from "@/lib/calibrationActions";
+import { ArrowLeft, Download, FileText, Calendar, User, Edit, History, Eye, Trash2, Printer } from "lucide-react";
+import { getCalibrationHistory, downloadCertificate, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
 import { getInstrument } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { format } from "date-fns";
 import {
   Dialog,
@@ -75,6 +76,15 @@ export default function CalibrationHistory() {
   const [auditLogs, setAuditLogs] = useState<CalibrationAuditLog[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
 
+  // View Certificate state
+  const [viewCertModalOpen, setViewCertModalOpen] = useState(false);
+  const [selectedViewCalibration, setSelectedViewCalibration] = useState<CalibrationRecord | null>(null);
+
+  // Delete state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [selectedDeleteCalibration, setSelectedDeleteCalibration] = useState<CalibrationRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const handleOpenAuditLogs = async (cal: CalibrationRecord) => {
     setSelectedCertNo(cal.certificate_number || cal.id);
     setAuditModalOpen(true);
@@ -86,6 +96,24 @@ export default function CalibrationHistory() {
       toast.error("Failed to load audit trail");
     } finally {
       setLoadingAudit(false);
+    }
+  };
+
+  const handleDeleteCalibration = async () => {
+    if (!selectedDeleteCalibration || !id) return;
+    setDeleting(true);
+    try {
+      await deleteCalibration(selectedDeleteCalibration.id);
+      toast.success("Calibration record deleted and instrument dates rolled back");
+      setDeleteModalOpen(false);
+      setSelectedDeleteCalibration(null);
+      const [inst, hist] = await Promise.all([getInstrument(id), getCalibrationHistory(id)]);
+      setInstrument(inst);
+      setHistory(hist);
+    } catch (err: any) {
+      toast.error("Failed to delete calibration record");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -223,6 +251,18 @@ export default function CalibrationHistory() {
                         <Button
                           variant="outline"
                           size="sm"
+                          onClick={() => {
+                            setSelectedViewCalibration(cal);
+                            setViewCertModalOpen(true);
+                          }}
+                          className="gap-1 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                        >
+                          <Eye className="w-3 h-3" />
+                          View
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
                           className="gap-1 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50"
                         >
@@ -244,6 +284,18 @@ export default function CalibrationHistory() {
                             PDF
                           </Button>
                         )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedDeleteCalibration(cal);
+                            setDeleteModalOpen(true);
+                          }}
+                          className="gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Delete
+                        </Button>
                       </div>
                     </div>
                   </CardContent>
@@ -261,6 +313,82 @@ export default function CalibrationHistory() {
           </Button>
         </div>
       )}
+
+      {/* View Certificate Dialog */}
+      <Dialog open={viewCertModalOpen} onOpenChange={setViewCertModalOpen}>
+        <DialogContent className="max-w-5xl h-[90vh] flex flex-col p-0 overflow-hidden bg-background text-foreground border shadow-2xl rounded-2xl">
+          {/* Header */}
+          <div className="p-4 sm:px-6 border-b bg-card flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-bold tracking-tight text-foreground">
+                  Certificate Preview
+                </h3>
+                <Badge variant="outline" className="font-mono text-xs bg-primary/10 text-primary border-primary/20">
+                  {selectedViewCalibration?.certificate_number}
+                </Badge>
+                {selectedViewCalibration?.verdict && (
+                  <VerdictBadge verdict={selectedViewCalibration.verdict} size="sm" />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground pl-8">
+                Instrument: <span className="font-semibold text-foreground">{instrument?.name}</span> ({instrument?.id_code}) — Calibrated on {fmtDate(selectedViewCalibration?.calibration_date)}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pr-10 shrink-0">
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => selectedViewCalibration && handleDownload(selectedViewCalibration)}
+                className="gap-1.5 text-xs font-semibold shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" /> Download PDF Certificate
+              </Button>
+            </div>
+          </div>
+
+          {/* Certificate Content Container with explicit max height for scroll */}
+          <div className="w-full flex-1 max-h-[calc(90vh-80px)] overflow-y-auto p-4 sm:p-8 bg-slate-100 dark:bg-slate-950 flex justify-center">
+            {selectedViewCalibration && (
+              <CertificatePreview
+                calibration={selectedViewCalibration}
+                instrumentName={instrument?.name}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <Trash2 className="w-5 h-5" /> Delete Calibration Record?
+            </DialogTitle>
+            <DialogDescription className="text-sm pt-2 space-y-2">
+              <span>
+                Are you sure you want to delete calibration record <span className="font-bold text-foreground">{selectedDeleteCalibration?.certificate_number}</span>?
+              </span>
+              <span className="block text-xs text-amber-700 bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800">
+                ⚠️ <b>Automatic Rollback:</b> Deleting this calibration history record will not delete the instrument master, but if this was the latest calibration, the instrument's last calibration date and due date will automatically roll back to the previous calibration record.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-3 border-t">
+            <Button variant="outline" size="sm" onClick={() => setDeleteModalOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={handleDeleteCalibration} disabled={deleting}>
+              {deleting ? "Deleting..." : "Confirm Delete"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Audit Trail Dialog */}
       <Dialog open={auditModalOpen} onOpenChange={setAuditModalOpen}>

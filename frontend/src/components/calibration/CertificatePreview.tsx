@@ -640,7 +640,7 @@ export function CertificatePreview({
                     </th>
                     <th className="border-r border-black p-1">Cert.No.</th>
                     <th className="border-r border-black p-1">Dt.of Cal</th>
-                    <th className="border-r border-black p-1">Due Dt.</th>
+                    <th className="border-r border-black p-1">Validity</th>
                     <th className="p-1">Cal.Agency</th>
                   </tr>
                 </thead>
@@ -689,7 +689,7 @@ export function CertificatePreview({
                     </th>
                     <th className="border-r border-black p-1">Cert.No.</th>
                     <th className="border-r border-black p-1">Dt.of Cal</th>
-                    <th className="border-r border-black p-1">Due Dt.</th>
+                    <th className="border-r border-black p-1">Validity</th>
                     <th className="p-1">Cal.Agency</th>
                   </tr>
                 </thead>

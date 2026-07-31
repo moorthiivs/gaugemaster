@@ -1270,7 +1270,7 @@ export class CertificateService {
                 { text: 'Sr No / Id. No.', style: 'thCellDark' },
                 { text: 'Cert.No.', style: 'thCellDark' },
                 { text: 'Dt.of Cal', style: 'thCellDark' },
-                { text: 'Due Dt.', style: 'thCellDark' },
+                { text: 'Validity', style: 'thCellDark' },
                 { text: 'Cal.Agency', style: 'thCellDark' },
               ],
               ...referenceStandards.map((ref) => [

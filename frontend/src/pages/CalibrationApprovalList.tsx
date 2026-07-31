@@ -17,6 +17,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { useNavigate } from "react-router-dom";
 import {
   CheckCircle2,
   XCircle,
@@ -31,9 +32,11 @@ import {
   PenTool,
   Check,
   X,
+  Edit,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [calibrations, setCalibrations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -415,6 +418,15 @@ export default function CalibrationApprovalList() {
                           <Button
                             variant="outline"
                             size="sm"
+                            className="h-8 text-xs gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                            onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                            <span>Edit</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             className="h-8 text-xs gap-1.5"
                             onClick={() => {
                               setSelectedRecord(cal);
@@ -720,6 +732,15 @@ export default function CalibrationApprovalList() {
               </div>
 
               <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                  onClick={() => navigate(`/calibration/new?editId=${selectedRecord.id}`)}
+                >
+                  <Edit className="w-4 h-4" />
+                  <span>Edit Calibration</span>
+                </Button>
                 <Button variant="outline" size="sm" onClick={() => setReviewDialogOpen(false)}>
                   Cancel
                 </Button>
