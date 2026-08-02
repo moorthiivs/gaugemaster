@@ -66,6 +66,7 @@ export type DashboardSummary = {
   recentActivity: { id: string; name: string; action: string; at: string; idCode?: string; location?: string }[];
   statusDistribution?: { name: string; value: number }[];
   itemStatusDistribution?: { name: string; value: number }[];
+  moduleDistribution?: { name: string; value: number }[];
   weeklyCompleted?: { week: string; completed: number }[];
   dailyCompleted?: { day: string; date: string; completed: number }[];
 };
@@ -79,6 +80,8 @@ export type InstrumentQuery = {
   location?: string | "All";
   frequency?: string | "All";
   calibration_source?: string | "All";
+  module?: string | "All";
+  exclude_modules?: string;
   search?: string;
   due_date?: string;
   due_date_start?: string;

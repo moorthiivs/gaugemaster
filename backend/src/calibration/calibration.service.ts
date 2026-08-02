@@ -386,6 +386,7 @@ export class CalibrationService {
     dateFrom?: string;
     dateTo?: string;
     search?: string;
+    latestOnly?: boolean | string;
     page?: number;
     pageSize?: number;
   }) {
@@ -399,6 +400,7 @@ export class CalibrationService {
       dateFrom,
       dateTo,
       search,
+      latestOnly,
       page = 1,
       pageSize = 10,
     } = filters;
@@ -407,6 +409,18 @@ export class CalibrationService {
       .createQueryBuilder('cal')
       .leftJoinAndSelect('cal.instrument', 'instrument')
       .leftJoinAndSelect('cal.created_by', 'created_by');
+
+    if (latestOnly === true || latestOnly === 'true') {
+      qb.andWhere((qbSub) => {
+        const subQuery = qbSub
+          .subQuery()
+          .select('MAX(c.created_at)')
+          .from(Calibration, 'c')
+          .where('c.instrument_id = cal.instrument_id')
+          .getQuery();
+        return `cal.created_at = ${subQuery}`;
+      });
+    }
 
     const userIds = await this.getCompanyUserIds(userId);
     if (userIds.length > 0) {

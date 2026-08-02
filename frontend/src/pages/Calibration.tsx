@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { getAuditFieldLabel, formatAuditValue } from "@/lib/auditFormatters";
 import { useNavigate } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
@@ -67,6 +67,18 @@ export default function Calibration() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  const filteredSuggestions = useMemo(() => {
+    if (!searchQuery.trim() || searchQuery.trim().length < 2) return [];
+    const query = searchQuery.trim().toLowerCase();
+    return calibrations.filter((cal) => {
+      const certNo = cal.certificate_number?.toLowerCase() || "";
+      const ulr = cal.ulr_number?.toLowerCase() || "";
+      const instName = cal.instrument?.name?.toLowerCase() || "";
+      const idCode = cal.instrument?.id_code?.toLowerCase() || "";
+      return certNo.includes(query) || ulr.includes(query) || instName.includes(query) || idCode.includes(query);
+    });
+  }, [calibrations, searchQuery]);
+
   // Delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [calibrationToDelete, setCalibrationToDelete] = useState<CalibrationRecord | null>(null);
@@ -103,6 +115,7 @@ export default function Calibration() {
           verdict: verdictFilter !== "All" ? verdictFilter : undefined,
           calibrationType: typeFilter !== "All" ? typeFilter : undefined,
           search: searchQuery.trim() ? searchQuery.trim() : undefined,
+          latestOnly: true,
           page,
           pageSize,
         }),
@@ -314,12 +327,12 @@ export default function Calibration() {
                   {showSuggestions && searchQuery.trim().length >= 2 && (
                     <Card className="absolute top-full left-0 right-0 mt-1 z-50 shadow-xl border bg-popover max-h-60 overflow-y-auto">
                       <CardContent className="p-1 space-y-0.5 text-xs">
-                        {calibrations.length > 0 ? (
-                          calibrations.map((cal) => (
+                        {filteredSuggestions.length > 0 ? (
+                          filteredSuggestions.map((cal) => (
                             <div
                               key={cal.id}
                               onClick={() => {
-                                setSearchQuery(cal.certificate_number || cal.instrument?.id_code || cal.instrument?.name || "");
+                                setSearchQuery(cal.instrument?.id_code || cal.certificate_number || cal.instrument?.name || "");
                                 setShowSuggestions(false);
                               }}
                               className="p-2 hover:bg-accent rounded-md cursor-pointer flex items-center justify-between transition-colors"

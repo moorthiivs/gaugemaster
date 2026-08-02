@@ -88,11 +88,13 @@ export default function Instruments() {
   const initialCalibrationSource = searchParams.get("calibration_source") || "All";
   const initialItemStatus = searchParams.get("item_status") || "Active";
   const initialLocation = searchParams.get("location") || "All";
+  const initialModule = searchParams.get("module") || "All";
+  const initialExcludeModules = searchParams.get("exclude_modules") || "";
   
   const initialIsReferenceStandard = searchParams.get("is_reference_standard") || "All";
 
   const [filters, setFilters] = useState<InstrumentQuery>({ 
-    status: initialStatus as any, item_status: initialItemStatus as any, location: initialLocation, frequency: "All", calibration_source: initialCalibrationSource, search: initialSearch, 
+    status: initialStatus as any, item_status: initialItemStatus as any, location: initialLocation, frequency: "All", calibration_source: initialCalibrationSource, module: initialModule, exclude_modules: initialExcludeModules, search: initialSearch, 
     due_date: initialDueDate, due_date_start: initialDueDateStart, due_date_end: initialDueDateEnd,
     last_cal_start: initialLastCalStart, last_cal_end: initialLastCalEnd,
     calibrated_in_range_start: initialCalibratedInRangeStart, calibrated_in_range_end: initialCalibratedInRangeEnd,
@@ -293,6 +295,8 @@ export default function Instruments() {
       if (filters.location && filters.location !== "All") queryParams.append("location", filters.location);
       if (filters.frequency && filters.frequency !== "All") queryParams.append("frequency", filters.frequency);
       if (filters.calibration_source && filters.calibration_source !== "All") queryParams.append("calibration_source", filters.calibration_source);
+      if (filters.module && filters.module !== "All") queryParams.append("module", filters.module);
+      if (filters.exclude_modules) queryParams.append("exclude_modules", filters.exclude_modules);
       if (filters.search) queryParams.append("search", filters.search);
       if (filters.due_date) queryParams.append("due_date", filters.due_date);
       if (filters.due_date_start) queryParams.append("due_date_start", filters.due_date_start);
@@ -374,6 +378,8 @@ export default function Instruments() {
       item_status: (searchParams.get("item_status") || "Active") as any,
       location: searchParams.get("location") || "All",
       calibration_source: searchParams.get("calibration_source") || "All",
+      module: searchParams.get("module") || "All",
+      exclude_modules: searchParams.get("exclude_modules") || "",
       is_reference_standard: searchParams.get("is_reference_standard") || "All",
       page: 1
     }));
@@ -381,7 +387,7 @@ export default function Instruments() {
 
   useEffect(() => {
     fetchData();
-  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.pageSize, filters.search, filters.due_date, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
+  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
 
   useEffect(() => {
     const handleUploadComplete = () => {
@@ -1777,7 +1783,26 @@ export default function Instruments() {
                 />
                 <label
                   htmlFor="certificate-upload"
-                  className="flex items-center justify-center w-full px-4 py-3 text-sm font-medium transition-colors border-2 border-dashed rounded-lg cursor-pointer border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50 text-muted-foreground"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.add("border-primary", "bg-primary/10");
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
+                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                      const droppedFile = e.dataTransfer.files[0];
+                      setCertificateFile(droppedFile);
+                    }
+                  }}
+                  className="flex items-center justify-center w-full px-4 py-3 text-sm font-medium transition-all border-2 border-dashed rounded-lg cursor-pointer border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50 text-muted-foreground"
                 >
                   <Upload className="w-5 h-5 mr-2 text-primary/70" />
                   {certificateFile ? (

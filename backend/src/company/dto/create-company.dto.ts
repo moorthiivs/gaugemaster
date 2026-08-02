@@ -4,7 +4,7 @@ import { IsString, IsOptional, IsEmail, IsUUID } from 'class-validator';
 export class CreateCompanyDto {
     @ApiProperty({
         description: 'The name of the company',
-        example: 'Acme Industries',
+        example: 'Company Name',
     })
     @IsString()
     companyName: string;
@@ -36,7 +36,7 @@ export class CreateCompanyDto {
 
     @ApiProperty({
         description: 'Email of the user registering this company',
-        example: 'admin@acme.com',
+        example: 'admin@company.com',
     })
     @IsEmail()
     registeredEmail: string;

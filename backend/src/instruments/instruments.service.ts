@@ -7,7 +7,7 @@ import {
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In } from 'typeorm';
+import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -22,6 +22,8 @@ interface InstrumentFilters {
     location?: string;
     frequency?: string;
     calibration_source?: string;
+    module?: string;
+    exclude_modules?: string;
     search?: string;
     due_date?: string;
     due_date_start?: string;
@@ -100,7 +102,7 @@ export class InstrumentsService {
     }
 
     async findAll(filters: InstrumentFilters) {
-        const { status, item_status, location, frequency, calibration_source, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy } = filters;
+        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy } = filters;
 
         // If calibrated_in_range filter is active, use QueryBuilder with subquery on calibration_history
         if (calibrated_in_range_start && calibrated_in_range_end) {
@@ -121,6 +123,34 @@ export class InstrumentsService {
         if (location && location !== 'All') baseWhere.location = ILike(location);
         if (frequency && frequency !== 'All') baseWhere.frequency = ILike(frequency);
         if (calibration_source && calibration_source !== 'All') baseWhere.calibration_source = ILike(calibration_source);
+        if (module && module !== 'All') {
+            if (module.toLowerCase() === 'unassigned') {
+                baseWhere.module = Raw(alias => `${alias} IS NULL OR TRIM(${alias}) = ''`);
+            } else if (module.toLowerCase() === 'others' && exclude_modules) {
+                const topModules = exclude_modules.split(',').map(m => m.trim().toLowerCase());
+                const unassignedInTop = topModules.includes('unassigned');
+                const namedTop = topModules.filter(m => m !== 'unassigned');
+
+                if (namedTop.length > 0) {
+                    baseWhere.module = Raw(
+                        alias => {
+                            let sql = `LOWER(TRIM(${alias})) NOT IN (${namedTop.map((_, i) => `:topMod${i}`).join(',')})`;
+                            if (!unassignedInTop) {
+                                sql += ` AND ${alias} IS NOT NULL AND TRIM(${alias}) != ''`;
+                            } else {
+                                sql += ` AND ${alias} IS NOT NULL AND TRIM(${alias}) != ''`;
+                            }
+                            return sql;
+                        },
+                        namedTop.reduce((acc, name, i) => ({ ...acc, [`topMod${i}`]: name }), {})
+                    );
+                } else {
+                    baseWhere.module = Raw(alias => `${alias} IS NOT NULL AND TRIM(${alias}) != ''`);
+                }
+            } else {
+                baseWhere.module = Raw(alias => `TRIM(${alias}) ILIKE :mod`, { mod: module.trim() });
+            }
+        }
         if (createdBy) {
             const userIds = await this.getCompanyUserIds(createdBy);
             if (userIds.length > 0) {
@@ -129,11 +159,28 @@ export class InstrumentsService {
         }
         
         if (due_date) {
-            const start = new Date(`${due_date}T00:00:00.000Z`);
-            const end = new Date(`${due_date}T23:59:59.999Z`);
-            baseWhere.due_date = Between(start, end);
+            const parts = due_date.split('-').map(Number);
+            if (parts.length === 3) {
+                const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+                const start = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+                const end = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+                baseWhere.due_date = Between(start, end);
+            } else {
+                const start = new Date(`${due_date}T00:00:00.000Z`);
+                const end = new Date(`${due_date}T23:59:59.999Z`);
+                baseWhere.due_date = Between(start, end);
+            }
         } else if (due_date_start && due_date_end) {
-            baseWhere.due_date = Between(new Date(due_date_start), new Date(`${due_date_end}T23:59:59.999Z`));
+            const sParts = due_date_start.split('-').map(Number);
+            const eParts = due_date_end.split('-').map(Number);
+            if (sParts.length === 3 && eParts.length === 3) {
+                const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+                const startRange = new Date(Date.UTC(sParts[0], sParts[1] - 1, sParts[2], 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+                const endRange = new Date(Date.UTC(eParts[0], eParts[1] - 1, eParts[2], 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+                baseWhere.due_date = Between(startRange, endRange);
+            } else {
+                baseWhere.due_date = Between(new Date(due_date_start), new Date(`${due_date_end}T23:59:59.999Z`));
+            }
         } else if (due_date_start) {
             baseWhere.due_date = Between(new Date(due_date_start), new Date("2100-01-01"));
         } else if (due_date_end) {
@@ -151,7 +198,7 @@ export class InstrumentsService {
         if (is_reference_standard === 'true') {
             baseWhere.is_reference_standard = true;
         } else if (is_reference_standard === 'false') {
-            baseWhere.is_reference_standard = false;
+            baseWhere.is_reference_standard = Raw(alias => `${alias} = false OR ${alias} IS NULL`);
         }
 
         let finalWhere: any = baseWhere;
@@ -261,7 +308,7 @@ export class InstrumentsService {
         if (is_reference_standard === 'true') {
             query.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
         } else if (is_reference_standard === 'false') {
-            query.andWhere('instrument.is_reference_standard = :isRef', { isRef: false });
+            query.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
         if (search) {
             query.andWhere(

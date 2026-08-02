@@ -193,7 +193,7 @@ export class CertificateService {
       ? (await this.settingsService.findOneByUserId(userId))?.certificateConfig
       : null;
     const headerCompanyName =
-      certConfig?.headerCompanyName || 'ACME ENTERPRISES';
+      certConfig?.headerCompanyName || 'Company Name';
     const headerCompanySubtitle =
       certConfig?.headerCompanySubtitle || '(CALIBRATION LABORATORY)';
     const headerRightBoxText1 = certConfig?.headerRightBoxText1 || 'NABL / LAB';
@@ -848,7 +848,7 @@ export class CertificateService {
                     {
                       text:
                         footerLine2 ||
-                        "28, 1st Floor, Saraswati, Opp. 'Sai Mandir', Behind Dwarkamai Mandir, Ayodhya Nagar, Nagpur- 440 024.",
+                        "",
                       fontSize: 7.5,
                       bold: true,
                       alignment: 'center',
@@ -858,7 +858,7 @@ export class CertificateService {
                     {
                       text:
                         footerLine3 ||
-                        '☎ : 0712-2703549, 9112229661, 2,3,4,5,6 & 7   website: www.acmecalibration.in',
+                        '☎ : xxxx-xxxxx, xx xx xx xx xx, x,x,x,x,x,x,x   website: xxxxxxxxx.in',
                       fontSize: 7.5,
                       bold: true,
                       alignment: 'center',
@@ -868,7 +868,7 @@ export class CertificateService {
                     {
                       text:
                         (certConfig as any)?.footerLine4 ||
-                        'Mob: +91 9822223948, 8806000048 • E-mail : shriacme@rediffmail.com, info@acmecalibration.in',
+                        'Mob: +91 xxxxxxxx, xxxxxxxx • E-mail : xxxxxxxxx@xxxxx.com',
                       fontSize: 7.5,
                       bold: true,
                       alignment: 'center',
@@ -1249,15 +1249,14 @@ export class CertificateService {
         // Traceability of Master Used
         {
           table: {
-            widths: ['*', '*', '*', '*', '*', '*', '*'],
+            widths: ['*', '*', '*', '*', '*', '*'],
             body: [
               [
                 {
                   text: 'TRACEABILITY OF MASTER USED :',
                   style: 'boxHeader',
-                  colSpan: 7,
+                  colSpan: 6,
                 },
-                {},
                 {},
                 {},
                 {},
@@ -1269,7 +1268,6 @@ export class CertificateService {
                 { text: 'Make', style: 'thCellDark' },
                 { text: 'Sr No / Id. No.', style: 'thCellDark' },
                 { text: 'Cert.No.', style: 'thCellDark' },
-                { text: 'Dt.of Cal', style: 'thCellDark' },
                 { text: 'Validity', style: 'thCellDark' },
                 { text: 'Cal.Agency', style: 'thCellDark' },
               ],
@@ -1291,10 +1289,6 @@ export class CertificateService {
                   style: 'tdCell',
                 },
                 {
-                  text: fmtDate(ref.cal_date || ref.calibration_date || calibration.calibration_date),
-                  style: 'tdCell',
-                },
-                {
                   text: fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity),
                   style: 'tdCell',
                 },
@@ -1311,7 +1305,7 @@ export class CertificateService {
                   color: '#334155',
                   margin: [4, 2, 4, 2],
                   fillColor: '#f8fafc',
-                  colSpan: 7,
+                  colSpan: 6,
                 },
                 {},
                 {},

@@ -39,14 +39,14 @@ export class CalibrationTemplatesService {
     const qb = this.repository.createQueryBuilder('template');
 
     if (companyId && userId) {
-      qb.where('(template.companyId = :companyId OR template.userId = :userId)', {
+      qb.where('(template.companyId = :companyId OR template.companyId IS NULL OR template.userId = :userId)', {
         companyId,
         userId,
       });
     } else if (companyId) {
-      qb.where('template.companyId = :companyId', { companyId });
+      qb.where('(template.companyId = :companyId OR template.companyId IS NULL)', { companyId });
     } else if (userId) {
-      qb.where('template.userId = :userId', { userId });
+      qb.where('(template.userId = :userId OR template.companyId IS NULL)', { userId });
     }
 
     if (calibrationType && calibrationType !== 'All') {

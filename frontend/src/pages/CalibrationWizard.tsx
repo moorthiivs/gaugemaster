@@ -11,7 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
@@ -254,6 +255,109 @@ export default function CalibrationWizard() {
   const [step1Collapsed, setStep1Collapsed] = useState(true);
   const [step2Collapsed, setStep2Collapsed] = useState(true);
   const [step3Collapsed, setStep3Collapsed] = useState(true);
+
+  const isPreloadedFromPreviousRef = useRef<boolean>(false);
+
+  // Helper to apply previous calibration data completely
+  const applyPreviousCalibrationData = (cal: any, typeMatch?: CalibrationTypeConfig) => {
+    if (!cal) return;
+    isPreloadedFromPreviousRef.current = true;
+
+    // Set Date of Calibration to previous calibration due date if present
+    if (cal.next_calibration_date) {
+      const prevDueDate = cal.next_calibration_date.split("T")[0];
+      setCalDate(prevDueDate);
+      setCertIssueDate(prevDueDate);
+    }
+
+    // 1. Reference standards
+    if (cal.reference_standards && Array.isArray(cal.reference_standards) && cal.reference_standards.length > 0) {
+      setReferenceStandards(cal.reference_standards);
+    } else if (cal.reference_standard_name) {
+      setReferenceStandards([
+        {
+          name: cal.reference_standard_name,
+          id: cal.reference_standard_id || "",
+          traceable_to: cal.reference_standard_traceable_to || "",
+          validity: cal.reference_standard_validity ? cal.reference_standard_validity.split("T")[0] : "",
+          range: cal.reference_standard_range || "",
+          least_count: cal.reference_standard_least_count || "",
+        },
+      ]);
+    }
+
+    // 2. Environmental conditions
+    if (cal.environmental_conditions) {
+      if (cal.environmental_conditions.temperature) setEnvTemp(cal.environmental_conditions.temperature);
+      if (cal.environmental_conditions.humidity) setEnvHumidity(cal.environmental_conditions.humidity);
+      if (cal.environmental_conditions.pressure) setEnvPressure(cal.environmental_conditions.pressure);
+    }
+
+    // 3. SOP & Standard Reference
+    if (cal.procedure_reference) setProcedureReference(cal.procedure_reference);
+    if (cal.standard_reference) setStandardReference(cal.standard_reference);
+    else if (cal.remarks) setStandardReference(cal.remarks);
+
+    // 4. Custom Formula & Rule Type
+    if (cal.status_rule_type) setStatusRuleType(cal.status_rule_type as "default" | "custom_formula");
+    if (cal.status_formula) setStatusFormula(cal.status_formula);
+
+    // 5. Custom grid schema & columns
+    if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns);
+    if (cal.standard_columns_config) setWizardStandardColumnConfigs(cal.standard_columns_config);
+    if (cal.column_order && cal.column_order.length > 0) setWizardColumnOrder(cal.column_order);
+    if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
+    if (cal.decimal_places !== undefined) setWizardDecimalPlaces(cal.decimal_places);
+    if (cal.acceptance_criteria) setWizardAcceptanceCriteria(cal.acceptance_criteria);
+
+    // 6. Calibration Points & Tolerance / Unit
+    if (cal.calibration_points && cal.calibration_points.length > 0) {
+      const loadedTol = cal.calibration_points[0].tolerance !== undefined ? cal.calibration_points[0].tolerance : calTolerance;
+      if (loadedTol !== undefined) setCalTolerance(loadedTol);
+      if (cal.calibration_points[0].unit) setCalUnit(cal.calibration_points[0].unit);
+
+      const hasDescending = typeMatch?.columns?.some((c: any) => c.key === "descending_reading") || false;
+
+      const fixedPoints = cal.calibration_points.map((pt: any, idx: number) => {
+        const rowTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : loadedTol;
+        let error = pt.error !== undefined ? Number(pt.error) : 0;
+        if (pt.ascending_reading !== undefined && pt.nominal !== undefined) {
+          if (hasDescending && pt.descending_reading !== undefined) {
+            const avg = ((Number(pt.ascending_reading) || 0) + (Number(pt.descending_reading) || 0)) / 2;
+            error = parseFloat((avg - (Number(pt.nominal) || 0)).toFixed(4));
+          } else {
+            error = parseFloat(((Number(pt.ascending_reading) || 0) - (Number(pt.nominal) || 0)).toFixed(4));
+          }
+        }
+        return {
+          ...pt,
+          point_number: pt.point_number || idx + 1,
+          description: pt.description || `Point ${idx + 1}`,
+          error,
+          tolerance: rowTol,
+          status: pt.status || (rowTol > 0 ? (Math.abs(error) <= rowTol ? "PASS" : "FAIL") : "PASS")
+        };
+      });
+      setCalPoints(fixedPoints);
+    }
+
+    // 7. Template ID & Name resolution
+    if (cal.template_id) {
+      setSelectedTemplateId(cal.template_id);
+    } else if (cal.template_name && availableTemplates.length > 0) {
+      const matchByName = availableTemplates.find(
+        (t) => t.name.toLowerCase() === cal.template_name.toLowerCase()
+      );
+      if (matchByName) {
+        setSelectedTemplateId(matchByName.id);
+      }
+    }
+
+    // 8. Uncertainty & Remarks
+    if (cal.uncertainty) setUncertainty(cal.uncertainty);
+    if (cal.remarks) setRemarks(cal.remarks);
+  };
+
   const handleClearTemplate = () => {
     setSelectedTemplateId("none");
     setWizardCustomColumns([]);
@@ -325,7 +429,7 @@ export default function CalibrationWizard() {
   // Auto-apply matching template when templates load or instrument changes (for new calibrations)
   useEffect(() => {
     if (!availableTemplates || availableTemplates.length === 0) return;
-    if (selectedTemplateId || isEditMode || draftIdParam) return;
+    if ((selectedTemplateId && selectedTemplateId !== "none") || isEditMode || draftIdParam) return;
 
     let match: CalibrationTemplate | undefined;
     if (selectedInstrument) {
@@ -345,7 +449,12 @@ export default function CalibrationWizard() {
     }
 
     if (match) {
-      handleApplyTemplate(match.id);
+      if (isPreloadedFromPreviousRef.current) {
+        // Set matching template ID for display without overwriting preloaded points or formulas!
+        setSelectedTemplateId(match.id);
+      } else {
+        handleApplyTemplate(match.id);
+      }
     }
   }, [availableTemplates, selectedInstrument, selectedTemplateId, isEditMode, draftIdParam]);
 
@@ -367,7 +476,7 @@ export default function CalibrationWizard() {
         // Fetch available templates for this type
         let tpls: CalibrationTemplate[] = [];
         try {
-          tpls = await getTemplates({ userId: user.id, calibrationType: typeMatch.type });
+          tpls = await getTemplates({ userId: user.id, companyId: user.companyId, calibrationType: typeMatch.type });
           setAvailableTemplates(tpls || []);
         } catch (e) {
           console.error("Failed to fetch templates on edit", e);
@@ -602,6 +711,11 @@ export default function CalibrationWizard() {
     if (instrumentId) {
       getInstrument(instrumentId).then((inst) => {
         setSelectedInstrument(inst);
+        if (inst.due_date) {
+          const prevDueDate = inst.due_date.split("T")[0];
+          setCalDate(prevDueDate);
+          setCertIssueDate(prevDueDate);
+        }
         // Try to auto-detect type from item_type
         const typeMatch = CALIBRATION_TYPES.find(
           (t) => inst.item_type?.toLowerCase().includes(t.type) || inst.name?.toLowerCase().includes(t.type)
@@ -614,18 +728,7 @@ export default function CalibrationWizard() {
         // Auto-fill from latest calibration
         httpClient.get(`/calibrations/latest/${instrumentId}`).then((res) => {
           if (res.data) {
-            const cal = res.data;
-            if (cal.reference_standards && cal.reference_standards.length > 0) {
-              setReferenceStandards(cal.reference_standards);
-            }
-            if (cal.environmental_conditions) {
-              setEnvTemp(cal.environmental_conditions.temperature || "");
-              setEnvHumidity(cal.environmental_conditions.humidity || "");
-              setEnvPressure(cal.environmental_conditions.pressure || "");
-            }
-            if (cal.calibration_points && cal.calibration_points.length > 0) {
-              setCalPoints(cal.calibration_points);
-            }
+            applyPreviousCalibrationData(res.data, typeMatch);
             toast.success("Auto-filled data from previous calibration");
           }
         }).catch(() => {});
@@ -665,8 +768,18 @@ export default function CalibrationWizard() {
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery, user]);
 
-  const handleInstrumentSelect = (inst: Instrument) => {
+  // Recently Calibrated Alert modal state
+  const [recentCalModalOpen, setRecentCalModalOpen] = useState(false);
+  const [recentCalDetails, setRecentCalDetails] = useState<{ lastCalDate?: string; dueDate?: string } | null>(null);
+  const [pendingSelectedInstrument, setPendingSelectedInstrument] = useState<Instrument | null>(null);
+
+  const proceedWithInstrumentSelect = (inst: Instrument) => {
     setSelectedInstrument(inst);
+    if (inst.due_date) {
+      const prevDueDate = inst.due_date.split("T")[0];
+      setCalDate(prevDueDate);
+      setCertIssueDate(prevDueDate);
+    }
     const typeMatch = CALIBRATION_TYPES.find(
       (t) => inst.item_type?.toLowerCase().includes(t.type) || inst.name?.toLowerCase().includes(t.type)
     );
@@ -678,48 +791,25 @@ export default function CalibrationWizard() {
     // Auto-fill from latest calibration
     httpClient.get(`/calibrations/latest/${inst.id}`).then((res) => {
       if (res.data) {
-        const cal = res.data;
-        if (cal.reference_standards && cal.reference_standards.length > 0) {
-          setReferenceStandards(cal.reference_standards);
-        }
-        if (cal.environmental_conditions) {
-          setEnvTemp(cal.environmental_conditions.temperature || "");
-          setEnvHumidity(cal.environmental_conditions.humidity || "");
-          setEnvPressure(cal.environmental_conditions.pressure || "");
-        }
-        if (cal.calibration_points && cal.calibration_points.length > 0) {
-          const loadedTol = cal.calibration_points[0].tolerance !== undefined ? cal.calibration_points[0].tolerance : calTolerance;
-          if (loadedTol !== undefined) {
-            setCalTolerance(loadedTol);
-          }
-          
-          const hasDescending = typeMatch?.columns?.some((c: any) => c.key === "descending_reading") || false;
-          
-          // Recalculate error and status to ensure correctness
-          const fixedPoints = cal.calibration_points.map((pt: any) => {
-            const rowTol = pt.tolerance !== undefined && pt.tolerance > 0 ? pt.tolerance : loadedTol;
-            let error = 0;
-            if (hasDescending) {
-              const avg = ((pt.ascending_reading || 0) + (pt.descending_reading || 0)) / 2;
-              error = parseFloat((avg - (pt.nominal || 0)).toFixed(4));
-            } else {
-              error = parseFloat(((pt.ascending_reading || 0) - (pt.nominal || 0)).toFixed(4));
-            }
-            
-            return {
-              ...pt,
-              description: pt.description || "",
-              error,
-              tolerance: rowTol,
-              status: rowTol > 0 ? (Math.abs(error) <= rowTol ? "PASS" : "FAIL") : undefined
-            };
-          });
-          
-          setCalPoints(fixedPoints);
-        }
+        applyPreviousCalibrationData(res.data, typeMatch);
         toast.success(`Auto-filled template from previous calibration for ${inst.name}`);
       }
     }).catch(() => {});
+  };
+
+  const handleInstrumentSelect = (inst: Instrument) => {
+    if (inst.last_calibration_date) {
+      const lastCal = new Date(inst.last_calibration_date);
+      const now = new Date();
+      const diffDays = Math.abs((now.getTime() - lastCal.getTime()) / (1000 * 3600 * 24));
+      if (diffDays <= 10) {
+        setRecentCalDetails({ lastCalDate: inst.last_calibration_date, dueDate: inst.due_date });
+        setPendingSelectedInstrument(inst);
+        setRecentCalModalOpen(true);
+        return;
+      }
+    }
+    proceedWithInstrumentSelect(inst);
   };
 
   // Auto-determine verdict from points
@@ -1292,9 +1382,11 @@ export default function CalibrationWizard() {
                     <div className="space-y-1.5 md:col-span-2">
                       <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
                       <Select 
+                        value={masterStandards.find(m => m.id === ref.id || m.id_code === ref.id || (ref.name && m.name.toLowerCase() === ref.name.toLowerCase()))?.id || ""}
                         onValueChange={(val) => {
                           const master = masterStandards.find(m => m.id === val);
                           if (master) {
+                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || (master as any).calibration_source || master.id_code || master.id || "";
                             const newRefs = [...referenceStandards];
                             newRefs[index] = {
                               ...newRefs[index],
@@ -1304,11 +1396,29 @@ export default function CalibrationWizard() {
                               range: master.range || "",
                               least_count: master.least_count || "",
                               validity: master.due_date ? master.due_date.split('T')[0] : "",
-                              traceable_to: master.cert_no || (master as any).certificate_no || master.traceable || "",
-                              cert_no: master.cert_no || (master as any).certificate_no || master.traceable || "",
+                              traceable_to: initialCertNo,
+                              cert_no: initialCertNo,
                               agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
                             };
                             setReferenceStandards(newRefs);
+
+                            // Asynchronously fetch latest calibration certificate for this master instrument
+                            httpClient.get(`/calibrations/latest/${master.id}`).then((res) => {
+                              if (res.data && res.data.certificate_number) {
+                                const fetchedCert = res.data.certificate_number;
+                                setReferenceStandards((prevRefs) => {
+                                  const updated = [...prevRefs];
+                                  if (updated[index]) {
+                                    updated[index] = {
+                                      ...updated[index],
+                                      traceable_to: fetchedCert,
+                                      cert_no: fetchedCert,
+                                    };
+                                  }
+                                  return updated;
+                                });
+                              }
+                            }).catch(() => {});
                           }
                         }}
                       >
@@ -1350,10 +1460,11 @@ export default function CalibrationWizard() {
                     <div className="space-y-1.5">
                       <Label className="text-xs">Traceable To (Cert No)</Label>
                       <Input 
-                        value={ref.traceable_to} 
+                        value={ref.traceable_to || ref.cert_no || ""} 
                         onChange={(e) => {
                           const newRefs = [...referenceStandards];
                           newRefs[index].traceable_to = e.target.value;
+                          newRefs[index].cert_no = e.target.value;
                           setReferenceStandards(newRefs);
                         }} 
                         placeholder="e.g., NABL Cert 12345" 
@@ -1598,8 +1709,15 @@ export default function CalibrationWizard() {
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-1.5 flex flex-col">
-                  <Label className="text-xs font-medium flex items-center gap-1.5">
-                    <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Date of Calibration
+                  <Label className="text-xs font-medium flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <CalendarIcon className="h-3.5 w-3.5 text-muted-foreground" /> Date of Calibration
+                    </span>
+                    {selectedInstrument?.due_date && (
+                      <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full" title="Previous Calibration Due Date Reference">
+                        Prev Due: {format(parseISO(selectedInstrument.due_date.split("T")[0]), "dd-MMM-yyyy")}
+                      </span>
+                    )}
                   </Label>
                   <YearMonthDatePicker
                     value={calDate}
@@ -1665,14 +1783,41 @@ export default function CalibrationWizard() {
               <div>
                 <h4 className="text-sm font-semibold mb-3">Signatories</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {/* Calibrated By (Auto-detected Engineer) */}
+                  {/* Calibrated By (Engineer / Admin Selection) */}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold">Calibrated By</Label>
-                    <Input
-                      value={calibratedBy || user?.name || "Calibration Engineer"}
-                      readOnly
-                      className="bg-muted/40 font-semibold cursor-not-allowed text-xs h-9"
-                    />
+                    {(user?.role?.toLowerCase().includes("admin") || user?.role === "Admin" || user?.role === "Administrator") ? (
+                      <Select
+                        value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy)?.id || calibratedBy}
+                        onValueChange={(val) => {
+                          const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                          if (selectedUser) {
+                            setCalibratedBy(selectedUser.name);
+                            setCalibratedByDesignation(selectedUser.designation || selectedUser.role || "Calibration Engineer");
+                            if (selectedUser.signature) {
+                              setCalibratedBySignature(selectedUser.signature);
+                            }
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                          <SelectValue placeholder="Select Calibration Engineer" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {systemUsers.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.name} ({u.designation || u.role || "Engineer"})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <Input
+                        value={calibratedBy || user?.name || "Calibration Engineer"}
+                        readOnly
+                        className="bg-muted/40 font-semibold cursor-not-allowed text-xs h-9"
+                      />
+                    )}
                     <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs shadow-sm">
                       <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
                       <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-[11px]">
@@ -1824,6 +1969,46 @@ export default function CalibrationWizard() {
           </Button>
         )}
       </div>
+
+      {/* ═══ Recently Calibrated Warning Alert Modal ═══ */}
+      <Dialog open={recentCalModalOpen} onOpenChange={setRecentCalModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              Instrument Recently Calibrated
+            </DialogTitle>
+            <DialogDescription className="space-y-3 pt-2 text-sm text-foreground">
+              <p>
+                Notice: <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) was already calibrated recently.
+              </p>
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-1 text-xs font-medium">
+                <div><span className="text-muted-foreground">Previous Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? format(parseISO(recentCalDetails.lastCalDate.split('T')[0]), "dd-MMM-yyyy") : "Recent"}</strong></div>
+                <div><span className="text-muted-foreground">Current Due Date:</span> <strong>{recentCalDetails?.dueDate ? format(parseISO(recentCalDetails.dueDate.split('T')[0]), "dd-MMM-yyyy") : "N/A"}</strong></div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Are you sure you want to perform another calibration for this instrument?
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => {
+              setRecentCalModalOpen(false);
+              setPendingSelectedInstrument(null);
+            }}>
+              Cancel
+            </Button>
+            <Button variant="default" className="bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
+              if (pendingSelectedInstrument) {
+                proceedWithInstrumentSelect(pendingSelectedInstrument);
+              }
+              setRecentCalModalOpen(false);
+            }}>
+              Proceed with Calibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

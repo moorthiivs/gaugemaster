@@ -22,6 +22,7 @@ export async function listCalibrations(params: {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
+  latestOnly?: boolean;
   page?: number;
   pageSize?: number;
 }) {

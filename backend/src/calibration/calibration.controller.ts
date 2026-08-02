@@ -65,6 +65,7 @@ export class CalibrationController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('search') search?: string,
+    @Query('latestOnly') latestOnly?: string,
     @Query('page') page: string = '1',
     @Query('pageSize') pageSize: string = '10',
   ) {
@@ -78,6 +79,7 @@ export class CalibrationController {
       dateFrom,
       dateTo,
       search,
+      latestOnly,
       page: parseInt(page, 10),
       pageSize: parseInt(pageSize, 10),
     });

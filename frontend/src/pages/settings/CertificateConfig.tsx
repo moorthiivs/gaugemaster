@@ -45,7 +45,7 @@ const DEFAULTS: CertConfig = {
   ulrYearFormat: "YYYY",
   ulrSeqLength: 5,
   ulrNextSeq: 0,
-  headerCompanyName: "ACME ENTERPRISES",
+  headerCompanyName: "Company Name",
   headerCompanySubtitle: "(CALIBRATION LABORATORY)",
   headerRightBoxText1: "NABL / LAB",
   headerRightBoxText2: "CC - 2632",
@@ -318,7 +318,7 @@ export default function CertificateConfig() {
               <Input
                 value={config.headerCompanyName}
                 onChange={(e) => update("headerCompanyName", e.target.value)}
-                placeholder="ACME ENTERPRISES"
+                placeholder="Company Name"
               />
             </div>
             <div className="space-y-1.5">
@@ -545,7 +545,7 @@ export default function CertificateConfig() {
                     </div>
                   )}
                   {(config.headerDisplayMode === "name" || config.headerDisplayMode === "both") && (
-                    <span className="text-xs font-bold uppercase">{config.headerCompanyName || "ACME ENTERPRISES"}</span>
+                    <span className="text-xs font-bold uppercase">{config.headerCompanyName || "Company Name"}</span>
                   )}
                 </div>
                 <span className="text-sm font-extrabold text-white tracking-wider drop-shadow-sm">CALIBRATION CERTIFICATE</span>

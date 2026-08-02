@@ -72,7 +72,7 @@ export const downloadTemplate = async () => {
     "0.02mm", "Lab 1", "12 MONTH", "2024-01-10", "2024-07-10",
     "ABC Labs - TC123", "OK", "Active",
     "Mitutoyo", "Mechanical", "PN-001", "Slide", "MOD1",
-    "External", "Acme Corp", "Manufacturing", "High",
+    "External", "Company Name", "Manufacturing", "High",
     "CERT-001", "Tested okay", "2024-01-01", "John Doe",
     "Jane Doe", "ISO 9001", "NABL", "No"
   ];

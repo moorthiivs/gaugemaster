@@ -376,6 +376,56 @@ export class DashboardService {
         }));
 
         // ═══════════════════════════════════════════════════════════════
+        // Module distribution (GROUP BY TRIM(instrument.module))
+        // ═══════════════════════════════════════════════════════════════
+        // Module distribution (Full Inventory breakdown with UPPER case normalization)
+        // ═══════════════════════════════════════════════════════════════
+        const moduleQuery = this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')", 'module_name')
+            .addSelect('COUNT(*)', 'count')
+            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+
+        if (itemStatus && itemStatus !== 'All') {
+            moduleQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            moduleQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            moduleQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            moduleQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            moduleQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+
+        const moduleGroups = await moduleQuery
+            .groupBy("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')")
+            .orderBy('COUNT(*)', 'DESC')
+            .getRawMany();
+
+        let rawModuleDistribution = moduleGroups.map(g => ({
+            name: g.module_name || 'Others',
+            value: Number(g.count),
+        }));
+
+        rawModuleDistribution.sort((a, b) => b.value - a.value);
+
+        let moduleDistribution: { name: string; value: number }[] = [];
+        if (rawModuleDistribution.length > 10) {
+            const top10 = rawModuleDistribution.slice(0, 10);
+            const othersCount = rawModuleDistribution.slice(10).reduce((sum, item) => sum + item.value, 0);
+            if (othersCount > 0) {
+                top10.push({ name: 'Others', value: othersCount });
+            }
+            moduleDistribution = top10;
+        } else {
+            moduleDistribution = rawModuleDistribution;
+        }
+
+        // ═══════════════════════════════════════════════════════════════
         // OPTIMIZED: Weekly completed — single GROUP BY query
         // Replaces 52-iteration loop with single SQL
         // ═══════════════════════════════════════════════════════════════
@@ -486,6 +536,7 @@ export class DashboardService {
             recentActivity: recentActivityFormatted,
             statusDistribution,
             itemStatusDistribution,
+            moduleDistribution,
             weeklyCompleted,
             dailyCompleted,
         };

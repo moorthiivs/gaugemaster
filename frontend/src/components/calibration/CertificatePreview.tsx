@@ -63,7 +63,7 @@ export function CertificatePreview({
   };
   const inst = calibration.instrument;
 
-  const headerCompanyName = certConfig?.headerCompanyName || "ACME ENTERPRISES";
+  const headerCompanyName = certConfig?.headerCompanyName || "Company Name";
   const headerCompanySubtitle =
     certConfig?.headerCompanySubtitle || "(CALIBRATION LABORATORY)";
   const headerRightBoxText1 = certConfig?.headerRightBoxText1 || "NABL / LAB";
@@ -639,7 +639,6 @@ export function CertificatePreview({
                       Sr No / Id. No.
                     </th>
                     <th className="border-r border-black p-1">Cert.No.</th>
-                    <th className="border-r border-black p-1">Dt.of Cal</th>
                     <th className="border-r border-black p-1">Validity</th>
                     <th className="p-1">Cal.Agency</th>
                   </tr>
@@ -659,11 +658,6 @@ export function CertificatePreview({
                         </td>
                         <td className="border-r border-black p-1">
                           {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
-                        </td>
-                        <td className="border-r border-black p-1">
-                          {fmtDate(
-                            ref.cal_date || ref.calibration_date || calibration.calibration_date,
-                          )}
                         </td>
                         <td className="border-r border-black p-1">
                           {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
@@ -688,7 +682,6 @@ export function CertificatePreview({
                       Sr No / Id. No.
                     </th>
                     <th className="border-r border-black p-1">Cert.No.</th>
-                    <th className="border-r border-black p-1">Dt.of Cal</th>
                     <th className="border-r border-black p-1">Validity</th>
                     <th className="p-1">Cal.Agency</th>
                   </tr>
@@ -706,9 +699,6 @@ export function CertificatePreview({
                     </td>
                     <td className="border-r border-black p-1">
                       {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
-                    </td>
-                    <td className="border-r border-black p-1">
-                      {fmtDate(calibration.calibration_date)}
                     </td>
                     <td className="border-r border-black p-1">
                       {fmtDate((calibration as any)?.reference_standard_validity)}
@@ -837,15 +827,11 @@ export function CertificatePreview({
         </div>
         <p className="font-bold">
           {footerLine2 ||
-            "28, 1st Floor, Saraswati, Opp. 'Sai Mandir', Behind Dwarkamai Mandir, Ayodhya Nagar, Nagpur- 440 024."}
+            ""}
         </p>
         <p>
           {footerLine3 ||
-            "☎ : 0712-2703549, 9112229661, 2,3,4,5,6 & 7   website: www.acmecalibration.in"}
-        </p>
-        <p>
-          Mob: +91 9822223948, 8806000048 • E-mail : shriacme@rediffmail.com,
-          info@acmecalibration.in
+            "☎ : "}
         </p>
       </div>
     </div>
