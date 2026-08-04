@@ -188,7 +188,16 @@ export class InstrumentsService {
         }
 
         if (last_cal_start && last_cal_end) {
-            baseWhere.last_calibration_date = Between(new Date(last_cal_start), new Date(`${last_cal_end}T23:59:59.999Z`));
+            const sParts = last_cal_start.split('-').map(Number);
+            const eParts = last_cal_end.split('-').map(Number);
+            if (sParts.length === 3 && eParts.length === 3) {
+                const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+                const startRange = new Date(Date.UTC(sParts[0], sParts[1] - 1, sParts[2], 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+                const endRange = new Date(Date.UTC(eParts[0], eParts[1] - 1, eParts[2], 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+                baseWhere.last_calibration_date = Between(startRange, endRange);
+            } else {
+                baseWhere.last_calibration_date = Between(new Date(last_cal_start), new Date(`${last_cal_end}T23:59:59.999Z`));
+            }
         } else if (last_cal_start) {
             baseWhere.last_calibration_date = Between(new Date(last_cal_start), new Date("2100-01-01"));
         } else if (last_cal_end) {

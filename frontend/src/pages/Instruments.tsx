@@ -28,6 +28,7 @@ import TooltipProv from "@/components/TooltipProv";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { InstrumentDateFilter } from "@/components/InstrumentDateFilter";
 
 export interface ColumnConfig {
   id: string;
@@ -385,9 +386,42 @@ export default function Instruments() {
     }));
   }, [searchParams]);
 
+  const handleApplyDateFilter = (updatedFilters: Partial<InstrumentQuery>) => {
+    setFilters((prev) => {
+      const next = { ...prev, ...updatedFilters, page: 1 };
+      const queryParams = new URLSearchParams();
+      if (next.search) queryParams.append("search", next.search);
+      if (next.status && next.status !== "All") queryParams.append("status", next.status);
+      if (next.item_status && next.item_status !== "All") queryParams.append("item_status", next.item_status);
+      if (next.location && next.location !== "All") queryParams.append("location", next.location);
+      if (next.frequency && next.frequency !== "All") queryParams.append("frequency", next.frequency);
+      if (next.calibration_source && next.calibration_source !== "All") queryParams.append("calibration_source", next.calibration_source);
+      if (next.module && next.module !== "All") queryParams.append("module", next.module);
+      if (next.due_date) queryParams.append("due_date", next.due_date);
+      if (next.due_date_start) queryParams.append("due_date_start", next.due_date_start);
+      if (next.due_date_end) queryParams.append("due_date_end", next.due_date_end);
+      if (next.last_cal_start) queryParams.append("last_cal_start", next.last_cal_start);
+      if (next.last_cal_end) queryParams.append("last_cal_end", next.last_cal_end);
+      if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.append("is_reference_standard", next.is_reference_standard);
+
+      navigate(`/instruments?${queryParams.toString()}`, { replace: true });
+      return next;
+    });
+  };
+
+  const handleClearDateFilter = () => {
+    handleApplyDateFilter({
+      due_date: "",
+      due_date_start: "",
+      due_date_end: "",
+      last_cal_start: "",
+      last_cal_end: "",
+    });
+  };
+
   useEffect(() => {
     fetchData();
-  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
+  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.due_date_start, filters.due_date_end, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
 
   useEffect(() => {
     const handleUploadComplete = () => {
@@ -1343,8 +1377,15 @@ export default function Instruments() {
               </Select>
             </div>
 
+            {/* Additional Date Filter (Due Date or Last Calibration Date - Single or Range) */}
+            <InstrumentDateFilter
+              filters={filters}
+              onApplyDateFilter={handleApplyDateFilter}
+              onClearDateFilter={handleClearDateFilter}
+            />
+
             {/* Compact Reset Icon Button */}
-            <div>
+            <div className="flex items-end">
               <Button 
                 variant="outline" 
                 size="icon"
@@ -1361,15 +1402,12 @@ export default function Instruments() {
             </div>
           </div>
             
-          {filters.due_date && (
+          {filters.due_date && !filters.due_date_start && (
             <div className="flex items-center mt-1">
               <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
                 <CalendarDays className="h-3.5 w-3.5" />
                 Showing instruments due on: {new Date(filters.due_date).toLocaleDateString()}
-                <button onClick={() => {
-                  setFilters(f => ({ ...f, due_date: "", page: 1 }));
-                  navigate("/instruments", { replace: true });
-                }} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
+                <button onClick={handleClearDateFilter} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
               </Badge>
             </div>
           )}
@@ -1378,11 +1416,12 @@ export default function Instruments() {
             <div className="flex items-center mt-1">
               <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
                 <CalendarDays className="h-3.5 w-3.5" />
-                Showing instruments due from: {filters.due_date_start ? new Date(filters.due_date_start).toLocaleDateString() : 'Any'} to {filters.due_date_end ? new Date(filters.due_date_end).toLocaleDateString() : 'Any'}
-                <button onClick={() => {
-                  setFilters(f => ({ ...f, due_date_start: "", due_date_end: "", page: 1 }));
-                  navigate("/instruments", { replace: true });
-                }} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
+                {filters.due_date_start && filters.due_date_end && filters.due_date_start === filters.due_date_end ? (
+                  <>Showing instruments due on: {new Date(filters.due_date_start).toLocaleDateString()}</>
+                ) : (
+                  <>Showing instruments due from: {filters.due_date_start ? new Date(filters.due_date_start).toLocaleDateString() : 'Any'} to {filters.due_date_end ? new Date(filters.due_date_end).toLocaleDateString() : 'Any'}</>
+                )}
+                <button onClick={handleClearDateFilter} className="ml-1 hover:text-amber-800 focus:outline-none font-bold">×</button>
               </Badge>
             </div>
           )}
@@ -1391,11 +1430,12 @@ export default function Instruments() {
             <div className="flex items-center mt-1">
               <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
                 <CalendarDays className="h-3.5 w-3.5" />
-                Showing calibrated from: {filters.last_cal_start ? new Date(filters.last_cal_start).toLocaleDateString() : 'Any'} to {filters.last_cal_end ? new Date(filters.last_cal_end).toLocaleDateString() : 'Any'}
-                <button onClick={() => {
-                  setFilters(f => ({ ...f, last_cal_start: "", last_cal_end: "", page: 1 }));
-                  navigate("/instruments", { replace: true });
-                }} className="ml-1 hover:text-blue-800 focus:outline-none font-bold">×</button>
+                {filters.last_cal_start && filters.last_cal_end && filters.last_cal_start === filters.last_cal_end ? (
+                  <>Showing calibrated on: {new Date(filters.last_cal_start).toLocaleDateString()}</>
+                ) : (
+                  <>Showing calibrated from: {filters.last_cal_start ? new Date(filters.last_cal_start).toLocaleDateString() : 'Any'} to {filters.last_cal_end ? new Date(filters.last_cal_end).toLocaleDateString() : 'Any'}</>
+                )}
+                <button onClick={handleClearDateFilter} className="ml-1 hover:text-blue-800 focus:outline-none font-bold">×</button>
               </Badge>
             </div>
           )}

@@ -30,7 +30,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { CalendarPicker } from "@/components/ui/calendar";
 import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
 import { format, addMonths, parseISO } from "date-fns";
-import { cn } from "@/lib/utils";
+import { cn, getRoleName } from "@/lib/utils";
 
 const STEPS = [
   "Select Instrument",
@@ -124,13 +124,13 @@ export default function CalibrationWizard() {
         const res = await httpClient.get(`/users?companyId=${user?.companyId || ""}`);
         const list = Array.isArray(res.data) ? res.data : [];
         if (user?.name && !list.some((u: any) => u.name === user.name || u.id === user.id)) {
-          list.unshift({ id: user.id, name: user.name, designation: user.role || "Calibration Engineer", signature: (user as any).signature || user.name });
+          list.unshift({ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name });
         }
         setSystemUsers(list);
       } catch (err) {
         console.error("Failed to load users for signatories", err);
         if (user?.name) {
-          setSystemUsers([{ id: user.id, name: user.name, designation: user.role || "Calibration Engineer", signature: (user as any).signature || user.name }]);
+          setSystemUsers([{ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name }]);
         }
       }
     };
@@ -180,7 +180,7 @@ export default function CalibrationWizard() {
   useEffect(() => {
     if (user?.name && !isEditMode && !draftIdParam && !calibratedBy) {
       setCalibratedBy(user.name);
-      setCalibratedByDesignation(user.role || "Calibration Engineer");
+      setCalibratedByDesignation(getRoleName(user.role) || "Calibration Engineer");
       if ((user as any).signature) {
         setCalibratedBySignature((user as any).signature);
       }
@@ -1786,42 +1786,46 @@ export default function CalibrationWizard() {
                   {/* Calibrated By (Engineer / Admin Selection) */}
                   <div className="space-y-2">
                     <Label className="text-xs font-semibold">Calibrated By</Label>
-                    {(user?.role?.toLowerCase().includes("admin") || user?.role === "Admin" || user?.role === "Administrator") ? (
-                      <Select
-                        value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy)?.id || calibratedBy}
-                        onValueChange={(val) => {
-                          const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
-                          if (selectedUser) {
-                            setCalibratedBy(selectedUser.name);
-                            setCalibratedByDesignation(selectedUser.designation || selectedUser.role || "Calibration Engineer");
-                            if (selectedUser.signature) {
-                              setCalibratedBySignature(selectedUser.signature);
+                    {(() => {
+                      const userRoleStr = getRoleName(user?.role);
+                      const isAdmin = userRoleStr.toLowerCase().includes("admin") || userRoleStr === "Admin" || userRoleStr === "Administrator";
+                      return isAdmin ? (
+                        <Select
+                          value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy)?.id || calibratedBy}
+                          onValueChange={(val) => {
+                            const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                            if (selectedUser) {
+                              setCalibratedBy(selectedUser.name);
+                              setCalibratedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Calibration Engineer");
+                              if (selectedUser.signature) {
+                                setCalibratedBySignature(selectedUser.signature);
+                              }
                             }
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="h-9 text-xs font-semibold bg-background">
-                          <SelectValue placeholder="Select Calibration Engineer" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {systemUsers.map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {u.name} ({u.designation || u.role || "Engineer"})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Input
-                        value={calibratedBy || user?.name || "Calibration Engineer"}
-                        readOnly
-                        className="bg-muted/40 font-semibold cursor-not-allowed text-xs h-9"
-                      />
-                    )}
+                          }}
+                        >
+                          <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                            <SelectValue placeholder="Select Calibration Engineer" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {systemUsers.map((u) => (
+                              <SelectItem key={u.id} value={u.id}>
+                                {u.name} ({getRoleName(u.designation) || getRoleName(u.role) || "Engineer"})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          value={calibratedBy || user?.name || "Calibration Engineer"}
+                          readOnly
+                          className="bg-muted/40 font-semibold cursor-not-allowed text-xs h-9"
+                        />
+                      );
+                    })()}
                     <div className="flex items-center gap-1.5 px-3 py-1.5 bg-sky-50 dark:bg-sky-950/50 rounded-md border border-sky-200 dark:border-sky-800 text-xs shadow-sm">
                       <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
                       <span className="font-bold text-sky-950 dark:text-sky-100 uppercase tracking-wide text-[11px]">
-                        {calibratedByDesignation || user?.role || "CALIBRATION ENGINEER"}
+                        {getRoleName(calibratedByDesignation) || getRoleName(user?.role) || "CALIBRATION ENGINEER"}
                       </span>
                     </div>
                   </div>

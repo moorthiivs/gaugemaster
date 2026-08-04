@@ -578,8 +578,6 @@ const Index = () => {
       params.set("due_date_start", todayStr);
       params.set("due_date_end", todayStr);
       params.set("status", "All");
-      params.set("item_status", "All");
-      params.set("is_reference_standard", "All");
     } else if (type === "today_completed") {
       params.set("calibrated_in_range_start", todayStr);
       params.set("calibrated_in_range_end", todayStr);

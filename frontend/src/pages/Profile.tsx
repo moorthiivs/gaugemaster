@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
 import { useSEO } from "@/hooks/useSEO";
+import { getRoleName } from "@/lib/utils";
 
 export default function Profile() {
   useSEO({ title: "Profile — Calibration Alerts", description: "Your profile and account details." });
@@ -22,7 +23,7 @@ export default function Profile() {
           </div>
           <div>
             <dt className="text-sm text-muted-foreground">Role</dt>
-            <dd className="font-medium">{user?.role}</dd>
+            <dd className="font-medium">{getRoleName(user?.role)}</dd>
           </div>
           <div>
             <dt className="text-sm text-muted-foreground">Provider</dt>

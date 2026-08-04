@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { getRoleName } from "@/lib/utils";
 import httpClient from "@/lib/httpClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,7 +138,7 @@ export default function CalibrationApprovalList() {
       await httpClient.post(`/calibrations/${selectedRecord.id}/approve`, {
         reviewerId: user?.id,
         reviewerName: user?.name || reviewerName || "Quality Manager",
-        reviewerDesignation: user?.role || reviewerDesignation || "Quality Manager",
+        reviewerDesignation: getRoleName(user?.role) || reviewerDesignation || "Quality Manager",
         signature: (user as any)?.signature || reviewerSignature || user?.name || "Quality Manager",
       });
 
@@ -728,7 +729,7 @@ export default function CalibrationApprovalList() {
             {/* Manager Review Action Footer */}
             <DialogFooter className="border-t pt-3 flex items-center justify-between">
               <div className="text-xs text-muted-foreground">
-                Reviewer: <span className="font-semibold text-foreground">{user?.name}</span> ({user?.role || "Quality Manager"})
+                Reviewer: <span className="font-semibold text-foreground">{user?.name}</span> ({getRoleName(user?.role) || "Quality Manager"})
               </div>
 
               <div className="flex items-center gap-2">
