@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { X, Plus, Mail, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { X, Plus, Mail, Clock, AlertCircle, Loader2, LayoutDashboard, Sliders, ShieldCheck } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,6 +35,21 @@ export default function ReminderConfig() {
       junior: [],
       senior: [],
       supervisor: [],
+    },
+  });
+  const [dashboardConfig, setDashboardConfig] = useState<{
+    warningDays: number;
+    widgets: Record<string, boolean>;
+  }>({
+    warningDays: 7,
+    widgets: {
+      overallProgress: true,
+      overdue: true,
+      dueToday: true,
+      periodProgress: true,
+      dueSoon: true,
+      compliance: true,
+      totalMaster: true,
     },
   });
   const [loading, setLoading] = useState(true);
@@ -161,20 +177,6 @@ export default function ReminderConfig() {
   };
 
   const handleSave = async () => {
-    const totalRecipients =
-      config.recipients.junior.length +
-      config.recipients.senior.length +
-      config.recipients.supervisor.length;
-
-    if (totalRecipients === 0) {
-      toast({
-        title: "No recipients",
-        description: "Please add at least one email recipient",
-        variant: "destructive",
-      });
-      return;
-    }
-
     try {
       setIsSaving(true); // 👈 Start loading
       const allData = {
@@ -182,6 +184,7 @@ export default function ReminderConfig() {
         seniorRecipients: config.recipients.senior,
         supervisorRecipients: config.recipients.supervisor,
         reminderFrequency: config.frequency,
+        dashboardConfig: dashboardConfig,
         userId: user.id,
         companyId: user.companyId
       }
@@ -196,7 +199,7 @@ export default function ReminderConfig() {
         setUser(updatedUser)
         toast({
           title: "Configuration saved",
-          description: `Reminder settings saved with ${totalRecipients} total recipients`,
+          description: "System & dashboard display settings saved successfully.",
         });
       }
 
@@ -223,6 +226,22 @@ export default function ReminderConfig() {
             supervisor: data.supervisorRecipients || [],
           },
         });
+
+        if (data.dashboardConfig) {
+          setDashboardConfig({
+            warningDays: data.dashboardConfig.warningDays ?? 7,
+            widgets: {
+              overallProgress: true,
+              overdue: true,
+              dueToday: true,
+              periodProgress: true,
+              dueSoon: true,
+              compliance: true,
+              totalMaster: true,
+              ...(data.dashboardConfig.widgets || {}),
+            },
+          });
+        }
       }
     } catch (error) {
       console.log(error);
@@ -411,6 +430,120 @@ export default function ReminderConfig() {
           </CardContent>
         </Card>
       ))}
+
+      {/* Dashboard & Inventory Display Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <LayoutDashboard className="w-5 h-5 text-primary" />
+            <CardTitle>Dashboard & Inventory Display Configuration</CardTitle>
+          </div>
+          <CardDescription>
+            Configure inventory row color warning period and dashboard KPI card visibility preferences
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Warning Period Days */}
+          <div className="space-y-2 max-w-md p-4 rounded-xl border bg-card/60 backdrop-blur-sm">
+            <Label className="text-sm font-semibold flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-amber-500" />
+              Due Date Warning Period (Days)
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Instruments approaching their due date within this number of days will be highlighted in <span className="text-amber-600 dark:text-amber-400 font-bold">Yellow</span> in the Inventory List.
+            </p>
+            <div className="flex items-center gap-3 pt-1">
+              <Input
+                type="number"
+                min={1}
+                max={90}
+                value={dashboardConfig.warningDays}
+                onChange={(e) =>
+                  setDashboardConfig((prev) => ({
+                    ...prev,
+                    warningDays: Math.max(1, parseInt(e.target.value) || 7),
+                  }))
+                }
+                className="w-28 font-bold text-center h-10"
+              />
+              <span className="text-sm font-medium text-muted-foreground">Days before due date</span>
+            </div>
+          </div>
+
+          {/* KPI Widget Visibility Switches */}
+          <div className="space-y-3">
+            <Label className="text-sm font-semibold flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-primary" />
+              Dashboard KPI & Widget Visibility Configuration
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Enable or disable individual KPI cards and widgets rendered on the Analytics Dashboard.
+            </p>
+
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-2 pt-2">
+              {[
+                {
+                  key: "overallProgress",
+                  title: "Calibration Overall Progress KPI",
+                  desc: "Displays total completion ratio (e.g. 200 / 3,500 - 5.71%) with progress bar",
+                },
+                {
+                  key: "overdue",
+                  title: "Overdue Instruments KPI",
+                  desc: "Displays count of overdue instruments with red alert status",
+                },
+                {
+                  key: "dueToday",
+                  title: "Due Today KPI",
+                  desc: "Displays count of instruments scheduled for calibration today",
+                },
+                {
+                  key: "periodProgress",
+                  title: "Period Progress KPI",
+                  desc: "Displays calibration completion ratio for the selected date range",
+                },
+                {
+                  key: "dueSoon",
+                  title: "Due Soon (30 Days) KPI",
+                  desc: "Displays instruments due for calibration within 30 days",
+                },
+                {
+                  key: "compliance",
+                  title: "Calibration Compliance % KPI",
+                  desc: "Displays percentage of compliant (non-overdue) instruments",
+                },
+                {
+                  key: "totalMaster",
+                  title: "Total Master Inventory KPI",
+                  desc: "Displays total instruments count breakdown",
+                },
+              ].map((item) => (
+                <div
+                  key={item.key}
+                  className="flex items-center justify-between p-3.5 rounded-xl border bg-muted/20 hover:bg-muted/40 transition-colors"
+                >
+                  <div className="space-y-0.5 pr-3">
+                    <p className="text-xs font-bold text-foreground">{item.title}</p>
+                    <p className="text-[11px] text-muted-foreground leading-tight">{item.desc}</p>
+                  </div>
+                  <Switch
+                    checked={dashboardConfig.widgets[item.key] !== false}
+                    onCheckedChange={(checked) =>
+                      setDashboardConfig((prev) => ({
+                        ...prev,
+                        widgets: {
+                          ...prev.widgets,
+                          [item.key]: checked,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Save Button */}
       {/* <div className="flex justify-end gap-3 sticky bottom-4 bg-background/80 backdrop-blur-sm p-4 rounded-lg border">

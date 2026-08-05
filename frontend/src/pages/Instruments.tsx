@@ -100,6 +100,8 @@ export default function Instruments() {
     last_cal_start: initialLastCalStart, last_cal_end: initialLastCalEnd,
     calibrated_in_range_start: initialCalibratedInRangeStart, calibrated_in_range_end: initialCalibratedInRangeEnd,
     is_reference_standard: initialIsReferenceStandard,
+    sortBy: (searchParams.get("sortBy") as any) || "sino",
+    sortOrder: (searchParams.get("sortOrder") as any) || "ASC",
     page: 1, pageSize, limit: 10 
   });
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
@@ -132,6 +134,45 @@ export default function Instruments() {
   const [localSearch, setLocalSearch] = useState(initialSearch);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [warningDays, setWarningDays] = useState<number>(7);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    httpClient.get('/settings/fetchmailconfig', { params: { userId: user.id, companyId: user.companyId } })
+      .then(res => {
+        if (res.status === 200 && res.data?.dashboardConfig?.warningDays) {
+          setWarningDays(res.data.dashboardConfig.warningDays);
+        }
+      })
+      .catch(() => {});
+  }, [user?.id, user?.companyId]);
+
+  const getRowClassName = (rowItem: Instrument) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const isOverdueStatus = rowItem.status === "Overdue" || rowItem.status === "OVER DUE";
+
+    if (isOverdueStatus) {
+      return "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500 transition-colors";
+    }
+
+    if (rowItem.due_date) {
+      const dueDate = new Date(rowItem.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+
+      if (dueDate < today) {
+        return "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500 transition-colors";
+      }
+
+      const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays <= warningDays) {
+        return "bg-amber-500/15 hover:bg-amber-500/25 dark:bg-amber-950/30 border-l-4 border-l-amber-500 transition-colors";
+      }
+    }
+
+    return "bg-emerald-500/10 hover:bg-emerald-500/20 dark:bg-emerald-950/20 border-l-4 border-l-emerald-500 transition-colors";
+  };
 
   const [dateModalOpen, setDateModalOpen] = useState(false);
   const [dateUpdateInstrument, setDateUpdateInstrument] = useState<Instrument | null>(null);
@@ -382,6 +423,8 @@ export default function Instruments() {
       module: searchParams.get("module") || "All",
       exclude_modules: searchParams.get("exclude_modules") || "",
       is_reference_standard: searchParams.get("is_reference_standard") || "All",
+      sortBy: (searchParams.get("sortBy") as any) || f.sortBy || "sino",
+      sortOrder: (searchParams.get("sortOrder") as any) || f.sortOrder || "ASC",
       page: 1
     }));
   }, [searchParams]);
@@ -421,7 +464,7 @@ export default function Instruments() {
 
   useEffect(() => {
     fetchData();
-  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.due_date_start, filters.due_date_end, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end]);
+  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.due_date_start, filters.due_date_end, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end, filters.sortBy, filters.sortOrder]);
 
   useEffect(() => {
     const handleUploadComplete = () => {
@@ -631,7 +674,7 @@ export default function Instruments() {
         exportCols.forEach((col) => {
           let val: any = "";
           if (col.id === "sino") {
-            val = idx + 1;
+            val = item.sino || '';
           } else if (col.id === "last_calibration_date") {
             val = item.last_calibration_date ? format(new Date(item.last_calibration_date), "dd-MM-yyyy") : "";
           } else if (col.id === "due_date") {
@@ -847,11 +890,29 @@ export default function Instruments() {
 
   const COLUMN_DEF_MAP: Record<string, Partial<ColumnDef<Instrument>>> = {
     sino: {
-      header: "S.No",
-      cell: ({ row }) => {
-        const index = row.index;
-        return row.original.sino || (filters.page - 1) * (filters.pageSize || 10) + index + 1;
+      header: () => {
+        const isSinoSorted = filters.sortBy === 'sino' || !filters.sortBy;
+        const currentSort = isSinoSorted ? (filters.sortOrder || 'ASC') : undefined;
+        return (
+          <button
+            className="flex items-center gap-1 hover:text-primary transition-colors font-semibold"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setFilters(f => {
+                const nextOrder = f.sortOrder === 'ASC' ? 'DESC' : 'ASC';
+                return { ...f, sortBy: 'sino', sortOrder: nextOrder, page: 1 };
+              });
+            }}
+          >
+            S.No
+            {currentSort === 'ASC' && <ArrowUp className="h-3.5 w-3.5 text-primary" />}
+            {currentSort === 'DESC' && <ArrowDown className="h-3.5 w-3.5 text-primary" />}
+            {!currentSort && <ArrowUp className="h-3.5 w-3.5 text-muted-foreground/40" />}
+          </button>
+        );
       },
+      cell: ({ row }) => row.original.sino || '-',
     },
     name: { accessorKey: "name", header: "Name" },
     id_code: { accessorKey: "id_code", header: "ID Code" },
@@ -1132,7 +1193,7 @@ export default function Instruments() {
           activeCols.push({
             id: c.id,
             accessorKey: (def as any).accessorKey || c.id,
-            header: c.label,
+            header: def.header || c.label,
             cell: def.cell || (({ row }: any) => {
               const val = (row.original as any)[c.id];
               return val !== undefined && val !== null && val !== "" ? String(val) : "-";
@@ -1149,7 +1210,7 @@ export default function Instruments() {
       } as ColumnDef<Instrument>);
     }
     return activeCols;
-  }, [columnConfigs, filters.page, filters.pageSize, uploadingId]);
+  }, [columnConfigs, filters.page, filters.pageSize, filters.sortBy, filters.sortOrder, uploadingId]);
 
   return (
     <>
@@ -1470,6 +1531,7 @@ export default function Instruments() {
           onRowSelectionChange={handleRowSelectionChange}
           hideSearch={true}
           hideColumnToggle={true}
+          getRowClassName={getRowClassName}
           headerActions={
             <div className="flex flex-wrap items-center justify-between w-full gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -1594,7 +1656,7 @@ export default function Instruments() {
           <ExcelUpload
             endpoint="/instruments/bulk-upload"
             mapRow={(row) => ({
-              sino: row["P.Sl.No"] || row["S.No"],
+              // sino is auto-generated by backend — not sent from Excel
               name: row["Description"] || row["NAME OF INSTRUMENT"],
               id_code: row["IMTE"] || row["ID CODE"],
               range: row["RANGE"],

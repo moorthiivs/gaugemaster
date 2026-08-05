@@ -239,7 +239,7 @@ export default function Reports() {
     {
       accessorKey: "sino",
       header: "S.No",
-      cell: ({ row }) => <span className="font-medium text-muted-foreground">{row.index + 1 + (page - 1) * pageSize}</span>,
+      cell: ({ row }) => <span className="font-medium text-muted-foreground">{row.original.sino || '-'}</span>,
     },
     {
       accessorKey: "name",

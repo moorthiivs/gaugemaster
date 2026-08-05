@@ -35,7 +35,9 @@ interface InstrumentFilters {
     is_reference_standard?: string;
     page: number;
     pageSize: number;
-    createdBy?: string
+    createdBy?: string;
+    sortBy?: string;
+    sortOrder?: 'ASC' | 'DESC';
 }
 
 @Injectable()
@@ -62,6 +64,22 @@ export class InstrumentsService {
             return companyUsers.map(u => u.id);
         }
         return [userId];
+    }
+
+    /**
+     * Generates the next sequential S.No for a given company.
+     * Finds the current maximum sino and returns max + 1.
+     */
+    private async generateNextSino(companyId: string): Promise<number> {
+        const result = await this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select('MAX(instrument.sino)', 'maxSino')
+            .where('instrument."companyId" = :companyId', { companyId })
+            .andWhere('instrument.sino IS NOT NULL')
+            .getRawOne();
+
+        const maxSino = result?.maxSino ? Number(result.maxSino) : 0;
+        return maxSino + 1;
     }
 
     async findFilterParams(createdById: string) {
@@ -102,7 +120,7 @@ export class InstrumentsService {
     }
 
     async findAll(filters: InstrumentFilters) {
-        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy } = filters;
+        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy, sortBy, sortOrder } = filters;
 
         // If calibrated_in_range filter is active, use QueryBuilder with subquery on calibration_history
         if (calibrated_in_range_start && calibrated_in_range_end) {
@@ -224,7 +242,6 @@ export class InstrumentsService {
                 { ...baseWhere, part_no: searchPattern },
                 { ...baseWhere, part_name: searchPattern },
                 { ...baseWhere, item_type: searchPattern },
-                { ...baseWhere, sino: searchPattern },
                 { ...baseWhere, frequency: searchPattern },
                 { ...baseWhere, agency: searchPattern },
                 { ...baseWhere, least_count: searchPattern },
@@ -245,11 +262,17 @@ export class InstrumentsService {
             ];
         }
 
+        // Determine sort order
+        let orderOption: any = { sino: sortOrder || 'ASC' };
+        if (sortBy && sortBy !== 'sino') {
+            orderOption = { [sortBy]: sortOrder || 'ASC' };
+        }
+
         const [data, total] = await this.instrumentRepository.findAndCount({
             where: finalWhere,
             skip: (page - 1) * pageSize,
             take: pageSize,
-            order: { due_date: 'ASC' },
+            order: orderOption,
         });
 
         return {
@@ -326,7 +349,11 @@ export class InstrumentsService {
             );
         }
 
-        query.orderBy('instrument.due_date', 'ASC');
+        if (filters.sortBy && filters.sortBy !== 'sino') {
+            query.orderBy(`instrument.${filters.sortBy}`, filters.sortOrder || 'ASC');
+        } else {
+            query.orderBy('instrument.sino', filters.sortOrder || 'ASC');
+        }
 
         const total = await query.getCount();
         const data = await query
@@ -371,29 +398,8 @@ export class InstrumentsService {
                 }
             }
 
-            let sinoStr = instrumentDto.sino ? String(instrumentDto.sino) : undefined;
-
-            if (!sinoStr) {
-                const lastInstrument = await this.instrumentRepository.findOne({
-                    where: {
-                        created_by: { id: instrumentDto.created_by },
-                        companyId: instrumentDto.companyId,
-                    },
-                    order: { sino: 'ASC' },
-                });
-
-                if (lastInstrument?.sino) {
-                    const last = String(lastInstrument.sino);
-                    const lastNum = parseInt(last, 10);
-
-                    // Keep length format (001 → 3 digits)
-                    const next = lastNum + 1;
-                    sinoStr = String(next).padStart(last.length, "0");
-                } else {
-                    // Default start
-                    sinoStr = "001"; // or "001" if you prefer
-                }
-            }
+            // Always auto-generate S.No — ignore any user-provided value
+            const sinoValue = await this.generateNextSino(instrumentDto.companyId);
 
             let autoStatus = instrumentDto.status;
             const parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
@@ -411,7 +417,7 @@ export class InstrumentsService {
 
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
-                sino: sinoStr,
+                sino: sinoValue,
                 status: autoStatus,
                 created_by: { id: instrumentDto.created_by },
                 updated_by: undefined,
@@ -520,30 +526,11 @@ export class InstrumentsService {
             // Fetch validation rules for the company to check uniqueness settings
             const companyId = instruments[0]?.companyId;
             const rules = companyId ? await this.validationService.getRules(companyId) : [];
-            const sinoRule = rules.find(r => r.fieldName === 'sino');
             const idCodeRule = rules.find(r => r.fieldName === 'id_code');
 
             for (const instrument of instruments) {
                 try {
-                    // Only check SINO uniqueness if explicitly enabled or if no rule exists (default legacy behavior)
-                    const checkSino = sinoRule ? sinoRule.isUnique : false;
-                    if (checkSino && instrument.sino) {
-                        const existingSino = await this.instrumentRepository.findOne({
-                            where: {
-                                sino: instrument.sino,
-                                companyId: instrument.companyId,
-                                created_by: { id: instrument.created_by },
-                            },
-                        });
-
-                        if (existingSino) {
-                            rejected.push({
-                                ...instrument,
-                                error: `SINO '${instrument.sino}' already exists`,
-                            });
-                            continue;
-                        }
-                    }
+                    // S.No is auto-generated in create(), no need to check uniqueness
 
                     // Only check ID Code uniqueness if explicitly enabled or if no rule exists (default legacy behavior)
                     const checkIdCode = idCodeRule ? idCodeRule.isUnique : true;
@@ -735,5 +722,48 @@ export class InstrumentsService {
         if (!ids || ids.length === 0) return { deletedCount: 0 };
         const result = await this.instrumentRepository.delete(ids);
         return { deletedCount: result.affected || 0 };
+    }
+
+    /**
+     * Backfill S.No for all existing instruments.
+     * Uses a fast SQL UPDATE with ROW_NUMBER() to assign 1, 2, 3... per company.
+     */
+    async backfillSino() {
+        const logger = new Logger('InstrumentsService');
+        logger.log('🔄 Starting S.No backfill for all instruments...');
+
+        // Get all distinct company IDs
+        const companies = await this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select('DISTINCT instrument."companyId"', 'companyId')
+            .where('instrument."companyId" IS NOT NULL')
+            .getRawMany();
+
+        let totalUpdated = 0;
+
+        for (const { companyId } of companies) {
+            // Use a single fast SQL UPDATE with ROW_NUMBER() window function
+            const result = await this.instrumentRepository.query(
+                `UPDATE instruments SET sino = sub.row_num::integer
+                 FROM (
+                   SELECT id, ROW_NUMBER() OVER (ORDER BY created_at ASC) as row_num
+                   FROM instruments
+                   WHERE "companyId" = $1
+                 ) sub
+                 WHERE instruments.id = sub.id`,
+                [companyId]
+            );
+
+            const updatedCount = result?.[1] || 0;
+            totalUpdated += updatedCount;
+            logger.log(`✅ Company ${companyId}: assigned sequential S.No to ${updatedCount} instruments`);
+        }
+
+        logger.log(`🎉 Backfill complete. ${totalUpdated} instruments updated.`);
+        return {
+            message: `Backfill complete. ${totalUpdated} instruments updated across ${companies.length} companies.`,
+            totalUpdated,
+            companiesProcessed: companies.length,
+        };
     }
 }

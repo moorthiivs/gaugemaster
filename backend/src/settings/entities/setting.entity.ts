@@ -83,4 +83,10 @@ export class Setting {
         headerDisplayMode?: string;    // "name" | "logo" | "both"
         companyLogoPath?: string;      // Path to uploaded logo image
     };
+
+    @Column({ type: "jsonb", nullable: true })
+    dashboardConfig: {
+        warningDays?: number;
+        widgets?: Record<string, boolean>;
+    };
 }

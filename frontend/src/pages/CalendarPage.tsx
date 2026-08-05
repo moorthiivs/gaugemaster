@@ -297,36 +297,46 @@ export default function CalendarPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {selectedInstruments.map((inst) => (
-                  <TableRow key={inst.id}>
-                    <TableCell className="font-medium">{inst.name}</TableCell>
-                    <TableCell>{inst.id_code}</TableCell>
-                    <TableCell>{inst.location}</TableCell>
-                    <TableCell>{inst.agency}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          inst.status?.toLowerCase().includes("over")
-                            ? "destructive"
-                            : inst.status?.toLowerCase() === "ok" || inst.status?.toLowerCase() === "active"
-                            ? "success"
-                            : "warning"
-                        }
-                        className="whitespace-nowrap uppercase text-[10px]"
-                      >
-                        {inst.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        onClick={() => navigate(`/instruments?search=${encodeURIComponent(inst.id_code)}`)}
-                        size="sm"
-                      >
-                        Update
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {selectedInstruments.map((inst) => {
+                  const isOverdue = inst.status?.toLowerCase().includes("over");
+                  const isCalibrated = inst.status?.toLowerCase() === "ok" || inst.status?.toLowerCase() === "calibrated";
+                  const rowClass = isOverdue
+                    ? "bg-rose-500/10 hover:bg-rose-500/20 border-l-4 border-l-rose-500"
+                    : isCalibrated
+                    ? "bg-emerald-500/10 hover:bg-emerald-500/20 border-l-4 border-l-emerald-500"
+                    : "bg-amber-500/15 hover:bg-amber-500/25 border-l-4 border-l-amber-500";
+
+                  return (
+                    <TableRow key={inst.id} className={rowClass}>
+                      <TableCell className="font-medium">{inst.name}</TableCell>
+                      <TableCell>{inst.id_code}</TableCell>
+                      <TableCell>{inst.location}</TableCell>
+                      <TableCell>{inst.agency}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            isOverdue
+                              ? "destructive"
+                              : isCalibrated
+                              ? "success"
+                              : "warning"
+                          }
+                          className="whitespace-nowrap uppercase text-[10px] font-bold"
+                        >
+                          {inst.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          onClick={() => navigate(`/instruments?search=${encodeURIComponent(inst.id_code)}`)}
+                          size="sm"
+                        >
+                          Update
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </ScrollArea>

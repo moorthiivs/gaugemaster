@@ -23,8 +23,8 @@ export class Instrument {
   @Column({ nullable: true })
   id_code: string;
 
-  @Column({ nullable: true })
-  sino: string;
+  @Column({ type: 'integer', nullable: true })
+  sino: number;
 
   @Column({ nullable: true })
   name: string;

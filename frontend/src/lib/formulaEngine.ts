@@ -272,8 +272,14 @@ export function evaluateFormulaValue(
     // 2. Replace standard named variables and Excel letters
     sortedKeys.forEach((key) => {
       const val = valuesMap[key];
+      const rawVal = rawValuesMap[key];
+      let replaceVal = String(val);
+      // If raw value is a non-numeric text string (e.g. "OK"), format as a quoted string literal so text comparisons like =C="OK" work
+      if (typeof rawVal === "string" && isNaN(Number(rawVal.trim())) && rawVal.trim() !== "") {
+        replaceVal = JSON.stringify(rawVal);
+      }
       const regex = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
-      processedExpr = processedExpr.replace(regex, String(val));
+      processedExpr = processedExpr.replace(regex, replaceVal);
     });
 
     // HyperFormula evaluation

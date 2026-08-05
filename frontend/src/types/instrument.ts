@@ -4,7 +4,7 @@
  */
 export type Instrument = {
   id: string;
-  sino?: string;
+  sino?: number;
   name: string;
   id_code: string;
   location: string;
@@ -46,6 +46,11 @@ export type Instrument = {
  */
 export type DashboardSummary = {
   total: number;
+  overallProgress?: {
+    total: number;
+    calibrated: number;
+    percentage: number;
+  };
   workingTotal?: number;
   referenceTotal?: number;
   dueThisMonth: number;
@@ -95,6 +100,8 @@ export type InstrumentQuery = {
   pageSize?: number;
   limit?: number;
   createdBy?: string;
+  sortBy?: string;
+  sortOrder?: "ASC" | "DESC";
 };
 
 export interface CalendarInstrument {

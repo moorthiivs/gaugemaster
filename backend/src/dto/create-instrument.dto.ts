@@ -4,7 +4,6 @@ import {
     IsOptional,
     IsDateString,
     IsIn,
-    IsNumber,
     IsBoolean,
 } from 'class-validator';
 
@@ -13,9 +12,8 @@ export class CreateInstrumentDto {
     @IsNotEmpty()
     id_code: string;
 
-    @IsNumber()
     @IsOptional()
-    sino: string;
+    sino?: number;
 
     @IsString()
     @IsNotEmpty()

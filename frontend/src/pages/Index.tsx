@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DashboardSummary } from "@/types/instrument";
 import { getDashboardSummary, getFilterParams } from "@/lib/instrumentActions";
+import httpClient from "@/lib/httpClient";
 import {
   Card,
   CardContent,
@@ -502,6 +503,35 @@ const Index = () => {
     return count;
   }, [startDate, endDate, location, itemStatus, calibrationStatus, category]);
 
+  const [dashboardConfig, setDashboardConfig] = useState<{
+    warningDays: number;
+    widgets: Record<string, boolean>;
+  }>({
+    warningDays: 7,
+    widgets: {
+      overallProgress: true,
+      overdue: true,
+      dueToday: true,
+      periodProgress: true,
+      dueSoon: true,
+      compliance: true,
+      totalMaster: true,
+    },
+  });
+
+  const visibleWidgetCount = useMemo(() => {
+    const keys = [
+      "overallProgress",
+      "overdue",
+      "dueToday",
+      "periodProgress",
+      "dueSoon",
+      "compliance",
+      "totalMaster",
+    ];
+    return keys.filter((k) => dashboardConfig.widgets[k] !== false).length;
+  }, [dashboardConfig.widgets]);
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -509,6 +539,29 @@ const Index = () => {
       setLoading(true);
       setError(null);
       try {
+        try {
+          const settingsRes = await httpClient.get('/settings/fetchmailconfig', {
+            params: { userId: user?.id, companyId: user?.companyId }
+          });
+          if (settingsRes.status === 200 && settingsRes.data?.dashboardConfig) {
+            setDashboardConfig({
+              warningDays: settingsRes.data.dashboardConfig.warningDays ?? 7,
+              widgets: {
+                overallProgress: true,
+                overdue: true,
+                dueToday: true,
+                periodProgress: true,
+                dueSoon: true,
+                compliance: true,
+                totalMaster: true,
+                ...(settingsRes.data.dashboardConfig.widgets || {}),
+              },
+            });
+          }
+        } catch (e) {
+          // ignore fallback
+        }
+
         const filters = await getFilterParams(user?.id);
         setLocations(filters.location || []);
         setItemStatuses(filters.item_status || []);
@@ -977,119 +1030,164 @@ const Index = () => {
         </Card>
       )}
 
-      {/* ─── Interactive 6-Card KPI Summary Grid (Equal-Height Compact Grid with Staggered Motion) ─ */}
+      {/* ─── Interactive KPI Summary Grid (Configurable Widgets) ─ */}
       <section
         aria-label="Key performance indicators"
-        className="grid gap-3 grid-cols-2 md:grid-cols-3 xl:grid-cols-6"
+        className={cn(
+          "grid gap-3 grid-cols-2 md:grid-cols-3",
+          visibleWidgetCount >= 7 && "xl:grid-cols-7",
+          visibleWidgetCount === 6 && "xl:grid-cols-6",
+          visibleWidgetCount === 5 && "xl:grid-cols-5",
+          visibleWidgetCount === 4 && "xl:grid-cols-4",
+          visibleWidgetCount === 3 && "xl:grid-cols-3",
+          visibleWidgetCount === 2 && "xl:grid-cols-2",
+          visibleWidgetCount === 1 && "xl:grid-cols-1"
+        )}
       >
-        {/* 1. Overdue Instruments */}
-        <KPICard
-          index={0}
-          title="Overdue"
-          value={loading ? "—" : data?.overdue || 0}
-          icon={AlertTriangle}
-          variant="critical"
-          subtitle={
-            loading
-              ? "Past due date"
-              : `${data?.workingOverdue || 0} Gauges · ${data?.referenceOverdue || 0} Master(s)`
-          }
-          actionLabel="Click to view list"
-          onClick={() => handleCardClick("overdue")}
-          loading={loading}
-          pulse={(data?.overdue || 0) > 0}
-        />
+        {/* 1. Calibration Overall Progress KPI Card */}
+        {dashboardConfig.widgets.overallProgress !== false && (
+          <KPICard
+            index={0}
+            title="Calibration Overall"
+            value={
+              loading
+                ? "—"
+                : `${data?.overallProgress?.calibrated ?? data?.calibratedCount ?? 0} / ${data?.overallProgress?.total ?? data?.total ?? 0}`
+            }
+            icon={CheckCircle2}
+            variant="success"
+            subtitle={
+              loading
+                ? "Total Completed Ratio"
+                : `${data?.overallProgress?.percentage ?? 0}% Completed`
+            }
+            progressPercent={data?.overallProgress?.percentage ?? 0}
+            actionLabel="Click to view list"
+            onClick={() => handleCardClick("calibrated")}
+            loading={loading}
+          />
+        )}
 
-        {/* 2. Today's Calibrations */}
-        <KPICard
-          index={1}
-          title="Due Today"
-          value={loading ? "—" : data?.dueTodayCount || 0}
-          icon={Calendar}
-          variant="primary"
-          subtitle={
-            loading
-              ? "Scheduled today"
-              : `${data?.workingDueTodayCount || 0} Gauges · ${data?.referenceDueTodayCount || 0} Master(s)`
-          }
-          actionLabel="Click to view list"
-          onClick={() => handleCardClick("today")}
-          loading={loading}
-          pulse={(data?.dueTodayCount || 0) > 0}
-        />
+        {/* 2. Overdue Instruments */}
+        {dashboardConfig.widgets.overdue !== false && (
+          <KPICard
+            index={1}
+            title="Overdue"
+            value={loading ? "—" : data?.overdue || 0}
+            icon={AlertTriangle}
+            variant="critical"
+            subtitle={
+              loading
+                ? "Past due date"
+                : `${data?.workingOverdue || 0} Gauges · ${data?.referenceOverdue || 0} Master(s)`
+            }
+            actionLabel="Click to view list"
+            onClick={() => handleCardClick("overdue")}
+            loading={loading}
+            pulse={(data?.overdue || 0) > 0}
+          />
+        )}
 
-        {/* 3. Monthly Calibration Target Plan (Progress Ratio 10/50) */}
-        <KPICard
-          index={2}
-          title="Period Progress"
-          value={loading ? "—" : `${completedCount} / ${plannedCount}`}
-          icon={Target}
-          variant="info"
-          subtitle={
-            loading
-              ? "Completed / Planned"
-              : `${completedCount} of ${plannedCount} completed`
-          }
-          progressPercent={targetProgressPercent}
-          actionLabel="Click to view list"
-          onClick={() => handleCardClick("calibrated")}
-          loading={loading}
-        />
+        {/* 3. Today's Calibrations */}
+        {dashboardConfig.widgets.dueToday !== false && (
+          <KPICard
+            index={2}
+            title="Due Today"
+            value={loading ? "—" : data?.dueTodayCount || 0}
+            icon={Calendar}
+            variant="primary"
+            subtitle={
+              loading
+                ? "Scheduled today"
+                : `${data?.workingDueTodayCount || 0} Gauges · ${data?.referenceDueTodayCount || 0} Master(s)`
+            }
+            actionLabel="Click to view list"
+            onClick={() => handleCardClick("today")}
+            loading={loading}
+            pulse={(data?.dueTodayCount || 0) > 0}
+          />
+        )}
 
-        {/* 4. Due Soon (Next 30 Days) */}
-        <KPICard
-          index={3}
-          title="Due Soon"
-          value={
-            loading
-              ? "—"
-              : (data?.dueSoonCount ?? data?.dueSoonList?.length ?? 0)
-          }
-          icon={Clock}
-          variant="warning"
-          subtitle={
-            loading
-              ? "Next 30 days"
-              : `${data?.workingDueSoonCount || 0} Gauges · ${data?.referenceDueSoonCount || 0} Master(s)`
-          }
-          actionLabel="Click to view schedule"
-          onClick={() => navigate("/calendar")}
-          loading={loading}
-        />
+        {/* 4. Period Progress */}
+        {dashboardConfig.widgets.periodProgress !== false && (
+          <KPICard
+            index={3}
+            title="Period Progress"
+            value={loading ? "—" : `${completedCount} / ${plannedCount}`}
+            icon={Target}
+            variant="info"
+            subtitle={
+              loading
+                ? "Completed / Planned"
+                : `${completedCount} of ${plannedCount} completed`
+            }
+            progressPercent={targetProgressPercent}
+            actionLabel="Click to view list"
+            onClick={() => handleCardClick("calibrated")}
+            loading={loading}
+          />
+        )}
 
-        {/* 5. Calibration Compliance % */}
-        <KPICard
-          index={4}
-          title="Compliance"
-          value={loading ? "—" : `${complianceRate}%`}
-          icon={ShieldCheck}
-          variant="success"
-          subtitle={
-            loading
-              ? "Compliant"
-              : `${(data?.total || 0) - (data?.overdue || 0)} of ${data?.total || 0} compliant`
-          }
-          actionLabel="Click to inspect"
-          onClick={() => navigate("/instruments")}
-          loading={loading}
-        />
+        {/* 5. Due Soon (Next 30 Days) */}
+        {dashboardConfig.widgets.dueSoon !== false && (
+          <KPICard
+            index={4}
+            title="Due Soon"
+            value={
+              loading
+                ? "—"
+                : (data?.dueSoonCount ?? data?.dueSoonList?.length ?? 0)
+            }
+            icon={Clock}
+            variant="warning"
+            subtitle={
+              loading
+                ? "Next 30 days"
+                : `${data?.workingDueSoonCount || 0} Gauges · ${data?.referenceDueSoonCount || 0} Master(s)`
+            }
+            actionLabel="Click to view schedule"
+            onClick={() => navigate("/calendar")}
+            loading={loading}
+          />
+        )}
 
-        {/* 6. Total Master Inventory */}
-        <KPICard
-          index={5}
-          title="Total Master"
-          value={loading ? "—" : data?.total || 0}
-          icon={Package}
-          variant="neutral"
-          subtitle={
-            loading
-              ? "Registered inventory"
-              : `${data?.workingTotal || 0} Gauges · ${data?.referenceTotal || 0} Ref Standard(s)`
-          }
-          actionLabel="Click to view all"
-          onClick={() => handleCardClick("total")}
-          loading={loading}
-        />
+        {/* 6. Calibration Compliance % */}
+        {dashboardConfig.widgets.compliance !== false && (
+          <KPICard
+            index={5}
+            title="Compliance"
+            value={loading ? "—" : `${complianceRate}%`}
+            icon={ShieldCheck}
+            variant="success"
+            subtitle={
+              loading
+                ? "Compliant"
+                : `${(data?.total || 0) - (data?.overdue || 0)} of ${data?.total || 0} compliant`
+            }
+            actionLabel="Click to inspect"
+            onClick={() => navigate("/instruments")}
+            loading={loading}
+          />
+        )}
+
+        {/* 7. Total Master Inventory */}
+        {dashboardConfig.widgets.totalMaster !== false && (
+          <KPICard
+            index={6}
+            title="Total Master"
+            value={loading ? "—" : data?.total || 0}
+            icon={Package}
+            variant="neutral"
+            subtitle={
+              loading
+                ? "Registered inventory"
+                : `${data?.workingTotal || 0} Gauges · ${data?.referenceTotal || 0} Ref Standard(s)`
+            }
+            actionLabel="Click to view all"
+            onClick={() => handleCardClick("total")}
+            loading={loading}
+          />
+        )}
       </section>
 
       {/* ─── Grid Row 1: Calibration Workload Bar & Status Donut Charts ── */}

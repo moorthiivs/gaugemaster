@@ -103,4 +103,11 @@ export class CreateSettingDto {
         ulrSeqLength: number;
         ulrNextSeq: number;
     };
+
+    @ApiProperty({ description: 'Dashboard & warning display configuration', required: false })
+    @IsOptional()
+    dashboardConfig?: {
+        warningDays?: number;
+        widgets?: Record<string, boolean>;
+    };
 }

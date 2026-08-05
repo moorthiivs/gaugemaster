@@ -35,7 +35,9 @@ export class InstrumentsController {
         @Query('is_reference_standard') is_reference_standard?: string,
         @Query('page') page: string = '1',
         @Query('pageSize') pageSize: string = '10',
-        @Query('createdBy') createdBy?: string
+        @Query('createdBy') createdBy?: string,
+        @Query('sortBy') sortBy?: string,
+        @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
     ) {
         const pageNumber = parseInt(page, 10);
         const limit = parseInt(pageSize, 10);
@@ -59,7 +61,9 @@ export class InstrumentsController {
             is_reference_standard,
             page: pageNumber,
             pageSize: limit,
-            createdBy
+            createdBy,
+            sortBy,
+            sortOrder,
         });
     }
 
@@ -120,6 +124,11 @@ export class InstrumentsController {
     }
 
     // Google Sheets integration removed based on user request
+
+    @Post('backfill-sino')
+    async backfillSino() {
+        return this.instrumentsService.backfillSino();
+    }
 
     @Post('bulk-upload')
     async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {

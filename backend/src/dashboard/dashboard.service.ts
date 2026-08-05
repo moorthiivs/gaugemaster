@@ -514,8 +514,17 @@ export class DashboardService {
             }
         }
 
+        const overallTotal = total || 0;
+        const overallCalibrated = calibratedCount || 0;
+        const overallPercentage = overallTotal > 0 ? Number(((overallCalibrated / overallTotal) * 100).toFixed(2)) : 0;
+
         return {
             total,
+            overallProgress: {
+                total: overallTotal,
+                calibrated: overallCalibrated,
+                percentage: overallPercentage,
+            },
             workingTotal: Number(kpiResult.workingTotal || 0),
             referenceTotal: Number(kpiResult.referenceTotal || 0),
             dueThisMonth,

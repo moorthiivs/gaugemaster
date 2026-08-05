@@ -74,6 +74,7 @@ interface DataTableProps<TData, TValue> {
   searchTooltip?: string
   hideSearch?: boolean
   hideColumnToggle?: boolean
+  getRowClassName?: (row: TData) => string
 }
 
 export function DataTable<TData, TValue>({
@@ -98,6 +99,7 @@ export function DataTable<TData, TValue>({
   searchTooltip,
   hideSearch = false,
   hideColumnToggle = false,
+  getRowClassName,
 }: DataTableProps<TData, TValue>) {
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [localColumnVisibility, setLocalColumnVisibility] = React.useState<VisibilityState>({})
@@ -390,7 +392,7 @@ export function DataTable<TData, TValue>({
                   <TableRow
                     key={row.id}
                     data-state={row.getIsSelected() && "selected"}
-                    className={`group transition-all hover:bg-primary/5 border-b border-muted/10 last:border-0 ${onRowClick ? "cursor-pointer" : ""}`}
+                    className={`group transition-all border-b border-muted/10 last:border-0 ${getRowClassName ? getRowClassName(row.original) : "hover:bg-primary/5"} ${onRowClick ? "cursor-pointer" : ""}`}
                     onClick={() => onRowClick?.(row.original)}
                   >
                     {row.getVisibleCells().map((cell, index) => {
