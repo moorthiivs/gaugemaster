@@ -13,7 +13,7 @@ export default function Register() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation()
-  const [username, setUsername] = useState("");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const from = (location.state as any)?.from?.pathname || "/dashboard"
@@ -21,7 +21,7 @@ export default function Register() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await register(username, email, password);
+      await register(name, email, password);
       toast({ title: "Welcome aboard!", description: "Your account is ready." });
       const setupCompleted = localStorage.getItem('setupCompleted')
       const redirectTo = !setupCompleted ? "/onboarding" : from
@@ -37,11 +37,11 @@ export default function Register() {
       <Card className="w-full max-w-md shadow-md" aria-label="Register card">
         <CardHeader>
           <CardTitle>Create account</CardTitle>
-          <CardDescription>Use a username, email, and password.</CardDescription>
+          <CardDescription>Use your full name, email, and password.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-3" onSubmit={onSubmit}>
-            <Input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} aria-label="Username" />
+            <Input placeholder="Full Name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Full Name" />
             <Input placeholder="email@example.com" type="email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Email" />
             <Input placeholder="••••••••" type="password" value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Password" />
             <Button type="submit" className="w-full">Create account</Button>

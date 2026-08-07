@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@loctax/nest-pg-boss": "^5.0.7",
+    "@nestjs/cli": "^11.0.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.6",
@@ -33,11 +34,14 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
     "@nestjs/schedule": "^6.0.1",
+    "@nestjs/schematics": "^11.0.0",
     "@nestjs/swagger": "^11.2.0",
     "@nestjs/typeorm": "^11.0.0",
+    "@types/jszip": "^3.4.0",
     "bcryptjs": "^3.0.2",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
+    "cpx": "^1.5.0",
     "csv-stringify": "^6.6.0",
     "date-fns": "^4.1.0",
     "dayjs": "^1.11.13",
@@ -47,6 +51,7 @@
     "html-to-pdfmake": "^2.5.1",
     "jsdom": "^24.0.0",
     "jsonwebtoken": "^9.0.2",
+    "jszip": "^3.10.1",
     "mammoth": "^1.10.0",
     "mysql2": "^3.14.3",
     "node-cron": "^4.2.1",
@@ -60,11 +65,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "typeorm": "^0.3.25",
-    "uuid": "^11.1.0",
-    "@nestjs/cli": "^11.0.0",
-    "@nestjs/schematics": "^11.0.0",
     "typescript": "^5.9.2",
-    "cpx": "^1.5.0"
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",

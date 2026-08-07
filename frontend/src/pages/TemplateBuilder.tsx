@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,10 +33,14 @@ import {
   Zap,
   Scale,
   Droplets,
+  Download,
+  Upload,
 } from "lucide-react";
 import { CALIBRATION_TYPES } from "@/types/calibration";
 import { CalibrationTemplate } from "@/types/template";
 import { getTemplates, createTemplate, deleteTemplate } from "@/lib/templateActions";
+import { TemplateExportModal } from "@/components/calibration/template-management/TemplateExportModal";
+import { TemplateImportModal } from "@/components/calibration/template-management/TemplateImportModal";
 
 const TYPE_ICONS: Record<string, any> = {
   dimensional: Ruler,
@@ -59,6 +64,11 @@ export default function TemplateBuilder() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState("All");
+
+  // Selection & Management State
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
 
   // Delete Dialog State
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -91,6 +101,7 @@ export default function TemplateBuilder() {
   const handleOpenEditModal = (tpl: CalibrationTemplate) => {
     navigate(`/calibration/templates/builder?id=${tpl.id}`);
   };
+
   const handleDuplicate = async (tpl: CalibrationTemplate) => {
     try {
       const duplicateData: Partial<CalibrationTemplate> = {
@@ -116,6 +127,7 @@ export default function TemplateBuilder() {
       await deleteTemplate(deleteId);
       toast.success("Template deleted");
       setTemplates((prev) => prev.filter((t) => t.id !== deleteId));
+      setSelectedIds((prev) => prev.filter((id) => id !== deleteId));
     } catch {
       toast.error("Failed to delete template");
     } finally {
@@ -132,6 +144,22 @@ export default function TemplateBuilder() {
     );
   });
 
+  const selectedTemplatesList = templates.filter((t) => selectedIds.includes(t.id));
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === filteredTemplates.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredTemplates.map((t) => t.id));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+    );
+  };
+
   return (
     <div className="space-y-6 py-6 px-4 max-w-[1600px] mx-auto">
       {/* Header */}
@@ -142,13 +170,31 @@ export default function TemplateBuilder() {
             Calibration Template Builder
           </h1>
           <p className="text-sm text-muted-foreground">
-            Create, manage, and reuse standardized calibration formats grouped by Calibration Type
+            Create, manage, export, and import reusable calibration formats across organizations
           </p>
         </div>
-        <Button onClick={handleOpenNewModal} className="gap-2 shadow-lg">
-          <PlusCircle className="w-4 h-4" />
-          Create New Template
-        </Button>
+        
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={() => setImportModalOpen(true)} className="gap-1.5 text-xs">
+            <Upload className="w-3.5 h-3.5 text-primary" />
+            Import Templates
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setExportModalOpen(true)}
+            className="gap-1.5 text-xs"
+          >
+            <Download className="w-3.5 h-3.5 text-primary" />
+            Export Packages {selectedIds.length > 0 && `(${selectedIds.length})`}
+          </Button>
+
+          <Button onClick={handleOpenNewModal} size="sm" className="gap-2 shadow-sm text-xs">
+            <PlusCircle className="w-4 h-4" />
+            Create New Template
+          </Button>
+        </div>
       </div>
 
       {/* Category Tabs / Filters */}
@@ -183,15 +229,30 @@ export default function TemplateBuilder() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <div className="relative flex-1 min-w-[240px] max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search templates by name, instrument type..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 text-xs"
-              />
+            <div className="flex items-center gap-3 flex-1 min-w-[240px] max-w-xl">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleSelectAll}
+                className="text-xs gap-1.5 shrink-0"
+              >
+                <Checkbox
+                  checked={selectedIds.length > 0 && selectedIds.length === filteredTemplates.length}
+                />
+                Select All ({selectedIds.length}/{filteredTemplates.length})
+              </Button>
+
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search templates by name, instrument type..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 text-xs"
+                />
+              </div>
             </div>
+
             <div className="text-xs text-muted-foreground">
               Showing {filteredTemplates.length} of {templates.length} templates
             </div>
@@ -212,28 +273,39 @@ export default function TemplateBuilder() {
                 const calTypeConfig = CALIBRATION_TYPES.find(
                   (c) => c.type === tpl.calibration_type
                 );
+                const isSelected = selectedIds.includes(tpl.id);
 
                 return (
                   <Card
                     key={tpl.id}
-                    className="group relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:border-primary/50"
+                    className={`group relative overflow-hidden transition-all duration-300 hover:shadow-lg ${
+                      isSelected ? "border-primary ring-1 ring-primary bg-primary/5" : "hover:border-primary/50"
+                    }`}
                   >
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="space-y-1 flex-1">
-                          <Badge variant="outline" className="text-[10px] gap-1 font-normal capitalize">
-                            <IconComp className="w-3 h-3 text-primary" />
-                            {calTypeConfig?.label || tpl.calibration_type}
-                          </Badge>
-                          <CardTitle className="text-base font-semibold line-clamp-1">
-                            {tpl.name}
-                          </CardTitle>
-                          <CardDescription className="text-xs line-clamp-1">
-                            Instrument: <span className="font-medium text-foreground">{tpl.instrument_type}</span>
-                          </CardDescription>
+                        <div className="flex items-start gap-2.5 flex-1">
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleSelectOne(tpl.id)}
+                            className="mt-1"
+                          />
+                          <div className="space-y-1 flex-1">
+                            <Badge variant="outline" className="text-[10px] gap-1 font-normal capitalize">
+                              <IconComp className="w-3 h-3 text-primary" />
+                              {calTypeConfig?.label || tpl.calibration_type}
+                            </Badge>
+                            <CardTitle className="text-base font-semibold line-clamp-1">
+                              {tpl.name}
+                            </CardTitle>
+                            <CardDescription className="text-xs line-clamp-1">
+                              Instrument: <span className="font-medium text-foreground">{tpl.instrument_type}</span>
+                            </CardDescription>
+                          </div>
                         </div>
                       </div>
                     </CardHeader>
+
                     <CardContent className="space-y-3 pt-0 text-xs">
                       {tpl.description && (
                         <p className="text-muted-foreground line-clamp-2 text-[11px]">
@@ -265,7 +337,7 @@ export default function TemplateBuilder() {
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7"
-                            title="Duplicate"
+                            title="Duplicate Local"
                             onClick={() => handleDuplicate(tpl)}
                           >
                             <Copy className="w-3.5 h-3.5" />
@@ -300,12 +372,18 @@ export default function TemplateBuilder() {
               <FileSpreadsheet className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
               <p className="text-sm font-medium">No templates found</p>
               <p className="text-xs text-muted-foreground mb-4">
-                Create reusable calibration formats to accelerate calibration entry.
+                Create reusable calibration formats or import existing template packages.
               </p>
-              <Button onClick={handleOpenNewModal} className="gap-2">
-                <PlusCircle className="w-4 h-4" />
-                Create Template
-              </Button>
+              <div className="flex items-center justify-center gap-3">
+                <Button variant="outline" onClick={() => setImportModalOpen(true)} className="gap-2">
+                  <Upload className="w-4 h-4" />
+                  Import Package
+                </Button>
+                <Button onClick={handleOpenNewModal} className="gap-2">
+                  <PlusCircle className="w-4 h-4" />
+                  Create Template
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -331,6 +409,27 @@ export default function TemplateBuilder() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Export Modal */}
+      <TemplateExportModal
+        open={exportModalOpen}
+        onOpenChange={setExportModalOpen}
+        selectedTemplates={selectedTemplatesList}
+        allTemplates={filteredTemplates}
+        companyId={user?.companyId}
+        userId={user?.id}
+        userName={user?.name}
+      />
+
+      {/* Import Modal */}
+      <TemplateImportModal
+        open={importModalOpen}
+        onOpenChange={setImportModalOpen}
+        companyId={user?.companyId}
+        userId={user?.id}
+        userName={user?.name}
+        onSuccess={fetchTemplates}
+      />
     </div>
   );
 }

@@ -20,14 +20,34 @@ const DAYS_OF_WEEK = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 
 
-function getLoadLevel(cellDate: Date, today: Date): "low" | "medium" | "high" {
+function getLoadLevel(cellDate: Date, today: Date, dayInstruments?: CalendarInstrument[]): "low" | "medium" | "high" {
+  if (!dayInstruments || dayInstruments.length === 0) return "low";
+
+  const allCalibrated = dayInstruments.every(
+    (inst) =>
+      inst.eventType === "completed" ||
+      inst.status?.toLowerCase() === "ok" ||
+      inst.status?.toLowerCase() === "calibrated"
+  );
+
+  if (allCalibrated) {
+    return "low"; // Completed / OK -> Green
+  }
+
   const cellTime = new Date(cellDate.getFullYear(), cellDate.getMonth(), cellDate.getDate()).getTime();
   const todayTime = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   const diffDays = (cellTime - todayTime) / (1000 * 60 * 60 * 24);
 
-  if (diffDays < 0) return "high";      // Overdue (past date)
-  if (diffDays <= 7) return "medium";   // Due within 7 days
-  return "low";                          // Due later (safe)
+  const hasOverdueStatus = dayInstruments.some((inst) => inst.status?.toLowerCase().includes("over"));
+  if (hasOverdueStatus || diffDays < 0) {
+    return "high"; // Overdue -> Red
+  }
+
+  if (diffDays <= 7) {
+    return "medium"; // Due within 7 days -> Amber
+  }
+
+  return "low"; // Due later -> Green
 }
 
 const loadColors = {
@@ -37,7 +57,7 @@ const loadColors = {
 };
 
 const loadLegend = [
-  { key: "low", label: "UPCOMING", color: "bg-emerald-500" },
+  { key: "low", label: "UPCOMING / COMPLETED", color: "bg-emerald-500" },
   { key: "medium", label: "DUE SOON", color: "bg-amber-500" },
   { key: "high", label: "OVERDUE", color: "bg-red-500" },
 ];
@@ -219,7 +239,7 @@ export default function CalendarPage() {
                     const count = dayData?.count || 0;
                     const today = cell.isCurrentMonth && isToday(cell.day);
                     const cellDate = new Date(year, month - 1, cell.day);
-                    const load = count > 0 ? getLoadLevel(cellDate, now) : null;
+                    const load = count > 0 ? getLoadLevel(cellDate, now, dayData?.instruments) : null;
 
                     return (
                       <div

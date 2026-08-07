@@ -32,4 +32,7 @@ export class CompanyService {
     return savedCompany;
   }
 
+  async findAll(): Promise<Company[]> {
+    return this.companyRepository.find();
+  }
 }

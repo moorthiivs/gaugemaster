@@ -14,10 +14,17 @@ export class CalibrationTemplatesService {
 
   async create(dto: CreateCalibrationTemplateDto): Promise<CalibrationTemplate> {
     if (dto.name) {
-      const existing = await this.repository
+      const qb = this.repository
         .createQueryBuilder('template')
-        .where('LOWER(template.name) = LOWER(:name)', { name: dto.name.trim() })
-        .getOne();
+        .where('LOWER(template.name) = LOWER(:name)', { name: dto.name.trim() });
+
+      if (dto.companyId) {
+        qb.andWhere('(template.companyId = :companyId OR template.companyId IS NULL)', { companyId: dto.companyId });
+      } else if (dto.userId) {
+        qb.andWhere('(template.userId = :userId OR template.companyId IS NULL)', { userId: dto.userId });
+      }
+
+      const existing = await qb.getOne();
 
       if (existing) {
         throw new BadRequestException(
@@ -80,11 +87,21 @@ export class CalibrationTemplatesService {
   ): Promise<CalibrationTemplate> {
     const template = await this.findOne(id);
     if (dto.name) {
-      const existing = await this.repository
+      const qb = this.repository
         .createQueryBuilder('template')
         .where('LOWER(template.name) = LOWER(:name)', { name: dto.name.trim() })
-        .andWhere('template.id != :id', { id })
-        .getOne();
+        .andWhere('template.id != :id', { id });
+
+      const targetCompanyId = dto.companyId || template.companyId;
+      const targetUserId = dto.userId || template.userId;
+
+      if (targetCompanyId) {
+        qb.andWhere('(template.companyId = :companyId OR template.companyId IS NULL)', { companyId: targetCompanyId });
+      } else if (targetUserId) {
+        qb.andWhere('(template.userId = :userId OR template.companyId IS NULL)', { userId: targetUserId });
+      }
+
+      const existing = await qb.getOne();
 
       if (existing) {
         throw new BadRequestException(

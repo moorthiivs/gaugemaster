@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,10 +40,22 @@ export default function OnboardingWizard() {
     companySize: "",
     industry: "",
     role: "",
-    userName: "",
-    registeredUserId: user.id,
-    registeredEmail: user.email
+    userName: user?.name || "",
+    registeredUserId: user?.id || "",
+    registeredEmail: user?.email || ""
   });
+
+  useEffect(() => {
+    if (user) {
+      setSetupData(prev => ({
+        ...prev,
+        userName: prev.userName || user.name || "",
+        registeredUserId: prev.registeredUserId || user.id || "",
+        registeredEmail: prev.registeredEmail || user.email || ""
+      }));
+    }
+  }, [user]);
+
   const [loading, setLoading] = useState(false);
 
   const totalSteps = 3;
@@ -65,7 +77,7 @@ export default function OnboardingWizard() {
     setLoading(true)
     try {
       const response = await httpClient.post(
-        `/api/company/register`,
+        `/company/register`,
         setupData
       );
 

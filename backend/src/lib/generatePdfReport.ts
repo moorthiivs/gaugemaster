@@ -32,20 +32,22 @@ async function generatePdfReport(instruments: any) {
     ];
 
     // Fill rows
-    instruments.forEach((inst, i) => {
+    instruments.forEach((inst: any, i: number) => {
+        const lastCal = inst.last_calibration_date ? String(inst.last_calibration_date).split('T')[0] : '-';
+        const dueDate = inst.due_date ? String(inst.due_date).split('T')[0] : '-';
         body.push([
-            i + 1,
-            inst.id_code,
-            inst.name,
-            inst.location,
-            inst.frequency,
-            inst.last_calibration_date.toISOString().split('T')[0],
-            inst.due_date.toISOString().split('T')[0],
-            inst.agency,
-            inst.range,
-            inst.serial_no,
-            inst.least_count,
-            inst.status,
+            String(i + 1),
+            inst.id_code || '-',
+            inst.name || '-',
+            inst.location || '-',
+            inst.frequency || '-',
+            lastCal,
+            dueDate,
+            inst.agency || '-',
+            inst.range || '-',
+            inst.serial_no || '-',
+            inst.least_count || '-',
+            inst.status || '-',
             inst.created_by?.name || inst.created_by?.id || '-',
         ]);
     });

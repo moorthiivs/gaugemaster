@@ -647,57 +647,90 @@ export class InstrumentsService {
 
         for (const inst of instruments) {
             const freqMonths = parseFreqMonths(inst.frequency);
-            const dateSources = [
-                { dateStr: inst.due_date, type: 'due' },
-                { dateStr: inst.last_calibration_date, type: 'last' },
-            ].filter(d => Boolean(d.dateStr));
 
-            if (dateSources.length === 0) continue;
+            // 1. Completed calibration on last_calibration_date
+            if (inst.last_calibration_date) {
+                const calDate = new Date(inst.last_calibration_date);
+                if (!isNaN(calDate.getTime())) {
+                    const localCalDate = new Date(calDate.getTime() + tzOffsetMinutes * 60 * 1000);
+                    const calYr = localCalDate.getUTCFullYear();
+                    const calMo = localCalDate.getUTCMonth() + 1;
+                    const calDay = localCalDate.getUTCDate();
 
-            let addedForThisInstrument = false;
-
-            for (const source of dateSources) {
-                if (addedForThisInstrument) break;
-
-                const utcDate = new Date(source.dateStr!);
-                if (isNaN(utcDate.getTime())) continue;
-
-                // Adjust UTC date to user's local timezone
-                const localDate = new Date(utcDate.getTime() + tzOffsetMinutes * 60 * 1000);
-                const baseYear = localDate.getUTCFullYear();
-                const baseMonth = localDate.getUTCMonth() + 1; // 1-12
-                const baseDay = localDate.getUTCDate();
-
-                // Difference in months between target month/year and base month/year
-                const totalMonthsDiff = (targetYear - baseYear) * 12 + (targetMonth - baseMonth);
-
-                // Check if target month falls on a frequency interval step
-                if (totalMonthsDiff >= 0 && totalMonthsDiff % freqMonths === 0) {
-                    const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
-                    const scheduledDay = Math.min(baseDay, daysInTargetMonth);
-                    const scheduledDateISO = new Date(Date.UTC(targetYear, targetMonth - 1, scheduledDay)).toISOString();
-
-                    if (!grouped[scheduledDay]) {
-                        grouped[scheduledDay] = { count: 0, instruments: [] };
+                    if (calYr === targetYear && calMo === targetMonth) {
+                        if (!grouped[calDay]) {
+                            grouped[calDay] = { count: 0, instruments: [] };
+                        }
+                        const exists = grouped[calDay].instruments.some(i => i.id === inst.id && i.eventType === 'completed');
+                        if (!exists) {
+                            grouped[calDay].count++;
+                            grouped[calDay].instruments.push({
+                                id: inst.id,
+                                name: inst.name,
+                                id_code: inst.id_code,
+                                due_date: localCalDate.toISOString(),
+                                status: inst.status || 'OK',
+                                location: inst.location,
+                                agency: inst.agency,
+                                frequency: inst.frequency || `${freqMonths} month(s)`,
+                                eventType: 'completed',
+                            });
+                            totalCount++;
+                        }
                     }
+                }
+            }
 
-                    // Prevent duplicate entries of the same instrument on the same day
-                    const exists = grouped[scheduledDay].instruments.some(i => i.id === inst.id);
-                    if (!exists) {
-                        grouped[scheduledDay].count++;
-                        grouped[scheduledDay].instruments.push({
-                            id: inst.id,
-                            name: inst.name,
-                            id_code: inst.id_code,
-                            due_date: scheduledDateISO,
-                            status: inst.status,
-                            location: inst.location,
-                            agency: inst.agency,
-                            frequency: inst.frequency || `${freqMonths} month(s)`,
-                        });
-                        totalCount++;
-                        addedForThisInstrument = true;
-                    }
+            // 2. Next due calibration on due_date (or projected due date if due_date is missing)
+            let rawDueDate: any = inst.due_date;
+            if (!rawDueDate && inst.last_calibration_date) {
+                const lastDate = new Date(inst.last_calibration_date);
+                if (!isNaN(lastDate.getTime())) {
+                    lastDate.setMonth(lastDate.getMonth() + freqMonths);
+                    rawDueDate = lastDate;
+                }
+            }
+
+            if (!rawDueDate) continue;
+
+            const utcDate = new Date(rawDueDate);
+            if (isNaN(utcDate.getTime())) continue;
+
+            // Adjust UTC date to user's local timezone
+            const localDate = new Date(utcDate.getTime() + tzOffsetMinutes * 60 * 1000);
+            const baseYear = localDate.getUTCFullYear();
+            const baseMonth = localDate.getUTCMonth() + 1; // 1-12
+            const baseDay = localDate.getUTCDate();
+
+            // Difference in months between target month/year and base due date month/year
+            const totalMonthsDiff = (targetYear - baseYear) * 12 + (targetMonth - baseMonth);
+
+            // Check if target month is due date or a future recurring cycle step
+            if (totalMonthsDiff >= 0 && totalMonthsDiff % freqMonths === 0) {
+                const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
+                const scheduledDay = Math.min(baseDay, daysInTargetMonth);
+                const scheduledDateISO = new Date(Date.UTC(targetYear, targetMonth - 1, scheduledDay)).toISOString();
+
+                if (!grouped[scheduledDay]) {
+                    grouped[scheduledDay] = { count: 0, instruments: [] };
+                }
+
+                // Prevent duplicate entries of the same instrument on the same day for due event
+                const exists = grouped[scheduledDay].instruments.some(i => i.id === inst.id && i.eventType === 'due');
+                if (!exists) {
+                    grouped[scheduledDay].count++;
+                    grouped[scheduledDay].instruments.push({
+                        id: inst.id,
+                        name: inst.name,
+                        id_code: inst.id_code,
+                        due_date: scheduledDateISO,
+                        status: inst.status,
+                        location: inst.location,
+                        agency: inst.agency,
+                        frequency: inst.frequency || `${freqMonths} month(s)`,
+                        eventType: 'due',
+                    });
+                    totalCount++;
                 }
             }
         }

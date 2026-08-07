@@ -112,6 +112,7 @@ export interface CalendarInstrument {
   status: string;
   location: string;
   agency: string;
+  eventType?: 'completed' | 'due';
 }
 
 export interface DayData {

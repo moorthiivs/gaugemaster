@@ -23,7 +23,7 @@ export type AuthContextType = {
   isNewCustomer: boolean;
   signInWithGoogleToken: (token: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
-  register: (username: string, email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
   signOut: () => void;
   setIsNewCustomer: (value: boolean) => void;
   setUser: React.Dispatch<React.SetStateAction<User | null>>;
@@ -133,9 +133,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       },
 
-      register: async (username: string, email: string, password: string) => {
+      register: async (name: string, email: string, password: string) => {
         try {
-          const response = await axios.post(`/api/auth/register`, { name: username, email, password });
+          const response = await axios.post(`/api/auth/register`, { name, email, password });
           const { accessToken, user } = response.data;
 
           const userObj: User = {

@@ -103,12 +103,13 @@ export default function TemplateBuilderForm() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isFullWindowPage]);
 
-  // Fetch all templates to validate unique template names
+  // Fetch existing templates for current company to validate unique template names
   useEffect(() => {
-    getTemplates()
+    if (!user?.id) return;
+    getTemplates({ userId: user.id, companyId: user.companyId })
       .then((tpls) => setExistingTemplates(tpls))
       .catch(() => {});
-  }, []);
+  }, [user?.id, user?.companyId]);
 
   // Fetch existing template if editing
   useEffect(() => {

@@ -1312,7 +1312,6 @@ export class CertificateService {
                 {},
                 {},
                 {},
-                {},
               ],
             ],
           },
