@@ -123,11 +123,6 @@ export class DashboardService {
         if (location && location !== 'All') {
             kpiQuery.andWhere('instrument.location ILIKE :location', { location });
         }
-        if (isReferenceStandard === 'true') {
-            kpiQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            kpiQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
-        }
 
         const kpiResult = await kpiQuery.getRawOne();
         const total = Number(kpiResult.total || 0);
@@ -514,24 +509,43 @@ export class DashboardService {
             }
         }
 
-        const overallTotal = total || 0;
+        const grandTotal = Number(kpiResult.total || 0);
+        const activeTotal = isReferenceStandard === 'true'
+            ? Number(kpiResult.referenceTotal || 0)
+            : isReferenceStandard === 'false'
+                ? Number(kpiResult.workingTotal || 0)
+                : grandTotal;
+
+        const activeOverdue = isReferenceStandard === 'true'
+            ? Number(kpiResult.referenceOverdue || 0)
+            : isReferenceStandard === 'false'
+                ? Number(kpiResult.workingOverdue || 0)
+                : Number(kpiResult.overdue || 0);
+
+        const activeDueSoon = isReferenceStandard === 'true'
+            ? Number(kpiResult.referenceDueSoon || 0)
+            : isReferenceStandard === 'false'
+                ? Number(kpiResult.workingDueSoon || 0)
+                : Number(kpiResult.dueSoon || 0);
+
         const overallCalibrated = calibratedCount || 0;
-        const overallPercentage = overallTotal > 0 ? Number(((overallCalibrated / overallTotal) * 100).toFixed(2)) : 0;
+        const overallPercentage = activeTotal > 0 ? Number(((overallCalibrated / activeTotal) * 100).toFixed(2)) : 0;
 
         return {
-            total,
+            total: activeTotal,
+            grandTotal,
             overallProgress: {
-                total: overallTotal,
+                total: activeTotal,
                 calibrated: overallCalibrated,
                 percentage: overallPercentage,
             },
             workingTotal: Number(kpiResult.workingTotal || 0),
             referenceTotal: Number(kpiResult.referenceTotal || 0),
             dueThisMonth,
-            overdue,
+            overdue: activeOverdue,
             workingOverdue: Number(kpiResult.workingOverdue || 0),
             referenceOverdue: Number(kpiResult.referenceOverdue || 0),
-            dueSoonCount,
+            dueSoonCount: activeDueSoon,
             workingDueSoonCount: Number(kpiResult.workingDueSoon || 0),
             referenceDueSoonCount: Number(kpiResult.referenceDueSoon || 0),
             calibratedCount,

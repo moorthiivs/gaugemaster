@@ -109,6 +109,7 @@ export interface CalendarInstrument {
   name: string;
   id_code: string;
   due_date: string;
+  last_calibration_date?: string | null;
   status: string;
   location: string;
   agency: string;

@@ -665,6 +665,36 @@ export class CertificateService {
       }
     }
 
+    // ── Resolve Approval Seal image to base64 for pdfmake ──
+    let sealDataUrl: string | null = null;
+    const possibleSealPaths = [
+      path.join(process.cwd(), 'src', 'assets', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), '..', 'frontend', 'public', 'Approved-seal1.png'),
+      path.join(__dirname, '..', 'assets', 'Approved-seal1.png'),
+      path.join(__dirname, 'assets', 'Approved-seal1.png'),
+    ];
+    for (const p of possibleSealPaths) {
+      if (fs.existsSync(p)) {
+        try {
+          let sealBuffer = fs.readFileSync(p);
+          const headerHex = sealBuffer.slice(0, 8).toString('hex');
+          const isJpeg = headerHex.startsWith('ffd8ff');
+          const isPng = headerHex.startsWith('89504e47');
+          if (isPng) {
+            try {
+              sealBuffer = await removeWhiteBackground(sealBuffer);
+            } catch (e) {}
+            sealDataUrl = `data:image/png;base64,${sealBuffer.toString('base64')}`;
+            break;
+          } else if (isJpeg) {
+            sealDataUrl = `data:image/jpeg;base64,${sealBuffer.toString('base64')}`;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+
     const headerBgColor = (certConfig as any)?.headerBgColor || '#54c6f3'; // Cyan sky blue banner color matching Image 1 & Image 2 layout
 
     // ── Build left header cell (logo and/or company name) ──
@@ -1426,22 +1456,28 @@ export class CertificateService {
                 },
                 {
                   stack: [
-                    {
-                      text: 'CALIBRATION',
-                      alignment: 'center',
-                      fontSize: 7,
-                      bold: true,
-                      color: '#0369a1',
-                    },
-                    {
-                      text: 'SEAL / STAMP',
-                      alignment: 'center',
-                      fontSize: 7,
-                      bold: true,
-                      color: '#0369a1',
-                    },
+                    sealDataUrl
+                      ? { image: sealDataUrl, fit: [75, 45], alignment: 'center' }
+                      : {
+                          stack: [
+                            {
+                              text: 'CALIBRATION',
+                              alignment: 'center',
+                              fontSize: 7,
+                              bold: true,
+                              color: '#0369a1',
+                            },
+                            {
+                              text: 'SEAL / STAMP',
+                              alignment: 'center',
+                              fontSize: 7,
+                              bold: true,
+                              color: '#0369a1',
+                            },
+                          ],
+                        },
                   ],
-                  margin: [2, 8, 2, 2],
+                  margin: [2, 2, 2, 2],
                 },
                 {
                   stack: [

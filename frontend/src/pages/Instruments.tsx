@@ -67,6 +67,27 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
   { id: "certificate", label: "Certificate", visible: true },
 ];
 
+const SESSION_KEY_SELECTED = "gaugemaster_selected_instrument_ids";
+const SESSION_KEY_OBJECTS = "gaugemaster_selected_instrument_objects";
+
+const getInitialSelected = (): Record<string, boolean> => {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY_SELECTED);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const getInitialSelectedObjects = (): Record<string, Instrument> => {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY_OBJECTS);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
 const pageSize = 10;
 const BASE_URL = (httpClient.defaults.baseURL || "http://localhost:5000/api").replace(/\/api$/, "");
 
@@ -107,8 +128,8 @@ export default function Instruments() {
   const [data, setData] = useState<{ items: Instrument[]; total: number }>({ items: [], total: 0 });
   const [allData, setAllData] = useState<Instrument[]>([]); // store original data
   const [loading, setLoading] = useState(false);
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [selectedObjects, setSelectedObjects] = useState<Record<string, Instrument>>({});
+  const [selected, setSelected] = useState<Record<string, boolean>>(getInitialSelected);
+  const [selectedObjects, setSelectedObjects] = useState<Record<string, Instrument>>(getInitialSelectedObjects);
   const [selectedReviewModalOpen, setSelectedReviewModalOpen] = useState(false);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
     range: false,
@@ -580,9 +601,30 @@ export default function Instruments() {
     });
   };
 
+  useEffect(() => {
+    try {
+      if (Object.keys(selected).length > 0) {
+        sessionStorage.setItem(SESSION_KEY_SELECTED, JSON.stringify(selected));
+      } else {
+        sessionStorage.removeItem(SESSION_KEY_SELECTED);
+      }
+      if (Object.keys(selectedObjects).length > 0) {
+        sessionStorage.setItem(SESSION_KEY_OBJECTS, JSON.stringify(selectedObjects));
+      } else {
+        sessionStorage.removeItem(SESSION_KEY_OBJECTS);
+      }
+    } catch (e) {
+      console.error("Failed to sync selection to sessionStorage", e);
+    }
+  }, [selected, selectedObjects]);
+
   const handleClearAllSelections = () => {
     setSelected({});
     setSelectedObjects({});
+    try {
+      sessionStorage.removeItem(SESSION_KEY_SELECTED);
+      sessionStorage.removeItem(SESSION_KEY_OBJECTS);
+    } catch (e) {}
   };
 
   const toggleAll = (checked: boolean) => {
@@ -1622,6 +1664,16 @@ export default function Instruments() {
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       <span>Delete {selectedIds.length} Selected</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs font-semibold animate-in fade-in gap-1.5 border-amber-500/40 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 hover:border-amber-500/60 shadow-sm"
+                      onClick={handleClearAllSelections}
+                      title="Clear all selected checkboxes"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span>Clear Selection</span>
                     </Button>
                   </>
                 )}

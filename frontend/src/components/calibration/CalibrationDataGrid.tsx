@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CalibrationPoint, CalibrationTypeConfig } from "@/types/calibration";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2 } from "lucide-react";
+import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2, Maximize2, Minimize2 } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -59,6 +61,8 @@ interface CalibrationDataGridProps {
   onStatusRuleChange?: (ruleType: "default" | "custom_formula", formula: string) => void;
   initialDecimalPlaces?: number;
   onDecimalPlacesChange?: (dp: number) => void;
+  initialIsFullscreen?: boolean;
+  onFullscreenToggle?: (isFullscreen: boolean) => void;
 }
 
 const ALL_STANDARD_COLUMNS = [
@@ -97,8 +101,43 @@ export function CalibrationDataGrid({
   onStatusRuleChange,
   initialDecimalPlaces = 4,
   onDecimalPlacesChange,
+  initialIsFullscreen = false,
+  onFullscreenToggle,
 }: CalibrationDataGridProps) {
   const hasDescending = typeConfig.columns.some((c) => c.key === "descending_reading");
+
+  // Full Window View State
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(initialIsFullscreen);
+
+  useEffect(() => {
+    if (initialIsFullscreen !== undefined) {
+      setIsFullscreen(initialIsFullscreen);
+    }
+  }, [initialIsFullscreen]);
+
+  const toggleFullscreen = (val?: boolean) => {
+    const nextVal = val !== undefined ? val : !isFullscreen;
+    setIsFullscreen(nextVal);
+    if (onFullscreenToggle) onFullscreenToggle(nextVal);
+  };
+
+  useEffect(() => {
+    if (isFullscreen) {
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = "";
+    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isFullscreen) {
+        toggleFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFullscreen]);
 
   // Raw input strings for decimal inputs
   const [rawInputs, setRawInputs] = useState<Record<string, string>>({});
@@ -881,8 +920,60 @@ export function CalibrationDataGrid({
 
   const virtualItems = rowVirtualizer.getVirtualItems();
 
-  return (
-    <div className="space-y-4">
+  const gridContent = (
+    <div
+      className={cn(
+        "space-y-4 transition-all duration-200",
+        isFullscreen &&
+          "fixed inset-0 z-[9999] bg-background text-foreground p-4 sm:p-6 flex flex-col justify-between overflow-hidden shadow-2xl animate-in fade-in duration-200"
+      )}
+    >
+      {/* Full Window Mode Top Bar */}
+      {isFullscreen && (
+        <div className="flex items-center justify-between pb-3 border-b bg-muted/40 p-3.5 rounded-xl shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-primary/10 text-primary">
+              <Maximize2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                Full Window Calibration Data Entry Mode
+                <Badge variant="outline" className="text-xs font-mono bg-primary/10 text-primary border-primary/30">
+                  {points.length} Points
+                </Badge>
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Comfortable full window layout for entering readings without scrolling. Press <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-muted border rounded shadow-2xs">Esc</kbd> to exit.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {points.some((p) => p.status !== undefined) && (
+              <div className="flex items-center gap-2 bg-background px-3 py-1.5 rounded-lg border text-xs font-bold shadow-2xs">
+                <span className="text-emerald-600">
+                  {points.filter((p) => p.status === "PASS").length} Pass
+                </span>
+                <span className="text-muted-foreground">•</span>
+                <span className="text-red-600">
+                  {points.filter((p) => p.status === "FAIL").length} Fail
+                </span>
+              </div>
+            )}
+
+            <Button
+              size="sm"
+              variant="default"
+              onClick={() => toggleFullscreen(false)}
+              className="gap-1.5 text-xs font-bold rounded-lg shadow-sm"
+            >
+              <Minimize2 className="w-4 h-4" />
+              Exit Full Window (Esc)
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Top Config & Toolbar Bar */}
       <div className="flex flex-wrap items-end justify-between gap-4 p-4 border rounded-xl bg-card shadow-xs">
         <div className="flex items-center gap-3 flex-wrap">
@@ -998,6 +1089,32 @@ export function CalibrationDataGrid({
         </div>
 
         <div className="flex items-end gap-2 ml-auto flex-wrap">
+          {/* Full Window View Toggle Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => toggleFullscreen()}
+            className={cn(
+              "text-xs gap-1.5 font-bold transition-all shadow-xs",
+              isFullscreen
+                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                : "border-primary/40 text-primary hover:bg-primary/10 hover:border-primary"
+            )}
+            title={isFullscreen ? "Exit Full Window View (Esc)" : "Expand grid to Full Window View"}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5" />
+                Exit Full Window
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5" />
+                Full Window View
+              </>
+            )}
+          </Button>
+
           {/* Template & Grid Settings Modal Button */}
           <Button
             variant="outline"
@@ -1022,7 +1139,7 @@ export function CalibrationDataGrid({
                 )}
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-64 p-3 space-y-3" align="end">
+            <PopoverContent className="w-64 p-3 space-y-3 z-[10000]" align="end">
               <div className="flex items-center justify-between border-b pb-2">
                 <span className="font-bold text-xs">Toggle Column Visibility</span>
                 {hiddenColumns.length > 0 && (
@@ -1108,7 +1225,10 @@ export function CalibrationDataGrid({
       {points.length > 0 ? (
         <div
           ref={parentRef}
-          className="border rounded-lg overflow-auto shadow-sm max-h-[600px] relative"
+          className={cn(
+            "border rounded-lg overflow-auto shadow-sm relative transition-all",
+            isFullscreen ? "flex-1 max-h-[calc(100vh-230px)] min-h-[400px] bg-background" : "max-h-[600px]"
+          )}
         >
           <Table>
             <TableHeader className="sticky top-0 bg-muted/90 backdrop-blur-sm z-10 shadow-xs">
@@ -1415,7 +1535,7 @@ export function CalibrationDataGrid({
 
       {/* Add Column Dialog */}
       <Dialog open={isAddColumnOpen} onOpenChange={setIsAddColumnOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Columns className="w-5 h-5 text-primary" />
@@ -1608,7 +1728,7 @@ export function CalibrationDataGrid({
 
       {/* Edit Column Dialog */}
       <Dialog open={!!editingCol} onOpenChange={(open) => !open && setEditingCol(null)}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="sm:max-w-[500px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Edit className="w-5 h-5 text-primary" />
@@ -1779,7 +1899,7 @@ export function CalibrationDataGrid({
 
       {/* Configure Status Rule & Formula Dialog */}
       <Dialog open={isEditStatusOpen} onOpenChange={setIsEditStatusOpen}>
-        <DialogContent className="sm:max-w-[550px]">
+        <DialogContent className="sm:max-w-[550px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Calculator className="w-5 h-5 text-primary" />
@@ -1957,7 +2077,7 @@ export function CalibrationDataGrid({
 
       {/* Template & Grid Settings Modal */}
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[480px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Settings2 className="w-5 h-5 text-primary" />
@@ -2124,4 +2244,10 @@ export function CalibrationDataGrid({
       </Dialog>
     </div>
   );
+
+  if (isFullscreen) {
+    return createPortal(gridContent, document.body);
+  }
+
+  return gridContent;
 }

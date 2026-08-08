@@ -303,7 +303,7 @@ const KPICard = ({
         delay: index * 0.05,
       }}
       whileHover={{ y: -4, scale: 1.02 }}
-      className="h-[132px]"
+      className="h-[136px]"
     >
       <Card
         className={cn(
@@ -349,8 +349,14 @@ const KPICard = ({
             />
           </div>
 
+          {subtitle ? (
+            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 font-medium">
+              {subtitle}
+            </p>
+          ) : null}
+
           {progressPercent !== undefined ? (
-            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1.5">
+            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1">
               <motion.div
                 className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full"
                 initial={{ width: 0 }}
@@ -358,10 +364,6 @@ const KPICard = ({
                 transition={{ duration: 0.8, ease: "easeOut" }}
               />
             </div>
-          ) : subtitle ? (
-            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 font-medium">
-              {subtitle}
-            </p>
           ) : null}
         </div>
 
@@ -613,7 +615,9 @@ const Index = () => {
       | "overdue"
       | "calibrated"
       | "today"
-      | "today_completed",
+      | "today_completed"
+      | "due_soon"
+      | "pending",
   ) => {
     const params = new URLSearchParams();
     const todayStr = format(new Date(), "yyyy-MM-dd");
@@ -627,6 +631,8 @@ const Index = () => {
 
     if (type === "overdue") {
       params.set("status", "Overdue");
+    } else if (type === "due_soon") {
+      params.set("status", "Due Soon");
     } else if (type === "today") {
       params.set("due_date_start", todayStr);
       params.set("due_date_end", todayStr);
@@ -634,6 +640,28 @@ const Index = () => {
     } else if (type === "today_completed") {
       params.set("calibrated_in_range_start", todayStr);
       params.set("calibrated_in_range_end", todayStr);
+    } else if (type === "pending") {
+      if (startDate)
+        params.append("due_date_start", format(startDate, "yyyy-MM-dd"));
+      else
+        params.append(
+          "due_date_start",
+          format(
+            new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+            "yyyy-MM-dd",
+          ),
+        );
+
+      if (endDate)
+        params.append("due_date_end", format(endDate, "yyyy-MM-dd"));
+      else
+        params.append(
+          "due_date_end",
+          format(
+            new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0),
+            "yyyy-MM-dd",
+          ),
+        );
     } else if (type === "calibrated" || type === "due") {
       if (startDate)
         params.append(
@@ -713,7 +741,9 @@ const Index = () => {
   const hasActionPlanData = Boolean(
     !loading &&
     data &&
-    ((data.dueTodayCount || 0) > 0 || (data.overdue || 0) > 0),
+    ((data.dueTodayCount || 0) > 0 ||
+      (data.overdue || 0) > 0 ||
+      plannedCount - completedCount > 0),
   );
 
   return (
@@ -798,12 +828,16 @@ const Index = () => {
                     ·{" "}
                     {data?.overdue
                       ? `${data.workingOverdue || 0} Gauge(s) · ${data.referenceOverdue || 0} Ref Standard(s) overdue`
-                      : "0 overdue"}
+                      : "0 overdue"}{" "}
+                    ·{" "}
+                    <span className="font-semibold text-purple-600 dark:text-purple-400">
+                      {Math.max(0, plannedCount - completedCount)} Pending ({completedCount} / {plannedCount} Done)
+                    </span>
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 w-full md:w-auto z-10">
+              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto z-10">
                 {(data?.dueTodayCount || 0) > 0 && (
                   <Button
                     size="sm"
@@ -824,6 +858,17 @@ const Index = () => {
                   >
                     <AlertTriangle className="h-3.5 w-3.5" />
                     Resolve Overdue ({data?.overdue})
+                  </Button>
+                )}
+
+                {Math.max(0, plannedCount - completedCount) > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={() => handleCardClick("pending")}
+                    className="flex-1 md:flex-initial h-9 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md shadow-purple-500/20 gap-1.5 transition-transform hover:scale-102"
+                  >
+                    <Target className="h-3.5 w-3.5" />
+                    View Pending ({Math.max(0, plannedCount - completedCount)})
                   </Button>
                 )}
               </div>
@@ -862,7 +907,7 @@ const Index = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="All">
-                All Inventory ({data?.total ?? "—"})
+                All Inventory ({(data as any)?.grandTotal ?? (data ? (data.workingTotal || 0) + (data.referenceTotal || 0) : "—")})
               </SelectItem>
               <SelectItem value="Working">
                 Working Gauges ({data?.workingTotal ?? "—"})
@@ -1119,11 +1164,11 @@ const Index = () => {
             subtitle={
               loading
                 ? "Completed / Planned"
-                : `${completedCount} of ${plannedCount} completed`
+                : `${completedCount} Done · ${Math.max(0, plannedCount - completedCount)} Pending`
             }
             progressPercent={targetProgressPercent}
             actionLabel="Click to view list"
-            onClick={() => handleCardClick("calibrated")}
+            onClick={() => handleCardClick("pending")}
             loading={loading}
           />
         )}
@@ -1145,8 +1190,8 @@ const Index = () => {
                 ? "Next 30 days"
                 : `${data?.workingDueSoonCount || 0} Gauges · ${data?.referenceDueSoonCount || 0} Master(s)`
             }
-            actionLabel="Click to view schedule"
-            onClick={() => navigate("/calendar")}
+            actionLabel="Click to view list"
+            onClick={() => handleCardClick("due_soon")}
             loading={loading}
           />
         )}

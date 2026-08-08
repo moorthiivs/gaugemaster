@@ -542,7 +542,7 @@ export function CertificatePreview({
                   <td className="border-r border-black p-1 font-bold w-1/4 pl-2">
                     Model No.
                   </td>
-                  <td className="p-1 w-1/4 pl-2">{inst?.model_no || "-"}</td>
+                  <td className="p-1 w-1/4 pl-2">{(inst as any)?.model_no || "-"}</td>
                 </tr>
                 <tr className="border-b border-black">
                   <td className="border-r border-black p-1 font-bold pl-2">
@@ -777,7 +777,19 @@ export function CertificatePreview({
                 </div>
 
                 <div className="text-center flex flex-col items-center justify-center space-y-1">
-                  <div className="w-14 h-14 rounded-full border-2 border-dashed border-sky-800 flex items-center justify-center text-[7px] font-bold text-sky-900 text-center leading-none p-1">
+                  <img
+                    src="/Approved-seal1.png"
+                    alt="Approval Seal"
+                    className="max-h-14 max-w-[85px] object-contain mx-auto"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      target.style.display = "none";
+                      if (target.nextElementSibling) {
+                        (target.nextElementSibling as HTMLElement).style.display = "flex";
+                      }
+                    }}
+                  />
+                  <div className="hidden w-14 h-14 rounded-full border-2 border-dashed border-sky-800 items-center justify-center text-[7px] font-bold text-sky-900 text-center leading-none p-1">
                     CALIBRATION
                     <br />
                     SEAL / STAMP

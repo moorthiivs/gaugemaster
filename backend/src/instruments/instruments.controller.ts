@@ -148,10 +148,17 @@ export class InstrumentsController {
         @Param('userId') userId: string,
         @Query('year') year: string,
         @Query('month') month: string,
+        @Query('is_reference_standard') isReferenceStandard?: string,
+        @Query('item_status') itemStatus?: string,
+        @Query('location') location?: string,
     ) {
         const y = parseInt(year, 10) || new Date().getFullYear();
         const m = parseInt(month, 10) || new Date().getMonth() + 1;
-        return this.instrumentsService.getCalendarDue(userId, y, m);
+        return this.instrumentsService.getCalendarDue(userId, y, m, {
+            isReferenceStandard,
+            itemStatus,
+            location,
+        });
     }
 
     @Delete(':id')

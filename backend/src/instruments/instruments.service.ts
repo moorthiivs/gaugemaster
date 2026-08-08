@@ -133,6 +133,11 @@ export class InstrumentsService {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
                 baseWhere.due_date = LessThan(new Date());
+            } else if (normalizedStatus === 'duesoon') {
+                const now = new Date();
+                const dueSoonEnd = new Date(now);
+                dueSoonEnd.setDate(now.getDate() + 30);
+                baseWhere.due_date = Between(now, dueSoonEnd);
             } else {
                 baseWhere.status = ILike(status);
             }
@@ -614,15 +619,52 @@ export class InstrumentsService {
     }
 
 
-    async getCalendarDue(userId: string, year: number, month: number) {
+    async getCalendarDue(
+        userId: string,
+        year: number,
+        month: number,
+        options?: {
+            isReferenceStandard?: string;
+            itemStatus?: string;
+            location?: string;
+        },
+    ) {
         const userIds = await this.getCompanyUserIds(userId);
         const targetUserIds = userIds.length > 0 ? userIds : [userId];
 
+        const whereCondition: any = {
+            created_by: { id: In(targetUserIds) },
+        };
+
+        if (options?.itemStatus && options.itemStatus !== 'All') {
+            whereCondition.item_status = ILike(options.itemStatus);
+        }
+        if (options?.location && options.location !== 'All') {
+            whereCondition.location = ILike(options.location);
+        }
+        if (options?.isReferenceStandard === 'true') {
+            whereCondition.is_reference_standard = true;
+        } else if (options?.isReferenceStandard === 'false') {
+            whereCondition.is_reference_standard = Raw(
+                (alias) => `${alias} = false OR ${alias} IS NULL`,
+            );
+        }
+
         const instruments = await this.instrumentRepository.find({
-            where: {
-                created_by: { id: In(targetUserIds) },
-            },
-            select: ['id', 'name', 'id_code', 'due_date', 'last_calibration_date', 'frequency', 'status', 'location', 'agency'],
+            where: whereCondition,
+            select: [
+                'id',
+                'name',
+                'id_code',
+                'due_date',
+                'last_calibration_date',
+                'frequency',
+                'status',
+                'location',
+                'agency',
+                'item_status',
+                'is_reference_standard',
+            ],
             order: { due_date: 'ASC' },
         });
 
@@ -668,7 +710,8 @@ export class InstrumentsService {
                                 id: inst.id,
                                 name: inst.name,
                                 id_code: inst.id_code,
-                                due_date: localCalDate.toISOString(),
+                                due_date: inst.due_date ? new Date(inst.due_date).toISOString() : localCalDate.toISOString(),
+                                last_calibration_date: localCalDate.toISOString(),
                                 status: inst.status || 'OK',
                                 location: inst.location,
                                 agency: inst.agency,
@@ -706,31 +749,38 @@ export class InstrumentsService {
             const totalMonthsDiff = (targetYear - baseYear) * 12 + (targetMonth - baseMonth);
 
             // Check if target month is due date or a future recurring cycle step
-            if (totalMonthsDiff >= 0 && totalMonthsDiff % freqMonths === 0) {
-                const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
-                const scheduledDay = Math.min(baseDay, daysInTargetMonth);
-                const scheduledDateISO = new Date(Date.UTC(targetYear, targetMonth - 1, scheduledDay)).toISOString();
+            // Only project future cycles if the base due date is NOT in the past as Overdue
+            const isOverdueStatus = inst.status && (inst.status.toLowerCase().includes('over') || inst.status === 'OVER DUE');
+            const isPastBaseDate = totalMonthsDiff > 0;
 
-                if (!grouped[scheduledDay]) {
-                    grouped[scheduledDay] = { count: 0, instruments: [] };
-                }
+            if (totalMonthsDiff >= 0 && (!isPastBaseDate || !isOverdueStatus)) {
+                if (totalMonthsDiff % freqMonths === 0) {
+                    const daysInTargetMonth = new Date(targetYear, targetMonth, 0).getDate();
+                    const scheduledDay = Math.min(baseDay, daysInTargetMonth);
+                    const scheduledDateISO = new Date(Date.UTC(targetYear, targetMonth - 1, scheduledDay)).toISOString();
 
-                // Prevent duplicate entries of the same instrument on the same day for due event
-                const exists = grouped[scheduledDay].instruments.some(i => i.id === inst.id && i.eventType === 'due');
-                if (!exists) {
-                    grouped[scheduledDay].count++;
-                    grouped[scheduledDay].instruments.push({
-                        id: inst.id,
-                        name: inst.name,
-                        id_code: inst.id_code,
-                        due_date: scheduledDateISO,
-                        status: inst.status,
-                        location: inst.location,
-                        agency: inst.agency,
-                        frequency: inst.frequency || `${freqMonths} month(s)`,
-                        eventType: 'due',
-                    });
-                    totalCount++;
+                    if (!grouped[scheduledDay]) {
+                        grouped[scheduledDay] = { count: 0, instruments: [] };
+                    }
+
+                    // Prevent duplicate entries of the same instrument on the same day for due event
+                    const exists = grouped[scheduledDay].instruments.some(i => i.id === inst.id && i.eventType === 'due');
+                    if (!exists) {
+                        grouped[scheduledDay].count++;
+                        grouped[scheduledDay].instruments.push({
+                            id: inst.id,
+                            name: inst.name,
+                            id_code: inst.id_code,
+                            due_date: scheduledDateISO,
+                            last_calibration_date: inst.last_calibration_date ? new Date(inst.last_calibration_date).toISOString() : null,
+                            status: inst.status,
+                            location: inst.location,
+                            agency: inst.agency,
+                            frequency: inst.frequency || `${freqMonths} month(s)`,
+                            eventType: 'due',
+                        });
+                        totalCount++;
+                    }
                 }
             }
         }
