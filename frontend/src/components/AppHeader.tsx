@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck, Zap, ChevronDown, Layers, FileCheck2, Gauge, ChevronRight, X } from "lucide-react";
+import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck, Zap, ChevronDown, Layers, FileCheck2, Gauge, ChevronRight, X, Building2 } from "lucide-react";
 import { useNavigate, NavLink } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -156,10 +156,22 @@ export function AppHeader() {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  const superAdminQuickActions: QuickActionConfig[] = [
+    {
+      title: "Customer Companies",
+      description: "Manage customer companies & access control",
+      url: "/super-admin/companies",
+      icon: Building2,
+      module: "superadmin",
+      action: "view",
+      category: "Admin",
+    },
+  ];
+
   // Filter Quick Actions based on User Role Permissions
-  const visibleQuickActions = quickActionsConfig.filter((item) =>
-    canAccess(item.module, item.action)
-  );
+  const visibleQuickActions = user?.isSuperAdmin
+    ? superAdminQuickActions
+    : quickActionsConfig.filter((item) => canAccess(item.module, item.action));
 
   const categories = ["Operations", "Master Data", "Admin"] as const;
 
@@ -788,14 +800,23 @@ export function AppHeader() {
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/users")}>
-                <UserCheck className="mr-2 h-4 w-4" />
-                <span>User & Access Control</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate("/settings")}>
-                <Settings className="mr-2 h-4 w-4" />
-                <span>System Configuration</span>
-              </DropdownMenuItem>
+              {user?.isSuperAdmin ? (
+                <DropdownMenuItem onClick={() => navigate("/super-admin/companies")}>
+                  <Building2 className="mr-2 h-4 w-4 text-primary" />
+                  <span>Customer Companies</span>
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuItem onClick={() => navigate("/users")}>
+                    <UserCheck className="mr-2 h-4 w-4" />
+                    <span>User & Access Control</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/settings")}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>System Configuration</span>
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => {
                 signOut();

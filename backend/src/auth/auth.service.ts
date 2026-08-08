@@ -1,5 +1,5 @@
 // src/auth/auth.service.ts
-import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { OAuth2Client } from 'google-auth-library';
 import { ConfigService } from '@nestjs/config';
@@ -7,6 +7,9 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from '../dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 import { CreateUserDto } from 'src/dto/create-user.dto';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Company } from '../company/entities/company.entity';
 
 @Injectable()
 export class AuthService {
@@ -17,6 +20,8 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    @InjectRepository(Company)
+    private readonly companyRepository: Repository<Company>,
   ) {
     const clientId = this.configService.get('GOOGLE_CLIENT_ID');
     this.googleEnabled = !!clientId;
@@ -51,7 +56,7 @@ export class AuthService {
   async register(createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
     const roleName = user.role?.name || user.roleId || 'Admin';
-    const payload = { sub: user.id, email: user.email, name: user.name, role: roleName, userRole: user.role, onboarded: user.onboarded, companyId: user.companyId };
+    const payload = { sub: user.id, email: user.email, name: user.name, role: roleName, userRole: user.role, onboarded: user.onboarded, companyId: user.companyId, isSuperAdmin: user.isSuperAdmin || false };
     return {
       accessToken: this.jwtService.sign(payload),
       user: payload,
@@ -72,8 +77,59 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // Super Admin bypass — no company access check needed
+    if (user.isSuperAdmin) {
+      const payload = {
+        sub: user.id,
+        email: user.email,
+        name: user.name,
+        role: 'SuperAdmin',
+        isSuperAdmin: true,
+        onboarded: true,
+        companyId: user.companyId || null,
+      };
+      return {
+        accessToken: this.jwtService.sign(payload),
+        user: payload,
+      };
+    }
+
+    // Regular user — check company access status
+    let targetCompany: Company | null = null;
+    if (user.companyId) {
+      targetCompany = await this.companyRepository.findOne({ where: { id: user.companyId } });
+      if (targetCompany) {
+        if (targetCompany.accessStatus === 'disabled') {
+          throw new ForbiddenException('Your company access has been disabled. Contact administrator.');
+        }
+        if (targetCompany.accessStatus === 'time_limited') {
+          const now = new Date();
+          if (targetCompany.accessStartDate && now < targetCompany.accessStartDate) {
+            throw new ForbiddenException('Your company access has not started yet. Contact administrator.');
+          }
+          if (targetCompany.accessExpiryDate && now > targetCompany.accessExpiryDate) {
+            throw new ForbiddenException('Your company access has expired. Contact administrator.');
+          }
+        }
+      }
+    }
+
     const roleName = user.role?.name || user.roleId || 'Admin';
-    const payload = { sub: user.id, email: user.email, name: user.name, role: roleName, userRole: user.role, onboarded: user.onboarded, companyId: user.companyId };
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId,
+      isSuperAdmin: false,
+      companyAccess: targetCompany ? {
+        status: targetCompany.accessStatus,
+        startDate: targetCompany.accessStartDate,
+        expiryDate: targetCompany.accessExpiryDate,
+      } : null,
+    };
     return {
       accessToken: this.jwtService.sign(payload),
       user: payload,
@@ -99,7 +155,26 @@ export class AuthService {
 
     const user = await this.usersService.findOrCreateByGoogleProfile({ id: googleId, email, name });
 
-    const jwtPayload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId };
+    // Check company access for Google login too
+    if (user.companyId && !user.isSuperAdmin) {
+      const company = await this.companyRepository.findOne({ where: { id: user.companyId } });
+      if (company) {
+        if (company.accessStatus === 'disabled') {
+          throw new ForbiddenException('Your company access has been disabled. Contact administrator.');
+        }
+        if (company.accessStatus === 'time_limited') {
+          const now = new Date();
+          if (company.accessStartDate && now < company.accessStartDate) {
+            throw new ForbiddenException('Your company access has not started yet. Contact administrator.');
+          }
+          if (company.accessExpiryDate && now > company.accessExpiryDate) {
+            throw new ForbiddenException('Your company access has expired. Contact administrator.');
+          }
+        }
+      }
+    }
+
+    const jwtPayload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId, isSuperAdmin: user.isSuperAdmin || false };
     return {
       accessToken: this.jwtService.sign(jwtPayload),
       user: jwtPayload,

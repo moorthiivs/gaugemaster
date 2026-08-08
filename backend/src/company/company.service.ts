@@ -15,8 +15,16 @@ export class CompanyService {
   ) { }
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
-    // 1. Create new company entity
-    const company = this.companyRepository.create(createCompanyDto);
+    const now = new Date();
+    const defaultExpiry = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30-day trial
+
+    // 1. Create new company entity with default 30-day time-limited trial access
+    const company = this.companyRepository.create({
+      accessStatus: 'time_limited',
+      accessStartDate: now,
+      accessExpiryDate: defaultExpiry,
+      ...createCompanyDto,
+    });
 
     // 2. Save to generate company.id
     const savedCompany = await this.companyRepository.save(company);

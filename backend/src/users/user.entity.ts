@@ -55,4 +55,7 @@ export class User {
 
   @Column({ default: false })   
   onboarded: boolean;
+
+  @Column({ default: false })
+  isSuperAdmin: boolean;
 }

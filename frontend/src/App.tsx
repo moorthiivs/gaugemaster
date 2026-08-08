@@ -28,6 +28,9 @@ import TemplateBuilder from "./pages/TemplateBuilder";
 import TemplateBuilderForm from "./pages/TemplateBuilderForm";
 import CalibrationApprovalList from "./pages/CalibrationApprovalList";
 import UserManagement from "./pages/UserManagement";
+import SuperAdminRoute from "./components/SuperAdminRoute";
+import CustomerCompanies from "./pages/admin/CustomerCompanies";
+import CompanyDetail from "./pages/admin/CompanyDetail";
 
 const queryClient = new QueryClient();
 
@@ -92,6 +95,10 @@ const App = () => (
                   <Route path="/users" element={<ProtectedRoute module="users" action="view"><UserManagement /></ProtectedRoute>} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/settings" element={<ProtectedRoute module="settings" action="view"><Settings /></ProtectedRoute>} />
+
+                  {/* Super Admin Management Routes */}
+                  <Route path="/super-admin/companies" element={<SuperAdminRoute><CustomerCompanies /></SuperAdminRoute>} />
+                  <Route path="/super-admin/companies/:id" element={<SuperAdminRoute><CompanyDetail /></SuperAdminRoute>} />
                 </Route>
 
                 {/* Catch-all */}

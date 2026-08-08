@@ -1,6 +1,6 @@
 
 import { User } from "../../users/user.entity";
-import { Entity, Column, ManyToOne, JoinColumn, PrimaryColumn, OneToMany } from "typeorm";
+import { Entity, Column, ManyToOne, JoinColumn, PrimaryColumn, OneToMany, CreateDateColumn, UpdateDateColumn } from "typeorm";
 import { v4 as uuidv4 } from 'uuid';
 
 @Entity({ name: "companies" })
@@ -29,6 +29,22 @@ export class Company {
 
     @Column({ type: "varchar", length: 50 })
     role: string;
+
+    // Access control
+    @Column({ type: "varchar", length: 20, default: "enabled" })
+    accessStatus: string; // 'enabled' | 'disabled' | 'time_limited'
+
+    @Column({ type: "timestamp", nullable: true })
+    accessStartDate: Date;
+
+    @Column({ type: "timestamp", nullable: true })
+    accessExpiryDate: Date;
+
+    @CreateDateColumn()
+    createdAt: Date;
+
+    @UpdateDateColumn()
+    updatedAt: Date;
 
     @OneToMany(() => User, (user) => user.company)
     users: User[];

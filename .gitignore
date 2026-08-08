@@ -8,3 +8,5 @@ frontend/.env
 .env
 .env_production
 *.zip
+backend/backups/
+

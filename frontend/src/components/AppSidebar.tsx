@@ -27,6 +27,16 @@ import {
 import { cn } from "@/lib/utils";
 
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuth } from "@/lib/auth";
+import { Building2 } from "lucide-react";
+import SidebarTrialCard from "./SidebarTrialCard";
+
+const superAdminGroup = {
+  label: "Platform Management",
+  items: [
+    { title: "Customer Companies", url: "/super-admin/companies", icon: Building2, module: "superadmin", action: "view" },
+  ],
+};
 
 const navigationGroups = [
   {
@@ -58,6 +68,11 @@ const navigationGroups = [
 
 export function AppSidebar() {
   const { canAccess } = usePermissions();
+  const { user } = useAuth();
+
+  const activeGroups = user?.isSuperAdmin
+    ? [superAdminGroup]
+    : navigationGroups;
 
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border/60 bg-sidebar/90 backdrop-blur-md shadow-lg transition-all duration-300">
@@ -74,7 +89,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-3 space-y-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
-        {navigationGroups.map((group) => {
+        {activeGroups.map((group) => {
           const visibleItems = group.items.filter((item) => canAccess(item.module, item.action as any));
           if (visibleItems.length === 0) return null;
 
@@ -116,6 +131,9 @@ export function AppSidebar() {
             </SidebarGroup>
           );
         })}
+
+        {/* Sidebar Trial Card placed right above bottom menu / logout */}
+        <SidebarTrialCard />
 
         <SidebarGroup className="mt-auto mb-3 border-t border-sidebar-border/60 pt-3 group-data-[collapsible=icon]:px-0">
           <SidebarGroupContent>

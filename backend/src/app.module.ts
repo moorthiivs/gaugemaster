@@ -21,6 +21,7 @@ import { ReportTemplatesModule } from './report-templates/report-templates.modul
 import { CalibrationModule } from './calibration/calibration.module';
 import { CalibrationTemplatesModule } from './calibration-templates/calibration-templates.module';
 import { RolesModule } from './roles/roles.module';
+import { SuperAdminModule } from './super-admin/super-admin.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { RolesModule } from './roles/roles.module';
     ReportTemplatesModule,
     CalibrationModule,
     CalibrationTemplatesModule,
+    SuperAdminModule,
 
     // ⭐ PgBoss correct async config (NO ERRORS)
     PGBossModule.forRootAsync({

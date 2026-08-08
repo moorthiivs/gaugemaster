@@ -47,6 +47,15 @@ export function LoginForm() {
         try {
             await signInWithPassword(email, password)
             toast({ title: "Signed in", description: "Welcome back!" })
+
+            const storedUser = localStorage.getItem('auth_user')
+            const parsedUser = storedUser ? JSON.parse(storedUser) : null
+
+            if (parsedUser?.isSuperAdmin) {
+                navigate("/super-admin/companies", { replace: true });
+                return;
+            }
+
             // Check if user needs onboarding after login
             const setupCompleted = localStorage.getItem('setupCompleted')
             const redirectTo = !setupCompleted ? "/onboarding" : from

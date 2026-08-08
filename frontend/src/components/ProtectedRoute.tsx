@@ -13,7 +13,7 @@ export default function ProtectedRoute({
   module?: string;
   action?: "create" | "edit" | "view" | "delete";
 }) {
-  const { token, loading, isNewCustomer } = useAuth();
+  const { user, token, loading, isNewCustomer } = useAuth();
   const { canAccess } = usePermissions();
   const location = useLocation();
 
@@ -29,14 +29,21 @@ export default function ProtectedRoute({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Redirect to onboarding if user has not completed setup
-  if (isNewCustomer && location.pathname !== "/onboarding") {
-    return <Navigate to="/onboarding" replace />;
-  }
+  // Super Admin redirect to platform management
+  if (user?.isSuperAdmin) {
+    if (location.pathname === "/dashboard" || location.pathname === "/onboarding") {
+      return <Navigate to="/super-admin/companies" replace />;
+    }
+  } else {
+    // Redirect to onboarding if user has not completed setup
+    if (isNewCustomer && location.pathname !== "/onboarding") {
+      return <Navigate to="/onboarding" replace />;
+    }
 
-  // Prevent accessing onboarding if setup is complete
-  if (!isNewCustomer && location.pathname === "/onboarding") {
-    return <Navigate to="/dashboard" replace />;
+    // Prevent accessing onboarding if setup is complete
+    if (!isNewCustomer && location.pathname === "/onboarding") {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   // Module level permission guard

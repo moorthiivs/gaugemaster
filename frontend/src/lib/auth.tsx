@@ -14,6 +14,12 @@ export type User = {
   provider?: string;
   companyId: string;
   isNewCustomer: boolean;
+  isSuperAdmin?: boolean;
+  companyAccess?: {
+    status: string;
+    startDate: string | null;
+    expiryDate: string | null;
+  } | null;
 };
 
 export type AuthContextType = {
@@ -120,6 +126,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             provider: "password",
             isNewCustomer: user.onboarded,
             companyId: user.companyId,
+            isSuperAdmin: user.isSuperAdmin || false,
+            companyAccess: user.companyAccess || null,
           };
 
           await signIn(userObj, accessToken);

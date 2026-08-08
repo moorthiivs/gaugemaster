@@ -21,7 +21,8 @@ async function seed() {
         name: 'Administrator',
         email: adminEmail,
         password: hashedPassword,
-        onboarded: true
+        onboarded: true,
+        isSuperAdmin: false,
       });
       adminUser = await userRepository.save(adminUser);
       console.log('✅ Default admin user created (admin@gaugemaster.com / admin123)');
@@ -34,7 +35,8 @@ async function seed() {
         companyName: 'Gaugemaster Default',
         registeredEmail: 'info@gaugemaster.com',
         role: 'admin',
-        registeredUserId: adminUser.id
+        registeredUserId: adminUser.id,
+        accessStatus: 'enabled',
       });
       defaultCompany = await companyRepository.save(defaultCompany);
       console.log('✅ Default company created');
@@ -44,6 +46,28 @@ async function seed() {
       adminUser.companyId = defaultCompany.id;
       await userRepository.save(adminUser);
       console.log('✅ Linked admin user to default company');
+    }
+
+    // 4. Create Super Admin if none exists
+    const superAdminEmail = 'superadmin@gaugemaster.com';
+    let superAdmin = await userRepository.findOne({ where: { email: superAdminEmail } });
+    if (!superAdmin) {
+      const hashedPassword = await bcrypt.hash('Admin@123', 10);
+      superAdmin = userRepository.create({
+        name: 'Super Admin',
+        email: superAdminEmail,
+        password: hashedPassword,
+        isSuperAdmin: true,
+        onboarded: true,
+        // No companyId — super admin is platform-level
+      });
+      await userRepository.save(superAdmin);
+      console.log('✅ Super Admin created (superadmin@gaugemaster.com / Admin@123)');
+    } else if (!superAdmin.isSuperAdmin) {
+      // Ensure existing user is flagged as super admin
+      superAdmin.isSuperAdmin = true;
+      await userRepository.save(superAdmin);
+      console.log('✅ Existing user updated to Super Admin');
     }
 
     console.log('🚀 Seeding completed successfully!');

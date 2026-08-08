@@ -10,6 +10,9 @@ export function usePermissions() {
   ): boolean => {
     if (!user) return false;
 
+    // Super Admin platform override
+    if (user.isSuperAdmin) return true;
+
     // Standard un-restricted modules
     if (moduleKey === "dashboard" || moduleKey === "profile") return true;
 
