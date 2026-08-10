@@ -13,7 +13,7 @@ export default function ProtectedRoute({
   module?: string;
   action?: "create" | "edit" | "view" | "delete";
 }) {
-  const { user, token, loading, isNewCustomer } = useAuth();
+  const { user, token, loading, isNewCustomer, inspectedCompany } = useAuth();
   const { canAccess } = usePermissions();
   const location = useLocation();
 
@@ -29,9 +29,9 @@ export default function ProtectedRoute({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Super Admin redirect to platform management
+  // Super Admin redirect to platform management if not inspecting a company
   if (user?.isSuperAdmin) {
-    if (location.pathname === "/dashboard" || location.pathname === "/onboarding") {
+    if (!inspectedCompany && (location.pathname === "/dashboard" || location.pathname === "/onboarding")) {
       return <Navigate to="/super-admin/companies" replace />;
     }
   } else {

@@ -3,6 +3,7 @@ import { getAuditFieldLabel, formatAuditValue } from "@/lib/auditFormatters";
 import { useNavigate } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -54,6 +55,7 @@ export default function Calibration() {
   useSEO({ title: "Calibration — GaugeMaster", description: "Calibrate instruments and generate certificates" });
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { canAccess } = usePermissions();
 
   const [calibrations, setCalibrations] = useState<CalibrationRecord[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
@@ -199,10 +201,12 @@ export default function Calibration() {
           </h1>
           <p className="text-sm text-muted-foreground">Calibrate instruments and generate professional certificates</p>
         </div>
-        <Button onClick={() => navigate("/calibration/new")} className="gap-2 shadow-lg">
-          <PlusCircle className="w-4 h-4" />
-          New Calibration
-        </Button>
+        {canAccess("calibrations", "create") && (
+          <Button onClick={() => navigate("/calibration/new")} className="gap-2 shadow-lg">
+            <PlusCircle className="w-4 h-4" />
+            New Calibration
+          </Button>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -471,20 +475,24 @@ export default function Calibration() {
                                       No Certificate
                                     </DropdownMenuItem>
                                   )}
-                                  <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
-                                    <Edit className="w-3.5 h-3.5 text-amber-600" />
-                                    Edit Calibration
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      setCalibrationToDelete(cal);
-                                      setDeleteModalOpen(true);
-                                    }}
-                                    className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                    Delete Record
-                                  </DropdownMenuItem>
+                                  {canAccess("calibrations", "edit") && (
+                                    <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
+                                      <Edit className="w-3.5 h-3.5 text-amber-600" />
+                                      Edit Calibration
+                                    </DropdownMenuItem>
+                                  )}
+                                  {canAccess("calibrations", "delete") && (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        setCalibrationToDelete(cal);
+                                        setDeleteModalOpen(true);
+                                      }}
+                                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                                      Delete Record
+                                    </DropdownMenuItem>
+                                  )}
                                 </DropdownMenuContent>
                               </DropdownMenu>
                             </div>
@@ -619,14 +627,16 @@ export default function Calibration() {
                               >
                                 Resume
                               </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
-                                onClick={() => handleDeleteDraft(draft.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                              {canAccess("calibrations", "delete") && (
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
+                                  onClick={() => handleDeleteDraft(draft.id)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>

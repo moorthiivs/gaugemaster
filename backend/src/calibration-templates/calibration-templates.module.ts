@@ -7,15 +7,18 @@ import { CalibrationTemplatesController } from './calibration-templates.controll
 import { TemplateAuditLogService } from './services/template-audit-log.service';
 import { TemplateExportService } from './services/template-export.service';
 import { TemplateImportService } from './services/template-import.service';
+import { User } from 'src/users/user.entity';
+import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CalibrationTemplate, TemplateAuditLog])],
+  imports: [TypeOrmModule.forFeature([CalibrationTemplate, TemplateAuditLog, User])],
   controllers: [CalibrationTemplatesController],
   providers: [
     CalibrationTemplatesService,
     TemplateAuditLogService,
     TemplateExportService,
     TemplateImportService,
+    PermissionsGuard,
   ],
   exports: [
     CalibrationTemplatesService,

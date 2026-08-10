@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
@@ -7,8 +8,11 @@ import { MailerService } from '../mail/mailer.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
 @ApiTags('api/settings')
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/settings')
 export class SettingsController {
   constructor(
@@ -29,6 +33,7 @@ export class SettingsController {
   }
 
   @Post()
+  @RequirePermission('settings', 'edit')
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
     return this.settingsService.create(createSettingDto);
   }
@@ -42,6 +47,7 @@ export class SettingsController {
   }
 
   @Post("mailconfig")
+  @RequirePermission('settings', 'edit')
   create(@Body() createSettingDto: CreateSettingDto, @Headers('authorization') authHeader: string) {
     if (!createSettingDto.userId || createSettingDto.userId === 'undefined') {
         if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -68,6 +74,7 @@ export class SettingsController {
   }
 
   @Post('test-email')
+  @RequirePermission('settings', 'edit')
   sendTestEmail(
     @Body('userId') userId: string,
     @Body('targetEmail') targetEmail: string,
@@ -76,6 +83,7 @@ export class SettingsController {
   }
 
   @Post('upload-logo')
+  @RequirePermission('settings', 'edit')
   @UseInterceptors(FileInterceptor('logo', {
     storage: diskStorage({
       destination: './uploads/logos',

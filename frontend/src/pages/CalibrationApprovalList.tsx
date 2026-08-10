@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { getRoleName } from "@/lib/utils";
 import httpClient from "@/lib/httpClient";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ import {
 export default function CalibrationApprovalList() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { canAccess } = usePermissions();
   const [calibrations, setCalibrations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -64,6 +66,8 @@ export default function CalibrationApprovalList() {
     try {
       const res = await httpClient.get("/calibrations", {
         params: {
+          companyId: user?.companyId,
+          userId: user?.id,
           pageSize: 100,
         },
       });
@@ -416,15 +420,17 @@ export default function CalibrationApprovalList() {
 
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                            onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
-                          >
-                            <Edit className="w-3.5 h-3.5" />
-                            <span>Edit</span>
-                          </Button>
+                          {canAccess("calibrations", "edit") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-xs gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                              onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                              <span>Edit</span>
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
@@ -733,20 +739,22 @@ export default function CalibrationApprovalList() {
               </div>
 
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                  onClick={() => navigate(`/calibration/new?editId=${selectedRecord.id}`)}
-                >
-                  <Edit className="w-4 h-4" />
-                  <span>Edit Calibration</span>
-                </Button>
+                {canAccess("calibrations", "edit") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                    onClick={() => navigate(`/calibration/new?editId=${selectedRecord.id}`)}
+                  >
+                    <Edit className="w-4 h-4" />
+                    <span>Edit Calibration</span>
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" onClick={() => setReviewDialogOpen(false)}>
                   Cancel
                 </Button>
 
-                {selectedRecord.approval_status !== "Approved" && (
+                {selectedRecord.approval_status !== "Approved" && canAccess("calibrations", "edit") && (
                   <>
                     <Button
                       variant="destructive"

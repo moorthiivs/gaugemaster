@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,6 +61,7 @@ export default function TemplateBuilder() {
 
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { canAccess } = usePermissions();
   const [templates, setTemplates] = useState<CalibrationTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -190,10 +192,12 @@ export default function TemplateBuilder() {
             Export Packages {selectedIds.length > 0 && `(${selectedIds.length})`}
           </Button>
 
-          <Button onClick={handleOpenNewModal} size="sm" className="gap-2 shadow-sm text-xs">
-            <PlusCircle className="w-4 h-4" />
-            Create New Template
-          </Button>
+          {canAccess("templates", "create") && (
+            <Button onClick={handleOpenNewModal} size="sm" className="gap-2 shadow-sm text-xs">
+              <PlusCircle className="w-4 h-4" />
+              Create New Template
+            </Button>
+          )}
         </div>
       </div>
 
@@ -342,24 +346,28 @@ export default function TemplateBuilder() {
                           >
                             <Copy className="w-3.5 h-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Edit"
-                            onClick={() => handleOpenEditModal(tpl)}
-                          >
-                            <Edit className="w-3.5 h-3.5 text-primary" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
-                            title="Delete"
-                            onClick={() => setDeleteId(tpl.id)}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </Button>
+                          {canAccess("templates", "edit") && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Edit"
+                              onClick={() => handleOpenEditModal(tpl)}
+                            >
+                              <Edit className="w-3.5 h-3.5 text-primary" />
+                            </Button>
+                          )}
+                          {canAccess("templates", "delete") && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
+                              title="Delete"
+                              onClick={() => setDeleteId(tpl.id)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </CardContent>
@@ -379,10 +387,12 @@ export default function TemplateBuilder() {
                   <Upload className="w-4 h-4" />
                   Import Package
                 </Button>
-                <Button onClick={handleOpenNewModal} className="gap-2">
-                  <PlusCircle className="w-4 h-4" />
-                  Create Template
-                </Button>
+                {canAccess("templates", "create") && (
+                  <Button onClick={handleOpenNewModal} className="gap-2">
+                    <PlusCircle className="w-4 h-4" />
+                    Create Template
+                  </Button>
+                )}
               </div>
             </div>
           )}

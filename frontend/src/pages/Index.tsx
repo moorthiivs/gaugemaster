@@ -564,7 +564,7 @@ const Index = () => {
           // ignore fallback
         }
 
-        const filters = await getFilterParams(user?.id);
+        const filters = await getFilterParams(user?.id, user?.companyId);
         setLocations(filters.location || []);
         setItemStatuses(filters.item_status || []);
 
@@ -586,6 +586,7 @@ const Index = () => {
           calibrationStatus,
           location,
           isRefParam,
+          user?.companyId,
         );
         setData(d);
       } catch (err: any) {
@@ -752,20 +753,20 @@ const Index = () => {
       <header className="flex flex-col gap-3.5">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2 text-foreground">
-              <Activity className="h-6 w-6 text-primary" />
-              Calibration Action Center
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2.5 text-foreground leading-snug">
+              <Activity className="h-6 w-6 text-primary shrink-0" />
+              <span>Calibration Action Center</span>
               {loading && (
-                <Loader2 className="h-4 w-4 text-primary animate-spin ml-1" />
+                <Loader2 className="h-4.5 w-4.5 text-primary animate-spin ml-1 shrink-0" />
               )}
             </h1>
-            <p className="text-xs text-muted-foreground mt-0.5 font-medium">
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1 font-medium leading-normal">
               Real-time calibration monitoring & action dashboard ·{" "}
-              {dateRangeLabel}
+              <span className="font-semibold text-foreground/80">{dateRangeLabel}</span>
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="outline"
               size="sm"
@@ -789,7 +790,7 @@ const Index = () => {
               exit={{ opacity: 0, y: -12, scale: 0.98 }}
               transition={{ duration: 0.35, ease: "easeOut" }}
               className={cn(
-                "rounded-2xl p-4 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-3 border backdrop-blur-md relative overflow-hidden",
+                "rounded-2xl p-4 sm:p-5 shadow-lg border backdrop-blur-md relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4",
                 (data?.overdue || 0) > 0
                   ? "bg-gradient-to-r from-rose-500/15 via-red-500/10 to-amber-500/10 border-rose-500/30"
                   : "bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-violet-500/10 border-blue-500/30",
@@ -798,10 +799,10 @@ const Index = () => {
               {/* Animated background glow */}
               <div className="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
 
-              <div className="flex items-center gap-3.5 z-10">
+              <div className="flex items-start sm:items-center gap-3.5 z-10 min-w-0">
                 <div
                   className={cn(
-                    "p-3 rounded-2xl text-white shadow-lg shrink-0",
+                    "p-3 rounded-2xl text-white shadow-lg shrink-0 mt-0.5 sm:mt-0",
                     (data?.overdue || 0) > 0
                       ? "bg-gradient-to-tr from-red-600 to-rose-500 shadow-red-500/30"
                       : "bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-blue-500/30",
@@ -809,40 +810,44 @@ const Index = () => {
                 >
                   <Target className="h-5 w-5" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-foreground">
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-extrabold tracking-tight text-foreground">
                       Today's Action Plan
                     </span>
                     <Badge
                       variant="outline"
-                      className="text-[10px] font-mono font-bold bg-background/80 text-primary border-primary/30 px-2 py-0.5 rounded-md"
+                      className="text-[11px] font-mono font-bold bg-background/90 text-primary border-primary/30 px-2 py-0.5 rounded-lg shadow-2xs"
                     >
                       {format(new Date(), "EEEE, dd MMM yyyy")}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-0.5 font-medium">
-                    {data?.dueTodayCount
-                      ? `${data.workingDueTodayCount || 0} Gauge(s) · ${data.referenceDueTodayCount || 0} Ref Standard(s) due today`
-                      : "No calibrations due today"}{" "}
-                    ·{" "}
-                    {data?.overdue
-                      ? `${data.workingOverdue || 0} Gauge(s) · ${data.referenceOverdue || 0} Ref Standard(s) overdue`
-                      : "0 overdue"}{" "}
-                    ·{" "}
-                    <span className="font-semibold text-purple-600 dark:text-purple-400">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground font-medium">
+                    <span>
+                      {data?.dueTodayCount
+                        ? `${data.workingDueTodayCount || 0} Gauge(s) · ${data.referenceDueTodayCount || 0} Ref Standard(s) due today`
+                        : "No calibrations due today"}
+                    </span>
+                    <span className="hidden sm:inline opacity-40">•</span>
+                    <span>
+                      {data?.overdue
+                        ? `${data.workingOverdue || 0} Gauge(s) · ${data.referenceOverdue || 0} Ref Standard(s) overdue`
+                        : "0 overdue"}
+                    </span>
+                    <span className="hidden sm:inline opacity-40">•</span>
+                    <span className="font-bold text-purple-700 dark:text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
                       {Math.max(0, plannedCount - completedCount)} Pending ({completedCount} / {plannedCount} Done)
                     </span>
-                  </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto z-10">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full xl:w-auto shrink-0 justify-start xl:justify-end z-10 pt-2 xl:pt-0 border-t xl:border-t-0 border-border/40">
                 {(data?.dueTodayCount || 0) > 0 && (
                   <Button
                     size="sm"
                     onClick={() => handleCardClick("today")}
-                    className="flex-1 md:flex-initial h-9 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md gap-1.5 transition-transform hover:scale-102"
+                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md gap-1.5 transition-transform hover:scale-102"
                   >
                     <Calendar className="h-3.5 w-3.5" />
                     View Today's ({data?.dueTodayCount || 0})
@@ -854,7 +859,7 @@ const Index = () => {
                     variant="destructive"
                     size="sm"
                     onClick={() => handleCardClick("overdue")}
-                    className="flex-1 md:flex-initial h-9 px-4 text-xs font-bold bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl shadow-md shadow-red-500/20 gap-1.5 transition-transform hover:scale-102"
+                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl shadow-md shadow-red-500/20 gap-1.5 transition-transform hover:scale-102"
                   >
                     <AlertTriangle className="h-3.5 w-3.5" />
                     Resolve Overdue ({data?.overdue})
@@ -865,7 +870,7 @@ const Index = () => {
                   <Button
                     size="sm"
                     onClick={() => handleCardClick("pending")}
-                    className="flex-1 md:flex-initial h-9 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md shadow-purple-500/20 gap-1.5 transition-transform hover:scale-102"
+                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md shadow-purple-500/20 gap-1.5 transition-transform hover:scale-102"
                   >
                     <Target className="h-3.5 w-3.5" />
                     View Pending ({Math.max(0, plannedCount - completedCount)})

@@ -36,6 +36,7 @@ interface InstrumentFilters {
     page: number;
     pageSize: number;
     createdBy?: string;
+    companyId?: string;
     sortBy?: string;
     sortOrder?: 'ASC' | 'DESC';
 }
@@ -120,7 +121,7 @@ export class InstrumentsService {
     }
 
     async findAll(filters: InstrumentFilters) {
-        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy, sortBy, sortOrder } = filters;
+        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy, companyId, sortBy, sortOrder } = filters;
 
         // If calibrated_in_range filter is active, use QueryBuilder with subquery on calibration_history
         if (calibrated_in_range_start && calibrated_in_range_end) {
@@ -174,7 +175,9 @@ export class InstrumentsService {
                 baseWhere.module = Raw(alias => `TRIM(${alias}) ILIKE :mod`, { mod: module.trim() });
             }
         }
-        if (createdBy) {
+        if (companyId) {
+            baseWhere.companyId = companyId;
+        } else if (createdBy) {
             const userIds = await this.getCompanyUserIds(createdBy);
             if (userIds.length > 0) {
                 baseWhere.created_by = { id: In(userIds) };

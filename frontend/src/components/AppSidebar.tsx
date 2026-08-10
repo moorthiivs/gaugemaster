@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Gauge,
@@ -12,6 +12,8 @@ import {
   LogOut,
   CheckCircle2,
   ShieldCheck,
+  Building2,
+  X,
 } from "lucide-react";
 import {
   Sidebar,
@@ -23,12 +25,14 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarHeader,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 import { usePermissions } from "@/hooks/usePermissions";
 import { useAuth } from "@/lib/auth";
-import { Building2 } from "lucide-react";
 import SidebarTrialCard from "./SidebarTrialCard";
 
 const superAdminGroup = {
@@ -68,10 +72,11 @@ const navigationGroups = [
 
 export function AppSidebar() {
   const { canAccess } = usePermissions();
-  const { user } = useAuth();
+  const { user, inspectedCompany, setInspectedCompany, signOut } = useAuth();
+  const navigate = useNavigate();
 
   const activeGroups = user?.isSuperAdmin
-    ? [superAdminGroup]
+    ? (inspectedCompany ? [superAdminGroup, ...navigationGroups] : [superAdminGroup])
     : navigationGroups;
 
   return (
@@ -132,27 +137,66 @@ export function AppSidebar() {
           );
         })}
 
-        {/* Sidebar Trial Card placed right above bottom menu / logout */}
+        {/* Sidebar Trial Card placed right above bottom footer */}
         <SidebarTrialCard />
-
-        <SidebarGroup className="mt-auto mb-3 border-t border-sidebar-border/60 pt-3 group-data-[collapsible=icon]:px-0">
-          <SidebarGroupContent>
-            <SidebarMenu className="group-data-[collapsible=icon]:items-center">
-              <SidebarMenuItem className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
-                <SidebarMenuButton asChild className="p-0 h-auto group-data-[collapsible=icon]:mx-auto">
-                  <NavLink to="/login" className={({ isActive }) => cn(
-                    "flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs text-destructive hover:bg-destructive/10 transition-all group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
-                    isActive && "bg-destructive/10"
-                  )} aria-label="Sign out">
-                    <LogOut className="h-4 w-4 shrink-0" />
-                    <span className="font-medium group-data-[collapsible=icon]:hidden">Sign out</span>
-                  </NavLink>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
       </SidebarContent>
+
+      {/* Pinned Bottom Footer with User Profile Picture & Sign Out */}
+      <SidebarFooter className="p-3 border-t border-sidebar-border/60 mt-auto bg-sidebar/95">
+        {/* Inspected Company Banner for SuperAdmin */}
+        {user?.isSuperAdmin && inspectedCompany && (
+          <div className="mb-2 p-2 bg-primary/10 border border-primary/30 rounded-xl flex items-center justify-between group-data-[collapsible=icon]:hidden">
+            <div className="flex items-center gap-2 min-w-0">
+              <Building2 className="h-4 w-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[9px] font-extrabold uppercase tracking-wider text-primary">Viewing Tenant</p>
+                <p className="text-xs font-bold truncate text-sidebar-foreground">{inspectedCompany.name}</p>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0"
+              title="Exit Company View"
+              onClick={() => {
+                setInspectedCompany(null);
+                navigate("/super-admin/companies");
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
+
+        {/* User Profile Card + Sign Out Button */}
+        <div className="flex items-center justify-between gap-2 group-data-[collapsible=icon]:justify-center">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Avatar className="h-8 w-8 border border-primary/20 shrink-0">
+              <AvatarImage src={user?.avatarUrl} alt={user?.name} />
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                {user?.name ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2) : "U"}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
+              <span className="text-xs font-bold truncate text-sidebar-foreground">{user?.name || "User"}</span>
+              <span className="text-[10px] text-muted-foreground truncate">{user?.isSuperAdmin ? "Super Admin" : user?.email || "Member"}</span>
+            </div>
+          </div>
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8"
+            title="Sign out"
+            onClick={() => {
+              signOut();
+              navigate("/login");
+            }}
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }

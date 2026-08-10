@@ -422,7 +422,7 @@ export class CalibrationService {
       });
     }
 
-    const userIds = await this.getCompanyUserIds(userId);
+    const userIds = await this.getCompanyUserIds(userId, companyId);
     if (userIds.length > 0) {
       if (companyId) {
         qb.andWhere('(created_by.id IN (:...userIds) OR cal.companyId = :companyId)', { userIds, companyId });
@@ -431,6 +431,9 @@ export class CalibrationService {
       }
     } else if (companyId) {
       qb.andWhere('cal.companyId = :companyId', { companyId });
+    } else {
+      // Fallback when neither userId nor companyId is supplied: prevent cross-tenant data leak
+      qb.andWhere('1 = 0');
     }
     if (instrumentId) qb.andWhere('cal.instrument_id = :instrumentId', { instrumentId });
     if (calibrationType) qb.andWhere('cal.calibration_type = :calibrationType', { calibrationType });

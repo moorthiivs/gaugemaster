@@ -27,6 +27,8 @@ export type AuthContextType = {
   token: string | null;
   loading: boolean;
   isNewCustomer: boolean;
+  inspectedCompany: { id: string; name: string } | null;
+  setInspectedCompany: (company: { id: string; name: string } | null) => void;
   signInWithGoogleToken: (token: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
@@ -40,12 +42,30 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const TOKEN_KEY = "auth_token";
 const USER_KEY = "auth_user";
 const SETUP_KEY = "setupCompleted";
+const INSPECTED_COMPANY_KEY = "inspected_company";
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isNewCustomer, setIsNewCustomer] = useState(false);
+  const [inspectedCompany, setInspectedCompanyState] = useState<{ id: string; name: string } | null>(() => {
+    try {
+      const stored = localStorage.getItem(INSPECTED_COMPANY_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const setInspectedCompany = (company: { id: string; name: string } | null) => {
+    setInspectedCompanyState(company);
+    if (company) {
+      localStorage.setItem(INSPECTED_COMPANY_KEY, JSON.stringify(company));
+    } else {
+      localStorage.removeItem(INSPECTED_COMPANY_KEY);
+    }
+  };
 
   useEffect(() => {
     const storedToken = localStorage.getItem(TOKEN_KEY);
@@ -78,12 +98,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsNewCustomer(!userData.isNewCustomer); // true if user not onboarded
   };
 
+  const effectiveUser = useMemo(() => {
+    if (!user) return null;
+    if (user.isSuperAdmin && inspectedCompany) {
+      return {
+        ...user,
+        companyId: inspectedCompany.id,
+      };
+    }
+    return user;
+  }, [user, inspectedCompany]);
+
   const value = useMemo<AuthContextType>(
     () => ({
-      user,
+      user: effectiveUser,
       token,
       loading,
       isNewCustomer,
+      inspectedCompany,
+      setInspectedCompany,
       setIsNewCustomer,
       setUser,
 
@@ -170,12 +203,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(USER_KEY);
         localStorage.removeItem(SETUP_KEY);
         localStorage.removeItem('setupData');
+        localStorage.removeItem(INSPECTED_COMPANY_KEY);
         setToken(null);
         setUser(null);
+        setInspectedCompanyState(null);
         setIsNewCustomer(false);
       },
     }),
-    [user, token, loading, isNewCustomer]
+    [effectiveUser, token, loading, isNewCustomer, inspectedCompany]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

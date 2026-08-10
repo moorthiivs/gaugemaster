@@ -6,11 +6,12 @@ import { UsersService } from './users.service';
 import { User } from './user.entity';
 import { Company } from 'src/company/entities/company.entity';
 import { Role } from 'src/roles/role.entity';
+import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, Company, Role])], // <-- THIS is required
+  imports: [TypeOrmModule.forFeature([User, Company, Role])],
   controllers: [UsersController],
-  providers: [UsersService],
+  providers: [UsersService, PermissionsGuard],
   exports: [UsersService],
 })
 export class UsersModule { }

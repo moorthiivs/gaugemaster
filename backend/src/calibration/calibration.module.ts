@@ -11,6 +11,7 @@ import { ReportTemplatesModule } from '../report-templates/report-templates.modu
 import { InstrumentsModule } from '../instruments/instruments.module';
 
 import { User } from 'src/users/user.entity';
+import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { User } from 'src/users/user.entity';
     InstrumentsModule,
   ],
   controllers: [CalibrationController],
-  providers: [CalibrationService, CertificateService],
+  providers: [CalibrationService, CertificateService, PermissionsGuard],
   exports: [CalibrationService, CertificateService],
 })
 export class CalibrationModule {}

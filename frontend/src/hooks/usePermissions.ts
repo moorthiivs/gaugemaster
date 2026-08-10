@@ -10,25 +10,27 @@ export function usePermissions() {
   ): boolean => {
     if (!user) return false;
 
-    // Super Admin platform override
+    // Super Admin platform owner override
     if (user.isSuperAdmin) return true;
 
     // Standard un-restricted modules
     if (moduleKey === "dashboard" || moduleKey === "profile") return true;
 
-    // Admin role override
-    const roleName = typeof user.role === "string" ? user.role : user.role?.name || "";
-    if (roleName.toLowerCase() === "admin") return true;
-
-    // Retrieve role permissions object
+    // Retrieve role permissions matrix object from userRole or role
     const rolePermissions: RolePermissions | undefined =
       user.userRole?.permissions || (typeof user.role === "object" ? user.role?.permissions : undefined);
 
-    if (rolePermissions && rolePermissions[moduleKey]) {
+    // If permissions matrix exists for this module, strictly evaluate it
+    if (rolePermissions && rolePermissions[moduleKey] !== undefined) {
       return !!rolePermissions[moduleKey][action];
     }
 
-    return true;
+    // Fallback if permissions matrix is not defined
+    const roleName = typeof user.role === "string" ? user.role : user.role?.name || "";
+    if (roleName.toLowerCase() === "admin") return true;
+
+    // Deny by default — if no permissions matrix is configured, block access
+    return false;
   };
 
   return { canAccess };

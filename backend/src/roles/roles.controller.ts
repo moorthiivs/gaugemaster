@@ -7,10 +7,15 @@ import {
   Body,
   Param,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { RolesService } from './roles.service';
 import { RolePermissions } from './role.entity';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller(['api/roles', 'roles'])
 export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
@@ -26,6 +31,7 @@ export class RolesController {
   }
 
   @Post()
+  @RequirePermission('users', 'create')
   async create(
     @Body()
     body: {
@@ -39,6 +45,7 @@ export class RolesController {
   }
 
   @Patch(':id')
+  @RequirePermission('users', 'edit')
   async update(
     @Param('id') id: string,
     @Body()
@@ -46,12 +53,14 @@ export class RolesController {
       name?: string;
       description?: string;
       permissions?: RolePermissions;
+      companyId?: string;
     },
   ) {
     return this.rolesService.update(id, body);
   }
 
   @Delete(':id')
+  @RequirePermission('users', 'delete')
   async remove(@Param('id') id: string) {
     return this.rolesService.remove(id);
   }

@@ -4,12 +4,14 @@ import { CompanyController } from './company.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Company } from './entities/company.entity';
 import { User } from 'src/users/user.entity';
-import { UsersModule } from 'src/users/users.module';  
+import { UsersModule } from 'src/users/users.module';
+import { RolesModule } from 'src/roles/roles.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Company, User]),
-    UsersModule,   // ✅ Add this so UsersService is available
+    UsersModule,
+    RolesModule,
   ],
   controllers: [CompanyController],
   providers: [CompanyService],

@@ -49,10 +49,12 @@ import {
   CompanyListItem,
   UpdateCompanyAccessDto,
 } from "@/lib/superAdminActions";
+import { useAuth } from "@/lib/auth";
 import CompanyAccessModal from "@/components/admin/CompanyAccessModal";
 import DeleteCompanyConfirmModal from "@/components/admin/DeleteCompanyConfirmModal";
 
 export default function CustomerCompanies() {
+  const { setInspectedCompany } = useAuth();
   const [companies, setCompanies] = useState<CompanyListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -337,12 +339,26 @@ export default function CustomerCompanies() {
                         : "—"}
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs font-bold gap-1 bg-primary/10 text-primary hover:bg-primary/20 border-primary/30 shadow-2xs"
+                          title="View Company Data (Instruments, Calibrations, Templates, Reports, Users)"
+                          onClick={() => {
+                            setInspectedCompany({ id: company.id, name: company.companyName });
+                            toast.success(`Viewing company data for ${company.companyName}`);
+                            navigate("/dashboard");
+                          }}
+                        >
+                          <Building2 className="h-3.5 w-3.5" />
+                          <span>View Data</span>
+                        </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0"
-                          title="View Details"
+                          title="View Company Details"
                           onClick={() => navigate(`/super-admin/companies/${company.id}`)}
                         >
                           <Eye className="h-3.5 w-3.5" />

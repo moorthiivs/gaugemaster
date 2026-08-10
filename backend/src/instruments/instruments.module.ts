@@ -9,11 +9,12 @@ import { ValidationModule } from 'src/validation/validation.module';
 
 import { User } from 'src/users/user.entity';
 import { BackupModule } from 'src/backup/backup.module';
+import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Instrument, CalibrationHistory, User]), MailerModule, ValidationModule, BackupModule],
   controllers: [InstrumentsController],
-  providers: [InstrumentsService],
+  providers: [InstrumentsService, PermissionsGuard],
   exports: [InstrumentsService],
 })
 export class InstrumentsModule { }

@@ -134,7 +134,7 @@ const quickActionsConfig: QuickActionConfig[] = [
 ];
 
 export function AppHeader() {
-  const { user, signOut } = useAuth();
+  const { user, inspectedCompany, setInspectedCompany, signOut } = useAuth();
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
   const { themeSettings, saveTheme } = useThemeSettings();
@@ -170,7 +170,7 @@ export function AppHeader() {
 
   // Filter Quick Actions based on User Role Permissions
   const visibleQuickActions = user?.isSuperAdmin
-    ? superAdminQuickActions
+    ? (inspectedCompany ? [...superAdminQuickActions, ...quickActionsConfig] : superAdminQuickActions)
     : quickActionsConfig.filter((item) => canAccess(item.module, item.action));
 
   const categories = ["Operations", "Master Data", "Admin"] as const;
@@ -200,7 +200,7 @@ export function AppHeader() {
     const timer = setTimeout(async () => {
       try {
         const res = await httpClient.get("/instruments", {
-          params: { search: searchQuery.trim(), limit: 6 }
+          params: { search: searchQuery.trim(), limit: 6, companyId: user?.companyId, createdBy: user?.id }
         });
         const items = Array.isArray(res.data) ? res.data : (res.data?.data || res.data?.items || []);
         setSuggestions(items.slice(0, 6));
@@ -531,6 +531,24 @@ export function AppHeader() {
         </div>
 
         <div className="flex items-center gap-2">
+          {user?.isSuperAdmin && inspectedCompany && (
+            <div className="hidden md:flex items-center gap-2 bg-primary/10 border border-primary/30 text-primary text-xs font-semibold px-3 py-1 rounded-lg">
+              <Building2 className="h-3.5 w-3.5" />
+              <span>Viewing: <strong className="font-bold text-foreground">{inspectedCompany.name}</strong></span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 px-1.5 text-[10px] font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded ml-1"
+                onClick={() => {
+                  setInspectedCompany(null);
+                  navigate("/super-admin/companies");
+                }}
+              >
+                Exit View
+              </Button>
+            </div>
+          )}
+
           {/* Dynamic Permission-Based Quick Actions Dropdown Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

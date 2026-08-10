@@ -8,14 +8,19 @@ import {
   Query,
   Res,
   Delete,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
 import { CalibrationService } from './calibration.service';
 import { CertificateService } from './certificate.service';
 import { CreateCalibrationDto } from './dto/create-calibration.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/calibrations')
 export class CalibrationController {
   constructor(
@@ -24,6 +29,7 @@ export class CalibrationController {
   ) {}
 
   @Post()
+  @RequirePermission('calibrations', 'create')
   async create(@Body() dto: CreateCalibrationDto) {
     return this.calibrationService.create(dto);
   }
@@ -86,6 +92,7 @@ export class CalibrationController {
   }
 
   @Post(':id/approve')
+  @RequirePermission('calibrations', 'edit')
   async approve(
     @Param('id') id: string,
     @Body() body: { reviewerId: string; reviewerName: string; reviewerDesignation?: string; signature?: string },
@@ -98,6 +105,7 @@ export class CalibrationController {
   }
 
   @Post(':id/reject')
+  @RequirePermission('calibrations', 'edit')
   async reject(
     @Param('id') id: string,
     @Body() body: { reviewerId: string; reviewerName: string; rejectionReason: string },
@@ -133,6 +141,7 @@ export class CalibrationController {
   }
 
   @Put(':id')
+  @RequirePermission('calibrations', 'edit')
   async update(
     @Param('id') id: string,
     @Body() body: { dto: any; editedByUserId?: string; editedByName?: string },
@@ -152,6 +161,7 @@ export class CalibrationController {
   }
 
   @Delete(':id')
+  @RequirePermission('calibrations', 'delete')
   async remove(@Param('id') id: string) {
     return this.calibrationService.remove(id);
   }

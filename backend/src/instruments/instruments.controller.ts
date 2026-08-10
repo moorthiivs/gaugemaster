@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname } from 'path';
@@ -6,7 +7,10 @@ import { InstrumentsService } from './instruments.service';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from '../dto/update-instrument.dto';
 import { GoogleDriveService } from '../backup/google-drive.service';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/instruments')
 export class InstrumentsController {
     constructor(
@@ -36,6 +40,7 @@ export class InstrumentsController {
         @Query('page') page: string = '1',
         @Query('pageSize') pageSize: string = '10',
         @Query('createdBy') createdBy?: string,
+        @Query('companyId') companyId?: string,
         @Query('sortBy') sortBy?: string,
         @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
     ) {
@@ -62,6 +67,7 @@ export class InstrumentsController {
             page: pageNumber,
             pageSize: limit,
             createdBy,
+            companyId,
             sortBy,
             sortOrder,
         });
@@ -84,11 +90,13 @@ export class InstrumentsController {
     }
 
     @Post()
+    @RequirePermission('instruments', 'create')
     create(@Body() createInstrumentDto: CreateInstrumentDto) {
         return this.instrumentsService.create(createInstrumentDto);
     }
 
     @Patch(':id')
+    @RequirePermission('instruments', 'edit')
     update(
         @Param('id') id: string,
         @Body() updateInstrumentDto: UpdateInstrumentDto
@@ -97,6 +105,7 @@ export class InstrumentsController {
     }
 
     @Post(':id/certificate')
+    @RequirePermission('instruments', 'edit')
     @UseInterceptors(FileInterceptor('file', {
         storage: diskStorage({
             destination: './uploads/certificates',
@@ -131,6 +140,7 @@ export class InstrumentsController {
     }
 
     @Post('bulk-upload')
+    @RequirePermission('instruments', 'create')
     async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
         const dataArray = Array.isArray(dto) ? dto : [dto];
         return this.instrumentsService.bulkUpload(dataArray);
@@ -162,11 +172,13 @@ export class InstrumentsController {
     }
 
     @Delete(':id')
+    @RequirePermission('instruments', 'delete')
     async remove(@Param('id') id: string) {
         return this.instrumentsService.remove(id);
     }
 
     @Post('bulk-delete')
+    @RequirePermission('instruments', 'delete')
     async bulkRemove(@Body('ids') ids: string[]) {
         return this.instrumentsService.bulkRemove(ids);
     }

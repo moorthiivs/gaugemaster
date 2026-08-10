@@ -15,6 +15,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import httpClient from "@/lib/httpClient";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
@@ -96,6 +97,7 @@ export default function Instruments() {
   const { toast } = useToast();
   const { user } = useAuth()
   const navigate = useNavigate();
+  const { canAccess } = usePermissions();
   const [searchParams] = useSearchParams();
   
   const initialSearch = searchParams.get("search") || "";
@@ -1126,34 +1128,38 @@ export default function Instruments() {
         const isUploading = uploadingId === row.original.id;
         return (
           <div className="flex items-center gap-2">
-            <TooltipProv content="Calibrate Instrument">
-              <Button 
-                variant="outline" 
-                size="icon"
-                disabled={isUploading}
-                className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/calibration/new/${row.original.id}`);
-                }}
-              >
-                <Activity className="h-4 w-4 text-primary" />
-              </Button>
-            </TooltipProv>
-            <TooltipProv content="Log External Calibration (Upload Certificate)">
-              <Button 
-                variant="outline" 
-                size="icon"
-                disabled={isUploading}
-                className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleOpenDateModal(row.original);
-                }}
-              >
-                <Upload className="h-4 w-4 text-emerald-600" />
-              </Button>
-            </TooltipProv>
+            {canAccess("calibrations", "create") && (
+              <TooltipProv content="Calibrate Instrument">
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  disabled={isUploading}
+                  className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/calibration/new/${row.original.id}`);
+                  }}
+                >
+                  <Activity className="h-4 w-4 text-primary" />
+                </Button>
+              </TooltipProv>
+            )}
+            {canAccess("instruments", "edit") && (
+              <TooltipProv content="Log External Calibration (Upload Certificate)">
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  disabled={isUploading}
+                  className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenDateModal(row.original);
+                  }}
+                >
+                  <Upload className="h-4 w-4 text-emerald-600" />
+                </Button>
+              </TooltipProv>
+            )}
             <TooltipProv content="View Calibration History">
               <Button 
                 variant="outline" 
@@ -1183,20 +1189,22 @@ export default function Instruments() {
                 <Printer className="h-4 w-4" />
               </Button>
             </TooltipProv>
-            <TooltipProv content="Delete Instrument">
-              <Button 
-                variant="outline" 
-                size="icon"
-                disabled={isUploading}
-                className="h-8 w-8 hover:bg-destructive/10 group"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleOpenDeleteModal(row.original);
-                }}
-              >
-                <Trash2 className="h-4 w-4 text-destructive group-hover:text-destructive" />
-              </Button>
-            </TooltipProv>
+            {canAccess("instruments", "delete") && (
+              <TooltipProv content="Delete Instrument">
+                <Button 
+                  variant="outline" 
+                  size="icon"
+                  disabled={isUploading}
+                  className="h-8 w-8 hover:bg-destructive/10 group"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleOpenDeleteModal(row.original);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive group-hover:text-destructive" />
+                </Button>
+              </TooltipProv>
+            )}
           </div>
         );
       }
@@ -1272,13 +1280,15 @@ export default function Instruments() {
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            <Button 
-              size="sm" 
-              className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl shadow-xs gap-2 w-full sm:w-auto" 
-              onClick={() => navigate("/instruments/new")}
-            >
-              <PlusCircle className="h-4 w-4" /> Add Instrument
-            </Button>
+            {canAccess("instruments", "create") && (
+              <Button 
+                size="sm" 
+                className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl shadow-xs gap-2 w-full sm:w-auto" 
+                onClick={() => navigate("/instruments/new")}
+              >
+                <PlusCircle className="h-4 w-4" /> Add Instrument
+              </Button>
+            )}
           </div>
         </header>
 
@@ -1568,7 +1578,7 @@ export default function Instruments() {
           totalItems={data.total}
           onPageChange={(page) => setFilters((f) => ({ ...f, page }))}
           onPageSizeChange={(pageSize) => setFilters((f) => ({ ...f, pageSize, page: 1 }))}
-          onRowClick={(row) => navigate(`/instruments/${row.id}/edit`)}
+          onRowClick={(row) => canAccess("instruments", "edit") ? navigate(`/instruments/${row.id}/edit`) : undefined}
           rowSelection={selected}
           onRowSelectionChange={handleRowSelectionChange}
           hideSearch={true}
@@ -1587,15 +1597,17 @@ export default function Instruments() {
                   <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
                   <span>Refresh</span>
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs font-semibold gap-1.5"
-                  onClick={() => setisOpenupload(true)}
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>Bulk Upload</span>
-                </Button>
+                {canAccess("instruments", "create") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs font-semibold gap-1.5"
+                    onClick={() => setisOpenupload(true)}
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>Bulk Upload</span>
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -1656,15 +1668,17 @@ export default function Instruments() {
                       <Printer className="h-3.5 w-3.5 text-primary" />
                       <span>Print {selectedIds.length} Labels</span>
                     </Button>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      className="h-8 text-xs font-semibold animate-in fade-in gap-1.5 text-destructive hover:bg-destructive/10 border-destructive/30"
-                      onClick={handleBulkDelete}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span>Delete {selectedIds.length} Selected</span>
-                    </Button>
+                    {canAccess("instruments", "delete") && (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="h-8 text-xs font-semibold animate-in fade-in gap-1.5 text-destructive hover:bg-destructive/10 border-destructive/30"
+                        onClick={handleBulkDelete}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span>Delete {selectedIds.length} Selected</span>
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"

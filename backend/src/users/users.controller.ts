@@ -7,12 +7,17 @@ import {
   Patch,
   Delete,
   Query,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { ApiBody, ApiTags } from '@nestjs/swagger';
 import { UsersService } from './users.service';
 import { CreateUserDto } from '../dto/create-user.dto';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
 @ApiTags('api/Users')
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller(['api/users', 'users'])
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -34,6 +39,7 @@ export class UsersController {
   }
 
   @Post()
+  @RequirePermission('users', 'create')
   async createUser(
     @Body()
     body: {
@@ -51,6 +57,7 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @RequirePermission('users', 'edit')
   async updateUser(
     @Param('id') id: string,
     @Body()
@@ -69,6 +76,7 @@ export class UsersController {
   }
 
   @Delete(':id')
+  @RequirePermission('users', 'delete')
   async removeUser(@Param('id') id: string) {
     return this.usersService.removeUser(id);
   }

@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Role, RolePermissions } from './role.entity';
+import { User } from '../users/user.entity';
 
 export const DEFAULT_MODULES = [
   'instruments',
@@ -62,6 +63,8 @@ export class RolesService implements OnModuleInit {
   constructor(
     @InjectRepository(Role)
     private readonly roleRepository: Repository<Role>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {}
 
   async onModuleInit() {
@@ -111,12 +114,73 @@ export class RolesService implements OnModuleInit {
     }
   }
 
+  async seedCompanyRoles(companyId: string): Promise<Role[]> {
+    const existing = await this.roleRepository.find({ where: { companyId } });
+    if (existing.length > 0) return existing;
+
+    const defaultRoles = [
+      {
+        name: 'Admin',
+        description: 'Full administrative access to all modules and user management',
+        permissions: FULL_ACCESS_PERMISSIONS,
+        companyId,
+        isSystemDefault: false,
+      },
+      {
+        name: 'Quality Manager',
+        description: 'Full access to instruments & calibrations, view-only access to system users',
+        permissions: QUALITY_MANAGER_PERMISSIONS,
+        companyId,
+        isSystemDefault: false,
+      },
+      {
+        name: 'Calibration Engineer',
+        description: 'Performs calibration activities for assigned instruments and submits records for approval',
+        permissions: CALIBRATION_ENGINEER_PERMISSIONS,
+        companyId,
+        isSystemDefault: false,
+      },
+      {
+        name: 'Lab Technician',
+        description: 'Can perform calibrations and update instruments, cannot delete master records',
+        permissions: LAB_TECHNICIAN_PERMISSIONS,
+        companyId,
+        isSystemDefault: false,
+      },
+      {
+        name: 'Viewer',
+        description: 'Read-only access to instruments, calibrations, and reports',
+        permissions: VIEWER_PERMISSIONS,
+        companyId,
+        isSystemDefault: false,
+      },
+    ];
+
+    const created: Role[] = [];
+    for (const rData of defaultRoles) {
+      const r = this.roleRepository.create(rData);
+      created.push(await this.roleRepository.save(r));
+    }
+    return created;
+  }
+
   async findAll(companyId?: string): Promise<Role[]> {
     if (companyId) {
-      return this.roleRepository.find({
+      const allRoles = await this.roleRepository.find({
         where: [{ companyId }, { isSystemDefault: true }],
         order: { name: 'ASC' },
       });
+
+      // Map roles by lowercase name, prioritizing company-specific roles over system default templates
+      const roleMap = new Map<string, Role>();
+      
+      // First populate default roles
+      allRoles.filter(r => r.isSystemDefault).forEach(r => roleMap.set(r.name.toLowerCase(), r));
+      
+      // Override with company-specific roles
+      allRoles.filter(r => r.companyId === companyId).forEach(r => roleMap.set(r.name.toLowerCase(), r));
+
+      return Array.from(roleMap.values());
     }
     return this.roleRepository.find({ order: { name: 'ASC' } });
   }
@@ -148,10 +212,47 @@ export class RolesService implements OnModuleInit {
       name?: string;
       description?: string;
       permissions?: RolePermissions;
+      companyId?: string;
     },
   ): Promise<Role> {
     const role = await this.findOne(id);
-    Object.assign(role, data);
+
+    // Copy-on-Write: If trying to edit a global system default role, fork a company-private role
+    if (role.isSystemDefault && data.companyId) {
+      let companyRole = await this.roleRepository.findOne({
+        where: { companyId: data.companyId, name: role.name },
+      });
+
+      if (!companyRole) {
+        companyRole = this.roleRepository.create({
+          name: data.name || role.name,
+          description: data.description !== undefined ? data.description : role.description,
+          permissions: data.permissions || role.permissions,
+          companyId: data.companyId,
+          isSystemDefault: false,
+        });
+      } else {
+        if (data.name) companyRole.name = data.name;
+        if (data.description !== undefined) companyRole.description = data.description;
+        if (data.permissions) companyRole.permissions = data.permissions;
+      }
+
+      const savedRole = await this.roleRepository.save(companyRole);
+
+      // Update all users in this company assigned to the global default role to use the new company-scoped role ID
+      await this.userRepository.update(
+        { companyId: data.companyId, roleId: role.id },
+        { roleId: savedRole.id },
+      );
+
+      return savedRole;
+    }
+
+    if (data.name) role.name = data.name;
+    if (data.description !== undefined) role.description = data.description;
+    if (data.permissions) role.permissions = data.permissions;
+    if (data.companyId && !role.companyId) role.companyId = data.companyId;
+
     return this.roleRepository.save(role);
   }
 

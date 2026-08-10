@@ -62,7 +62,7 @@ interface AppUser {
 import { usePermissions } from "@/hooks/usePermissions";
 
 export default function UserManagement() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, setUser } = useAuth();
   const { canAccess } = usePermissions();
   const { toast } = useToast();
 
@@ -310,8 +310,31 @@ export default function UserManagement() {
       };
 
       if (editingRole) {
-        await httpClient.patch(`/roles/${editingRole.id}`, payload);
+        const res = await httpClient.patch(`/roles/${editingRole.id}`, payload);
+        const savedRoleData = res.data;
         toast({ title: "Role Updated 🎉", description: `Role "${roleName}" permissions updated.` });
+
+        // Real-time update if currentUser has this role
+        const isCurrentRole = currentUser && (
+          editingRole.id === currentUser.userRole?.id ||
+          editingRole.id === currentUser.role?.id ||
+          editingRole.name === currentUser.role ||
+          editingRole.name === currentUser.role?.name
+        );
+
+        if (isCurrentRole && currentUser) {
+          const updatedUser = {
+            ...currentUser,
+            userRole: savedRoleData || {
+              ...(currentUser.userRole || {}),
+              id: editingRole.id,
+              name: roleName,
+              permissions: rolePermissions,
+            },
+          };
+          setUser(updatedUser);
+          localStorage.setItem("auth_user", JSON.stringify(updatedUser));
+        }
       } else {
         await httpClient.post(`/roles`, payload);
         toast({ title: "Role Created 🎉", description: `Role "${roleName}" created successfully.` });

@@ -17,21 +17,22 @@ export class DashboardService {
         private readonly userRepository: Repository<User>,
     ) { }
 
-    private async getCompanyUserIds(userId?: string): Promise<string[]> {
-        if (!userId) return [];
-        const user = await this.userRepository.findOne({ where: { id: userId } });
-        if (user && user.companyId) {
+    private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+        const targetCompanyId = companyId || (userId ? (await this.userRepository.findOne({ where: { id: userId } }))?.companyId : undefined);
+        if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
-                where: { companyId: user.companyId },
+                where: { companyId: targetCompanyId },
                 select: ['id'],
             });
-            return companyUsers.map(u => u.id);
+            if (companyUsers.length > 0) {
+                return companyUsers.map(u => u.id);
+            }
         }
-        return [userId];
+        return userId ? [userId] : [];
     }
 
-    async fetchDashboard(userid: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string) {
-        const userIds = await this.getCompanyUserIds(userid);
+    async fetchDashboard(userid: string, companyId?: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string) {
+        const userIds = await this.getCompanyUserIds(userid, companyId);
         const targetUserIds = userIds.length > 0 ? userIds : [userid];
 
         const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
@@ -568,12 +569,16 @@ export class DashboardService {
     async fetchDashboardList(
         userid: string,
         listType: 'total' | 'due' | 'overdue' | 'calibrated',
+        companyId?: string,
         startDateStr?: string,
         endDateStr?: string,
         itemStatus?: string,
         status?: string,
         location?: string
     ) {
+        const userIds = await this.getCompanyUserIds(userid, companyId);
+        const targetUserIds = userIds.length > 0 ? userIds : [userid];
+
         const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
         const now = new Date();
         let startRange: Date;
@@ -596,7 +601,7 @@ export class DashboardService {
         }
 
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
-            created_by: { id: userid },
+            created_by: { id: In(targetUserIds) },
             ...(itemStatus ? { item_status: itemStatus } : {}),
             ...(status ? { status: status } : {}),
             ...(location ? { location: location } : {}),

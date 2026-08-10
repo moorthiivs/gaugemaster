@@ -43,17 +43,17 @@ export async function deleteInstrumentsBulk(ids: string[]) {
 }
 
 /** Fetch dashboard statistics for a specific user */
-export async function getDashboardSummary(userId: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string): Promise<DashboardSummary> {
+export async function getDashboardSummary(userId: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string, companyId?: string): Promise<DashboardSummary> {
   const res = await httpClient.get(`/dashboard/${userId}`, {
-    params: { startDate, endDate, itemStatus, status, location, isReferenceStandard }
+    params: { startDate, endDate, itemStatus, status, location, isReferenceStandard, companyId }
   });
   return res.data;
 }
 
 /** Fetch dashboard list for a specific user and type */
-export async function getDashboardList(userId: string, listType: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string): Promise<any[]> {
+export async function getDashboardList(userId: string, listType: string, startDate?: string, endDate?: string, itemStatus?: string, status?: string, location?: string, companyId?: string): Promise<any[]> {
   const res = await httpClient.get(`/dashboard/${userId}/list`, {
-    params: { listType, startDate, endDate, itemStatus, status, location }
+    params: { listType, startDate, endDate, itemStatus, status, location, companyId }
   });
   return res.data;
 }
@@ -68,7 +68,9 @@ export async function generateReport(from: string, to: string, format: "csv" | "
 }
 
 /** Fetch filter parameters (locations, frequencies, etc.) for a user */
-export async function getFilterParams(userId: string) {
-  const res = await httpClient.get(`/instruments/filters/${userId}`);
+export async function getFilterParams(userId: string, companyId?: string) {
+  const res = await httpClient.get(`/instruments/filters/${userId}`, {
+    params: { companyId }
+  });
   return res.data;
 }

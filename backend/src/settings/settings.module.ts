@@ -4,11 +4,13 @@ import { SettingsController } from './settings.controller';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Setting } from './entities/setting.entity';
 import { MailerModule } from '../mail/mailer.module';
+import { User } from '../users/user.entity';
+import { PermissionsGuard } from '../auth/permissions.guard';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Setting]), MailerModule],
+  imports: [TypeOrmModule.forFeature([Setting, User]), MailerModule],
   controllers: [SettingsController],
-  providers: [SettingsService],
+  providers: [SettingsService, PermissionsGuard],
   exports: [SettingsService]
 })
 export class SettingsModule { }

@@ -11,7 +11,9 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { CalibrationTemplatesService } from './calibration-templates.service';
@@ -20,7 +22,10 @@ import { UpdateCalibrationTemplateDto } from './dto/update-calibration-template.
 import { TemplateExportService } from './services/template-export.service';
 import { TemplateImportService } from './services/template-import.service';
 import { TemplateAuditLogService } from './services/template-audit-log.service';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/calibration-templates')
 export class CalibrationTemplatesController {
   constructor(
@@ -31,6 +36,7 @@ export class CalibrationTemplatesController {
   ) {}
 
   @Post()
+  @RequirePermission('templates', 'create')
   async create(@Body() dto: CreateCalibrationTemplateDto) {
     return this.templatesService.create(dto);
   }
@@ -121,6 +127,7 @@ export class CalibrationTemplatesController {
   }
 
   @Put(':id')
+  @RequirePermission('templates', 'edit')
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCalibrationTemplateDto,
@@ -129,6 +136,7 @@ export class CalibrationTemplatesController {
   }
 
   @Delete(':id')
+  @RequirePermission('templates', 'delete')
   async remove(@Param('id') id: string) {
     await this.templatesService.remove(id);
     return { message: 'Template deleted successfully' };
