@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useSEO } from "@/hooks/useSEO";
 import { Building2, User, UserCheck } from "lucide-react";
 import heroImage from "@/assets/hero-instruments.jpg";
-import dashboardPreview from "@/assets/dashboard-preview.jpg";
+import dashboardPreview from "@/assets/dashboard-preview.png";
 import httpClient from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
 
