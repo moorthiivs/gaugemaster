@@ -39,6 +39,43 @@ interface UploadResult {
   failedRows: { row: number; error: string }[];
 }
 
+const normalizeKey = (key: string): string => {
+  return (key || "").toString().toLowerCase().replace(/[^a-z0-9]/g, "");
+};
+
+const findRawValue = (raw: Record<string, any>, aliases: string[]) => {
+  const normAliases = aliases.map(normalizeKey);
+  const key = Object.keys(raw || {}).find(k => normAliases.includes(normalizeKey(k)));
+  return key !== undefined ? raw[key] : undefined;
+};
+
+const REQUIRED_GROUPS: { displayName: string; aliases: string[] }[] = [
+  {
+    displayName: "ID CODE",
+    aliases: ["idcode", "id", "imte", "instrumentid", "equipmentid", "code"],
+  },
+  {
+    displayName: "NAME OF INSTRUMENT",
+    aliases: ["nameofinstrument", "instrumentname", "name", "description", "itemname", "equipmentname", "gaugename"],
+  },
+  {
+    displayName: "LOCATION",
+    aliases: ["location", "itemlocation", "dept", "department", "loc", "plant"],
+  },
+  {
+    displayName: "CALIBRATION FREQUENCY",
+    aliases: ["calibrationfrequency", "calibfrequencyinmonth", "frequency", "calibfrequency", "calfrequency", "freq"],
+  },
+  {
+    displayName: "LAST CALIBRATION DATE",
+    aliases: ["lastcalibrationdate", "lastcaldate", "lastcalibration", "lastcal", "calibrationdate", "prevcaldate"],
+  },
+  {
+    displayName: "DUE DATE",
+    aliases: ["duedate", "nextcaldate", "nextcalibrationdate", "nextcalibration", "nextcal", "calduedate"],
+  },
+];
+
 const REQUIRED_COLUMNS = [
   "S.No", "NAME OF INSTRUMENT", "ID CODE", "RANGE", "SERIAL NO",
   "LEAST COUNT", "LOCATION", "CALIBRATION FREQUENCY",
@@ -213,11 +250,11 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
     });
 
     // Keep hardcoded critical validations if not in rules
-    const name = mapped.name || raw["NAME OF INSTRUMENT"] || raw["Description"];
-    const idCode = mapped.id_code || raw["ID CODE"] || raw["IMTE"];
-    const location = mapped.location || raw["LOCATION"] || raw["Item Location"];
-    const frequency = mapped.frequency || raw["CALIBRATION FREQUENCY"] || raw["CALIB. FREQUENCY in month"];
-    const status = mapped.status || raw["STATUS"] || raw["Calibration Status"]
+    const name = mapped.name || findRawValue(raw, ["NAME OF INSTRUMENT", "Description", "Name", "Instrument Name"]);
+    const idCode = mapped.id_code || findRawValue(raw, ["ID CODE", "IMTE", "ID Code", "ID"]);
+    const location = mapped.location || findRawValue(raw, ["LOCATION", "Item Location", "Location"]);
+    const frequency = mapped.frequency || findRawValue(raw, ["CALIBRATION FREQUENCY", "CALIB. FREQUENCY in month", "Frequency", "Freq"]);
+    const status = mapped.status || findRawValue(raw, ["STATUS", "Calibration Status", "Status"]) || "OK";
 
     if (validationRules.length === 0) {
         if (!name?.toString().trim()) errors.push("Name is required");
@@ -227,7 +264,7 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
         if (!status?.toString().trim()) errors.push("Status is required");
     }
 
-    const rawLastCal = lastCalKey ? raw[lastCalKey] : (raw["LAST CALIBRATION DATE"] || raw["Last Cal. Date"]);
+    const rawLastCal = mapped.last_calibration_date || (lastCalKey ? raw[lastCalKey] : findRawValue(raw, ["LAST CALIBRATION DATE", "Last Cal. Date", "Last Calibration Date", "Last Cal"]));
     const lastCalRule = validationRules.find(r => r.fieldName === 'last_calibration_date');
     const isLastCalRequired = lastCalRule ? lastCalRule.isRequired : true;
     const isLastCalEmpty = !rawLastCal || rawLastCal.toString().trim() === "";
@@ -241,7 +278,7 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
       lastCalDate = excelDateToISO(rawLastCal);
     }
 
-    const rawDue = dueKey ? raw[dueKey] : (raw["DUE DATE"] || raw["Next Cal. Date"]);
+    const rawDue = mapped.due_date || (dueKey ? raw[dueKey] : findRawValue(raw, ["DUE DATE", "Next Cal. Date", "Due Date", "Next Cal"]));
     const dueRule = validationRules.find(r => r.fieldName === 'due_date');
     const isDueRequired = dueRule ? dueRule.isRequired : true;
     const isDueEmpty = !rawDue || rawDue.toString().trim() === "";
@@ -268,7 +305,8 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
     const currentId = idCode?.toString().trim();
     if (currentId && enforceUniqueId) {
       const duplicates = allRows.filter((r, i) => {
-        const otherId = (r["ID CODE"] || r["IMTE"])?.toString().trim();
+        const otherMapped = mapRow ? mapRow(r) : r;
+        const otherId = (otherMapped.id_code || findRawValue(r, ["ID CODE", "IMTE", "ID Code", "ID"]))?.toString().trim();
         return i !== rowIndex && otherId === currentId;
       });
       if (duplicates.length > 0) errors.push("Duplicate ID Code in file");
@@ -294,39 +332,31 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
 
         const headers = Object.keys(rows[0] || {});
         
-        // Smarter validation: Check for sets of alternative names
-        const requiredGroups = [
-          ["ID CODE", "IMTE"],
-          ["NAME OF INSTRUMENT", "Description"],
-          ["LOCATION", "Item Location"],
-          ["CALIBRATION FREQUENCY", "CALIB. FREQUENCY in month"],
-          ["LAST CALIBRATION DATE", "Last Cal. Date"],
-          ["DUE DATE", "Next Cal. Date"]
-        ];
-
-        const missingGroups = requiredGroups.filter(group => 
-          !group.some(col => headers.includes(col))
+        // Alias-aware & normalized column validation
+        const missingGroups = REQUIRED_GROUPS.filter(group =>
+          !headers.some(h => group.aliases.includes(normalizeKey(h)))
         );
 
         if (missingGroups.length > 0) {
-          const missingNames = missingGroups.map(group => group[0]).join(", ");
+          const missingNames = missingGroups.map(group => group.displayName).join(", ");
           setColumnErrors([`Missing required info: ${missingNames}`]);
           setStep("preview");
           return;
         }
         setColumnErrors([]);
 
-        const findCol = (names: string[]) => {
-          return headers.find(h => names.some(n => h.toLowerCase().trim().includes(n.toLowerCase())));
+        const findCol = (aliases: string[]) => {
+          const normAliases = aliases.map(normalizeKey);
+          return headers.find(h => normAliases.some(alias => normalizeKey(h).includes(alias)));
         };
 
-        const lastCalKey = findCol(["last cal", "last calibration"]);
-        const dueKey = findCol(["next cal", "due date", "next calibration"]);
+        const lastCalKey = findCol(["lastcaldate", "lastcalibrationdate", "lastcal", "lastcalibration", "prevcaldate"]);
+        const dueKey = findCol(["nextcaldate", "duedate", "nextcal", "nextcalibration", "calduedate"]);
 
         const parsed: ParsedRow[] = rows.map((raw, i) => {
           // Pre-extract dates using the found keys
-          const lastCalRaw = lastCalKey ? raw[lastCalKey] : null;
-          const dueRaw = dueKey ? raw[dueKey] : null;
+          const lastCalRaw = lastCalKey ? raw[lastCalKey] : findRawValue(raw, ["last calibration date", "last cal. date", "last cal"]);
+          const dueRaw = dueKey ? raw[dueKey] : findRawValue(raw, ["due date", "next cal. date", "next cal"]);
 
           // Auto-parse any field with "Date" in it if it's a number (Excel date)
           const processedRaw = { ...raw };
@@ -339,8 +369,8 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
           const mapped = {
             ...mapRow({
               ...processedRaw,
-              "LAST CALIBRATION DATE": excelDateToISO(lastCalRaw),
-              "DUE DATE": excelDateToISO(dueRaw),
+              "LAST CALIBRATION DATE": excelDateToISO(lastCalRaw) || processedRaw["LAST CALIBRATION DATE"],
+              "DUE DATE": excelDateToISO(dueRaw) || processedRaw["DUE DATE"],
             }),
             created_by: user.id,
             updated_by: user.id,
@@ -623,9 +653,9 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
                               <XCircle size={16} className="text-red-500" />
                             )}
                           </TableCell>
-                          <TableCell className="text-sm font-medium">{row.raw["NAME OF INSTRUMENT"] || row.raw["Description"] || "—"}</TableCell>
-                          <TableCell className="text-sm">{row.raw["ID CODE"] || row.raw["IMTE"] || "—"}</TableCell>
-                          <TableCell className="text-sm">{row.raw["LOCATION"] || row.raw["Item Location"] || "—"}</TableCell>
+                          <TableCell className="text-sm font-medium">{row.mapped.name || findRawValue(row.raw, ["NAME OF INSTRUMENT", "Description", "Name"]) || "—"}</TableCell>
+                          <TableCell className="text-sm">{row.mapped.id_code || findRawValue(row.raw, ["ID CODE", "IMTE", "ID Code"]) || "—"}</TableCell>
+                          <TableCell className="text-sm">{row.mapped.location || findRawValue(row.raw, ["LOCATION", "Item Location", "Location"]) || "—"}</TableCell>
                           <TableCell className="text-xs">
                             {row.mapped.last_calibration_date ? new Date(row.mapped.last_calibration_date).toLocaleDateString() : (row.raw["LAST CALIBRATION DATE"] || row.raw["Last Cal. Date"] || "—")}
                           </TableCell>
