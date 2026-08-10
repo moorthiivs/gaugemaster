@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { format } from "date-fns";
-import { Clock, ShieldAlert, Sparkles, X } from "lucide-react";
+import { Clock, Crown, ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { useAuth } from "@/lib/auth";
+import { cn } from "@/lib/utils";
 
 export default function SidebarTrialCard() {
   const { user } = useAuth();
@@ -45,63 +45,133 @@ export default function SidebarTrialCard() {
     }
   };
 
-  return (
-    <div className="px-3 my-2 group-data-[collapsible=icon]:px-1">
-      {/* Full expanded card matching modern storage/trial card design */}
-      <div className="group-data-[collapsible=icon]:hidden relative rounded-xl border border-sidebar-border/80 bg-sidebar-accent/50 p-3 shadow-2xs hover:shadow-xs transition-all">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="absolute top-1.5 right-1.5 h-5 w-5 text-muted-foreground hover:text-foreground rounded-md"
-          onClick={handleDismiss}
-          title="Hide trial card"
-        >
-          <X className="h-3.5 w-3.5" />
-        </Button>
+  const handleUpgrade = () => {
+    window.open("mailto:support@gaugemaster.com?subject=Upgrade%20Trial%20Subscription", "_blank");
+  };
 
-        <div className="space-y-2 pr-3">
+  return (
+    <div className="px-1 my-1 group-data-[collapsible=icon]:px-1">
+      {/* Expanded Full Card */}
+      <div
+        className={cn(
+          "group-data-[collapsible=icon]:hidden relative overflow-hidden rounded-2xl p-4 border shadow-sm transition-all duration-300 hover:shadow-md backdrop-blur-sm",
+          isWarning
+            ? "bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-red-500/10 dark:from-amber-950/40 dark:via-orange-950/20 dark:to-red-950/30 border-amber-500/30 dark:border-amber-500/40"
+            : "bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-blue-500/10 dark:from-indigo-950/40 dark:via-purple-950/20 dark:to-blue-950/30 border-indigo-500/20 dark:border-indigo-500/30"
+        )}
+      >
+        {/* Subtle Ambient Glowing Orb */}
+        <div
+          className={cn(
+            "absolute -top-10 -right-10 h-28 w-28 rounded-full blur-2xl pointer-events-none opacity-60",
+            isWarning ? "bg-amber-500/30" : "bg-indigo-500/30"
+          )}
+        />
+
+        {/* Top Header Row */}
+        <div className="flex items-center justify-between gap-2 mb-3 relative z-10">
           <div className="flex items-center gap-1.5">
-            {isWarning ? (
-              <ShieldAlert className="h-4 w-4 text-amber-500 shrink-0 animate-pulse" />
-            ) : (
-              <Clock className="h-4 w-4 text-primary shrink-0" />
-            )}
-            <span className="text-xs font-bold tracking-tight text-sidebar-foreground truncate">
-              {isWarning ? "Trial Expiring Soon" : "Trial Period"}
+            <span className="relative flex h-2 w-2">
+              <span
+                className={cn(
+                  "animate-ping absolute inline-flex h-full w-full rounded-full opacity-75",
+                  isWarning ? "bg-amber-400" : "bg-indigo-400"
+                )}
+              />
+              <span
+                className={cn(
+                  "relative inline-flex rounded-full h-2 w-2",
+                  isWarning ? "bg-amber-500" : "bg-indigo-600 dark:bg-indigo-400"
+                )}
+              />
+            </span>
+            <span
+              className={cn(
+                "text-[10px] uppercase font-extrabold tracking-wider px-2 py-0.5 rounded-full border",
+                isWarning
+                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30"
+                  : "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/30"
+              )}
+            >
+              {isWarning ? "Expiring Soon" : "Free Trial"}
             </span>
           </div>
 
-          <div className="space-y-1">
-            <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground">
-              <span>{remainingDays} days remaining</span>
-              <span className="text-[10px] font-mono font-bold text-sidebar-foreground">{usedPercentage}% used</span>
+          <button
+            onClick={handleDismiss}
+            className="h-6 w-6 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            title="Hide trial card"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        {/* Main Metric Row */}
+        <div className="space-y-2 relative z-10">
+          <div className="flex items-baseline justify-between">
+            <div>
+              <span className="text-xl font-extrabold text-foreground tracking-tight">{remainingDays}</span>
+              <span className="text-xs font-semibold text-muted-foreground ml-1">days remaining</span>
             </div>
-            <Progress value={usedPercentage} className={`h-1.5 ${isWarning ? "[&>div]:bg-amber-500" : "[&>div]:bg-primary"}`} />
+            <span className="text-[10px] font-bold text-muted-foreground/80 bg-background/60 dark:bg-black/30 px-1.5 py-0.5 rounded border border-border/40">
+              {usedPercentage}% used
+            </span>
           </div>
 
-          <p className="text-[10px] text-muted-foreground font-medium">
-            Expires on <span className="font-semibold text-sidebar-foreground">{format(expiryDate, "dd MMM yyyy")}</span>
-          </p>
+          {/* Custom Styled Progress Bar */}
+          <div className="w-full bg-black/5 dark:bg-white/10 h-2 rounded-full overflow-hidden p-[1px]">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-500",
+                isWarning
+                  ? "bg-gradient-to-r from-amber-500 to-red-500 shadow-xs shadow-amber-500/50"
+                  : "bg-gradient-to-r from-indigo-500 via-purple-500 to-blue-500 shadow-xs shadow-indigo-500/50"
+              )}
+              style={{ width: `${usedPercentage}%` }}
+            />
+          </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full h-7 text-[11px] font-bold gap-1.5 mt-1 bg-background hover:bg-primary/10 hover:text-primary border-sidebar-border/80 shadow-2xs"
-            onClick={() => window.open("mailto:support@gaugemaster.com?subject=Upgrade%20Trial%20Subscription", "_blank")}
-          >
-            <Sparkles className="h-3 w-3 text-amber-500 fill-amber-500" />
-            Upgrade Plan
-          </Button>
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-0.5">
+            <span className="flex items-center gap-1">
+              <Clock className="h-3 w-3 opacity-70" />
+              Expires {format(expiryDate, "dd MMM yyyy")}
+            </span>
+          </div>
         </div>
+
+        {/* Action Upgrade Button */}
+        <Button
+          onClick={handleUpgrade}
+          size="sm"
+          className="w-full h-9 mt-3 text-xs font-bold gap-2 relative z-10 bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30 transition-all duration-300 group/btn border-0 rounded-xl cursor-pointer"
+        >
+          <Crown className="h-3.5 w-3.5 fill-amber-200 text-amber-200 group-hover/btn:rotate-12 group-hover/btn:scale-110 transition-transform" />
+          <span>Upgrade Plan</span>
+          <ArrowRight className="h-3.5 w-3.5 ml-auto opacity-70 group-hover/btn:translate-x-0.5 transition-transform" />
+        </Button>
       </div>
 
-      {/* Collapsed Icon Mode Tooltip / Badge */}
-      <div
-        className="hidden group-data-[collapsible=icon]:flex items-center justify-center p-2 rounded-lg bg-primary/10 border border-primary/20 text-primary cursor-pointer"
-        title={`Trial: ${remainingDays} days remaining (Expires ${format(expiryDate, "dd MMM yyyy")})`}
+      {/* Collapsed Icon Mode Button */}
+      <button
+        onClick={handleUpgrade}
+        className={cn(
+          "hidden group-data-[collapsible=icon]:flex relative items-center justify-center h-10 w-10 mx-auto rounded-xl transition-all duration-300 group/icon border shadow-xs cursor-pointer",
+          isWarning
+            ? "bg-gradient-to-br from-amber-500/20 to-red-500/20 border-amber-500/40 text-amber-600 dark:text-amber-400 hover:scale-105"
+            : "bg-gradient-to-br from-indigo-500/20 to-purple-500/20 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 hover:scale-105"
+        )}
+        title={`Trial: ${remainingDays} days remaining (Expires ${format(expiryDate, "dd MMM yyyy")}) — Click to Upgrade`}
       >
-        <Clock className="h-4 w-4" />
-      </div>
+        <Crown className="h-4 w-4 fill-current group-hover/icon:rotate-12 transition-transform" />
+        <span
+          className={cn(
+            "absolute -top-1 -right-1 flex h-4 min-w-4 px-1 items-center justify-center rounded-full text-[9px] font-extrabold text-white shadow-xs",
+            isWarning ? "bg-amber-600" : "bg-indigo-600"
+          )}
+        >
+          {remainingDays}
+        </span>
+      </button>
     </div>
   );
 }
