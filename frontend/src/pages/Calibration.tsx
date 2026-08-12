@@ -12,11 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
 import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
+import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
+import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -69,6 +71,41 @@ export default function Calibration() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Overdue instruments state
+  const [overdueCount, setOverdueCount] = useState<number>(0);
+  const [overdueInstruments, setOverdueInstruments] = useState<Instrument[]>([]);
+  const [overdueModalOpen, setOverdueModalOpen] = useState(false);
+  const [overdueSearchQuery, setOverdueSearchQuery] = useState("");
+  const [overdueScope, setOverdueScope] = useState<"current_month" | "all_time">("current_month");
+  const [viewMode, setViewMode] = useState<"latest" | "all">("latest");
+  const [activeTab, setActiveTab] = useState<string>("recent");
+
+  // Delete modal state
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [calibrationToDelete, setCalibrationToDelete] = useState<CalibrationRecord | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Audit trail modal state
+  const [auditModalOpen, setAuditModalOpen] = useState(false);
+  const [selectedCertNo, setSelectedCertNo] = useState<string>("");
+  const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<CalibrationAuditLog[]>([]);
+
+  const handleOpenAuditLogs = async (cal: CalibrationRecord) => {
+    setSelectedCertNo(cal.certificate_number || cal.id || "");
+    setAuditModalOpen(true);
+    setLoadingAudit(true);
+    try {
+      const logs = await getCalibrationAuditLogs(cal.id);
+      setAuditLogs(logs || []);
+    } catch {
+      toast.error("Failed to load audit logs");
+      setAuditLogs([]);
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
+
   const filteredSuggestions = useMemo(() => {
     if (!searchQuery.trim() || searchQuery.trim().length < 2) return [];
     const query = searchQuery.trim().toLowerCase();
@@ -81,53 +118,154 @@ export default function Calibration() {
     });
   }, [calibrations, searchQuery]);
 
-  // Delete modal state
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [calibrationToDelete, setCalibrationToDelete] = useState<CalibrationRecord | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const filteredOverdueInstruments = useMemo(() => {
+    const now = new Date();
+    const startOfCurrentMonth = startOfMonth(now);
 
-  // Audit Log Dialog state
-  const [auditModalOpen, setAuditModalOpen] = useState(false);
-  const [selectedCertNo, setSelectedCertNo] = useState("");
-  const [auditLogs, setAuditLogs] = useState<CalibrationAuditLog[]>([]);
-  const [loadingAudit, setLoadingAudit] = useState(false);
+    let list = overdueInstruments.filter((inst) => {
+      const dStr = inst.due_date || inst.next_due_date;
+      if (!dStr) return true;
+      const d = new Date(dStr);
+      if (d > now) return false; // Exclude future-dated instruments
 
-  const handleOpenAuditLogs = async (cal: CalibrationRecord) => {
-    setSelectedCertNo(cal.certificate_number || cal.id);
-    setAuditModalOpen(true);
-    setLoadingAudit(true);
+      if (overdueScope === "current_month") {
+        return d >= startOfCurrentMonth; // Only include instruments due in the current month
+      }
+      return true;
+    });
+
+    if (overdueSearchQuery.trim()) {
+      const q = overdueSearchQuery.trim().toLowerCase();
+      list = list.filter(
+        (inst) =>
+          inst.name?.toLowerCase().includes(q) ||
+          inst.id_code?.toLowerCase().includes(q) ||
+          inst.location?.toLowerCase().includes(q) ||
+          inst.department?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [overdueInstruments, overdueSearchQuery, overdueScope]);
+
+  const currentMonthOverdueCount = useMemo(() => {
+    const now = new Date();
+    const startOfCurrentMonth = startOfMonth(now);
+    return overdueInstruments.filter((inst) => {
+      const dStr = inst.due_date || inst.next_due_date;
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return d >= startOfCurrentMonth && d <= now;
+    }).length;
+  }, [overdueInstruments]);
+
+  const activeOverdueCount = overdueScope === "current_month" ? currentMonthOverdueCount : overdueInstruments.length;
+
+  // Pending Certificates state
+  const [certStatusFilter, setCertStatusFilter] = useState<"all" | "pending" | "generated">("all");
+  const [pendingCertsModalOpen, setPendingCertsModalOpen] = useState(false);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState("");
+  const [pendingCertsList, setPendingCertsList] = useState<CalibrationRecord[]>([]);
+  const [loadingPendingList, setLoadingPendingList] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
+
+  const handleGenerateCertificate = async (cal: CalibrationRecord) => {
     try {
-      const logs = await getCalibrationAuditLogs(cal.id);
-      setAuditLogs(logs || []);
+      setGeneratingId(cal.id);
+      const blob = await downloadCertificate(cal.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Certificate-${cal.certificate_number?.replace(/\//g, "-") || cal.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
+      fetchData();
+      setPendingCertsList((prev) => prev.filter((c) => c.id !== cal.id));
     } catch {
-      toast.error("Failed to load audit trail");
+      toast.error("Failed to generate certificate");
     } finally {
-      setLoadingAudit(false);
+      setGeneratingId(null);
     }
   };
+
+  const filteredPendingCerts = useMemo(() => {
+    if (!pendingSearchQuery.trim()) return pendingCertsList;
+    const q = pendingSearchQuery.trim().toLowerCase();
+    return pendingCertsList.filter(
+      (cal) =>
+        cal.certificate_number?.toLowerCase().includes(q) ||
+        cal.instrument?.name?.toLowerCase().includes(q) ||
+        cal.instrument?.id_code?.toLowerCase().includes(q) ||
+        cal.ulr_number?.toLowerCase().includes(q)
+    );
+  }, [pendingCertsList, pendingSearchQuery]);
+
+  const fetchPendingCerts = async () => {
+    if (!user?.id) return;
+    setLoadingPendingList(true);
+    try {
+      const data = await listCalibrations({
+        userId: user.id,
+        companyId: user.companyId,
+        pendingCertsOnly: true,
+        pageSize: 200,
+      });
+      setPendingCertsList(data.data || []);
+    } catch {
+      toast.error("Failed to load pending certificates");
+    } finally {
+      setLoadingPendingList(false);
+    }
+  };
+
+  useEffect(() => {
+    if (pendingCertsModalOpen) {
+      fetchPendingCerts();
+    }
+  }, [pendingCertsModalOpen, user?.id]);
 
   const fetchData = async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [calData, statsData, draftData] = await Promise.all([
+      const now = new Date();
+      const startStr = overdueScope === "current_month" ? format(startOfMonth(now), "yyyy-MM-dd") : undefined;
+      const endStr = overdueScope === "current_month" ? format(endOfMonth(now), "yyyy-MM-dd") : undefined;
+      const isRefParam = overdueScope === "current_month" ? "false" : undefined;
+
+      const [calData, statsData, draftData, overdueData, summaryData] = await Promise.all([
         listCalibrations({
           userId: user.id,
           companyId: user.companyId,
           verdict: verdictFilter !== "All" ? verdictFilter : undefined,
           calibrationType: typeFilter !== "All" ? typeFilter : undefined,
+          pendingCertsOnly: activeTab === "pending" || certStatusFilter === "pending" ? true : undefined,
           search: searchQuery.trim() ? searchQuery.trim() : undefined,
-          latestOnly: true,
+          latestOnly: viewMode === "latest" && activeTab !== "pending",
           page,
           pageSize,
         }),
         getCalibrationStats(user.id),
         getAllDrafts(user.id).catch(() => []),
+        listInstruments({
+          status: "Overdue",
+          item_status: "Active",
+          pageSize: 500,
+          companyId: user.companyId,
+        }).catch(() => ({ data: [] })),
+        getDashboardSummary(user.id, startStr, endStr, undefined, undefined, undefined, isRefParam, user.companyId).catch(() => ({} as any)),
       ]);
+
       setCalibrations(calData.data || []);
       setDrafts(draftData || []);
       setTotal(calData.total || 0);
       setStats(statsData);
+
+      const overdueList = overdueData.data || (Array.isArray(overdueData) ? overdueData : []);
+      setOverdueInstruments(overdueList);
+      setOverdueCount(summaryData?.overdue || overdueList.length || 0);
     } catch {
       toast.error("Failed to load calibrations");
     } finally {
@@ -137,7 +275,7 @@ export default function Calibration() {
 
   useEffect(() => {
     fetchData();
-  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery]);
+  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery, viewMode, overdueScope, certStatusFilter, activeTab]);
 
   const handleConfirmDelete = async () => {
     if (!calibrationToDelete) return;
@@ -157,17 +295,25 @@ export default function Calibration() {
 
   const handleDownload = async (cal: CalibrationRecord) => {
     try {
+      setGeneratingId(cal.id);
       const blob = await downloadCertificate(cal.id);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Certificate-${cal.certificate_number?.replace(/\//g, "-")}.pdf`;
+      a.download = `Certificate-${cal.certificate_number?.replace(/\//g, "-") || cal.id}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
+      toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
+      fetchData();
+      if (pendingCertsModalOpen) {
+        fetchPendingCerts();
+      }
     } catch {
-      toast.error("Certificate not available for download");
+      toast.error("Failed to generate or download certificate");
+    } finally {
+      setGeneratingId(null);
     }
   };
 
@@ -211,7 +357,7 @@ export default function Calibration() {
 
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           <Card className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border-blue-200">
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
@@ -245,13 +391,52 @@ export default function Calibration() {
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-gradient-to-br from-amber-500/10 to-amber-600/5 border-amber-200">
+          <Card
+            onClick={() => setPendingCertsModalOpen(true)}
+            className="bg-gradient-to-br from-amber-500/15 via-amber-500/10 to-amber-600/5 border-amber-300/80 hover:border-amber-500 hover:shadow-md transition-all cursor-pointer group"
+          >
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/15"><Clock className="w-5 h-5 text-amber-600" /></div>
+                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                </div>
                 <div>
-                  <p className="text-2xl font-bold">{stats.pendingCerts}</p>
-                  <p className="text-xs text-muted-foreground">Pending Certificates</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{stats.pendingCerts}</p>
+                    {stats.pendingCerts > 0 && (
+                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 uppercase bg-amber-100 text-amber-800 border-amber-300">
+                        Pending
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                    Pending Certificates <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card
+            onClick={() => setOverdueModalOpen(true)}
+            className="bg-gradient-to-br from-rose-500/15 via-rose-500/10 to-rose-600/5 border-rose-300/80 hover:border-rose-500 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{activeOverdueCount}</p>
+                    {activeOverdueCount > 0 && (
+                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 uppercase animate-pulse">
+                        Overdue
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                    Overdue Instruments <ChevronRight className="w-3 h-3 text-rose-500 group-hover:translate-x-0.5 transition-transform" />
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -269,7 +454,7 @@ export default function Calibration() {
             <Card
               key={ct.type}
               onClick={() => navigate(`/calibration/new?type=${ct.type}`)}
-              className={`cursor-pointer p-3 transition-all duration-200 bg-card border border-border/80 ${style.border} flex flex-col items-center justify-center text-center gap-2 hover:scale-[1.02] hover:shadow-sm group`}
+              className="p-2.5 flex items-center gap-2.5 hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group bg-card"
             >
               <div className={`p-2 rounded-xl border ${style.badge} transition-transform group-hover:scale-110 shadow-2xs`}>
                 <IconComp className={`w-4 h-4 ${style.icon}`} />
@@ -280,92 +465,147 @@ export default function Calibration() {
         })}
       </div>
 
-      {/* Filters & Table */}
-      <Tabs defaultValue="recent" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-4 flex-wrap flex-1 min-w-[280px]">
-                <TabsList>
-                  <TabsTrigger value="recent">Recent Calibrations</TabsTrigger>
-                  <TabsTrigger value="drafts">
-                    Unfinished Drafts
-                    {drafts.length > 0 && (
-                      <Badge variant="secondary" className="ml-2 bg-blue-100 text-blue-700 hover:bg-blue-200">
-                        {drafts.length}
-                      </Badge>
-                    )}
-                  </TabsTrigger>
-                </TabsList>
+          <CardHeader className="pb-2 space-y-3">
+            {/* Row 1: Full-width Tabs */}
+            <TabsList className="w-full justify-start h-11 bg-muted/50 p-1 rounded-xl gap-1">
+              <TabsTrigger value="recent" className="text-[13px] font-semibold px-4 py-2 rounded-lg data-[state=active]:shadow-sm">
+                Recent Calibrations
+              </TabsTrigger>
+              <TabsTrigger value="pending" className="text-[13px] font-semibold px-4 py-2 rounded-lg data-[state=active]:shadow-sm gap-2">
+                Pending Certificates
+                {(stats?.pendingCerts ?? 0) > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 text-[10px] font-bold rounded-full bg-amber-500 text-white tabular-nums">
+                    {stats!.pendingCerts}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="overdue" className="text-[13px] font-semibold px-4 py-2 rounded-lg data-[state=active]:shadow-sm gap-2">
+                Overdue Instruments
+                {activeOverdueCount > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 text-[10px] font-bold rounded-full bg-rose-500 text-white tabular-nums animate-pulse">
+                    {activeOverdueCount}
+                  </span>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="drafts" className="text-[13px] font-semibold px-4 py-2 rounded-lg data-[state=active]:shadow-sm gap-2">
+                Unfinished Drafts
+                {drafts.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 text-[10px] font-bold rounded-full bg-blue-500 text-white tabular-nums">
+                    {drafts.length}
+                  </span>
+                )}
+              </TabsTrigger>
+            </TabsList>
 
-                {/* Auto-suggest Search Box */}
-                <div className="relative flex-1 max-w-md min-w-[240px]">
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={searchQuery}
-                      onChange={(e) => {
-                        setSearchQuery(e.target.value);
+            {/* Row 2: Search + Filters */}
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5">
+              {/* Search Box */}
+              <div className="relative flex-1 min-w-[260px] max-w-lg">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/60" />
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => {
+                      setSearchQuery(e.target.value);
+                      setPage(1);
+                    }}
+                    onFocus={() => setShowSuggestions(true)}
+                    placeholder="Search cert no, instrument, ID, ULR..."
+                    className="pl-9 pr-8 h-9 text-[13px] rounded-lg bg-muted/30 border-border/60 font-medium placeholder:text-muted-foreground/50 focus:bg-background transition-colors"
+                  />
+                  {searchQuery && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setSearchQuery("");
                         setPage(1);
                       }}
-                      onFocus={() => setShowSuggestions(true)}
-                      placeholder="Search cert no, instrument, ID (e.g. SNG934/03), ULR..."
-                      className="pl-8 pr-8 h-10 text-xs rounded-lg bg-background border-input font-medium"
-                    />
-                    {searchQuery && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          setSearchQuery("");
-                          setPage(1);
-                        }}
-                        className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        <X className="w-3 h-3" />
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Auto-suggest Dropdown Overlay */}
-                  {showSuggestions && searchQuery.trim().length >= 2 && (
-                    <Card className="absolute top-full left-0 right-0 mt-1 z-50 shadow-xl border bg-popover max-h-60 overflow-y-auto">
-                      <CardContent className="p-1 space-y-0.5 text-xs">
-                        {filteredSuggestions.length > 0 ? (
-                          filteredSuggestions.map((cal) => (
-                            <div
-                              key={cal.id}
-                              onClick={() => {
-                                setSearchQuery(cal.instrument?.id_code || cal.certificate_number || cal.instrument?.name || "");
-                                setShowSuggestions(false);
-                              }}
-                              className="p-2 hover:bg-accent rounded-md cursor-pointer flex items-center justify-between transition-colors"
-                            >
-                              <div>
-                                <p className="font-bold text-primary font-mono text-[11px]">{cal.certificate_number || cal.id}</p>
-                                <p className="text-[10px] text-muted-foreground font-medium">
-                                  {cal.instrument?.name || "Instrument"} ({cal.instrument?.id_code || "No ID"})
-                                </p>
-                              </div>
-                              {cal.ulr_number && (
-                                <Badge variant="outline" className="text-[9px] font-mono">
-                                  {cal.ulr_number}
-                                </Badge>
-                              )}
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-[11px] text-muted-foreground text-center py-2">No matching suggestions</p>
-                        )}
-                      </CardContent>
-                    </Card>
+                      className="h-5 w-5 absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground rounded-full"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
                   )}
                 </div>
+
+                {/* Auto-suggest Dropdown Overlay */}
+                {showSuggestions && searchQuery.trim().length >= 2 && (
+                  <Card className="absolute top-full left-0 right-0 mt-1 z-50 shadow-xl border bg-popover max-h-60 overflow-y-auto">
+                    <CardContent className="p-1 space-y-0.5 text-xs">
+                      {filteredSuggestions.length > 0 ? (
+                        filteredSuggestions.map((cal) => (
+                          <div
+                            key={cal.id}
+                            onClick={() => {
+                              setSearchQuery(cal.instrument?.id_code || cal.certificate_number || cal.instrument?.name || "");
+                              setShowSuggestions(false);
+                            }}
+                            className="p-2 hover:bg-accent rounded-md cursor-pointer flex items-center justify-between transition-colors"
+                          >
+                            <div>
+                              <p className="font-bold text-primary font-mono text-[11px]">{cal.certificate_number || cal.id}</p>
+                              <p className="text-[10px] text-muted-foreground font-medium">
+                                {cal.instrument?.name || "Instrument"} ({cal.instrument?.id_code || "No ID"})
+                              </p>
+                            </div>
+                            {cal.ulr_number && (
+                              <Badge variant="outline" className="text-[9px] font-mono">
+                                {cal.ulr_number}
+                              </Badge>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground text-center py-2">No matching suggestions</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
-              
-              <div className="flex items-center gap-2">
+
+              {/* Divider */}
+              <div className="hidden sm:block w-px h-7 bg-border/60" />
+
+              {/* Filter Dropdowns */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {activeTab === "recent" && (
+                  <Select value={viewMode} onValueChange={(val: any) => { setViewMode(val); setPage(1); }}>
+                    <SelectTrigger className="w-[170px] h-9 text-[13px] font-medium bg-muted/30 border-border/60 rounded-lg">
+                      <SelectValue placeholder="View Mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="latest">Recent Only (Distinct)</SelectItem>
+                      <SelectItem value="all">All Historical Records</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                {activeTab === "recent" && (
+                  <Select value={certStatusFilter} onValueChange={(val: any) => { setCertStatusFilter(val); setPage(1); }}>
+                    <SelectTrigger className="w-[150px] h-9 text-[13px] font-medium bg-muted/30 border-border/60 rounded-lg">
+                      <SelectValue placeholder="Cert Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Cert Status</SelectItem>
+                      <SelectItem value="pending">Pending Certs Only</SelectItem>
+                      <SelectItem value="generated">Generated Only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                {activeTab === "overdue" && (
+                  <Select value={overdueScope} onValueChange={(val: any) => setOverdueScope(val)}>
+                    <SelectTrigger className="w-[185px] h-9 text-[13px] font-medium bg-muted/30 border-rose-200/60 rounded-lg">
+                      <SelectValue placeholder="Period Scope" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current_month">Active Period (This Month)</SelectItem>
+                      <SelectItem value="all_time">All Time (Total History)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
                 <Select value={verdictFilter} onValueChange={setVerdictFilter}>
-                  <SelectTrigger className="w-[120px] h-8 text-xs font-medium">
+                  <SelectTrigger className="w-[125px] h-9 text-[13px] font-medium bg-muted/30 border-border/60 rounded-lg">
                     <SelectValue placeholder="Verdict" />
                   </SelectTrigger>
                   <SelectContent>
@@ -376,7 +616,7 @@ export default function Calibration() {
                   </SelectContent>
                 </Select>
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger className="w-[130px] h-8 text-xs font-medium">
+                  <SelectTrigger className="w-[130px] h-9 text-[13px] font-medium bg-muted/30 border-border/60 rounded-lg">
                     <SelectValue placeholder="Type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -399,38 +639,38 @@ export default function Calibration() {
               </div>
             ) : calibrations.length > 0 ? (
               <>
-                <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <div className="overflow-x-auto border rounded-xl shadow-sm">
                   <Table>
-                    <TableHeader className="bg-muted/70 border-b border-border">
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Certificate No</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Type</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Date</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Verdict</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">ULR</TableHead>
-                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
+                    <TableHeader className="bg-muted/50">
+                      <TableRow className="hover:bg-transparent border-b">
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Certificate No</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Date</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Verdict</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">ULR</TableHead>
+                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {calibrations.map((cal) => (
-                        <TableRow key={cal.id} className="hover:bg-muted/30 transition-colors">
-                          <TableCell className="font-mono text-xs font-bold text-primary">{cal.certificate_number}</TableCell>
-                          <TableCell>
+                        <TableRow key={cal.id} className="hover:bg-muted/20 transition-colors">
+                          <TableCell className="font-mono text-[13px] font-bold text-primary px-4 py-3">{cal.certificate_number}</TableCell>
+                          <TableCell className="px-4 py-3">
                             <div>
-                              <p className="text-xs font-semibold text-foreground">{cal.instrument?.name || "-"}</p>
-                              <p className="text-[10px] text-muted-foreground font-mono font-medium">{cal.instrument?.id_code || ""}</p>
+                              <p className="text-[13px] font-semibold text-foreground leading-tight">{cal.instrument?.name || "-"}</p>
+                              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{cal.instrument?.id_code || ""}</p>
                             </div>
                           </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-[10px] capitalize font-semibold border-primary/20 bg-primary/5 text-primary">
+                          <TableCell className="px-4 py-3">
+                            <Badge variant="outline" className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
                               {cal.calibration_type || "-"}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap font-medium text-muted-foreground">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="text-xs font-mono font-medium text-slate-700">{cal.ulr_number || "-"}</TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
+                          <TableCell className="px-4 py-3"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
+                          <TableCell className="text-[13px] font-mono font-medium text-slate-600 px-4 py-3">{cal.ulr_number || "-"}</TableCell>
+                          <TableCell className="text-right px-4 py-3">
                             <div className="flex items-center justify-end gap-1.5">
                               {/* Default Visible Button 1: View */}
                               <Button 
@@ -504,7 +744,7 @@ export default function Calibration() {
                 </div>
 
                 {/* Enhanced Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-xs">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
                   <div className="flex items-center gap-3">
                     <span className="text-muted-foreground">
                       Showing <strong>{total === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, total)}</strong> of <strong>{total}</strong> calibrations
@@ -512,7 +752,7 @@ export default function Calibration() {
                     <div className="flex items-center gap-1.5 ml-2">
                       <span className="text-muted-foreground">Per page:</span>
                       <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
-                        <SelectTrigger className="w-[70px] h-7 text-xs font-mono font-bold">
+                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -575,6 +815,66 @@ export default function Calibration() {
                   <PlusCircle className="w-4 h-4" />
                   Start First Calibration
                 </Button>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* OVERDUE INSTRUMENTS TAB */}
+          <TabsContent value="overdue" className="mt-4">
+            {filteredOverdueInstruments.length > 0 ? (
+              <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <Table>
+                  <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredOverdueInstruments.map((inst) => (
+                      <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
+                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                            <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {inst.location || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          {fmtDate(inst.due_date || inst.next_due_date)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="destructive" className="text-[10px] uppercase font-bold">
+                            Overdue
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => navigate(`/calibration/new/${inst.id}`)}
+                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                          >
+                            <PlayCircle className="w-3.5 h-3.5" />
+                            Start Calibration
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-12 flex flex-col items-center">
+                <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
+                <p className="text-base font-bold text-foreground">No Overdue Instruments!</p>
+                <p className="text-xs text-muted-foreground">All instruments are up to date with their calibration schedule.</p>
               </div>
             )}
           </TabsContent>
@@ -759,6 +1059,206 @@ export default function Calibration() {
               {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               Delete Record
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Overdue Instruments Dialog Modal */}
+      <Dialog open={overdueModalOpen} onOpenChange={setOverdueModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0 overflow-hidden z-[10000]">
+          <DialogHeader className="p-4 border-b bg-rose-50/70 dark:bg-rose-950/40">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <DialogTitle className="flex items-center gap-2 text-lg font-bold text-rose-700 dark:text-rose-400">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                  Overdue Calibrations List ({activeOverdueCount})
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground pt-0.5">
+                  Select any overdue instrument below and click <strong>Start Calibration</strong> to perform calibration.
+                </DialogDescription>
+              </div>
+              <Badge variant="destructive" className="text-xs px-2.5 py-1 font-bold">
+                {activeOverdueCount} Overdue
+              </Badge>
+            </div>
+
+            <div className="flex items-center gap-2 mt-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={overdueSearchQuery}
+                  onChange={(e) => setOverdueSearchQuery(e.target.value)}
+                  placeholder="Filter by instrument code, name, or location..."
+                  className="pl-8 text-xs bg-background h-9"
+                />
+              </div>
+              <Select value={overdueScope} onValueChange={(val: any) => setOverdueScope(val)}>
+                <SelectTrigger className="w-[190px] h-9 text-xs font-medium bg-background border-rose-200">
+                  <SelectValue placeholder="Period Scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current_month">Active Period (This Month)</SelectItem>
+                  <SelectItem value="all_time">All Time (Total History)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {filteredOverdueInstruments.length > 0 ? (
+              <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <Table>
+                  <TableHeader className="bg-muted/70">
+                    <TableRow>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Code / ID</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Instrument</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Location / Dept</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Next Due</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5 text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredOverdueInstruments.map((inst) => (
+                      <TableRow key={inst.id} className="hover:bg-rose-50/20 dark:hover:bg-rose-950/10 transition-colors">
+                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                        <TableCell>
+                          <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {inst.location || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          {fmtDate(inst.due_date || inst.next_due_date)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setOverdueModalOpen(false);
+                              navigate(`/calibration/new/${inst.id}`);
+                            }}
+                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                          >
+                            <PlayCircle className="w-3.5 h-3.5" />
+                            Start Calibration
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-muted-foreground text-xs">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                No matching overdue instruments found.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pending Certificates Modal */}
+      <Dialog open={pendingCertsModalOpen} onOpenChange={setPendingCertsModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0 gap-0 z-[10000]">
+          <DialogHeader className="p-4 border-b bg-amber-500/5">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-lg bg-amber-500/15 text-amber-600">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <DialogTitle className="text-lg font-bold flex items-center gap-2">
+                    Pending Certificates
+                    <Badge variant="outline" className="bg-amber-100 text-amber-800 border-amber-300 font-mono text-xs">
+                      {pendingCertsList.length} Pending
+                    </Badge>
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    Calibrations completed but official certificates not yet generated. Click Generate Certificate to produce official PDF.
+                  </DialogDescription>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Filter Bar */}
+            <div className="pt-3 flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={pendingSearchQuery}
+                  onChange={(e) => setPendingSearchQuery(e.target.value)}
+                  placeholder="Search cert no, instrument, ID code..."
+                  className="pl-8 h-8 text-xs bg-background"
+                />
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {loadingPendingList ? (
+              <div className="space-y-2 py-6">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-10 bg-muted animate-pulse rounded-lg" />
+                ))}
+              </div>
+            ) : filteredPendingCerts.length > 0 ? (
+              <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <Table>
+                  <TableHeader className="bg-muted/70">
+                    <TableRow>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Cert No</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Instrument</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Type</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Date</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Verdict</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5 text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredPendingCerts.map((cal) => (
+                      <TableRow key={cal.id} className="hover:bg-amber-50/20 dark:hover:bg-amber-950/10 transition-colors">
+                        <TableCell className="font-mono text-xs font-bold text-primary">{cal.certificate_number || cal.id}</TableCell>
+                        <TableCell>
+                          <p className="text-xs font-semibold text-foreground">{cal.instrument?.name || "-"}</p>
+                          <p className="text-[10px] text-muted-foreground font-mono">{cal.instrument?.id_code || "-"}</p>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] capitalize font-semibold border-primary/20 bg-primary/5 text-primary">
+                            {cal.calibration_type || "-"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap font-medium text-muted-foreground">
+                          {fmtDate(cal.calibration_date)}
+                        </TableCell>
+                        <TableCell><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => handleGenerateCertificate(cal)}
+                            disabled={generatingId === cal.id}
+                            className="gap-1.5 h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-sm"
+                          >
+                            {generatingId === cal.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <FileText className="w-3.5 h-3.5" />
+                            )}
+                            Generate Certificate
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-muted-foreground text-xs">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                No pending certificates found. All completed calibrations have certificates!
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

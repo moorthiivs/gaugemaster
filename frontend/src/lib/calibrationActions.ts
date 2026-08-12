@@ -19,6 +19,7 @@ export async function listCalibrations(params: {
   instrumentId?: string;
   calibrationType?: string;
   verdict?: string;
+  pendingCertsOnly?: boolean;
   dateFrom?: string;
   dateTo?: string;
   search?: string;

@@ -5,7 +5,7 @@ import { CalibrationPoint, CalibrationTypeConfig } from "@/types/calibration";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2, Maximize2, Minimize2 } from "lucide-react";
+import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2, Maximize2, Minimize2, Sliders, RotateCcw } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,6 +24,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   CustomColumn,
   evaluateFormulaValue,
@@ -186,6 +192,66 @@ export function CalibrationDataGrid({
     setStatusFormula(initialStatusFormula);
     setEditStatusFormula(initialStatusFormula);
   }, [initialStatusFormula]);
+
+  // Auto-recalculate formula columns and status for all initial points on mount/load
+  useEffect(() => {
+    if (!points || points.length === 0) return;
+    let needsUpdate = false;
+    const updated = points.map((pt) => {
+      const copy = { ...pt };
+      const nom = parseNum(copy.nominal);
+      const asc = parseNum(copy.ascending_reading);
+      const desc = copy.descending_reading !== undefined ? parseNum(copy.descending_reading) : undefined;
+
+      const errConfig = standardColumnConfigs["error"];
+      if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
+        const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+        const activeOrder = getActiveColumnOrder();
+        const calcVal = evaluateFormulaValue(errConfig, copy, hasDescending, customColumns, activeOrder, tolerance, accVal);
+        const parsed = parseFloat(calcVal.replace("%", ""));
+        copy.error = isNaN(parsed) ? 0 : parsed;
+      } else if (hasDescending && desc !== undefined) {
+        const avg = (asc + desc) / 2;
+        copy.error = parseFloat((avg - nom).toFixed(6));
+      } else {
+        copy.error = parseFloat((asc - nom).toFixed(6));
+      }
+
+      copy.unit = unit;
+
+      if (customColumns.length > 0) {
+        const currentFields = copy.customFields || {};
+        const computedFields: Record<string, any> = {};
+        customColumns.forEach((col) => {
+          if (col.type === "formula") {
+            const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+            const activeOrder = getActiveColumnOrder();
+            const val = evaluateFormulaValue(col, copy, hasDescending, customColumns, activeOrder, tolerance, accVal);
+            computedFields[col.id] = { name: col.name, value: val };
+          } else {
+            let existing = currentFields[col.id];
+            if (existing === undefined && col.name) {
+              existing = currentFields[col.name];
+            }
+            const val = typeof existing === "object" && existing !== null && "value" in existing ? existing.value : existing;
+            computedFields[col.id] = { name: col.name, value: val ?? "" };
+          }
+        });
+        copy.customFields = computedFields;
+      }
+
+      const newStatus = computePointStatus(copy);
+      if (newStatus !== copy.status || JSON.stringify(copy.customFields) !== JSON.stringify(pt.customFields)) {
+        copy.status = newStatus;
+        needsUpdate = true;
+      }
+      return copy;
+    });
+
+    if (needsUpdate) {
+      onPointsChange(updated);
+    }
+  }, [initialCustomColumns, initialStatusFormula, initialStatusRuleType]);
 
   // Helper to dynamically check if a column key belongs to a numeric or formula column
   const isNumericOrFormulaColumnKey = (key: string): boolean => {
@@ -415,8 +481,8 @@ export function CalibrationDataGrid({
       };
 
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, activeOrder, rowTol, accVal);
 
       if (resultStr === "TRUE" || resultStr === "1" || resultStr.toLowerCase() === "pass" || resultStr === "true") {
         return "PASS";
@@ -437,8 +503,8 @@ export function CalibrationDataGrid({
     const formulaErrCol = currentColumns.find((c) => c.type === "formula" && c.name.toLowerCase() === "error");
     if (formulaErrCol) {
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, activeOrder, rowTol, accVal);
       const parsed = parseFloat(calcStr.replace("%", ""));
       if (!isNaN(parsed)) {
         errVal = parsed;
@@ -469,8 +535,8 @@ export function CalibrationDataGrid({
     const errConfig = standardColumnConfigs["error"];
     if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
        const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-       const fullOrder = getFullColumnOrder();
-       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+       const activeOrder = getActiveColumnOrder();
+       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
        const parsed = parseFloat(calcVal.replace("%", ""));
        pt.error = isNaN(parsed) ? 0 : parsed;
     } else if (hasDescending && desc !== undefined) {
@@ -489,8 +555,8 @@ export function CalibrationDataGrid({
       customColumns.forEach((col) => {
         if (col.type === "formula") {
           const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-          const fullOrder = getFullColumnOrder();
-          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+          const activeOrder = getActiveColumnOrder();
+          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
           computedFields[col.id] = { name: col.name, value: val };
         } else {
           const existing = currentFields[col.id];
@@ -603,21 +669,48 @@ export function CalibrationDataGrid({
     onPointsChange([...points, ...newPoints]);
   };
 
+  // Helper to extract clean base name without trailing bracketed units like " (inch)"
+  const getCleanBaseName = (name: string): string => {
+    if (!name) return "";
+    return name.replace(/\s*\([^)]*\)$/, "").trim();
+  };
+
+  const getStandardColumnOriginalLabel = (colId: string): string => {
+    const found = ALL_STANDARD_COLUMNS.find((c) => c.id === colId);
+    if (found) return found.label;
+    if (colId === "nominal") return "Nominal Value";
+    if (colId === "description") return "Description";
+    if (colId === "tolerance") return "Tolerance (±)";
+    if (colId === "ascending_reading") return "Actual / Ascending";
+    if (colId === "descending_reading") return "Descending Reading";
+    if (colId === "error") return "Error";
+    if (colId === "status") return "Status";
+    return colId;
+  };
+
   // Helper to validate unique column names (case-insensitive)
   const isColumnNameTaken = (nameToCheck: string, excludeColId?: string): boolean => {
-    const normalized = nameToCheck.trim().toLowerCase();
+    const clean = getCleanBaseName(nameToCheck);
+    const normalized = clean.trim().toLowerCase();
     if (!normalized) return false;
 
-    // Check custom columns duplicates (excluding current editing column)
-    const customDuplicate = customColumns.some(
-      (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
-    );
+    // Check custom columns duplicates (only non-excluded, active/visible columns)
+    const customDuplicate = customColumns.some((c) => {
+      if (c.id === excludeColId) return false;
+      if (hiddenColumns.includes(c.id)) return false;
+      const colClean = getCleanBaseName(c.name).trim().toLowerCase();
+      return colClean === normalized;
+    });
     if (customDuplicate) return true;
 
-    // Check standard column config duplicates (excluding current editing column)
-    const standardDuplicate = Object.entries(standardColumnConfigs).some(
-      ([id, c]) => id !== excludeColId && c.name && c.name.trim().toLowerCase() === normalized
-    );
+    // Check standard column config duplicates (only non-excluded, active/visible columns)
+    const standardDuplicate = Object.entries(standardColumnConfigs).some(([id, c]) => {
+      if (id === excludeColId) return false;
+      if (hiddenColumns.includes(id)) return false;
+      if (!c.name) return false;
+      const colClean = getCleanBaseName(c.name).trim().toLowerCase();
+      return colClean === normalized;
+    });
     if (standardDuplicate) return true;
 
     // Standard column IDs mapped to their default names & aliases
@@ -635,27 +728,25 @@ export function CalibrationDataGrid({
     // If editing an existing standard column, allow its own default names & aliases
     if (excludeColId) {
       const selfNames = standardIdToNames[excludeColId] || [];
-      if (selfNames.includes(normalized) || excludeColId === normalized) {
+      const selfConfigName = standardColumnConfigs[excludeColId]?.name;
+      const selfCleanConfig = selfConfigName ? getCleanBaseName(selfConfigName).trim().toLowerCase() : "";
+      if (selfNames.includes(normalized) || excludeColId === normalized || (selfCleanConfig && selfCleanConfig === normalized)) {
         return false;
       }
     }
 
-    // Reserved names across all OTHER standard columns
-    const allReservedNames = Object.entries(standardIdToNames).flatMap(([id, names]) =>
-      id === excludeColId ? [] : names
-    );
+    // Reserved names across all OTHER active/visible standard columns
+    const activeReservedNames = Object.entries(standardIdToNames).flatMap(([id, names]) => {
+      if (id === excludeColId) return [];
+      if (hiddenColumns.includes(id)) return [];
+      return names;
+    });
 
-    return allReservedNames.includes(normalized);
+    return activeReservedNames.includes(normalized);
   };
 
   const isAddNameDuplicate = isColumnNameTaken(newColName);
   const isEditNameDuplicate = editingCol ? isColumnNameTaken(editColName, editingCol.id) : false;
-
-  // Add Dynamic Column  // Helper to extract clean base name without trailing bracketed units like " (inch)"
-  const getCleanBaseName = (name: string): string => {
-    if (!name) return "";
-    return name.replace(/\s*\([^)]*\)$/, "").trim();
-  };
 
   // Helper to format display title: HEADERNAME (UNIT) if unit present, or HEADERNAME only
   const getHeaderDisplayTitle = (rawName: string, colUnitSetting?: string): string => {
@@ -789,6 +880,11 @@ export function CalibrationDataGrid({
   const handleRemoveColumn = (colId: string) => {
     const nextCols = customColumns.filter((c) => c.id !== colId);
     const nextOrder = columnOrder.filter((id) => id !== colId);
+    const nextStdConfigs = { ...standardColumnConfigs };
+    if (nextStdConfigs[colId]) {
+      delete nextStdConfigs[colId];
+      updateStandardColumnConfigsState(nextStdConfigs);
+    }
     updateCustomColumnsState(nextCols);
     updateColumnOrderState(nextOrder);
   };
@@ -883,8 +979,8 @@ export function CalibrationDataGrid({
   const renderCustomCell = (col: CustomColumn, pt: CalibrationPoint, idx: number) => {
     if (col.type === "formula") {
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
       return (
         <TableCell key={col.id} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -1158,19 +1254,30 @@ export function CalibrationDataGrid({
                 {ALL_STANDARD_COLUMNS.map((col) => {
                   if (col.id === "descending_reading" && !hasDescending) return null;
                   const isVisible = !hiddenColumns.includes(col.id);
+                  const customConfig = standardColumnConfigs[col.id];
+                  const customName = customConfig?.name ? getCleanBaseName(customConfig.name) : "";
+                  const isRenamed = Boolean(customName && customName.toLowerCase() !== getCleanBaseName(col.label).toLowerCase());
+
                   return (
                     <div key={col.id} className="flex items-center justify-between text-xs py-0.5">
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <label className="flex items-center gap-2 cursor-pointer select-none truncate pr-1">
                         <Checkbox
                           checked={isVisible}
                           onCheckedChange={() => toggleColumnHide(col.id)}
                         />
-                        <span>{col.label}</span>
+                        {isRenamed ? (
+                          <span className="truncate flex items-center gap-1">
+                            <span className="font-semibold text-foreground">{customName}</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">({col.label})</span>
+                          </span>
+                        ) : (
+                          <span className="truncate">{col.label}</span>
+                        )}
                       </label>
                       {!isVisible ? (
-                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       ) : (
-                        <Eye className="w-3.5 h-3.5 text-primary" />
+                        <Eye className="w-3.5 h-3.5 text-primary shrink-0" />
                       )}
                     </div>
                   );
@@ -1473,8 +1580,8 @@ export function CalibrationDataGrid({
                     const isStandardFormula = standardColumnConfigs[colKey]?.type === "formula";
                     if (isStandardFormula && colKey !== "status") {
                       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-                      const fullOrder = getFullColumnOrder();
-                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+                      const activeOrder = getActiveColumnOrder();
+                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
                       return (
                         <TableCell key={colKey} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
                           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -1535,7 +1642,7 @@ export function CalibrationDataGrid({
 
       {/* Add Column Dialog */}
       <Dialog open={isAddColumnOpen} onOpenChange={setIsAddColumnOpen}>
-        <DialogContent className="sm:max-w-[500px] z-[10000]">
+        <DialogContent className="sm:max-w-[750px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Columns className="w-5 h-5 text-primary" />
@@ -1728,25 +1835,68 @@ export function CalibrationDataGrid({
 
       {/* Edit Column Dialog */}
       <Dialog open={!!editingCol} onOpenChange={(open) => !open && setEditingCol(null)}>
-        <DialogContent className="sm:max-w-[500px] z-[10000]">
+        <DialogContent className="sm:max-w-[520px] w-[95vw] max-w-full overflow-hidden z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Edit className="w-5 h-5 text-primary" />
-              Edit Custom Column
+              {editingColIsStandard ? "Edit Standard Column" : "Edit Custom Column"}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Rename column, change data type, or edit calculation formula.
+              {editingColIsStandard && editingCol
+                ? `Customize header name, unit, or calculation formula for ${getStandardColumnOriginalLabel(editingCol.id)}.`
+                : "Rename column, change data type, or edit calculation formula."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
+          <div className="space-y-4 py-2 text-xs min-w-0">
+            {editingColIsStandard && editingCol && (
+              <div className="w-full p-3 rounded-xl bg-gradient-to-r from-blue-50/90 via-indigo-50/40 to-background dark:from-blue-950/40 dark:via-indigo-950/20 dark:to-background border border-blue-200/80 dark:border-blue-800/60 shadow-2xs space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 truncate">
+                    <div className="p-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 shrink-0">
+                      <Sliders className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs font-bold text-foreground truncate">
+                      System Field: <span className="text-blue-600 dark:text-blue-400">{getStandardColumnOriginalLabel(editingCol.id)}</span>
+                    </span>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground bg-background shrink-0 px-2 py-0.5">
+                    key: {editingCol.id}
+                  </Badge>
+                </div>
+                <p className="text-[10px] text-muted-foreground pl-6">
+                  Renaming updates display headers & reports while keeping formula mapping intact.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-2 items-start">
               <div className="flex-1 space-y-1.5">
-                <Label className="text-xs font-semibold">Column Header Name</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Column Header Name</Label>
+                  {editingColIsStandard && editingCol && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-muted-foreground">
+                        Default: <span className="font-medium text-foreground">{getStandardColumnOriginalLabel(editingCol.id)}</span>
+                      </span>
+                      {editColName !== getStandardColumnOriginalLabel(editingCol.id) && (
+                        <button
+                          type="button"
+                          onClick={() => setEditColName(getStandardColumnOriginalLabel(editingCol.id))}
+                          className="text-[10px] font-semibold text-primary hover:underline flex items-center gap-0.5 focus:outline-none"
+                          title="Reset back to default column name"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <Input
                   value={editColName}
                   onChange={(e) => setEditColName(e.target.value)}
-                  placeholder="e.g., TEST"
+                  placeholder="e.g., Size, Nominal, Actual"
                   className={`text-xs ${isEditNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
                 />
                 {isEditNameDuplicate && (
@@ -1967,33 +2117,353 @@ export function CalibrationDataGrid({
                 </div>
 
                 {/* Quick Formula Presets */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-semibold text-muted-foreground block">Quick Formula Presets:</span>
-                  <div className="flex flex-wrap gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(C) <= tolerance")}
-                    >
-                      =ABS(C) &le; tolerance
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(C) <= 0.2")}
-                    >
-                      =ABS(C) &le; 0.2
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(D) <= 2")}
-                    >
-                      =ABS(D) &le; 2%
-                    </Button>
+                <div className="space-y-2 pt-1 border-t">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-foreground uppercase tracking-wider">Quick Formula Presets:</span>
+                    <span className="text-[9px] text-muted-foreground font-medium">Hover over any button to see formula use case & example</span>
+                  </div>
+                  
+                  <div className="space-y-2 bg-muted/30 p-2.5 rounded-lg border">
+                    {/* Category 1: Single Limit & Range Checks */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">1. Limit & Range Checks</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=AND(E >= B + D, E <= B + C)")}
+                              >
+                                =AND(E &ge; B+D, E &le; B+C)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Upper & Lower Deviation Tolerance Range</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if Actual reading (E) is between Nominal (B) plus Min Tolerance (D) and Nominal (B) plus Max Tolerance (C).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 15.0, Max C = +0.020, Min D = -0.020, Actual E = 14.980</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">14.980 is between 14.980 & 15.020 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=AND(C >= D, C <= B)")}
+                              >
+                                =AND(C &ge; D, C &le; B)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Min Size & Max Size Boundaries</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if Actual size (C) is between Min Size (D) and Max Size (B).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Max B = 41.936, Min D = 41.906, Actual C = 41.920</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">41.920 is between 41.906 & 41.936 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=B <= C")}
+                              >
+                                =B &le; C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Minimum Size Check (Nominal &le; Actual)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Passes when Nominal / Minimum limit B is less than or equal to Actual reading C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 0.020, Actual C = 0.025</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.020 &le; 0.025 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=C <= B")}
+                              >
+                                =C &le; B
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Maximum Size Check (Actual &le; Nominal)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Passes when Actual reading C does not exceed Maximum limit B.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Max B = 0.020, Actual C = 0.025</p>
+                                <p className="text-rose-400 font-semibold pt-0.5">0.025 is greater than 0.020 &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
+
+                    {/* Category 2: Multiple Readings */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">2. Multiple Readings</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=AND(ABS(D - B) <= C, ABS(E - B) <= C)")}
+                              >
+                                =AND(ABS(D-B)&le;C, ABS(E-B)&le;C)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Strict Check: All Readings In Tolerance</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Requires EVERY reading (Reading 1 D and Reading 2 E) to be individually within tolerance C from Nominal B.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 1.000, Tol C = 0.030</p>
+                                <p>Reading 1 D = 1.000 (Err 0 &le; 0.030)</p>
+                                <p>Reading 2 E = 10.100 (Err 9.1 &gt; 0.030)</p>
+                                <p className="text-rose-400 font-semibold pt-0.5">Reading 2 failed &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=ABS(AVERAGE(D, E) - B) <= C")}
+                              >
+                                =ABS(AVERAGE(D,E)-B)&le;C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Average Reading In Tolerance</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Computes average of Reading 1 (D) & Reading 2 (E) and checks if average error is within tolerance C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 1.000, Tol C = 0.030</p>
+                                <p>Reading 1 D = 1.000, Reading 2 E = 1.020</p>
+                                <p>Average = 1.010 (Error = 0.010)</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.010 &le; 0.030 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=ABS(D - E) <= C")}
+                              >
+                                =ABS(D - E) &le; C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Repeatability Variation Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if the difference between Reading 1 (D) and Reading 2 (E) does not exceed variation limit C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Reading 1 D = 10.010, Reading 2 E = 10.020, Limit C = 0.030</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">Diff |10.010 - 10.020| = 0.010 &le; 0.030 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
+
+                    {/* Category 3: Error & Acceptance Criteria */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">3. Tolerance & Percentage Error</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(C) <= tolerance")}
+                              >
+                                =ABS(C) &le; tolerance
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Absolute Row Error Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if absolute value of error in Column C is within the row tolerance limit.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Error C = -0.015, Row Tolerance = 0.020</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">|-0.015| = 0.015 &le; 0.020 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(C) <= MPE")}
+                              >
+                                =ABS(C) &le; MPE
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Template Acceptance Criteria (MPE)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if error in Column C is within template Maximum Permissible Error (MPE / AC).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Error C = 0.005, Template MPE = 0.010</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.005 &le; 0.010 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(D) <= 2%")}
+                              >
+                                =ABS(D) &le; 2%
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Percentage Error Limit Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if percentage error in Column D is within 2%.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Pct Error D = 1.5%</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">1.5% &le; 2% &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-purple-50/60 hover:bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400"
+                                onClick={() => setEditStatusFormula('=C = "OK"')}
+                              >
+                                =C = "OK"
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Text Verdict Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if text entry in Column C matches &quot;OK&quot;.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Column C = &quot;OK&quot; &rarr; PASS &check;</p>
+                                <p>Column C = &quot;NOT OK&quot; &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
