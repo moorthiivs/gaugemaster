@@ -414,11 +414,14 @@ export class CalibrationService {
       qb.andWhere((qbSub) => {
         const subQuery = qbSub
           .subQuery()
-          .select('MAX(c.created_at)')
+          .select('c.id')
           .from(Calibration, 'c')
           .where('c.instrument_id = cal.instrument_id')
+          .orderBy('c.calibration_date', 'DESC')
+          .addOrderBy('c.created_at', 'DESC')
+          .limit(1)
           .getQuery();
-        return `cal.created_at = ${subQuery}`;
+        return `(cal.instrument_id IS NULL OR cal.id = ${subQuery})`;
       });
     }
 
@@ -458,6 +461,7 @@ export class CalibrationService {
     }
 
     qb.orderBy('cal.calibration_date', 'DESC')
+      .addOrderBy('cal.created_at', 'DESC')
       .skip((page - 1) * pageSize)
       .take(pageSize);
 

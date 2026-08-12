@@ -1392,18 +1392,26 @@ export class CertificateService {
                       ]
                     : []),
                   ...dataTableBody,
-                  [
-                    {
-                      text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ±${calibration.uncertainty || '0.00'}${unit}`,
-                      fontSize: 8,
-                      bold: true,
-                      alignment: 'center',
-                      fillColor: '#f8fafc',
-                      margin: [2, 3, 2, 3],
-                      colSpan: totalCols,
-                    },
-                    ...Array(totalCols - 1).fill({}),
-                  ],
+                  ...(calibration.uncertainty && String(calibration.uncertainty).trim()
+                    ? [
+                        [
+                          {
+                            text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ${
+                              String(calibration.uncertainty).trim().startsWith('±') || /[a-zA-Z]/.test(String(calibration.uncertainty).trim())
+                                ? String(calibration.uncertainty).trim()
+                                : `±${String(calibration.uncertainty).trim()}${unit ? ` ${unit}` : ''}`
+                            }`,
+                            fontSize: 8,
+                            bold: true,
+                            alignment: 'center',
+                            fillColor: '#f8fafc',
+                            margin: [2, 3, 2, 3],
+                            colSpan: totalCols,
+                          },
+                          ...Array(totalCols - 1).fill({}),
+                        ],
+                      ]
+                    : []),
                 ],
               },
               layout: {

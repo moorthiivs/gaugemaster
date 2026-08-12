@@ -5,7 +5,7 @@ import { CalibrationPoint, CalibrationTypeConfig } from "@/types/calibration";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2, Maximize2, Minimize2 } from "lucide-react";
+import { Plus, Trash2, Columns, Calculator, X, Sparkles, GripVertical, ChevronLeft, ChevronRight, Edit, Eye, EyeOff, Check, AlertTriangle, Settings2, Maximize2, Minimize2, Sliders, RotateCcw } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -186,6 +186,66 @@ export function CalibrationDataGrid({
     setStatusFormula(initialStatusFormula);
     setEditStatusFormula(initialStatusFormula);
   }, [initialStatusFormula]);
+
+  // Auto-recalculate formula columns and status for all initial points on mount/load
+  useEffect(() => {
+    if (!points || points.length === 0) return;
+    let needsUpdate = false;
+    const updated = points.map((pt) => {
+      const copy = { ...pt };
+      const nom = parseNum(copy.nominal);
+      const asc = parseNum(copy.ascending_reading);
+      const desc = copy.descending_reading !== undefined ? parseNum(copy.descending_reading) : undefined;
+
+      const errConfig = standardColumnConfigs["error"];
+      if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
+        const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+        const fullOrder = getFullColumnOrder();
+        const calcVal = evaluateFormulaValue(errConfig, copy, hasDescending, customColumns, fullOrder, tolerance, accVal);
+        const parsed = parseFloat(calcVal.replace("%", ""));
+        copy.error = isNaN(parsed) ? 0 : parsed;
+      } else if (hasDescending && desc !== undefined) {
+        const avg = (asc + desc) / 2;
+        copy.error = parseFloat((avg - nom).toFixed(6));
+      } else {
+        copy.error = parseFloat((asc - nom).toFixed(6));
+      }
+
+      copy.unit = unit;
+
+      if (customColumns.length > 0) {
+        const currentFields = copy.customFields || {};
+        const computedFields: Record<string, any> = {};
+        customColumns.forEach((col) => {
+          if (col.type === "formula") {
+            const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
+            const fullOrder = getFullColumnOrder();
+            const val = evaluateFormulaValue(col, copy, hasDescending, customColumns, fullOrder, tolerance, accVal);
+            computedFields[col.id] = { name: col.name, value: val };
+          } else {
+            let existing = currentFields[col.id];
+            if (existing === undefined && col.name) {
+              existing = currentFields[col.name];
+            }
+            const val = typeof existing === "object" && existing !== null && "value" in existing ? existing.value : existing;
+            computedFields[col.id] = { name: col.name, value: val ?? "" };
+          }
+        });
+        copy.customFields = computedFields;
+      }
+
+      const newStatus = computePointStatus(copy);
+      if (newStatus !== copy.status || JSON.stringify(copy.customFields) !== JSON.stringify(pt.customFields)) {
+        copy.status = newStatus;
+        needsUpdate = true;
+      }
+      return copy;
+    });
+
+    if (needsUpdate) {
+      onPointsChange(updated);
+    }
+  }, [initialCustomColumns, initialStatusFormula, initialStatusRuleType]);
 
   // Helper to dynamically check if a column key belongs to a numeric or formula column
   const isNumericOrFormulaColumnKey = (key: string): boolean => {
@@ -603,21 +663,48 @@ export function CalibrationDataGrid({
     onPointsChange([...points, ...newPoints]);
   };
 
+  // Helper to extract clean base name without trailing bracketed units like " (inch)"
+  const getCleanBaseName = (name: string): string => {
+    if (!name) return "";
+    return name.replace(/\s*\([^)]*\)$/, "").trim();
+  };
+
+  const getStandardColumnOriginalLabel = (colId: string): string => {
+    const found = ALL_STANDARD_COLUMNS.find((c) => c.id === colId);
+    if (found) return found.label;
+    if (colId === "nominal") return "Nominal Value";
+    if (colId === "description") return "Description";
+    if (colId === "tolerance") return "Tolerance (±)";
+    if (colId === "ascending_reading") return "Actual / Ascending";
+    if (colId === "descending_reading") return "Descending Reading";
+    if (colId === "error") return "Error";
+    if (colId === "status") return "Status";
+    return colId;
+  };
+
   // Helper to validate unique column names (case-insensitive)
   const isColumnNameTaken = (nameToCheck: string, excludeColId?: string): boolean => {
-    const normalized = nameToCheck.trim().toLowerCase();
+    const clean = getCleanBaseName(nameToCheck);
+    const normalized = clean.trim().toLowerCase();
     if (!normalized) return false;
 
-    // Check custom columns duplicates (excluding current editing column)
-    const customDuplicate = customColumns.some(
-      (c) => c.id !== excludeColId && c.name.trim().toLowerCase() === normalized
-    );
+    // Check custom columns duplicates (only non-excluded, active/visible columns)
+    const customDuplicate = customColumns.some((c) => {
+      if (c.id === excludeColId) return false;
+      if (hiddenColumns.includes(c.id)) return false;
+      const colClean = getCleanBaseName(c.name).trim().toLowerCase();
+      return colClean === normalized;
+    });
     if (customDuplicate) return true;
 
-    // Check standard column config duplicates (excluding current editing column)
-    const standardDuplicate = Object.entries(standardColumnConfigs).some(
-      ([id, c]) => id !== excludeColId && c.name && c.name.trim().toLowerCase() === normalized
-    );
+    // Check standard column config duplicates (only non-excluded, active/visible columns)
+    const standardDuplicate = Object.entries(standardColumnConfigs).some(([id, c]) => {
+      if (id === excludeColId) return false;
+      if (hiddenColumns.includes(id)) return false;
+      if (!c.name) return false;
+      const colClean = getCleanBaseName(c.name).trim().toLowerCase();
+      return colClean === normalized;
+    });
     if (standardDuplicate) return true;
 
     // Standard column IDs mapped to their default names & aliases
@@ -635,27 +722,25 @@ export function CalibrationDataGrid({
     // If editing an existing standard column, allow its own default names & aliases
     if (excludeColId) {
       const selfNames = standardIdToNames[excludeColId] || [];
-      if (selfNames.includes(normalized) || excludeColId === normalized) {
+      const selfConfigName = standardColumnConfigs[excludeColId]?.name;
+      const selfCleanConfig = selfConfigName ? getCleanBaseName(selfConfigName).trim().toLowerCase() : "";
+      if (selfNames.includes(normalized) || excludeColId === normalized || (selfCleanConfig && selfCleanConfig === normalized)) {
         return false;
       }
     }
 
-    // Reserved names across all OTHER standard columns
-    const allReservedNames = Object.entries(standardIdToNames).flatMap(([id, names]) =>
-      id === excludeColId ? [] : names
-    );
+    // Reserved names across all OTHER active/visible standard columns
+    const activeReservedNames = Object.entries(standardIdToNames).flatMap(([id, names]) => {
+      if (id === excludeColId) return [];
+      if (hiddenColumns.includes(id)) return [];
+      return names;
+    });
 
-    return allReservedNames.includes(normalized);
+    return activeReservedNames.includes(normalized);
   };
 
   const isAddNameDuplicate = isColumnNameTaken(newColName);
   const isEditNameDuplicate = editingCol ? isColumnNameTaken(editColName, editingCol.id) : false;
-
-  // Add Dynamic Column  // Helper to extract clean base name without trailing bracketed units like " (inch)"
-  const getCleanBaseName = (name: string): string => {
-    if (!name) return "";
-    return name.replace(/\s*\([^)]*\)$/, "").trim();
-  };
 
   // Helper to format display title: HEADERNAME (UNIT) if unit present, or HEADERNAME only
   const getHeaderDisplayTitle = (rawName: string, colUnitSetting?: string): string => {
@@ -789,6 +874,11 @@ export function CalibrationDataGrid({
   const handleRemoveColumn = (colId: string) => {
     const nextCols = customColumns.filter((c) => c.id !== colId);
     const nextOrder = columnOrder.filter((id) => id !== colId);
+    const nextStdConfigs = { ...standardColumnConfigs };
+    if (nextStdConfigs[colId]) {
+      delete nextStdConfigs[colId];
+      updateStandardColumnConfigsState(nextStdConfigs);
+    }
     updateCustomColumnsState(nextCols);
     updateColumnOrderState(nextOrder);
   };
@@ -1158,19 +1248,30 @@ export function CalibrationDataGrid({
                 {ALL_STANDARD_COLUMNS.map((col) => {
                   if (col.id === "descending_reading" && !hasDescending) return null;
                   const isVisible = !hiddenColumns.includes(col.id);
+                  const customConfig = standardColumnConfigs[col.id];
+                  const customName = customConfig?.name ? getCleanBaseName(customConfig.name) : "";
+                  const isRenamed = Boolean(customName && customName.toLowerCase() !== getCleanBaseName(col.label).toLowerCase());
+
                   return (
                     <div key={col.id} className="flex items-center justify-between text-xs py-0.5">
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <label className="flex items-center gap-2 cursor-pointer select-none truncate pr-1">
                         <Checkbox
                           checked={isVisible}
                           onCheckedChange={() => toggleColumnHide(col.id)}
                         />
-                        <span>{col.label}</span>
+                        {isRenamed ? (
+                          <span className="truncate flex items-center gap-1">
+                            <span className="font-semibold text-foreground">{customName}</span>
+                            <span className="text-[10px] text-muted-foreground font-normal">({col.label})</span>
+                          </span>
+                        ) : (
+                          <span className="truncate">{col.label}</span>
+                        )}
                       </label>
                       {!isVisible ? (
-                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                        <EyeOff className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       ) : (
-                        <Eye className="w-3.5 h-3.5 text-primary" />
+                        <Eye className="w-3.5 h-3.5 text-primary shrink-0" />
                       )}
                     </div>
                   );
@@ -1728,25 +1829,68 @@ export function CalibrationDataGrid({
 
       {/* Edit Column Dialog */}
       <Dialog open={!!editingCol} onOpenChange={(open) => !open && setEditingCol(null)}>
-        <DialogContent className="sm:max-w-[500px] z-[10000]">
+        <DialogContent className="sm:max-w-[520px] w-[95vw] max-w-full overflow-hidden z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Edit className="w-5 h-5 text-primary" />
-              Edit Custom Column
+              {editingColIsStandard ? "Edit Standard Column" : "Edit Custom Column"}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Rename column, change data type, or edit calculation formula.
+              {editingColIsStandard && editingCol
+                ? `Customize header name, unit, or calculation formula for ${getStandardColumnOriginalLabel(editingCol.id)}.`
+                : "Rename column, change data type, or edit calculation formula."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2 text-xs">
+          <div className="space-y-4 py-2 text-xs min-w-0">
+            {editingColIsStandard && editingCol && (
+              <div className="w-full p-3 rounded-xl bg-gradient-to-r from-blue-50/90 via-indigo-50/40 to-background dark:from-blue-950/40 dark:via-indigo-950/20 dark:to-background border border-blue-200/80 dark:border-blue-800/60 shadow-2xs space-y-1.5 text-xs">
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0 truncate">
+                    <div className="p-1 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 shrink-0">
+                      <Sliders className="w-3.5 h-3.5" />
+                    </div>
+                    <span className="text-xs font-bold text-foreground truncate">
+                      System Field: <span className="text-blue-600 dark:text-blue-400">{getStandardColumnOriginalLabel(editingCol.id)}</span>
+                    </span>
+                  </div>
+                  <Badge variant="outline" className="font-mono text-[10px] text-muted-foreground bg-background shrink-0 px-2 py-0.5">
+                    key: {editingCol.id}
+                  </Badge>
+                </div>
+                <p className="text-[10px] text-muted-foreground pl-6">
+                  Renaming updates display headers & reports while keeping formula mapping intact.
+                </p>
+              </div>
+            )}
+
             <div className="flex gap-2 items-start">
               <div className="flex-1 space-y-1.5">
-                <Label className="text-xs font-semibold">Column Header Name</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Column Header Name</Label>
+                  {editingColIsStandard && editingCol && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] text-muted-foreground">
+                        Default: <span className="font-medium text-foreground">{getStandardColumnOriginalLabel(editingCol.id)}</span>
+                      </span>
+                      {editColName !== getStandardColumnOriginalLabel(editingCol.id) && (
+                        <button
+                          type="button"
+                          onClick={() => setEditColName(getStandardColumnOriginalLabel(editingCol.id))}
+                          className="text-[10px] font-semibold text-primary hover:underline flex items-center gap-0.5 focus:outline-none"
+                          title="Reset back to default column name"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          Reset
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <Input
                   value={editColName}
                   onChange={(e) => setEditColName(e.target.value)}
-                  placeholder="e.g., TEST"
+                  placeholder="e.g., Size, Nominal, Actual"
                   className={`text-xs ${isEditNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
                 />
                 {isEditNameDuplicate && (

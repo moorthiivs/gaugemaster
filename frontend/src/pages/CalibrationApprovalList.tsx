@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
-import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { CertificatePreview, formatUncertainty } from "@/components/calibration/CertificatePreview";
 import { useNavigate } from "react-router-dom";
 import {
   CheckCircle2,
@@ -514,7 +514,9 @@ export default function CalibrationApprovalList() {
                   const pressStr = envPress ? ` / ${envPress}` : "";
                   const envDisplay = `${tempStr} / ${humStr}${pressStr}`;
 
-                  const uncertaintyStr = `±${selectedRecord.uncertainty ?? "0.00"} ${unit}`;
+                  const uncertaintyStr = selectedRecord.uncertainty && selectedRecord.uncertainty.trim()
+                    ? formatUncertainty(selectedRecord.uncertainty, unit)
+                    : null;
 
                   const refStandardsList = Array.isArray(selectedRecord.reference_standards) && selectedRecord.reference_standards.length > 0
                     ? selectedRecord.reference_standards
@@ -560,7 +562,14 @@ export default function CalibrationApprovalList() {
                     (k: string) => k !== "pt" && k !== "actions" && !hidden.has(k)
                   );
 
+                  const stdColConfig = (selectedRecord as any).standard_columns_config || {};
+
                   const getColumnTitle = (k: string) => {
+                    const stdCfg = stdColConfig[k];
+                    if (stdCfg) {
+                      const stdName = stdCfg.name || stdCfg.label || stdCfg.title || stdCfg.header;
+                      if (stdName && !stdName.startsWith("col_")) return stdName;
+                    }
                     if (k === "description") return "Description";
                     if (k === "nominal") return `Nominal (${unit})`;
                     if (k === "tolerance") return "Tolerance";
@@ -598,10 +607,12 @@ export default function CalibrationApprovalList() {
                           <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Temperature / Humidity</span>
                           <span className="font-medium text-foreground">{envDisplay}</span>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Uncertainty</span>
-                          <span className="font-mono font-semibold text-foreground">{uncertaintyStr}</span>
-                        </div>
+                        {uncertaintyStr && (
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Uncertainty</span>
+                            <span className="font-mono font-semibold text-foreground">{uncertaintyStr}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Standard & Procedure References */}

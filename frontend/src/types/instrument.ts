@@ -8,8 +8,10 @@ export type Instrument = {
   name: string;
   id_code: string;
   location: string;
+  department?: string;
   last_calibration_date: string; // ISO string
   due_date: string; // ISO string
+  next_due_date?: string; // ISO string fallback
   frequency: string;
   agency: string;
   status: string;
@@ -20,6 +22,8 @@ export type Instrument = {
   notes?: string;
   make?: string;
   item_type?: string;
+  equipment_type?: string;
+  category?: string;
   part_no?: string;
   part_name?: string;
   module?: string;
@@ -100,6 +104,7 @@ export type InstrumentQuery = {
   pageSize?: number;
   limit?: number;
   createdBy?: string;
+  companyId?: string;
   sortBy?: string;
   sortOrder?: "ASC" | "DESC";
 };

@@ -12,11 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
 import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
+import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
+import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import {
   Dialog,
   DialogContent,
@@ -69,6 +71,15 @@ export default function Calibration() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
 
+  // Overdue instruments state
+  const [overdueCount, setOverdueCount] = useState<number>(0);
+  const [overdueInstruments, setOverdueInstruments] = useState<Instrument[]>([]);
+  const [overdueModalOpen, setOverdueModalOpen] = useState(false);
+  const [overdueSearchQuery, setOverdueSearchQuery] = useState("");
+  const [overdueScope, setOverdueScope] = useState<"current_month" | "all_time">("current_month");
+  const [viewMode, setViewMode] = useState<"latest" | "all">("latest");
+  const [activeTab, setActiveTab] = useState<string>("recent");
+
   const filteredSuggestions = useMemo(() => {
     if (!searchQuery.trim() || searchQuery.trim().length < 2) return [];
     const query = searchQuery.trim().toLowerCase();
@@ -80,6 +91,18 @@ export default function Calibration() {
       return certNo.includes(query) || ulr.includes(query) || instName.includes(query) || idCode.includes(query);
     });
   }, [calibrations, searchQuery]);
+
+  const filteredOverdueInstruments = useMemo(() => {
+    if (!overdueSearchQuery.trim()) return overdueInstruments;
+    const q = overdueSearchQuery.trim().toLowerCase();
+    return overdueInstruments.filter(
+      (inst) =>
+        inst.name?.toLowerCase().includes(q) ||
+        inst.id_code?.toLowerCase().includes(q) ||
+        inst.location?.toLowerCase().includes(q) ||
+        inst.department?.toLowerCase().includes(q)
+    );
+  }, [overdueInstruments, overdueSearchQuery]);
 
   // Delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -110,24 +133,42 @@ export default function Calibration() {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const [calData, statsData, draftData] = await Promise.all([
+      const now = new Date();
+      const startStr = overdueScope === "current_month" ? format(startOfMonth(now), "yyyy-MM-dd") : undefined;
+      const endStr = overdueScope === "current_month" ? format(endOfMonth(now), "yyyy-MM-dd") : undefined;
+      const isRefParam = overdueScope === "current_month" ? "false" : undefined;
+
+      const [calData, statsData, draftData, overdueData, summaryData] = await Promise.all([
         listCalibrations({
           userId: user.id,
           companyId: user.companyId,
           verdict: verdictFilter !== "All" ? verdictFilter : undefined,
           calibrationType: typeFilter !== "All" ? typeFilter : undefined,
           search: searchQuery.trim() ? searchQuery.trim() : undefined,
-          latestOnly: true,
+          latestOnly: viewMode === "latest",
           page,
           pageSize,
         }),
         getCalibrationStats(user.id),
         getAllDrafts(user.id).catch(() => []),
+        listInstruments({
+          status: "Overdue",
+          due_date_start: startStr,
+          due_date_end: endStr,
+          pageSize: 100,
+          companyId: user.companyId,
+        }).catch(() => ({ data: [] })),
+        getDashboardSummary(user.id, startStr, endStr, undefined, undefined, undefined, isRefParam, user.companyId).catch(() => ({} as any)),
       ]);
+
       setCalibrations(calData.data || []);
       setDrafts(draftData || []);
       setTotal(calData.total || 0);
       setStats(statsData);
+
+      const overdueList = overdueData.data || (Array.isArray(overdueData) ? overdueData : []);
+      setOverdueInstruments(overdueList);
+      setOverdueCount(summaryData?.overdue || overdueList.length || 0);
     } catch {
       toast.error("Failed to load calibrations");
     } finally {
@@ -137,7 +178,7 @@ export default function Calibration() {
 
   useEffect(() => {
     fetchData();
-  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery]);
+  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery, viewMode, overdueScope]);
 
   const handleConfirmDelete = async () => {
     if (!calibrationToDelete) return;
@@ -211,7 +252,7 @@ export default function Calibration() {
 
       {/* Stats Cards */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           <Card className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border-blue-200">
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
@@ -256,6 +297,31 @@ export default function Calibration() {
               </div>
             </CardContent>
           </Card>
+          <Card
+            onClick={() => setOverdueModalOpen(true)}
+            className="bg-gradient-to-br from-rose-500/15 via-rose-500/10 to-rose-600/5 border-rose-300/80 hover:border-rose-500 hover:shadow-md transition-all cursor-pointer group"
+          >
+            <CardContent className="pt-5 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{overdueCount}</p>
+                    {overdueCount > 0 && (
+                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 uppercase animate-pulse">
+                        Overdue
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                    Overdue Instruments <ChevronRight className="w-3 h-3 text-rose-500 group-hover:translate-x-0.5 transition-transform" />
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -280,14 +346,21 @@ export default function Calibration() {
         })}
       </div>
 
-      {/* Filters & Table */}
-      <Tabs defaultValue="recent" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <Card>
           <CardHeader className="pb-3">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-4 flex-wrap flex-1 min-w-[280px]">
                 <TabsList>
                   <TabsTrigger value="recent">Recent Calibrations</TabsTrigger>
+                  <TabsTrigger value="overdue">
+                    Overdue Instruments
+                    {overdueCount > 0 && (
+                      <Badge variant="destructive" className="ml-2 text-[10px] px-1.5 py-0">
+                        {overdueCount}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
                   <TabsTrigger value="drafts">
                     Unfinished Drafts
                     {drafts.length > 0 && (
@@ -364,6 +437,28 @@ export default function Calibration() {
               </div>
               
               <div className="flex items-center gap-2">
+                {activeTab === "recent" && (
+                  <Select value={viewMode} onValueChange={(val: any) => { setViewMode(val); setPage(1); }}>
+                    <SelectTrigger className="w-[180px] h-8 text-xs font-medium bg-background">
+                      <SelectValue placeholder="View Mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="latest">Recent Only (Distinct)</SelectItem>
+                      <SelectItem value="all">All Historical Records</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+                {activeTab === "overdue" && (
+                  <Select value={overdueScope} onValueChange={(val: any) => setOverdueScope(val)}>
+                    <SelectTrigger className="w-[190px] h-8 text-xs font-medium bg-background border-rose-200">
+                      <SelectValue placeholder="Period Scope" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="current_month">Active Period (This Month)</SelectItem>
+                      <SelectItem value="all_time">All Time (Total History)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
                 <Select value={verdictFilter} onValueChange={setVerdictFilter}>
                   <SelectTrigger className="w-[120px] h-8 text-xs font-medium">
                     <SelectValue placeholder="Verdict" />
@@ -579,6 +674,66 @@ export default function Calibration() {
             )}
           </TabsContent>
 
+          {/* OVERDUE INSTRUMENTS TAB */}
+          <TabsContent value="overdue" className="mt-4">
+            {overdueInstruments.length > 0 ? (
+              <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <Table>
+                  <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
+                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {overdueInstruments.map((inst) => (
+                      <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
+                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                            <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {inst.location || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          {fmtDate(inst.due_date || inst.next_due_date)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="destructive" className="text-[10px] uppercase font-bold">
+                            Overdue
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => navigate(`/calibration/new/${inst.id}`)}
+                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                          >
+                            <PlayCircle className="w-3.5 h-3.5" />
+                            Start Calibration
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-12 flex flex-col items-center">
+                <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
+                <p className="text-base font-bold text-foreground">No Overdue Instruments!</p>
+                <p className="text-xs text-muted-foreground">All instruments are up to date with their calibration schedule.</p>
+              </div>
+            )}
+          </TabsContent>
+
           {/* DRAFTS TAB */}
           <TabsContent value="drafts" className="mt-4">
             {drafts.length > 0 ? (
@@ -759,6 +914,102 @@ export default function Calibration() {
               {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               Delete Record
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Overdue Instruments Dialog Modal */}
+      <Dialog open={overdueModalOpen} onOpenChange={setOverdueModalOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0 overflow-hidden z-[10000]">
+          <DialogHeader className="p-4 border-b bg-rose-50/70 dark:bg-rose-950/40">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <DialogTitle className="flex items-center gap-2 text-lg font-bold text-rose-700 dark:text-rose-400">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                  Overdue Calibrations List ({overdueCount})
+                </DialogTitle>
+                <DialogDescription className="text-xs text-muted-foreground pt-0.5">
+                  Select any overdue instrument below and click <strong>Start Calibration</strong> to perform calibration.
+                </DialogDescription>
+              </div>
+              <Badge variant="destructive" className="text-xs px-2.5 py-1 font-bold">
+                {overdueCount} Overdue
+              </Badge>
+            </div>
+
+            <div className="flex items-center gap-2 mt-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={overdueSearchQuery}
+                  onChange={(e) => setOverdueSearchQuery(e.target.value)}
+                  placeholder="Filter by instrument code, name, or location..."
+                  className="pl-8 text-xs bg-background h-9"
+                />
+              </div>
+              <Select value={overdueScope} onValueChange={(val: any) => setOverdueScope(val)}>
+                <SelectTrigger className="w-[190px] h-9 text-xs font-medium bg-background border-rose-200">
+                  <SelectValue placeholder="Period Scope" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="current_month">Active Period (This Month)</SelectItem>
+                  <SelectItem value="all_time">All Time (Total History)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {filteredOverdueInstruments.length > 0 ? (
+              <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                <Table>
+                  <TableHeader className="bg-muted/70">
+                    <TableRow>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Code / ID</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Instrument</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Location / Dept</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5">Next Due</TableHead>
+                      <TableHead className="font-bold text-xs uppercase text-foreground py-2.5 text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredOverdueInstruments.map((inst) => (
+                      <TableRow key={inst.id} className="hover:bg-rose-50/20 dark:hover:bg-rose-950/10 transition-colors">
+                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                        <TableCell>
+                          <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {inst.location || "-"}
+                        </TableCell>
+                        <TableCell className="text-xs font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                          {fmtDate(inst.due_date || inst.next_due_date)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setOverdueModalOpen(false);
+                              navigate(`/calibration/new/${inst.id}`);
+                            }}
+                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                          >
+                            <PlayCircle className="w-3.5 h-3.5" />
+                            Start Calibration
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <div className="text-center py-10 text-muted-foreground text-xs">
+                <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
+                No matching overdue instruments found.
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -4,6 +4,18 @@ import { format } from "date-fns";
 import httpClient from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
 
+export function formatUncertainty(val?: string | null, unit?: string): string {
+  if (!val || !val.trim()) return "";
+  const trimmed = val.trim();
+  const activeUnit = unit && unit.trim() ? unit.trim() : "";
+
+  if (trimmed.startsWith("±") || /[a-zA-Z]/.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `±${trimmed}${activeUnit ? ` ${activeUnit}` : ""}`;
+}
+
 interface CertificatePreviewProps {
   calibration: Partial<CalibrationRecord>;
   instrumentName?: string;
@@ -213,6 +225,24 @@ export function CertificatePreview({
     }
 
     const renderCellTitle = (k: string) => {
+      // 1. Check standard column custom configuration first
+      const stdCfg = stdColConfig[k];
+      if (stdCfg) {
+        const stdName = stdCfg.name || stdCfg.label || stdCfg.title || stdCfg.header;
+        if (stdName && !stdName.startsWith("col_")) return stdName;
+      }
+
+      // 2. Check custom column definitions and point mapping
+      const mapped = customColMap.get(k);
+      if (mapped && !mapped.startsWith("col_")) return mapped;
+
+      const def = customColDefs.find((c: any) => c.id === k || c.key === k || c.field === k);
+      if (def) {
+        const defName = def.name || def.label || def.title || def.header;
+        if (defName && !defName.startsWith("col_")) return defName;
+      }
+
+      // 3. Fallback to standard column default names
       if (k === "description") return "Description";
       if (k === "nominal") return "Nominal";
       if (k === "tolerance") return "Tolerance";
@@ -220,21 +250,6 @@ export function CertificatePreview({
         return hasDescending ? "Ascending" : "Actual";
       if (k === "descending_reading") return "Descending";
       if (k === "error") return "Error";
-
-      const mapped = customColMap.get(k);
-      if (mapped && !mapped.startsWith("col_")) return mapped;
-
-      const def = customColDefs.find((c: any) => c.id === k || c.key === k || c.field === k);
-      if (def) {
-        const defName = def.label || def.name || def.title || def.header;
-        if (defName && !defName.startsWith("col_")) return defName;
-      }
-
-      const stdCfg = stdColConfig[k];
-      if (stdCfg) {
-        const stdName = stdCfg.label || stdCfg.name || stdCfg.title || stdCfg.header;
-        if (stdName && !stdName.startsWith("col_")) return stdName;
-      }
 
       if (k.startsWith("col_")) return "Remark";
 
@@ -397,10 +412,12 @@ export function CertificatePreview({
             ))}
           </tbody>
         </table>
-        <div className="p-1.5 text-[9px] font-bold text-center bg-slate-50 mt-auto">
-          Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of
-          confidence Level = ±{calibration.uncertainty || "0.00"} {unit}
-        </div>
+        {calibration.uncertainty && calibration.uncertainty.trim() ? (
+          <div className="p-1.5 text-[9px] font-bold text-center bg-slate-50 mt-auto border-t">
+            Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of
+            confidence Level = {formatUncertainty(calibration.uncertainty, unit)}
+          </div>
+        ) : null}
       </div>
     );
   };

@@ -199,6 +199,25 @@ export function evaluateFormulaValue(
     // Filter out 'pt' and 'actions' so Excel letters (A, B, C, D...) start at the 1st actual data column
     const dataColumns = activeColumnOrder.filter((k) => k !== "pt" && k !== "actions");
 
+    const getCustomFieldValue = (colId: string, colName?: string) => {
+      if (!pt.customFields) return undefined;
+      let raw = pt.customFields[colId];
+      if (raw === undefined && colName) {
+        raw = pt.customFields[colName];
+      }
+      if (raw === undefined) {
+        const targetKeys = [colId.toLowerCase(), colName?.toLowerCase()].filter(Boolean);
+        const matchedKey = Object.keys(pt.customFields).find((k) =>
+          targetKeys.includes(k.toLowerCase())
+        );
+        if (matchedKey) raw = pt.customFields[matchedKey];
+      }
+      if (typeof raw === "object" && raw !== null && "value" in raw) {
+        return (raw as any).value;
+      }
+      return raw;
+    };
+
     dataColumns.forEach((colKey, colIdx) => {
       const excelLetter = getExcelColumnLetter(colIdx);
       let colVal = 0;
@@ -212,15 +231,10 @@ export function evaluateFormulaValue(
       else if (colKey === "error") { colVal = err; rawVal = pt.error; }
       else if (colKey === "status") { colVal = 0; rawVal = 0; }
       else {
-        // Custom column
-        const customData = pt.customFields?.[colKey];
-        if (typeof customData === "object" && customData !== null && "value" in customData) {
-          colVal = parseNum((customData as any).value);
-          rawVal = (customData as any).value;
-        } else {
-          colVal = parseNum(customData);
-          rawVal = customData;
-        }
+        // Custom column lookup by ID and Name
+        const customCol = customColumns.find((c) => c.id === colKey);
+        rawVal = getCustomFieldValue(colKey, customCol?.name);
+        colVal = parseNum(rawVal);
       }
 
       valuesMap[excelLetter] = colVal;
@@ -229,16 +243,8 @@ export function evaluateFormulaValue(
 
     // Custom Column Name mappings
     customColumns.forEach((c) => {
-      const customData = pt.customFields?.[c.id];
-      let val = 0;
-      let rawVal: any = 0;
-      if (typeof customData === "object" && customData !== null && "value" in customData) {
-        val = parseNum((customData as any).value);
-        rawVal = (customData as any).value;
-      } else {
-        val = parseNum(customData);
-        rawVal = customData;
-      }
+      const rawVal = getCustomFieldValue(c.id, c.name);
+      const val = parseNum(rawVal);
 
       if (c.name && c.name.trim()) {
         valuesMap[c.name.trim()] = val;
