@@ -25,6 +25,12 @@ import {
 } from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   CustomColumn,
   evaluateFormulaValue,
   FORMULA_VARIABLE_SUGGESTIONS,
@@ -200,8 +206,8 @@ export function CalibrationDataGrid({
       const errConfig = standardColumnConfigs["error"];
       if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
         const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-        const fullOrder = getFullColumnOrder();
-        const calcVal = evaluateFormulaValue(errConfig, copy, hasDescending, customColumns, fullOrder, tolerance, accVal);
+        const activeOrder = getActiveColumnOrder();
+        const calcVal = evaluateFormulaValue(errConfig, copy, hasDescending, customColumns, activeOrder, tolerance, accVal);
         const parsed = parseFloat(calcVal.replace("%", ""));
         copy.error = isNaN(parsed) ? 0 : parsed;
       } else if (hasDescending && desc !== undefined) {
@@ -219,8 +225,8 @@ export function CalibrationDataGrid({
         customColumns.forEach((col) => {
           if (col.type === "formula") {
             const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-            const fullOrder = getFullColumnOrder();
-            const val = evaluateFormulaValue(col, copy, hasDescending, customColumns, fullOrder, tolerance, accVal);
+            const activeOrder = getActiveColumnOrder();
+            const val = evaluateFormulaValue(col, copy, hasDescending, customColumns, activeOrder, tolerance, accVal);
             computedFields[col.id] = { name: col.name, value: val };
           } else {
             let existing = currentFields[col.id];
@@ -475,8 +481,8 @@ export function CalibrationDataGrid({
       };
 
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const resultStr = evaluateFormulaValue(dummyCol, pt, hasDescending, currentColumns, activeOrder, rowTol, accVal);
 
       if (resultStr === "TRUE" || resultStr === "1" || resultStr.toLowerCase() === "pass" || resultStr === "true") {
         return "PASS";
@@ -497,8 +503,8 @@ export function CalibrationDataGrid({
     const formulaErrCol = currentColumns.find((c) => c.type === "formula" && c.name.toLowerCase() === "error");
     if (formulaErrCol) {
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, fullOrder, rowTol, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const calcStr = evaluateFormulaValue(formulaErrCol, pt, hasDescending, currentColumns, activeOrder, rowTol, accVal);
       const parsed = parseFloat(calcStr.replace("%", ""));
       if (!isNaN(parsed)) {
         errVal = parsed;
@@ -529,8 +535,8 @@ export function CalibrationDataGrid({
     const errConfig = standardColumnConfigs["error"];
     if (errConfig?.type === "formula" && errConfig.customFormula?.trim()) {
        const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-       const fullOrder = getFullColumnOrder();
-       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+       const activeOrder = getActiveColumnOrder();
+       const calcVal = evaluateFormulaValue(errConfig, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
        const parsed = parseFloat(calcVal.replace("%", ""));
        pt.error = isNaN(parsed) ? 0 : parsed;
     } else if (hasDescending && desc !== undefined) {
@@ -549,8 +555,8 @@ export function CalibrationDataGrid({
       customColumns.forEach((col) => {
         if (col.type === "formula") {
           const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-          const fullOrder = getFullColumnOrder();
-          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+          const activeOrder = getActiveColumnOrder();
+          const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
           computedFields[col.id] = { name: col.name, value: val };
         } else {
           const existing = currentFields[col.id];
@@ -973,8 +979,8 @@ export function CalibrationDataGrid({
   const renderCustomCell = (col: CustomColumn, pt: CalibrationPoint, idx: number) => {
     if (col.type === "formula") {
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-      const fullOrder = getFullColumnOrder();
-      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+      const activeOrder = getActiveColumnOrder();
+      const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
       return (
         <TableCell key={col.id} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -1574,8 +1580,8 @@ export function CalibrationDataGrid({
                     const isStandardFormula = standardColumnConfigs[colKey]?.type === "formula";
                     if (isStandardFormula && colKey !== "status") {
                       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
-                      const fullOrder = getFullColumnOrder();
-                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, fullOrder, tolerance, accVal);
+                      const activeOrder = getActiveColumnOrder();
+                      const calculatedVal = evaluateFormulaValue(standardColumnConfigs[colKey], pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
                       return (
                         <TableCell key={colKey} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
                           <span className="text-primary font-bold">{calculatedVal}</span>
@@ -1636,7 +1642,7 @@ export function CalibrationDataGrid({
 
       {/* Add Column Dialog */}
       <Dialog open={isAddColumnOpen} onOpenChange={setIsAddColumnOpen}>
-        <DialogContent className="sm:max-w-[500px] z-[10000]">
+        <DialogContent className="sm:max-w-[750px] z-[10000]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-lg font-bold">
               <Columns className="w-5 h-5 text-primary" />
@@ -2111,33 +2117,353 @@ export function CalibrationDataGrid({
                 </div>
 
                 {/* Quick Formula Presets */}
-                <div className="space-y-1">
-                  <span className="text-[10px] font-semibold text-muted-foreground block">Quick Formula Presets:</span>
-                  <div className="flex flex-wrap gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(C) <= tolerance")}
-                    >
-                      =ABS(C) &le; tolerance
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(C) <= 0.2")}
-                    >
-                      =ABS(C) &le; 0.2
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-[10px] px-2 font-mono"
-                      onClick={() => setEditStatusFormula("=ABS(D) <= 2")}
-                    >
-                      =ABS(D) &le; 2%
-                    </Button>
+                <div className="space-y-2 pt-1 border-t">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-foreground uppercase tracking-wider">Quick Formula Presets:</span>
+                    <span className="text-[9px] text-muted-foreground font-medium">Hover over any button to see formula use case & example</span>
+                  </div>
+                  
+                  <div className="space-y-2 bg-muted/30 p-2.5 rounded-lg border">
+                    {/* Category 1: Single Limit & Range Checks */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">1. Limit & Range Checks</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=AND(E >= B + D, E <= B + C)")}
+                              >
+                                =AND(E &ge; B+D, E &le; B+C)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Upper & Lower Deviation Tolerance Range</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if Actual reading (E) is between Nominal (B) plus Min Tolerance (D) and Nominal (B) plus Max Tolerance (C).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 15.0, Max C = +0.020, Min D = -0.020, Actual E = 14.980</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">14.980 is between 14.980 & 15.020 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=AND(C >= D, C <= B)")}
+                              >
+                                =AND(C &ge; D, C &le; B)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Min Size & Max Size Boundaries</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if Actual size (C) is between Min Size (D) and Max Size (B).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Max B = 41.936, Min D = 41.906, Actual C = 41.920</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">41.920 is between 41.906 & 41.936 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=B <= C")}
+                              >
+                                =B &le; C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Minimum Size Check (Nominal &le; Actual)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Passes when Nominal / Minimum limit B is less than or equal to Actual reading C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 0.020, Actual C = 0.025</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.020 &le; 0.025 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-blue-50/60 hover:bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-400"
+                                onClick={() => setEditStatusFormula("=C <= B")}
+                              >
+                                =C &le; B
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Maximum Size Check (Actual &le; Nominal)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Passes when Actual reading C does not exceed Maximum limit B.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Max B = 0.020, Actual C = 0.025</p>
+                                <p className="text-rose-400 font-semibold pt-0.5">0.025 is greater than 0.020 &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
+
+                    {/* Category 2: Multiple Readings */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">2. Multiple Readings</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=AND(ABS(D - B) <= C, ABS(E - B) <= C)")}
+                              >
+                                =AND(ABS(D-B)&le;C, ABS(E-B)&le;C)
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Strict Check: All Readings In Tolerance</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Requires EVERY reading (Reading 1 D and Reading 2 E) to be individually within tolerance C from Nominal B.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 1.000, Tol C = 0.030</p>
+                                <p>Reading 1 D = 1.000 (Err 0 &le; 0.030)</p>
+                                <p>Reading 2 E = 10.100 (Err 9.1 &gt; 0.030)</p>
+                                <p className="text-rose-400 font-semibold pt-0.5">Reading 2 failed &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=ABS(AVERAGE(D, E) - B) <= C")}
+                              >
+                                =ABS(AVERAGE(D,E)-B)&le;C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Average Reading In Tolerance</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Computes average of Reading 1 (D) & Reading 2 (E) and checks if average error is within tolerance C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Nominal B = 1.000, Tol C = 0.030</p>
+                                <p>Reading 1 D = 1.000, Reading 2 E = 1.020</p>
+                                <p>Average = 1.010 (Error = 0.010)</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.010 &le; 0.030 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-emerald-50/60 hover:bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400"
+                                onClick={() => setEditStatusFormula("=ABS(D - E) <= C")}
+                              >
+                                =ABS(D - E) &le; C
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Repeatability Variation Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if the difference between Reading 1 (D) and Reading 2 (E) does not exceed variation limit C.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Reading 1 D = 10.010, Reading 2 E = 10.020, Limit C = 0.030</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">Diff |10.010 - 10.020| = 0.010 &le; 0.030 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
+
+                    {/* Category 3: Error & Acceptance Criteria */}
+                    <div>
+                      <span className="text-[9px] font-bold text-muted-foreground uppercase block mb-1">3. Tolerance & Percentage Error</span>
+                      <div className="flex flex-wrap gap-1">
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(C) <= tolerance")}
+                              >
+                                =ABS(C) &le; tolerance
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Absolute Row Error Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if absolute value of error in Column C is within the row tolerance limit.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Error C = -0.015, Row Tolerance = 0.020</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">|-0.015| = 0.015 &le; 0.020 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(C) <= MPE")}
+                              >
+                                =ABS(C) &le; MPE
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Template Acceptance Criteria (MPE)</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if error in Column C is within template Maximum Permissible Error (MPE / AC).
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Error C = 0.005, Template MPE = 0.010</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">0.005 &le; 0.010 &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono"
+                                onClick={() => setEditStatusFormula("=ABS(D) <= 2%")}
+                              >
+                                =ABS(D) &le; 2%
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Percentage Error Limit Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if percentage error in Column D is within 2%.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Pct Error D = 1.5%</p>
+                                <p className="text-emerald-400 font-semibold pt-0.5">1.5% &le; 2% &rarr; PASS &check;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+
+                        <TooltipProvider delayDuration={0}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[10px] px-2 font-mono bg-purple-50/60 hover:bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-400"
+                                onClick={() => setEditStatusFormula('=C = "OK"')}
+                              >
+                                =C = "OK"
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[300px] p-3 space-y-1.5 text-xs bg-slate-900 text-slate-100 border border-slate-700 shadow-2xl z-[20000]">
+                              <div className="flex items-center gap-1.5 text-emerald-400 font-bold text-[11px] border-b border-slate-800 pb-1">
+                                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                                <span>Text Verdict Check</span>
+                              </div>
+                              <p className="text-[10px] text-slate-300 leading-tight">
+                                Checks if text entry in Column C matches &quot;OK&quot;.
+                              </p>
+                              <div className="p-2 rounded bg-slate-950 font-mono text-[9.5px] text-slate-200 border border-slate-800 space-y-0.5">
+                                <p className="text-amber-400 font-bold text-[10px]">Example:</p>
+                                <p>Column C = &quot;OK&quot; &rarr; PASS &check;</p>
+                                <p>Column C = &quot;NOT OK&quot; &rarr; FAIL &cross;</p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
                   </div>
                 </div>
 

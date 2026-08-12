@@ -382,6 +382,7 @@ export class CalibrationService {
     instrumentId?: string;
     calibrationType?: string;
     verdict?: string;
+    pendingCertsOnly?: boolean | string;
     approvalStatus?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -396,6 +397,7 @@ export class CalibrationService {
       instrumentId,
       calibrationType,
       verdict,
+      pendingCertsOnly,
       approvalStatus,
       dateFrom,
       dateTo,
@@ -441,6 +443,9 @@ export class CalibrationService {
     if (instrumentId) qb.andWhere('cal.instrument_id = :instrumentId', { instrumentId });
     if (calibrationType) qb.andWhere('cal.calibration_type = :calibrationType', { calibrationType });
     if (verdict) qb.andWhere('cal.verdict = :verdict', { verdict });
+    if (filters.pendingCertsOnly === true || (filters as any).pendingCertsOnly === 'true') {
+      qb.andWhere('(cal.certificate_generated = false OR cal.certificate_generated IS NULL)');
+    }
     if (approvalStatus) {
       if (approvalStatus === 'Pending Approval') {
         qb.andWhere("(cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Approval')");

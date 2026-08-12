@@ -595,10 +595,11 @@ export class InstrumentsService {
             logger.log('🕒 Running auto-overdue status update job...');
 
             const today = new Date();
+            today.setHours(0, 0, 0, 0); // Normalize to start of day
 
             const overdueInstruments = await this.instrumentRepository.find({
                 where: {
-                    due_date: LessThanOrEqual(today),
+                    due_date: LessThan(today),
                 },
             });
 
