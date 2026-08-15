@@ -10,6 +10,7 @@ import { CreateUserDto } from 'src/dto/create-user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Company } from '../company/entities/company.entity';
+import { Role } from '../roles/role.entity';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +23,8 @@ export class AuthService {
     private readonly usersService: UsersService,
     @InjectRepository(Company)
     private readonly companyRepository: Repository<Company>,
+    @InjectRepository(Role)
+    private readonly roleRepository: Repository<Role>,
   ) {
     const clientId = this.configService.get('GOOGLE_CLIENT_ID');
     this.googleEnabled = !!clientId;
@@ -114,13 +117,25 @@ export class AuthService {
       }
     }
 
-    const roleName = user.role?.name || user.roleId || 'Admin';
+    let userRole: Role | null | undefined = user.role;
+    if (user.companyId && (!userRole || !user.roleId)) {
+      userRole = await this.roleRepository.findOne({
+        where: [{ companyId: user.companyId, name: 'Admin' }, { name: 'Admin', isSystemDefault: true }],
+      });
+      if (userRole && !user.roleId) {
+        user.roleId = userRole.id;
+        user.role = userRole;
+        await this.usersService.updateUser(user.id, { roleId: userRole.id });
+      }
+    }
+
+    const roleName = userRole?.name || user.roleId || 'Admin';
     const payload = {
       sub: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
-      userRole: user.role,
+      userRole: userRole || user.role,
       onboarded: user.onboarded,
       companyId: user.companyId,
       isSuperAdmin: false,

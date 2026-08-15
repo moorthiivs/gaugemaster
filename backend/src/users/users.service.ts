@@ -50,12 +50,14 @@ export class UsersService {
       relations: ['role', 'company'],
     });
 
-    if (user && !user.companyId) {
-      const firstCompany = await this.companyRepository.findOne({ where: {} });
-      if (firstCompany) {
-        user.companyId = firstCompany.id;
-        user.company = firstCompany;
-        await this.userRepository.save(user);
+    if (user && user.companyId && !user.roleId) {
+      const adminRole = await this.roleRepository.findOne({
+        where: [{ companyId: user.companyId, name: 'Admin' }, { name: 'Admin', isSystemDefault: true }],
+      });
+      if (adminRole) {
+        user.roleId = adminRole.id;
+        user.role = adminRole;
+        await this.userRepository.update(user.id, { roleId: adminRole.id });
       }
     }
 

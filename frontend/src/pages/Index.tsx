@@ -174,7 +174,7 @@ const MiniSparkline = ({
   );
 };
 
-// ─── Compact & Uniform KPI Card Component ──────────────────────────────
+// ─── Compact & Uniform World-Class KPI Card Component ──────────────────
 interface KPICardProps {
   title: string;
   value: string | number;
@@ -205,78 +205,70 @@ const KPICard = ({
   const variantStyles = {
     critical: {
       chartType: "wave" as const,
-      chartColor: "#ef4444",
-      border:
-        "border-red-200/80 dark:border-red-900/40 hover:border-red-500/60 hover:shadow-red-500/10",
-      cardBg: "bg-card hover:bg-red-500/5",
-      badge:
-        "bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-md shadow-red-500/30",
+      chartColor: "#f43f5e",
+      border: "border-rose-500/30 dark:border-rose-500/25 hover:border-rose-500/60",
+      cardBg: "bg-card/90 hover:bg-rose-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(244, 63, 94, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-rose-600 to-red-500 text-white shadow-lg shadow-rose-500/25",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-red-600 dark:text-red-400 font-extrabold"
+          ? "text-rose-600 dark:text-rose-400 font-black"
           : "text-foreground font-bold",
-      footerHover: "group-hover:text-red-600 dark:group-hover:text-red-400",
+      footerHover: "group-hover:text-rose-600 dark:group-hover:text-rose-400",
     },
     primary: {
       chartType: "bars" as const,
       chartColor: "#3b82f6",
-      border:
-        "border-blue-200/80 dark:border-blue-900/40 hover:border-blue-500/60 hover:shadow-blue-500/10",
-      cardBg: "bg-card hover:bg-blue-500/5",
-      badge:
-        "bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-md shadow-blue-500/30",
+      border: "border-blue-500/30 dark:border-blue-500/25 hover:border-blue-500/60",
+      cardBg: "bg-card/90 hover:bg-blue-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(59, 130, 246, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-blue-600 to-indigo-500 text-white shadow-lg shadow-blue-500/25",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-blue-600 dark:text-blue-400 font-extrabold"
+          ? "text-blue-600 dark:text-blue-400 font-black"
           : "text-foreground font-bold",
       footerHover: "group-hover:text-blue-600 dark:group-hover:text-blue-400",
     },
     info: {
       chartType: "radial" as const,
       chartColor: "#a855f7",
-      border:
-        "border-purple-200/80 dark:border-purple-900/40 hover:border-purple-500/60 hover:shadow-purple-500/10",
-      cardBg: "bg-card hover:bg-purple-500/5",
-      badge:
-        "bg-gradient-to-br from-purple-500 to-violet-600 text-white shadow-md shadow-purple-500/30",
-      valueTxt: () => "text-purple-600 dark:text-purple-400 font-extrabold",
-      footerHover:
-        "group-hover:text-purple-600 dark:group-hover:text-purple-400",
+      border: "border-purple-500/30 dark:border-purple-500/25 hover:border-purple-500/60",
+      cardBg: "bg-card/90 hover:bg-purple-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(168, 85, 247, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-purple-600 to-violet-500 text-white shadow-lg shadow-purple-500/25",
+      valueTxt: () => "text-purple-600 dark:text-purple-400 font-black",
+      footerHover: "group-hover:text-purple-600 dark:group-hover:text-purple-400",
     },
     warning: {
       chartType: "curve" as const,
       chartColor: "#f59e0b",
-      border:
-        "border-amber-200/80 dark:border-amber-900/40 hover:border-amber-500/60 hover:shadow-amber-500/10",
-      cardBg: "bg-card hover:bg-amber-500/5",
-      badge:
-        "bg-gradient-to-br from-amber-500 to-orange-600 text-white shadow-md shadow-amber-500/30",
+      border: "border-amber-500/30 dark:border-amber-500/25 hover:border-amber-500/60",
+      cardBg: "bg-card/90 hover:bg-amber-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(245, 158, 11, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-amber-600 dark:text-amber-400 font-extrabold"
+          ? "text-amber-600 dark:text-amber-400 font-black"
           : "text-foreground font-bold",
       footerHover: "group-hover:text-amber-600 dark:group-hover:text-amber-400",
     },
     success: {
       chartType: "arc" as const,
       chartColor: "#10b981",
-      border:
-        "border-emerald-200/80 dark:border-emerald-900/40 hover:border-emerald-500/60 hover:shadow-emerald-500/10",
-      cardBg: "bg-card hover:bg-emerald-500/5",
-      badge:
-        "bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-emerald-500/30",
-      valueTxt: () => "text-emerald-600 dark:text-emerald-400 font-extrabold",
-      footerHover:
-        "group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
+      border: "border-emerald-500/30 dark:border-emerald-500/25 hover:border-emerald-500/60",
+      cardBg: "bg-card/90 hover:bg-emerald-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(16, 185, 129, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/25",
+      valueTxt: () => "text-emerald-600 dark:text-emerald-400 font-black",
+      footerHover: "group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
     },
     neutral: {
       chartType: "trend" as const,
       chartColor: "#06b6d4",
-      border:
-        "border-slate-200 dark:border-slate-800 hover:border-slate-400 dark:hover:border-slate-600 hover:shadow-slate-500/10",
-      cardBg: "bg-card hover:bg-cyan-500/5",
-      badge:
-        "bg-gradient-to-br from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/30",
+      border: "border-cyan-500/30 dark:border-cyan-500/25 hover:border-cyan-500/60",
+      cardBg: "bg-card/90 hover:bg-cyan-500/[0.04]",
+      glow: "radial-gradient(130px circle at top right, rgba(6, 182, 212, 0.15), transparent 70%)",
+      badge: "bg-gradient-to-tr from-cyan-600 to-blue-500 text-white shadow-lg shadow-cyan-500/25",
       valueTxt: () => "text-foreground font-bold",
       footerHover: "group-hover:text-cyan-600 dark:group-hover:text-cyan-400",
     },
@@ -284,7 +276,7 @@ const KPICard = ({
   const styles = variantStyles[variant];
 
   if (loading) {
-    return <Skeleton className="h-[132px] rounded-2xl" />;
+    return <Skeleton className="h-[136px] rounded-2xl" />;
   }
 
   const rawNum =
@@ -294,30 +286,31 @@ const KPICard = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 18, scale: 0.96 }}
+      initial={{ opacity: 0, y: 16, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{
         type: "spring",
-        stiffness: 350,
-        damping: 24,
-        delay: index * 0.05,
+        stiffness: 380,
+        damping: 26,
+        delay: index * 0.04,
       }}
-      whileHover={{ y: -4, scale: 1.02 }}
-      className="h-[136px]"
+      whileHover={{ y: -3, scale: 1.015 }}
+      className="h-[138px]"
     >
       <Card
         className={cn(
-          "h-full p-3.5 flex flex-col justify-between rounded-2xl shadow-2xs transition-all duration-300 group relative overflow-hidden border backdrop-blur-sm",
+          "h-full p-3.5 flex flex-col justify-between rounded-2xl shadow-sm transition-all duration-300 group relative overflow-hidden border backdrop-blur-xl",
           styles.cardBg,
           styles.border,
           onClick && "cursor-pointer",
         )}
+        style={{ backgroundImage: styles.glow }}
         aria-label={title}
         onClick={onClick}
       >
         {/* Top Header Row */}
-        <div className="flex items-center justify-between gap-1.5 pt-0.5">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground truncate">
+        <div className="flex items-center justify-between gap-1.5 pt-0.5 z-10">
+          <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">
             {title}
           </span>
           <div
@@ -332,7 +325,7 @@ const KPICard = ({
         </div>
 
         {/* Main Content Area with Mini Sparkline Chart */}
-        <div className="my-auto">
+        <div className="my-auto z-10">
           <div className="flex items-center justify-between gap-1">
             <div
               className={cn(
@@ -356,7 +349,7 @@ const KPICard = ({
           ) : null}
 
           {progressPercent !== undefined ? (
-            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1">
+            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1.5">
               <motion.div
                 className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full"
                 initial={{ width: 0 }}
@@ -370,7 +363,7 @@ const KPICard = ({
         {/* Footer Link / Action Hint */}
         <div
           className={cn(
-            "flex items-center justify-between pt-1.5 border-t border-border/40 text-[11px] font-semibold text-muted-foreground transition-colors",
+            "flex items-center justify-between pt-1.5 border-t border-border/40 text-[11px] font-semibold text-muted-foreground transition-colors z-10",
             styles.footerHover,
           )}
         >
@@ -748,21 +741,26 @@ const Index = () => {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* ─── Dashboard Header & Controls ─────────────────────── */}
-      <header className="flex flex-col gap-3.5">
+      <header className="flex flex-col gap-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight flex items-center gap-2.5 text-foreground leading-snug">
-              <Activity className="h-6 w-6 text-primary shrink-0" />
-              <span>Calibration Action Center</span>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live Monitoring
+              </span>
+            </div>
+            <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-2.5 text-foreground leading-snug mt-1">
+              <span className="text-gradient-primary">Calibration Action Center</span>
               {loading && (
                 <Loader2 className="h-4.5 w-4.5 text-primary animate-spin ml-1 shrink-0" />
               )}
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-1 font-medium leading-normal">
+            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 font-medium leading-normal">
               Real-time calibration monitoring & action dashboard ·{" "}
-              <span className="font-semibold text-foreground/80">{dateRangeLabel}</span>
+              <span className="font-semibold text-foreground/90">{dateRangeLabel}</span>
             </p>
           </div>
 
@@ -770,13 +768,13 @@ const Index = () => {
             <Button
               variant="outline"
               size="sm"
-              className="h-8 gap-1.5 text-xs font-semibold rounded-lg shadow-xs hover:border-primary/50"
+              className="h-8 gap-1.5 text-xs font-bold rounded-xl shadow-xs border-border/80 hover:border-primary/50 hover:bg-card/80 transition-all"
               onClick={() => {
                 setData(null);
                 setLoading(true);
               }}
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh Data
+              <RefreshCw className="h-3.5 w-3.5 text-primary" /> Refresh Data
             </Button>
           </div>
         </div>
@@ -790,14 +788,16 @@ const Index = () => {
               exit={{ opacity: 0, y: -12, scale: 0.98 }}
               transition={{ duration: 0.35, ease: "easeOut" }}
               className={cn(
-                "rounded-2xl p-4 sm:p-5 shadow-lg border backdrop-blur-md relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4",
+                "rounded-2xl p-4 sm:p-5 shadow-lg border backdrop-blur-xl relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4",
                 (data?.overdue || 0) > 0
-                  ? "bg-gradient-to-r from-rose-500/15 via-red-500/10 to-amber-500/10 border-rose-500/30"
-                  : "bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-violet-500/10 border-blue-500/30",
+                  ? "bg-gradient-to-r from-rose-500/15 via-red-500/10 to-amber-500/10 border-rose-500/35 shadow-rose-500/5"
+                  : "bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-violet-500/10 border-blue-500/35 shadow-blue-500/5",
               )}
             >
+              {/* Shimmer line on top edge */}
+              <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/40 dark:via-white/20 to-transparent" />
               {/* Animated background glow */}
-              <div className="absolute -right-10 -bottom-10 w-44 h-44 rounded-full bg-primary/10 blur-2xl pointer-events-none" />
+              <div className="absolute -right-10 -bottom-10 w-48 h-48 rounded-full bg-primary/15 blur-3xl pointer-events-none" />
 
               <div className="flex items-start sm:items-center gap-3.5 z-10 min-w-0">
                 <div
@@ -812,12 +812,12 @@ const Index = () => {
                 </div>
                 <div className="space-y-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base font-extrabold tracking-tight text-foreground">
+                    <span className="text-base font-black tracking-tight text-foreground">
                       Today's Action Plan
                     </span>
                     <Badge
                       variant="outline"
-                      className="text-[11px] font-mono font-bold bg-background/90 text-primary border-primary/30 px-2 py-0.5 rounded-lg shadow-2xs"
+                      className="text-[11px] font-mono font-extrabold bg-background/90 text-primary border-primary/30 px-2 py-0.5 rounded-lg shadow-2xs"
                     >
                       {format(new Date(), "EEEE, dd MMM yyyy")}
                     </Badge>
@@ -882,10 +882,10 @@ const Index = () => {
         </AnimatePresence>
 
         {/* ─── Filter Toolbar ─────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2.5 bg-card/90 backdrop-blur-md border border-border/70 rounded-xl p-2.5 shadow-xs">
+        <div className="flex flex-wrap items-center gap-2.5 bg-card/90 backdrop-blur-xl border border-border/70 rounded-2xl p-2.5 shadow-sm">
           {/* Filter Icon Only with Badge at Top-Right Corner */}
           <div
-            className="relative inline-flex items-center justify-center p-1.5 rounded-lg bg-primary/10 text-primary shrink-0 mr-1"
+            className="relative inline-flex items-center justify-center p-1.5 rounded-xl bg-primary/10 text-primary shrink-0 mr-1"
             title="Filters"
           >
             <Filter className="h-4 w-4" />
@@ -1312,75 +1312,79 @@ const Index = () => {
       {/* ─── Grid Row 3: Recent Activity Logs ── */}
       <section aria-label="Recent logs" className="grid grid-cols-1 gap-4">
         {/* Recent Activity Card */}
-        <Card className="h-full border border-border/70 shadow-xs hover:shadow-md transition-all duration-300 flex flex-col justify-between">
-          <CardHeader className="pb-2 pt-3 px-4">
+        <Card className="world-class-card-static h-full flex flex-col justify-between">
+          <CardHeader className="pb-2 pt-3.5 px-5">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-sm font-extrabold tracking-tight flex items-center gap-2">
-                  <Activity className="h-4 w-4 text-primary" />
-                  Recent Activity Logs
+                  <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                    <Activity className="h-4 w-4" />
+                  </div>
+                  <span>Recent Activity Logs</span>
                 </CardTitle>
-                <CardDescription className="text-[11px]">
-                  Last 10 calibration events
+                <CardDescription className="text-xs">
+                  Last 10 calibration events and updates
                 </CardDescription>
               </div>
-              <Badge variant="outline" className="text-[9px] font-mono">
-                Real-time
+              <Badge variant="outline" className="text-[10px] font-mono font-bold bg-primary/5 text-primary border-primary/20 px-2 py-0.5 rounded-md">
+                Live Feed
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="px-4 pb-3 flex-1 overflow-y-auto">
+          <CardContent className="px-5 pb-4 flex-1 overflow-y-auto">
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 rounded-lg" />
+                  <Skeleton key={i} className="h-10 rounded-xl" />
                 ))}
               </div>
             ) : !data?.recentActivity?.length ? (
-              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                <Activity className="h-10 w-10 opacity-20 mb-2" />
-                <p className="text-sm font-medium">No recent activity</p>
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <div className="h-12 w-12 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
+                  <Activity className="h-6 w-6 opacity-30" />
+                </div>
+                <p className="text-sm font-semibold">No recent activity</p>
                 <p className="text-xs opacity-60 mt-0.5">
                   Calibration events will appear here
                 </p>
               </div>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {data.recentActivity.map((r) => (
                   <div
                     key={r.id}
-                    className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-primary/5 transition-colors group cursor-pointer"
+                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-muted/70 transition-all group cursor-pointer border border-transparent hover:border-border/60"
                     onClick={() => navigate(`/instruments`)}
                   >
                     <div
                       className={cn(
-                        "p-1.5 rounded-lg shrink-0 border",
+                        "p-2 rounded-xl shrink-0 border shadow-xs",
                         r.action === "Calibrated" || r.action === "OK"
-                          ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
+                          ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
                           : r.action === "Overdue"
-                            ? "bg-red-500/10 text-red-500 border-red-500/20"
+                            ? "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/25"
                             : r.action === "Due Soon"
-                              ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
-                              : "bg-blue-500/10 text-blue-500 border-blue-500/20",
+                              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25"
+                              : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/25",
                       )}
                     >
-                      <Gauge className="h-3.5 w-3.5" />
+                      <Gauge className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-2">
                         <span className="text-xs font-bold truncate group-hover:text-primary transition-colors">
                           {r.name}
                         </span>
                         {r.idCode && (
                           <Badge
                             variant="outline"
-                            className="text-[9px] font-mono px-1 py-0 shrink-0 bg-background"
+                            className="text-[9px] font-mono font-bold px-1.5 py-0 shrink-0 bg-background/80"
                           >
                             {r.idCode}
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5">
+                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5 font-medium">
                         <span className="font-semibold text-foreground/80">
                           {r.action}
                         </span>
@@ -1392,13 +1396,13 @@ const Index = () => {
                         )}
                       </div>
                     </div>
-                    <span className="text-[10px] text-muted-foreground tabular-nums shrink-0 font-medium">
+                    <span className="text-[11px] text-muted-foreground tabular-nums shrink-0 font-mono font-semibold">
                       {new Date(r.at).toLocaleDateString("en-GB", {
                         day: "2-digit",
                         month: "short",
                       })}
                     </span>
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0" />
+                    <ChevronRight className="h-4 w-4 text-muted-foreground/40 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0" />
                   </div>
                 ))}
               </div>
@@ -1409,42 +1413,48 @@ const Index = () => {
 
       {/* ─── Grid Row 3: Due Soon / Due in Selected Range Instruments Table ── */}
       <section aria-label="Instruments due soon">
-        <Card className="border border-border/70 shadow-xs hover:shadow-md transition-all duration-300">
-          <CardHeader className="pb-2 pt-3 px-4">
+        <Card className="world-class-card-static">
+          <CardHeader className="pb-2 pt-3.5 px-5">
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-sm font-extrabold tracking-tight flex items-center gap-2">
-                  <CalendarClock className="h-4 w-4 text-amber-500" />
-                  {startDate || endDate
-                    ? "Instruments Due in Selected Range"
-                    : "Instruments Due Soon — Next 30 Days"}
+                  <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500">
+                    <CalendarClock className="h-4 w-4" />
+                  </div>
+                  <span>
+                    {startDate || endDate
+                      ? "Instruments Due in Selected Range"
+                      : "Instruments Due Soon — Next 30 Days"}
+                  </span>
                 </CardTitle>
-                <CardDescription className="text-[11px]">
+                <CardDescription className="text-xs">
                   List of instruments requiring calibration within the selected
                   time window
                 </CardDescription>
               </div>
               {(data?.dueSoonList?.length || 0) > 0 && (
                 <Badge
-                  variant="secondary"
-                  className="text-[10px] font-mono font-bold tabular-nums"
+                  variant="outline"
+                  className="text-xs font-mono font-extrabold tabular-nums bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25 px-2.5 py-0.5 rounded-lg"
                 >
                   {data?.dueSoonList?.length} instruments
                 </Badge>
               )}
             </div>
           </CardHeader>
-          <CardContent className="px-4 pb-3">
+          <CardContent className="px-5 pb-4">
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
-                  <Skeleton key={i} className="h-9 rounded-lg" />
+                  <Skeleton key={i} className="h-10 rounded-xl" />
                 ))}
               </div>
             ) : !data?.dueSoonList?.length ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <CheckCircle2 className="h-10 w-10 opacity-20 mb-2 text-emerald-500" />
-                <p className="text-sm font-medium">
+              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center mb-3 text-emerald-500">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <p className="text-sm font-semibold">
                   All instruments up to date
                 </p>
                 <p className="text-xs opacity-60 mt-0.5">
@@ -1455,14 +1465,14 @@ const Index = () => {
               <>
                 <Table aria-label="Due soon instruments">
                   <TableHeader>
-                    <TableRow className="hover:bg-transparent border-border/50">
-                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2">
+                    <TableRow className="hover:bg-transparent border-border/60">
+                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2.5">
                         Instrument
                       </TableHead>
-                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2">
+                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2.5">
                         Location
                       </TableHead>
-                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2 text-right">
+                      <TableHead className="text-[11px] font-bold uppercase tracking-wider py-2.5 text-right">
                         Due Date
                       </TableHead>
                     </TableRow>
@@ -1475,26 +1485,26 @@ const Index = () => {
                         return (
                           <TableRow
                             key={id}
-                            className="group cursor-pointer hover:bg-primary/5 transition-colors"
+                            className="group cursor-pointer hover:bg-muted/60 transition-colors border-border/40"
                             onClick={() => navigate("/instruments")}
                           >
-                            <TableCell className="py-2">
-                              <span className="text-xs font-semibold group-hover:text-primary transition-colors">
+                            <TableCell className="py-2.5">
+                              <span className="text-xs font-bold group-hover:text-primary transition-colors">
                                 {name}
                               </span>
                             </TableCell>
-                            <TableCell className="py-2">
-                              <span className="text-xs text-muted-foreground">
+                            <TableCell className="py-2.5">
+                              <span className="text-xs text-muted-foreground font-medium">
                                 {loc || "—"}
                               </span>
                             </TableCell>
-                            <TableCell className="py-2 text-right">
+                            <TableCell className="py-2.5 text-right">
                               <span
                                 className={cn(
-                                  "text-xs font-mono tabular-nums",
+                                  "text-xs font-mono tabular-nums font-bold px-2 py-0.5 rounded-md",
                                   isOverdue
-                                    ? "text-red-500 font-bold"
-                                    : "text-muted-foreground",
+                                    ? "text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/20"
+                                    : "text-muted-foreground bg-muted/40",
                                 )}
                               >
                                 {due.toLocaleDateString("en-GB", {
@@ -1513,17 +1523,17 @@ const Index = () => {
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
-                    <span className="text-[10px] text-muted-foreground tabular-nums font-medium">
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-border/60">
+                    <span className="text-xs text-muted-foreground tabular-nums font-semibold">
                       Page {page} of {totalPages}
                     </span>
-                    <div className="flex gap-1">
+                    <div className="flex gap-1.5">
                       <Button
                         variant="outline"
                         size="sm"
                         disabled={page === 1}
                         onClick={() => setPage((p) => p - 1)}
-                        className="h-6 text-[11px] px-2"
+                        className="h-7 text-xs px-2.5 rounded-lg"
                       >
                         Previous
                       </Button>
@@ -1532,7 +1542,7 @@ const Index = () => {
                         size="sm"
                         disabled={page === totalPages}
                         onClick={() => setPage((p) => p + 1)}
-                        className="h-6 text-[11px] px-2"
+                        className="h-7 text-xs px-2.5 rounded-lg"
                       >
                         Next
                       </Button>

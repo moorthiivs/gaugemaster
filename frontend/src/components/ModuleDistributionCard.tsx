@@ -3,7 +3,7 @@ import Chart from 'react-apexcharts';
 import { useTheme } from 'next-themes';
 import { ApexOptions } from 'apexcharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Layers, ChevronRight } from 'lucide-react';
+import { Layers, ChevronRight, PieChart } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useNavigate } from 'react-router-dom';
 
@@ -24,10 +24,10 @@ const MODULE_COLORS = [
   '#f59e0b', // amber
   '#8b5cf6', // purple
   '#ec4899', // pink
-  '#14b8a6', // teal
+  '#06b6d4', // cyan
   '#6366f1', // indigo
   '#f97316', // orange
-  '#06b6d4', // cyan
+  '#14b8a6', // teal
   '#84cc16', // lime
   '#64748b', // slate for Others
 ];
@@ -60,7 +60,7 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
   const options: ApexOptions = {
     chart: {
       type: 'donut',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
       background: 'transparent',
       animations: {
         enabled: true,
@@ -85,21 +85,21 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
     plotOptions: {
       pie: {
         donut: {
-          size: '68%',
+          size: '70%',
           labels: {
             show: true,
             name: {
               show: true,
-              color: isDark ? '#e2e8f0' : '#475569',
-              fontSize: '13px',
-              fontWeight: 600,
+              color: isDark ? '#cbd5e1' : '#475569',
+              fontSize: '12px',
+              fontWeight: 700,
             },
             value: {
               show: true,
               color: isDark ? '#f8fafc' : '#0f172a',
               fontSize: '24px',
               fontWeight: 800,
-              fontFamily: 'Inter, monospace',
+              fontFamily: "'Plus Jakarta Sans', monospace",
               formatter: (val) => String(val),
             },
             total: {
@@ -107,8 +107,8 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
               showAlways: true,
               label: 'Total',
               color: isDark ? '#94a3b8' : '#64748b',
-              fontSize: '12px',
-              fontWeight: 600,
+              fontSize: '11px',
+              fontWeight: 700,
               formatter: () => String(totalCount),
             },
           },
@@ -120,11 +120,12 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
     },
     stroke: {
       show: true,
-      colors: [isDark ? '#0f172a' : '#ffffff'],
+      colors: [isDark ? '#0b1120' : '#ffffff'],
       width: 3,
     },
     tooltip: {
       theme: isDark ? 'dark' : 'light',
+      style: { fontSize: '12px', fontFamily: 'inherit' },
       y: {
         formatter: (val) => {
           const pct = totalCount > 0 ? ((val / totalCount) * 100).toFixed(1) : '0';
@@ -139,13 +140,13 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
 
   if (loading) {
     return (
-      <Card className="h-full border border-border/70 shadow-xs">
+      <Card className="world-class-card-static h-full">
         <CardHeader className="pb-2 pt-3 px-4">
           <Skeleton className="h-5 w-40 mb-1" />
           <Skeleton className="h-3 w-56" />
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          <div className="h-[320px] w-full flex items-center justify-center">
+          <div className="h-[310px] w-full flex items-center justify-center">
             <Skeleton className="h-44 w-44 rounded-full" />
           </div>
         </CardContent>
@@ -156,16 +157,18 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
   const isEmpty = !data || data.length === 0 || totalCount === 0;
 
   return (
-    <Card className="h-full border border-border/70 shadow-xs hover:shadow-md transition-all duration-300 flex flex-col justify-between">
+    <Card className="world-class-card-static h-full flex flex-col justify-between">
       <CardHeader className="pb-2 pt-3 px-4">
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="text-base font-extrabold tracking-tight flex items-center gap-2">
-              <Layers className="h-4 w-4 text-primary" />
-              Module Distribution
+              <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-500">
+                <Layers className="h-4 w-4" />
+              </div>
+              <span>Module Distribution</span>
             </CardTitle>
             <CardDescription className="text-xs">
-              Distribution of instruments by Module
+              Distribution of instruments across plant modules
             </CardDescription>
           </div>
         </div>
@@ -173,11 +176,11 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
 
       <CardContent className="px-4 pb-4 flex-1 flex flex-col justify-between">
         {isEmpty ? (
-          <div className="h-[300px] w-full flex flex-col items-center justify-center text-center p-6 border-2 border-dashed border-muted rounded-xl bg-muted/20">
-            <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-              <Layers className="h-6 w-6 text-primary/60" />
+          <div className="h-[300px] w-full flex flex-col items-center justify-center text-center p-6 border border-dashed border-border/70 rounded-2xl bg-muted/20">
+            <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center mb-3">
+              <Layers className="h-6 w-6 text-primary/70" />
             </div>
-            <h4 className="text-sm font-semibold text-foreground">No Module Data Available</h4>
+            <h4 className="text-sm font-bold text-foreground">No Module Data Available</h4>
             <p className="text-xs text-muted-foreground mt-1 max-w-[250px]">
               No instruments with assigned modules match the current filter criteria.
             </p>
@@ -199,21 +202,21 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
                   <div
                     key={item.name}
                     onClick={() => handleModuleClick(item.name)}
-                    className="flex items-center justify-between p-1.5 px-2 rounded-lg hover:bg-muted/60 transition-colors cursor-pointer text-xs group"
+                    className="flex items-center justify-between p-1.5 px-2.5 rounded-xl hover:bg-muted/70 transition-all cursor-pointer text-xs group border border-transparent hover:border-border/50"
                   >
-                    <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <div className="flex items-center gap-2.5 min-w-0 pr-2">
                       <span
-                        className="h-2.5 w-2.5 rounded-full shrink-0"
+                        className="h-2.5 w-2.5 rounded-full shrink-0 shadow-xs"
                         style={{ backgroundColor: color }}
                       />
-                      <span className="font-medium text-foreground truncate group-hover:text-primary transition-colors" title={item.name}>
+                      <span className="font-semibold text-foreground/90 truncate group-hover:text-primary transition-colors" title={item.name}>
                         {item.name}
                       </span>
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 font-mono text-xs">
-                      <span className="font-bold text-foreground">{item.value}</span>
-                      <span className="text-[11px] text-muted-foreground min-w-[42px] text-right">
+                      <span className="font-extrabold text-foreground">{item.value}</span>
+                      <span className="text-[11px] text-muted-foreground min-w-[42px] text-right font-medium">
                         ({percentage}%)
                       </span>
                       <ChevronRight className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -225,17 +228,17 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
               {/* Total Count Row (Always Last) */}
               <div
                 onClick={() => navigate('/instruments')}
-                className="flex items-center justify-between p-1.5 px-2 rounded-lg bg-muted/40 font-bold border-t border-border mt-1.5 text-xs hover:bg-muted/70 transition-colors cursor-pointer group"
+                className="flex items-center justify-between p-2 px-2.5 rounded-xl bg-muted/40 font-bold border border-border/60 mt-2 text-xs hover:bg-muted/70 transition-colors cursor-pointer group"
               >
-                <div className="flex items-center gap-2 min-w-0 pr-2">
+                <div className="flex items-center gap-2.5 min-w-0 pr-2">
                   <span className="h-2.5 w-2.5 rounded-full shrink-0 bg-primary" />
                   <span className="font-extrabold text-foreground group-hover:text-primary transition-colors">
                     Total
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 font-mono text-xs">
-                  <span className="font-extrabold text-foreground">{totalCount}</span>
-                  <span className="text-[11px] text-muted-foreground min-w-[42px] text-right font-semibold">
+                  <span className="font-black text-foreground">{totalCount}</span>
+                  <span className="text-[11px] text-muted-foreground min-w-[42px] text-right font-bold">
                     (100%)
                   </span>
                   <ChevronRight className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -248,3 +251,4 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
     </Card>
   );
 }
+

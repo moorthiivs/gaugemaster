@@ -30,7 +30,7 @@ interface DashboardPieChartProps {
     onCalibrationStatusChange: (status: string | undefined) => void;
 }
 
-// Consistent color mapping for calibration statuses
+// Consistent curated color mapping for calibration statuses
 const STATUS_COLORS: Record<string, string> = {
     'OK': '#10b981',
     'Calibrated': '#10b981',
@@ -48,7 +48,7 @@ const STATUS_COLORS: Record<string, string> = {
     'Under Repair': '#8b5cf6',
 };
 
-const DEFAULT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1', '#8b5cf6', '#ec4899', '#14b8a6'];
+const DEFAULT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#6366f1', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 export function DashboardPieChart({
     calibrationStatusData,
@@ -103,7 +103,7 @@ export function DashboardPieChart({
     const options: ApexOptions = {
         chart: {
             type: 'donut',
-            fontFamily: 'Inter, sans-serif',
+            fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
             background: 'transparent',
             animations: {
                 enabled: true,
@@ -120,29 +120,29 @@ export function DashboardPieChart({
         plotOptions: {
             pie: {
                 donut: {
-                    size: '68%',
+                    size: '70%',
                     labels: {
                         show: true,
                         name: {
                             show: true,
-                            color: isDark ? '#e2e8f0' : '#475569',
-                            fontSize: '13px',
-                            fontWeight: 600,
+                            color: isDark ? '#cbd5e1' : '#475569',
+                            fontSize: '12px',
+                            fontWeight: 700,
                         },
                         value: {
                             show: true,
                             color: isDark ? '#f8fafc' : '#0f172a',
                             fontSize: '26px',
                             fontWeight: 800,
-                            fontFamily: 'Inter, monospace',
+                            fontFamily: "'Plus Jakarta Sans', monospace",
                         },
                         total: {
                             show: true,
                             showAlways: true,
                             label: 'Total',
                             color: isDark ? '#94a3b8' : '#64748b',
-                            fontSize: '12px',
-                            fontWeight: 600,
+                            fontSize: '11px',
+                            fontWeight: 700,
                             formatter: function (w) {
                                 return w.globals.seriesTotals.reduce((a: any, b: any) => {
                                     return a + b
@@ -158,11 +158,12 @@ export function DashboardPieChart({
         },
         stroke: {
             show: true,
-            colors: [isDark ? '#0f172a' : '#ffffff'],
+            colors: [isDark ? '#0b1120' : '#ffffff'],
             width: 3
         },
         tooltip: {
             theme: isDark ? 'dark' : 'light',
+            style: { fontSize: '12px', fontFamily: 'inherit' },
             y: {
                 formatter: (val) => `${val} instruments`
             }
@@ -173,7 +174,7 @@ export function DashboardPieChart({
                 colors: isDark ? '#cbd5e1' : '#334155'
             },
             markers: {
-                shape: 'circle'
+                shape: 'circle',
             },
             fontSize: '12px',
             fontWeight: 600,
@@ -181,12 +182,14 @@ export function DashboardPieChart({
     };
 
     return (
-        <Card className="border border-border/60 shadow-sm hover:shadow-md transition-all duration-300">
+        <Card className="world-class-card-static h-full flex flex-col justify-between">
             <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between space-y-2 sm:space-y-0 pb-3">
                 <div>
-                    <CardTitle className="text-base font-bold tracking-tight flex items-center gap-2">
-                        <PieChart className="h-4 w-4 text-primary" />
-                        {title}
+                    <CardTitle className="text-base font-extrabold tracking-tight flex items-center gap-2">
+                        <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-500">
+                            <PieChart className="h-4 w-4" />
+                        </div>
+                        <span>{title}</span>
                     </CardTitle>
                     <CardDescription className="text-xs">{description}</CardDescription>
                 </div>
@@ -194,22 +197,23 @@ export function DashboardPieChart({
                     <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                             <Button
-                                variant="ghost"
-                                size="icon"
-                                className={`h-8 w-8 hover:bg-muted/80 ${isFilterActive ? "text-blue-600 bg-blue-50/50 hover:bg-blue-100/50" : "text-muted-foreground"}`}
+                                variant="outline"
+                                size="sm"
+                                className={`h-8 w-8 p-0 rounded-lg ${isFilterActive ? "text-primary border-primary bg-primary/10" : "text-muted-foreground hover:text-foreground"}`}
                                 title="Filter chart data"
                             >
-                                <Filter className={`h-3.5 w-3.5 ${isFilterActive ? "fill-blue-600/20" : ""}`} />
+                                <Filter className={`h-3.5 w-3.5 ${isFilterActive ? "fill-primary/20" : ""}`} />
                             </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuContent align="end" className="w-48 rounded-xl shadow-xl backdrop-blur-xl bg-popover/95 border-border/80">
                             {filterType === 'calibrationStatus' ? (
                                 <>
-                                    <DropdownMenuLabel>Filter Calibration Result</DropdownMenuLabel>
+                                    <DropdownMenuLabel className="text-xs font-bold">Filter Calibration Result</DropdownMenuLabel>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuCheckboxItem
                                         checked={!currentCalibrationStatus}
                                         onCheckedChange={() => onCalibrationStatusChange(undefined)}
+                                        className="text-xs"
                                     >
                                         All Results
                                     </DropdownMenuCheckboxItem>
@@ -218,6 +222,7 @@ export function DashboardPieChart({
                                             key={statusObj.name}
                                             checked={currentCalibrationStatus === statusObj.name}
                                             onCheckedChange={() => onCalibrationStatusChange(statusObj.name)}
+                                            className="text-xs"
                                         >
                                             {statusObj.name} Only
                                         </DropdownMenuCheckboxItem>
@@ -225,11 +230,12 @@ export function DashboardPieChart({
                                 </>
                             ) : (
                                 <>
-                                    <DropdownMenuLabel>Filter Item Status</DropdownMenuLabel>
+                                    <DropdownMenuLabel className="text-xs font-bold">Filter Item Status</DropdownMenuLabel>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuCheckboxItem
                                         checked={!currentItemStatus}
                                         onCheckedChange={() => onItemStatusChange(undefined)}
+                                        className="text-xs"
                                     >
                                         All Statuses
                                     </DropdownMenuCheckboxItem>
@@ -238,6 +244,7 @@ export function DashboardPieChart({
                                             key={statusObj.name}
                                             checked={currentItemStatus === statusObj.name}
                                             onCheckedChange={() => onItemStatusChange(statusObj.name)}
+                                            className="text-xs"
                                         >
                                             {statusObj.name} Only
                                         </DropdownMenuCheckboxItem>
@@ -251,22 +258,24 @@ export function DashboardPieChart({
                         value={filterType}
                         onValueChange={(val: any) => setFilterType(val)}
                     >
-                        <SelectTrigger className="w-[160px] h-8 text-xs font-medium">
+                        <SelectTrigger className="w-[150px] h-8 text-xs font-semibold rounded-lg bg-card/60">
                             <SelectValue placeholder="Select view" />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="rounded-xl backdrop-blur-xl bg-popover/95 border-border/80 text-xs">
                             <SelectItem value="calibrationStatus">Calibration Status</SelectItem>
                             <SelectItem value="itemStatus">Item Status</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
             </CardHeader>
-            <CardContent>
-                <div className="h-[320px] w-full flex items-center justify-center">
+            <CardContent className="flex-1 flex items-center justify-center">
+                <div className="h-[310px] w-full flex items-center justify-center">
                     {activeData.every(d => d.value === 0) ? (
-                        <div className="text-muted-foreground text-sm flex flex-col items-center justify-center">
-                            <PieChart className="h-12 w-12 opacity-20 mb-3" />
-                            <p className="text-sm font-medium">No matching instruments</p>
+                        <div className="text-muted-foreground text-sm flex flex-col items-center justify-center py-12">
+                            <div className="h-12 w-12 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
+                                <PieChart className="h-6 w-6 opacity-30" />
+                            </div>
+                            <p className="text-sm font-semibold">No matching instruments</p>
                             <p className="text-xs opacity-60 mt-1">Adjust filters to see distribution</p>
                         </div>
                     ) : (
@@ -279,3 +288,4 @@ export function DashboardPieChart({
         </Card>
     );
 }
+

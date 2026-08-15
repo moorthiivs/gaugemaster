@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Role, RolePermissions } from './role.entity';
 import { User } from '../users/user.entity';
+import { Company } from '../company/entities/company.entity';
 
 export const DEFAULT_MODULES = [
   'instruments',
@@ -65,10 +66,48 @@ export class RolesService implements OnModuleInit {
     private readonly roleRepository: Repository<Role>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(Company)
+    private readonly companyRepository: Repository<Company>,
   ) {}
 
   async onModuleInit() {
     await this.seedDefaultRoles();
+    await this.repairAndSeedAllCompanies();
+  }
+
+  private async repairAndSeedAllCompanies() {
+    try {
+      const companies = await this.companyRepository.find();
+      for (const comp of companies) {
+        const companyRoles = await this.seedCompanyRoles(comp.id);
+        const adminRole = companyRoles.find((r) => r.name === 'Admin');
+
+        if (adminRole) {
+          // If registered user has no role, assign admin role
+          if (comp.registeredUserId) {
+            const regUser = await this.userRepository.findOne({ where: { id: comp.registeredUserId } });
+            if (regUser && (!regUser.roleId || !regUser.role)) {
+              await this.userRepository.update(comp.registeredUserId, {
+                roleId: adminRole.id,
+                companyId: comp.id,
+              });
+            }
+          }
+
+          // Also check all users belonging to this company with roleId null
+          const usersWithoutRole = await this.userRepository.find({
+            where: { companyId: comp.id, isSuperAdmin: false },
+          });
+          for (const u of usersWithoutRole) {
+            if (!u.roleId) {
+              await this.userRepository.update(u.id, { roleId: adminRole.id });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to repair/seed company roles:', err);
+    }
   }
 
   private async seedDefaultRoles() {
@@ -166,6 +205,11 @@ export class RolesService implements OnModuleInit {
 
   async findAll(companyId?: string): Promise<Role[]> {
     if (companyId) {
+      const existingCompanyRoles = await this.roleRepository.find({ where: { companyId } });
+      if (existingCompanyRoles.length === 0) {
+        await this.seedCompanyRoles(companyId);
+      }
+
       const allRoles = await this.roleRepository.find({
         where: [{ companyId }, { isSystemDefault: true }],
         order: { name: 'ASC' },

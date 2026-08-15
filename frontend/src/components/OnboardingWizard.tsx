@@ -81,15 +81,30 @@ export default function OnboardingWizard() {
         setupData
       );
 
-      const { id } = response.data;
+      const { id, adminRole } = response.data;
+
+      const fullAdminPermissions = {
+        instruments: { create: true, edit: true, view: true, delete: true },
+        calibrations: { create: true, edit: true, view: true, delete: true },
+        reports: { create: true, edit: true, view: true, delete: true },
+        templates: { create: true, edit: true, view: true, delete: true },
+        users: { create: true, edit: true, view: true, delete: true },
+        settings: { create: true, edit: true, view: true, delete: true },
+      };
 
       const updatedUser = {
         ...user,
         companyId: id,
-        isNewCustomer: false
+        role: "Admin",
+        userRole: adminRole || {
+          name: "Admin",
+          permissions: fullAdminPermissions,
+        },
+        designation: setupData.role || "Admin",
+        isNewCustomer: false,
       };
 
-      setUser(updatedUser)
+      setUser(updatedUser);
       setIsNewCustomer(false);
 
       localStorage.setItem('auth_user', JSON.stringify(updatedUser));

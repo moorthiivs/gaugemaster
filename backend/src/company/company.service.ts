@@ -45,11 +45,17 @@ export class CompanyService {
       );
 
       if (adminRole) {
-        await this.userRepository.update(savedCompany.registeredUserId, { roleId: adminRole.id });
+        await this.userRepository.update(savedCompany.registeredUserId, {
+          roleId: adminRole.id,
+          designation: createCompanyDto.role || 'Admin',
+        });
       }
     }
 
-    return savedCompany;
+    return {
+      ...savedCompany,
+      adminRole: adminRole || null,
+    } as any;
   }
 
   async findAll(): Promise<Company[]> {
