@@ -9,13 +9,14 @@ import { GoogleStrategy } from './google.strategy';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UsersModule } from 'src/users/users.module';
 import { Company } from '../company/entities/company.entity';
+import { Role } from '../roles/role.entity';
 
 @Module({
   imports: [
     ConfigModule,
     UsersModule,
     PassportModule,
-    TypeOrmModule.forFeature([Company]),
+    TypeOrmModule.forFeature([Company, Role]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

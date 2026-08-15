@@ -33,7 +33,6 @@ export class SettingsController {
   }
 
   @Post()
-  @RequirePermission('settings', 'edit')
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
     return this.settingsService.create(createSettingDto);
   }

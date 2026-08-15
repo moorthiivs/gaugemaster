@@ -2,7 +2,7 @@ import { useTheme } from 'next-themes';
 import Chart from 'react-apexcharts';
 import { ApexOptions } from 'apexcharts';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { BarChart3 } from 'lucide-react';
+import { BarChart3, TrendingUp } from 'lucide-react';
 
 interface ChartData {
   month: string;
@@ -26,18 +26,22 @@ export function DashboardChart({
 
   if (!data || data.length === 0) {
     return (
-      <Card className="border border-border/60 shadow-sm">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-base font-bold tracking-tight flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-primary" />
+      <Card className="world-class-card-static h-full">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-extrabold tracking-tight flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+              <BarChart3 className="h-4 w-4" />
+            </div>
             {title}
           </CardTitle>
           <CardDescription className="text-xs">{description}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <BarChart3 className="h-12 w-12 opacity-20 mb-3" />
-            <p className="text-sm font-medium">No workload data available</p>
+          <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+            <div className="h-12 w-12 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
+              <BarChart3 className="h-6 w-6 opacity-30" />
+            </div>
+            <p className="text-sm font-semibold">No workload data available</p>
             <p className="text-xs opacity-60 mt-1">Select a date range with calibration activity</p>
           </div>
         </CardContent>
@@ -49,12 +53,10 @@ export function DashboardChart({
     {
       name: 'Plan (Due)',
       data: data.map(d => d.plan),
-      color: isDark ? '#60a5fa' : '#3b82f6'
     },
     {
       name: 'Actual (Completed)',
       data: data.map(d => d.actual),
-      color: '#10b981'
     }
   ];
 
@@ -63,24 +65,26 @@ export function DashboardChart({
       type: 'bar',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: 'Inter, sans-serif',
+      fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
       animations: {
         enabled: true,
         easing: 'easeinout',
-        speed: 600,
+        speed: 700,
+        dynamicAnimation: { enabled: true, speed: 350 },
       },
     },
+    colors: ['#3b82f6', '#10b981'],
     plotOptions: {
       bar: {
         horizontal: false,
-        columnWidth: data.length <= 3 ? '30%' : data.length <= 6 ? '40%' : '55%',
-        borderRadius: 4,
+        columnWidth: data.length <= 3 ? '28%' : data.length <= 6 ? '38%' : '52%',
+        borderRadius: 5,
         borderRadiusApplication: 'end',
       },
     },
     dataLabels: {
       enabled: data.length <= 12,
-      formatter: (val) => val > 0 ? `${val}` : '',
+      formatter: (val) => Number(val) > 0 ? `${val}` : '',
       style: {
         fontSize: '10px',
         fontWeight: 700,
@@ -117,7 +121,8 @@ export function DashboardChart({
       labels: {
         style: {
           colors: isDark ? '#94a3b8' : '#64748b',
-          fontSize: '11px'
+          fontSize: '11px',
+          fontWeight: 600,
         },
         formatter: (val) => Math.floor(val).toString(),
       },
@@ -126,21 +131,33 @@ export function DashboardChart({
     },
     grid: {
       borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      strokeDashArray: 3,
+      strokeDashArray: 4,
       xaxis: { lines: { show: false } },
       yaxis: { lines: { show: true } }
     },
     fill: {
-      opacity: 1
+      type: 'gradient',
+      gradient: {
+        shade: isDark ? 'dark' : 'light',
+        type: 'vertical',
+        shadeIntensity: 0.25,
+        gradientToColors: ['#60a5fa', '#34d399'],
+        inverseColors: false,
+        opacityFrom: 0.95,
+        opacityTo: 0.85,
+        stops: [0, 100]
+      }
     },
     tooltip: {
       theme: isDark ? 'dark' : 'light',
+      style: { fontSize: '12px', fontFamily: 'inherit' },
       y: {
         formatter: (val) => `${val} instruments`
       }
     },
     legend: {
-      position: 'bottom',
+      position: 'top',
+      horizontalAlign: 'right',
       labels: {
         colors: isDark ? '#cbd5e1' : '#334155'
       },
@@ -149,23 +166,29 @@ export function DashboardChart({
       },
       fontSize: '12px',
       fontWeight: 600,
+      itemMargin: { horizontal: 10, vertical: 0 }
     }
   };
 
   return (
-    <Card className="border border-border/60 shadow-sm hover:shadow-md transition-all duration-300">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base font-bold tracking-tight flex items-center gap-2">
-          <BarChart3 className="h-4 w-4 text-primary" />
-          {title}
-        </CardTitle>
-        <CardDescription className="text-xs">{description}</CardDescription>
+    <Card className="world-class-card-static h-full flex flex-col justify-between">
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <div>
+          <CardTitle className="text-base font-extrabold tracking-tight flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-500">
+              <BarChart3 className="h-4 w-4" />
+            </div>
+            <span>{title}</span>
+          </CardTitle>
+          <CardDescription className="text-xs">{description}</CardDescription>
+        </div>
       </CardHeader>
-      <CardContent>
-        <div className="h-[320px] w-full">
+      <CardContent className="flex-1 flex items-center">
+        <div className="h-[310px] w-full">
           <Chart options={options} series={series} type="bar" height="100%" />
         </div>
       </CardContent>
     </Card>
   );
 }
+
