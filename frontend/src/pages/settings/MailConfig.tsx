@@ -72,17 +72,27 @@ export default function MailConfig() {
             return;
         }
 
+        if (!emailSettings.smtpServer || !emailSettings.username || !emailSettings.password) {
+            toast({
+                title: "Incomplete SMTP details",
+                description: "Please enter SMTP Server, Username, and Password before testing.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         try {
             setIsSendingTest(true);
             const response = await httpClient.post('/settings/test-email', {
                 userId: user.id,
-                targetEmail: testEmail
+                targetEmail: testEmail,
+                smtpConfig: emailSettings,
             });
 
             if (response.status === 201 || response.status === 200) {
                 toast({
                     title: "Test email sent",
-                    description: `A test email has been sent to ${testEmail}.`,
+                    description: `A test email was successfully sent to ${testEmail} using your current SMTP configuration.`,
                 });
                 setIsTestDialogOpen(false);
             }

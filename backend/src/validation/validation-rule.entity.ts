@@ -26,9 +26,16 @@ export class ValidationRule {
   @Column({ default: 'text' })
   validationType: string; // 'text', 'date', 'number'
 
+  @Column({ default: false })
+  isCustom: boolean;
+
+  @Column({ type: 'jsonb', default: () => "'[]'", nullable: true })
+  excelAliases: string[];
+
   @CreateDateColumn()
   created_at: Date;
 
   @UpdateDateColumn()
   updated_at: Date;
 }
+

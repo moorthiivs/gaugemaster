@@ -91,7 +91,7 @@ const STEPS: { key: Step; label: string; icon: React.ReactNode }[] = [
   { key: "result", label: "Result", icon: <FileSpreadsheet size={16} /> },
 ];
 
-export const downloadTemplate = async () => {
+export const downloadTemplate = async (customHeaders: string[] = []) => {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Template");
   const headers = [
@@ -102,7 +102,8 @@ export const downloadTemplate = async () => {
     "Calibration Source", "Customer", "Sector", "Criticality Level",
     "Cert. No.", "Remarks", "Gauge Issue Date", "Gauges Received By",
     "Gauges Issued By", "Calibration Procedure& Ref Std", "Traceable",
-    "Is Reference Standard"
+    "Is Reference Standard",
+    ...customHeaders
   ];
   const sampleRow = [
     "001", "Vernier Caliper", "VC-001", "0-150mm", "SN123456",
@@ -111,7 +112,8 @@ export const downloadTemplate = async () => {
     "Mitutoyo", "Mechanical", "PN-001", "Slide", "MOD1",
     "External", "Company Name", "Manufacturing", "High",
     "CERT-001", "Tested okay", "2024-01-01", "John Doe",
-    "Jane Doe", "ISO 9001", "NABL", "No"
+    "Jane Doe", "ISO 9001", "NABL", "No",
+    ...customHeaders.map(() => "Sample Value")
   ];
   ws.addRow(headers);
   ws.addRow(sampleRow);
@@ -243,9 +245,20 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
     
     // Check dynamic rules from backend
     validationRules.forEach(rule => {
-      const value = mapped[rule.fieldName] || raw[rule.fieldName] || raw[rule.displayName];
+      let value = mapped[rule.fieldName] || raw[rule.fieldName] || raw[rule.displayName];
+      if (rule.isCustom && mapped.custom_parameters && mapped.custom_parameters[rule.fieldName] !== undefined) {
+        value = mapped.custom_parameters[rule.fieldName];
+      }
       if (rule.isRequired && (!value || value.toString().trim() === "")) {
         errors.push(`${rule.displayName} is required`);
+      }
+      if (value && value.toString().trim() !== "") {
+        if (rule.validationType === "number" && isNaN(Number(value))) {
+          errors.push(`${rule.displayName} must be a number`);
+        }
+        if (rule.validationType === "date" && isNaN(Date.parse(value))) {
+          errors.push(`${rule.displayName} must be a valid date`);
+        }
       }
     });
 
@@ -505,7 +518,13 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
 
           {/* Download Template */}
           <div className="flex justify-center">
-            <Button onClick={downloadTemplate} className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 text-sm font-medium">
+            <Button
+              onClick={() => {
+                const customHeaders = validationRules.filter((r) => r.isCustom).map((r) => r.displayName);
+                downloadTemplate(customHeaders);
+              }}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 text-sm font-medium"
+            >
               <DownloadCloudIcon size={18} className="mr-2" />
               Download Excel Template
             </Button>

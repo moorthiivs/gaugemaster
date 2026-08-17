@@ -41,6 +41,7 @@ export type Instrument = {
   is_reference_standard?: boolean;
   companyId?: string;
   certificate_file?: string;
+  custom_parameters?: Record<string, any>;
   created_by?: any;
   updated_by?: any;
 };

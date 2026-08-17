@@ -81,12 +81,16 @@ export class ValidationService {
     const errors: string[] = [];
 
     for (const rule of rules) {
-      const value = data[rule.fieldName];
+      let value = data[rule.fieldName];
+      if (rule.isCustom && data.custom_parameters && data.custom_parameters[rule.fieldName] !== undefined) {
+        value = data.custom_parameters[rule.fieldName];
+      }
+
       if (rule.isRequired && (value === undefined || value === null || value === '')) {
         errors.push(`${rule.displayName} is required`);
       }
       
-      if (value) {
+      if (value !== undefined && value !== null && value !== '') {
         if (rule.validationType === 'date') {
           const isInvalid = value instanceof Date ? isNaN(value.getTime()) : isNaN(Date.parse(value));
           if (isInvalid) {
@@ -103,4 +107,58 @@ export class ValidationService {
       throw new BadRequestException(errors.join(', '));
     }
   }
+
+  async addCustomField(companyId: string, payload: {
+    fieldName: string;
+    displayName: string;
+    validationType?: string;
+    isRequired?: boolean;
+    excelAliases?: string[];
+  }): Promise<ValidationRule> {
+    const sanitizedFieldName = payload.fieldName
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9_]/g, '_');
+
+    const existing = await this.ruleRepository.findOne({
+      where: { companyId, fieldName: sanitizedFieldName },
+    });
+
+    if (existing) {
+      existing.displayName = payload.displayName || existing.displayName;
+      existing.validationType = payload.validationType || existing.validationType;
+      existing.isRequired = payload.isRequired !== undefined ? payload.isRequired : existing.isRequired;
+      existing.excelAliases = payload.excelAliases || existing.excelAliases;
+      existing.isCustom = true;
+      return await this.ruleRepository.save(existing);
+    }
+
+    const created = this.ruleRepository.create({
+      companyId,
+      fieldName: sanitizedFieldName,
+      displayName: payload.displayName,
+      validationType: payload.validationType || 'text',
+      isRequired: !!payload.isRequired,
+      isCustom: true,
+      excelAliases: payload.excelAliases || [],
+      isUnique: false,
+      isStrictDate: false,
+    });
+
+    return await this.ruleRepository.save(created);
+  }
+
+  async deleteCustomField(id: string): Promise<{ success: boolean; message: string }> {
+    const rule = await this.ruleRepository.findOne({ where: { id } });
+    if (!rule) {
+      throw new BadRequestException('Validation rule not found');
+    }
+    if (!rule.isCustom) {
+      throw new BadRequestException('Default system fields cannot be deleted');
+    }
+
+    await this.ruleRepository.delete(id);
+    return { success: true, message: 'Custom field removed successfully' };
+  }
 }
+

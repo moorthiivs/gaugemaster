@@ -12,17 +12,21 @@ import { ReminderJob } from './reminder.job';
 
 import { NotificationsModule } from 'src/notifications/notifications.module';
 
+import { LocationEmail } from 'src/settings/entities/location-email.entity';
+import { StatusNotificationService } from './status-notification.service';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ReminderFrequncy, Instrument, Setting]),
+    TypeOrmModule.forFeature([ReminderFrequncy, Instrument, Setting, LocationEmail]),
     MailerModule,
     NotificationsModule
   ],
   controllers: [ReminderController],
   providers: [
     ReminderService,
+    StatusNotificationService,
     ReminderJob.ServiceProvider,
   ],
-  exports: [ReminderService],
+  exports: [ReminderService, StatusNotificationService],
 })
 export class ReminderModule { }

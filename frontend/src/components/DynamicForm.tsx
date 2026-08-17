@@ -61,7 +61,7 @@ export default function DynamicForm({
 
     fields.forEach((field) => {
       // Find database validation settings for this field
-      const rule = validationRules.find((r) => r.fieldName === field.name);
+      const rule = validationRules.find((r) => r.fieldName === field.name || `custom_${r.fieldName}` === field.name);
       const isRequired = rule ? rule.isRequired : false;
       const displayName = rule?.displayName || field.label;
       const valType = rule?.validationType || (field.type === "number" ? "number" : field.type === "date" ? "date" : "text");

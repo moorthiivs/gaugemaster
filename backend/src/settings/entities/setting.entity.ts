@@ -89,4 +89,15 @@ export class Setting {
         warningDays?: number;
         widgets?: Record<string, boolean>;
     };
+
+    @Column({ type: "integer", default: 15, nullable: true })
+    dueReminderThresholdDays: number;
+
+    @Column({ type: "jsonb", nullable: true })
+    summaryReportConfig: {
+        enabled: boolean;
+        frequency: string; // 'daily' | 'weekly' | 'monthly'
+        managementRecipients?: string[];
+    };
 }
+

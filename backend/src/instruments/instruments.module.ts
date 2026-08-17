@@ -10,9 +10,16 @@ import { ValidationModule } from 'src/validation/validation.module';
 import { User } from 'src/users/user.entity';
 import { BackupModule } from 'src/backup/backup.module';
 import { PermissionsGuard } from 'src/auth/permissions.guard';
+import { ReminderModule } from 'src/reminder/reminder.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Instrument, CalibrationHistory, User]), MailerModule, ValidationModule, BackupModule],
+  imports: [
+    TypeOrmModule.forFeature([Instrument, CalibrationHistory, User]),
+    MailerModule,
+    ValidationModule,
+    BackupModule,
+    ReminderModule,
+  ],
   controllers: [InstrumentsController],
   providers: [InstrumentsService, PermissionsGuard],
   exports: [InstrumentsService],
