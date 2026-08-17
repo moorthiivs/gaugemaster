@@ -15,6 +15,7 @@ import { Logger } from '@nestjs/common';
 import { User } from 'src/users/user.entity';
 import { ValidationService } from 'src/validation/validation.service';
 import { MailerService } from 'src/mail/mailer.service';
+import { StatusNotificationService } from 'src/reminder/status-notification.service';
 
 interface InstrumentFilters {
     status?: string;
@@ -52,6 +53,7 @@ export class InstrumentsService {
         private readonly userRepository: Repository<User>,
         private readonly mailerService: MailerService,
         private readonly validationService: ValidationService,
+        private readonly statusNotificationService: StatusNotificationService,
     ) { }
 
     private async getCompanyUserIds(userId?: string): Promise<string[]> {
@@ -509,6 +511,16 @@ export class InstrumentsService {
                     }
                     await this.calibrationHistoryRepository.save(latestHistory);
                 }
+            }
+
+            // Trigger collection notification to Location Head if instrument was calibrated/updated to OK
+            if (
+                savedInstrument.status === 'OK' &&
+                (updateInstrumentDto.last_calibration_date || updateInstrumentDto.certificate_file || updateInstrumentDto.due_date)
+            ) {
+                this.statusNotificationService.notifyCalibrated(savedInstrument).catch((err) => {
+                    console.error('Failed to notify Location Head of calibration completion:', err);
+                });
             }
 
             return savedInstrument;

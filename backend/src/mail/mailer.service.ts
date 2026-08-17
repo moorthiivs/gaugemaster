@@ -17,13 +17,19 @@ export class MailerService {
     ) { }
 
     /**
-     * Fetch mail configuration for a specific user
+     * Fetch mail configuration for a specific user or company
      */
-    async getMailConfig(userId: string) {
-        const config = await this.mailConfigRepository.findOne({ where: { userId } });
+    async getMailConfig(userId?: string, companyId?: string) {
+        let config: Setting | null = null;
+        if (companyId) {
+            config = await this.mailConfigRepository.findOne({ where: { companyId } });
+        }
+        if (!config && userId) {
+            config = await this.mailConfigRepository.findOne({ where: { userId } });
+        }
 
         if (!config) {
-            this.logger.warn(`⚠️ No SMTP configuration found for user ${userId}`);
+            this.logger.warn(`⚠️ No SMTP configuration found for user ${userId} / company ${companyId}`);
             return null;
         }
 
@@ -38,18 +44,20 @@ export class MailerService {
         subject,
         html,
         userId,
+        companyId,
     }: {
         to: string[];
         subject: string;
         html: string;
-        userId: string;
+        userId?: string;
+        companyId?: string;
     }) {
         try {
-            // 1️⃣ Get user-specific mail config
-            const smtpSetting = await this.getMailConfig(userId);
+            // 1️⃣ Get mail config
+            const smtpSetting = await this.getMailConfig(userId, companyId);
 
             if (!smtpSetting?.smtpConfig) {
-                throw new BadRequestException(`No SMTP configuration found for user ${userId}. Please update SMTP settings in Settings > Mail Configuration.`);
+                throw new BadRequestException(`No SMTP configuration found for ${companyId ? 'company ' + companyId : 'user ' + userId}. Please update SMTP settings in Settings > Mail Configuration.`);
             }
 
             const smtp = smtpSetting.smtpConfig;
@@ -255,16 +263,19 @@ export class MailerService {
     /**
      * Send a test email to verify SMTP configuration
      */
-    async sendTestMail(userId: string, targetEmail: string) {
+    async sendTestMail(userId: string, targetEmail: string, customSmtpConfig?: any) {
         try {
-            const smtpSetting = await this.getMailConfig(userId);
-
-            if (!smtpSetting?.smtpConfig) {
-                throw new BadRequestException(`No SMTP configuration found for user ${userId}. Please update SMTP settings in Settings > Mail Configuration.`);
+            let smtp: any = null;
+            if (customSmtpConfig && customSmtpConfig.smtpServer && customSmtpConfig.username) {
+                smtp = customSmtpConfig;
+            } else {
+                const smtpSetting = await this.getMailConfig(userId);
+                if (!smtpSetting?.smtpConfig) {
+                    throw new BadRequestException(`No SMTP configuration found for user ${userId}. Please update SMTP settings in Settings > Mail Configuration.`);
+                }
+                smtp = smtpSetting.smtpConfig;
             }
 
-            const smtp = smtpSetting.smtpConfig;
-            
             // secure: true for port 465, false for other ports
             const isSecure = Number(smtp.smtpPort) === 465 || smtp.encryption === 'ssl';
 

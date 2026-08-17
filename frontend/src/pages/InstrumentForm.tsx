@@ -109,7 +109,7 @@ export default function InstrumentForm() {
     const fetchRules = async () => {
       try {
         const res = await httpClient.get(`/validation/rules?companyId=${user.companyId}`);
-        setValidationRules(res.data);
+        setValidationRules(res.data || []);
       } catch (err) {
         console.error("Failed to fetch rules", err);
       }
@@ -117,12 +117,31 @@ export default function InstrumentForm() {
     fetchRules();
   }, [user.companyId]);
 
+  // Dynamically compute fields with custom parameters
+  const customFields: FormFieldConfig[] = validationRules
+    .filter((r) => r.isCustom)
+    .map((r) => ({
+      name: `custom_${r.fieldName}`,
+      label: r.displayName,
+      type: (r.validationType === "number" ? "number" : r.validationType === "date" ? "date" : "text") as any,
+      col: 4,
+    }));
+
+  const dynamicFormFields: FormFieldConfig[] = [...INSTRUMENT_FIELDS, ...customFields];
+
   // 2. Fetch instrument details if in Edit Mode
   useEffect(() => {
     const fetchInstrument = async () => {
       try {
         const response = await httpClient.get(`/instruments/${params.id}`);
         const i = response.data;
+
+        const customValues: Record<string, any> = {};
+        if (i.custom_parameters && typeof i.custom_parameters === "object") {
+          Object.keys(i.custom_parameters).forEach((k) => {
+            customValues[`custom_${k}`] = i.custom_parameters[k];
+          });
+        }
 
         setInstrumentData({
           name: i.name || "",
@@ -155,6 +174,7 @@ export default function InstrumentForm() {
           calibration_procedure: i.calibration_procedure ?? "",
           traceable: i.traceable ?? "",
           is_reference_standard: i.is_reference_standard || false,
+          ...customValues,
         });
       } catch (error) {
         toast({
@@ -196,9 +216,20 @@ export default function InstrumentForm() {
       }
     }
 
+    // Extract custom parameters
+    const custom_parameters: Record<string, any> = {};
+    validationRules
+      .filter((r) => r.isCustom)
+      .forEach((r) => {
+        const val = values[`custom_${r.fieldName}`];
+        if (val !== undefined && val !== null && val !== "") {
+          custom_parameters[r.fieldName] = val;
+        }
+      });
+
     setIsSaving(true);
     try {
-      const payload: Omit<Instrument, "id"> = {
+      const payload: Omit<Instrument, "id"> & { custom_parameters?: Record<string, any> } = {
         name: values.name,
         id_code: values.id_code,
         location: values.location || "",
@@ -232,6 +263,7 @@ export default function InstrumentForm() {
         updated_by: user.id,
         companyId: user.companyId,
         is_reference_standard: values.is_reference_standard || false,
+        custom_parameters,
       };
 
       if (isEdit) {
@@ -311,7 +343,7 @@ export default function InstrumentForm() {
           </div>
         ) : (
           <DynamicForm
-            fields={INSTRUMENT_FIELDS}
+            fields={dynamicFormFields}
             validationRules={validationRules}
             defaultValues={instrumentData}
             onSubmit={onSubmit}

@@ -158,6 +158,7 @@ export default function Instruments() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [warningDays, setWarningDays] = useState<number>(7);
+  const [validationRules, setValidationRules] = useState<any[]>([]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -168,6 +169,25 @@ export default function Instruments() {
         }
       })
       .catch(() => {});
+
+    if (user?.companyId) {
+      httpClient.get(`/validation/rules?companyId=${user.companyId}`)
+        .then(res => {
+          const rules: any[] = res.data || [];
+          setValidationRules(rules);
+          const custom = rules.filter(r => r.isCustom);
+          if (custom.length > 0) {
+            setColumnConfigs(prev => {
+              const existingIds = new Set(prev.map(c => c.id));
+              const newCols = custom
+                .filter(r => !existingIds.has(r.fieldName))
+                .map(r => ({ id: r.fieldName, label: r.displayName, visible: false }));
+              return [...prev, ...newCols];
+            });
+          }
+        })
+        .catch(err => console.error("Failed to load validation rules", err));
+    }
   }, [user?.id, user?.companyId]);
 
   const getRowClassName = (rowItem: Instrument) => {
@@ -1245,9 +1265,20 @@ export default function Instruments() {
             accessorKey: (def as any).accessorKey || c.id,
             header: def.header || c.label,
             cell: def.cell || (({ row }: any) => {
-              const val = (row.original as any)[c.id];
+              const val = (row.original as any)[c.id] ?? row.original.custom_parameters?.[c.id];
               return val !== undefined && val !== null && val !== "" ? String(val) : "-";
             }),
+          } as ColumnDef<Instrument>);
+        } else {
+          // Custom Column without static definition
+          activeCols.push({
+            id: c.id,
+            accessorKey: `custom_${c.id}`,
+            header: c.label,
+            cell: ({ row }: any) => {
+              const val = row.original.custom_parameters?.[c.id] ?? (row.original as any)[c.id];
+              return val !== undefined && val !== null && val !== "" ? String(val) : "-";
+            },
           } as ColumnDef<Instrument>);
         }
       });
@@ -1762,7 +1793,17 @@ export default function Instruments() {
                   const val = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
                   return val === "yes" || val === "true";
                 })(),
-                custom_parameters: {},
+                custom_parameters: (() => {
+                  const params: Record<string, any> = {};
+                  const customRules = validationRules.filter(r => r.isCustom);
+                  customRules.forEach(rule => {
+                    const val = getVal([rule.displayName, rule.fieldName, ...(rule.excelAliases || [])]);
+                    if (val !== undefined && val !== null && val !== "") {
+                      params[rule.fieldName] = val;
+                    }
+                  });
+                  return params;
+                })(),
               };
             }}
 

@@ -14,6 +14,8 @@ export class ReportsController {
     @Query('userid') userid: string,
     @Query('columns') columns: string,
     @Query('templateId') templateId: string,
+    @Query('status') status: string,
+    @Query('location') location: string,
     @Headers('authorization') authHeader: string,
     @Res() res: Response,
   ) {
@@ -29,10 +31,9 @@ export class ReportsController {
             }
         }
     }
-    console.log("PDF Generation Request Query:", { from, to, format, userid, columns, templateId, finalUserId });
-    // Validate params here as needed
+    console.log("Report Generation Request Query:", { from, to, format, userid, columns, templateId, status, location, finalUserId });
 
-    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId);
+    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId, status, location);
 
     // Set response headers based on format
     const mimeType = format === 'html' ? 'text/html' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';

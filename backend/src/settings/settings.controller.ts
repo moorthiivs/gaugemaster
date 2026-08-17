@@ -77,8 +77,9 @@ export class SettingsController {
   sendTestEmail(
     @Body('userId') userId: string,
     @Body('targetEmail') targetEmail: string,
+    @Body('smtpConfig') smtpConfig?: any,
   ) {
-    return this.mailerService.sendTestMail(userId, targetEmail);
+    return this.mailerService.sendTestMail(userId, targetEmail, smtpConfig);
   }
 
   @Post('upload-logo')
@@ -105,4 +106,22 @@ export class SettingsController {
     return { message: 'Logo uploaded successfully', url: logoUrl };
   }
 
+  @Get('location-emails')
+  async getLocationEmails(@Query('companyId') companyId: string) {
+    return this.settingsService.getLocationEmails(companyId);
+  }
+
+  @Post('location-emails')
+  @RequirePermission('settings', 'edit')
+  async saveLocationEmail(@Body() body: any) {
+    return this.settingsService.upsertLocationEmail(body);
+  }
+
+  @Delete('location-emails/:id')
+  @RequirePermission('settings', 'edit')
+  async deleteLocationEmail(@Param('id') id: string) {
+    return this.settingsService.deleteLocationEmail(id);
+  }
+
 }
+

@@ -8,13 +8,23 @@ import { ReportTemplatesModule } from '../report-templates/report-templates.modu
 
 import { User } from 'src/users/user.entity';
 
+import { CalibrationHistory } from 'src/instruments/calibration-history.entity';
+import { LocationEmail } from 'src/settings/entities/location-email.entity';
+import { Setting } from 'src/settings/entities/setting.entity';
+import { MailerModule } from 'src/mail/mailer.module';
+import { NotificationsModule } from 'src/notifications/notifications.module';
+import { SummaryReportService } from './summary-report.service';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Instrument, User]),
+    TypeOrmModule.forFeature([Instrument, User, CalibrationHistory, LocationEmail, Setting]),
     SettingsModule,
     ReportTemplatesModule,
+    MailerModule,
+    NotificationsModule,
   ],
   controllers: [ReportsController],
-  providers: [ReportsService],
+  providers: [ReportsService, SummaryReportService],
+  exports: [ReportsService, SummaryReportService],
 })
 export class ReportsModule { }

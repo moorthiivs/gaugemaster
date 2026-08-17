@@ -90,7 +90,8 @@ export class ReportsService {
 
         const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
 
-        const headerRow = activeColumns.map(col => ({ text: columnMap[col] || col, style: 'tableHeader' }));
+        const formatColHeader = (col: string) => columnMap[col] || col.replace(/^custom_param_/, '').replace(/^custom_/, '').replace(/_/g, ' ').toUpperCase();
+        const headerRow = activeColumns.map(col => ({ text: formatColHeader(col), style: 'tableHeader' }));
         const body = [headerRow];
 
         instruments.forEach((inst, i) => {
@@ -102,8 +103,12 @@ export class ReportsService {
                     text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
-                } else {
+                } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
                     text = (inst[col as keyof Instrument] as string) || '-';
+                } else {
+                    const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
+                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    text = String(customVal);
                 }
                 return { text, style: 'tableData' };
             });
@@ -335,16 +340,28 @@ export class ReportsService {
         format: string,
         userid: string,
         columnsStr?: string,
-        templateId?: string
+        templateId?: string,
+        status?: string,
+        location?: string,
     ): Promise<Buffer> {
         const userIds = await this.getCompanyUserIds(userid);
         const targetUserIds = userIds.length > 0 ? userIds : [userid];
 
+        const { ILike } = require('typeorm');
+        const where: any = {
+            due_date: Between(new Date(from), new Date(to)),
+            created_by: { id: In(targetUserIds) },
+        };
+
+        if (status && status !== 'All') {
+            where.status = ILike(`%${status}%`);
+        }
+        if (location && location !== 'All') {
+            where.location = ILike(`%${location}%`);
+        }
+
         const instruments = await this.instrumentRepository.find({
-            where: {
-                due_date: Between(new Date(from), new Date(to)),
-                created_by: { id: In(targetUserIds) },
-            },
+            where,
             relations: ['created_by'],
             order: {
                 due_date: 'ASC',
@@ -458,13 +475,12 @@ export class ReportsService {
                 
                 worksheet.addRow([]); // Spacer
                 worksheet.getRow(2).height = 10;
-            } else {
-                // If no header template at all, just skip adding empty rows at the top
-                // Add a small spacer if needed, or nothing.
             }
 
+            const formatColHeader = (col: string) => columnMap[col] || col.replace(/^custom_param_/, '').replace(/^custom_/, '').replace(/_/g, ' ').toUpperCase();
+
             // Headers
-            const headerRow = worksheet.addRow(activeColumns.map(col => columnMap[col] || col));
+            const headerRow = worksheet.addRow(activeColumns.map(col => formatColHeader(col)));
             headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
             headerRow.alignment = { vertical: 'middle', horizontal: 'center' };
             headerRow.eachCell(cell => {
@@ -482,8 +498,12 @@ export class ReportsService {
                         rowData.push(date instanceof Date ? date.toISOString().split('T')[0] : '-');
                     } else if (col === 'created_by') {
                         rowData.push(inst.created_by?.name || inst.created_by?.id || '');
-                    } else {
+                    } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
                         rowData.push(inst[col as keyof Instrument] || '');
+                    } else {
+                        const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
+                        const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '';
+                        rowData.push(customVal);
                     }
                 });
                 const row = worksheet.addRow(rowData);
@@ -596,14 +616,10 @@ export class ReportsService {
             rawFooterHtml = userSettings?.reportConfig?.footerText || '';
         }
 
-        // Process header/footer HTML through JSDOM to fix table layout
-        
-
         const processHtmlForPrint = (html: string): string => {
             if (!html) return html;
             const dom = new JSDOM(html);
             const doc = dom.window.document;
-            // Ensure tables span full width with fixed layout for equal columns
             doc.querySelectorAll('table').forEach((table: any) => {
                 table.style.width = '100%';
                 table.style.tableLayout = 'fixed';
@@ -622,14 +638,12 @@ export class ReportsService {
                         cells[0].style.width = '50%';
                         cells[1].style.width = '50%';
                     }
-                    // Ensure all cells have vertical-align
                     cells.forEach((cell: any) => {
                         cell.style.verticalAlign = 'middle';
                         cell.style.padding = '5px';
                     });
                 });
             });
-            // Strip explicit width/height from images so they scale within their cell
             doc.querySelectorAll('img').forEach((img: any) => {
                 img.removeAttribute('width');
                 img.removeAttribute('height');
@@ -645,13 +659,15 @@ export class ReportsService {
         const customHeaderHtml = processHtmlForPrint(rawHeaderHtml);
         const customFooterHtml = processHtmlForPrint(rawFooterHtml);
 
+        const formatColHeader = (col: string) => columnMap[col] || col.replace(/^custom_param_/, '').replace(/^custom_/, '').replace(/_/g, ' ').toUpperCase();
+
         let tableHtml = '<table class="data-table" style="width: 100%; border-collapse: collapse; margin-top: 0;">';
         
         tableHtml += '<thead>';
         tableHtml += `<tr><th colspan="${activeColumns.length}" style="border: none; padding-top: 10mm; padding-bottom: 10px; background: white;"><div class="header-container">${customHeaderHtml}</div></th></tr>`;
         tableHtml += '<tr>';
         activeColumns.forEach(col => {
-            tableHtml += `<th style="border: 1px solid #ddd; padding: 8px; text-align: left; background-color: #f2f2f2; font-size: 12px; font-weight: bold;">${columnMap[col] || col}</th>`;
+            tableHtml += `<th style="border: 1px solid #ddd; padding: 8px; text-align: left; background-color: #f2f2f2; font-size: 12px; font-weight: bold;">${formatColHeader(col)}</th>`;
         });
         tableHtml += '</tr></thead>';
 
@@ -671,11 +687,14 @@ export class ReportsService {
                     text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
-                } else {
+                } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
                     text = (inst[col as keyof Instrument] as string) || '-';
+                } else {
+                    const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
+                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    text = String(customVal);
                 }
                 let style = 'border: 1px solid #ddd; padding: 8px; font-size: 12px;';
-                // Prevent wrapping for dates and ID codes
                 if (['due_date', 'last_calibration_date', 'gauge_issue_date', 'id_code'].includes(col)) {
                     style += ' white-space: nowrap;';
                 }

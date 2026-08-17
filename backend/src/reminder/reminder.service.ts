@@ -361,10 +361,13 @@ export class ReminderService {
                 where: { created_by: { id: r.created_by.id }, companyId: r.companyId },
             });
 
-            const dueInstruments = instruments.filter((i) => !!i.due_date);
+            const dueInstruments = instruments.filter((i) => {
+                const s = (i.status || '').toLowerCase().trim();
+                return !!i.due_date && s !== 'sent for calibration';
+            });
 
             if (dueInstruments.length === 0) {
-                this.logger.warn(`[BULK] No instruments with due_date for reminder ${r.id}`);
+                this.logger.warn(`[BULK] No instruments with due_date (or all sent for calibration) for reminder ${r.id}`);
                 return;
             }
 
@@ -430,6 +433,11 @@ export class ReminderService {
 
         if (!inst) {
             this.logger.warn(`Instrument ${instrumentId} not found or belongs to a different company.`);
+            return;
+        }
+
+        if ((inst.status || '').toLowerCase().trim() === 'sent for calibration') {
+            this.logger.log(`[SKIPPED REMINDER] Instrument ${inst.id_code} is "Sent for Calibration" — reminders paused.`);
             return;
         }
 

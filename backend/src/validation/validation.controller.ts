@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ValidationService } from './validation.service';
 import { ValidationRule } from './validation-rule.entity';
 
@@ -18,4 +18,24 @@ export class ValidationController {
   ) {
     return await this.validationService.updateRules(companyId, rules);
   }
+
+  @Post('custom-field')
+  async addCustomField(
+    @Query('companyId') companyId: string,
+    @Body() body: {
+      fieldName: string;
+      displayName: string;
+      validationType?: string;
+      isRequired?: boolean;
+      excelAliases?: string[];
+    },
+  ) {
+    return await this.validationService.addCustomField(companyId, body);
+  }
+
+  @Delete('custom-field/:id')
+  async deleteCustomField(@Param('id') id: string) {
+    return await this.validationService.deleteCustomField(id);
+  }
 }
+
