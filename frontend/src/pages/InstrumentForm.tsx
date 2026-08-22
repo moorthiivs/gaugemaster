@@ -47,6 +47,13 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
   { name: "least_count", label: "Least Count", type: "text", col: 4 },
   { name: "location", label: "Location", type: "text", col: 4 },
   { name: "agency", label: "Agency & TC No", type: "text", col: 4 },
+  {
+    name: "device_type",
+    label: "Device Type",
+    type: "select",
+    col: 4,
+    options: ["Instrument", "Gauge", "Master", "Reference Standard"]
+  },
   { name: "is_reference_standard", label: "Is Reference Standard / Master Instrument?", type: "checkbox", col: 12 },
   { name: "make", label: "Item Make", type: "text", col: 4 },
   { name: "item_type", label: "Item Type", type: "text", col: 4 },
@@ -159,6 +166,7 @@ export default function InstrumentForm() {
           notes: i.notes ?? "",
           make: i.make ?? "",
           item_type: i.item_type ?? "",
+          device_type: i.device_type ?? "Instrument",
           part_no: i.part_no ?? "",
           part_name: i.part_name ?? "",
           module: i.module ?? "",
@@ -190,6 +198,7 @@ export default function InstrumentForm() {
     } else {
       // Set default values for New Instrument Mode
       setInstrumentData({
+        device_type: "Instrument",
         frequency: "12 MONTH",
         status: "OK",
         item_status: "Active",
@@ -245,6 +254,7 @@ export default function InstrumentForm() {
         item_status: values.item_status || "Active",
         make: values.make || "",
         item_type: values.item_type || "",
+        device_type: values.device_type || "Instrument",
         part_no: values.part_no || "",
         part_name: values.part_name || "",
         module: values.module || "",

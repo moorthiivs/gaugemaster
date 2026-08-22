@@ -40,6 +40,10 @@ export interface CalibrationTemplate {
   status_rule_type?: string;
   status_formula?: string;
   decimal_places?: number;
+  diagram_image?: string;
+  diagram_image_width?: number;
+  diagram_image_height?: number;
+  diagram_image_alignment?: "center" | "left" | "right";
   userId?: string;
   user?: any;
   companyId?: string;

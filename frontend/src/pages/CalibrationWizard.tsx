@@ -252,6 +252,10 @@ export default function CalibrationWizard() {
     value?: number;
     type?: "percentage" | "absolute";
   }>({});
+  const [wizardDiagramImage, setWizardDiagramImage] = useState<string | null>(null);
+  const [wizardDiagramWidth, setWizardDiagramWidth] = useState<number>(240);
+  const [wizardDiagramHeight, setWizardDiagramHeight] = useState<number>(140);
+  const [wizardDiagramAlignment, setWizardDiagramAlignment] = useState<"center" | "left" | "right">("center");
   const [step1Collapsed, setStep1Collapsed] = useState(true);
   const [step2Collapsed, setStep2Collapsed] = useState(true);
   const [step3Collapsed, setStep3Collapsed] = useState(true);
@@ -309,6 +313,10 @@ export default function CalibrationWizard() {
     if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
     if (cal.decimal_places !== undefined) setWizardDecimalPlaces(cal.decimal_places);
     if (cal.acceptance_criteria) setWizardAcceptanceCriteria(cal.acceptance_criteria);
+    if (cal.diagram_image) setWizardDiagramImage(cal.diagram_image);
+    if (cal.diagram_image_width) setWizardDiagramWidth(cal.diagram_image_width);
+    if (cal.diagram_image_height) setWizardDiagramHeight(cal.diagram_image_height);
+    if (cal.diagram_image_alignment) setWizardDiagramAlignment(cal.diagram_image_alignment);
 
     // 6. Calibration Points & Tolerance / Unit
     if (cal.calibration_points && cal.calibration_points.length > 0) {
@@ -366,6 +374,7 @@ export default function CalibrationWizard() {
     setWizardHiddenColumns([]);
     setWizardDecimalPlaces(4);
     setWizardAcceptanceCriteria({});
+    setWizardDiagramImage(null);
     toast.info("Cleared template selection (Custom Grid)");
   };
 
@@ -387,13 +396,18 @@ export default function CalibrationWizard() {
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
-    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria from template
+    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria, diagram from template
     setWizardCustomColumns((tpl as any).custom_columns || []);
     setWizardStandardColumnConfigs((tpl as any).standard_columns_config || {});
     setWizardColumnOrder((tpl as any).column_order || []);
     setWizardHiddenColumns((tpl as any).hidden_columns || []);
     setWizardDecimalPlaces(tpl.decimal_places ?? 4);
     setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
+    if (tpl.diagram_image) setWizardDiagramImage(tpl.diagram_image);
+    else setWizardDiagramImage(null);
+    if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
+    if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
+    if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
 
     if (isEdit && existingPoints && existingPoints.length > 0) {
       setCalPoints(existingPoints);
@@ -879,6 +893,10 @@ export default function CalibrationWizard() {
         template_name: selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.name : undefined,
         decimal_places: wizardDecimalPlaces,
         acceptance_criteria: wizardAcceptanceCriteria,
+        diagram_image: wizardDiagramImage || undefined,
+        diagram_image_width: wizardDiagramWidth,
+        diagram_image_height: wizardDiagramHeight,
+        diagram_image_alignment: wizardDiagramAlignment,
         uncertainty,
         verdict,
         remarks,
@@ -1924,6 +1942,10 @@ export default function CalibrationWizard() {
                       custom_columns: wizardCustomColumns as any,
                       standard_columns_config: wizardStandardColumnConfigs,
                       acceptance_criteria: wizardAcceptanceCriteria,
+                      diagram_image: wizardDiagramImage || undefined,
+                      diagram_image_width: wizardDiagramWidth,
+                      diagram_image_height: wizardDiagramHeight,
+                      diagram_image_alignment: wizardDiagramAlignment,
                     }}
                   />
                 </div>

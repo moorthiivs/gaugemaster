@@ -25,6 +25,18 @@ export interface TemplatePackageSpec {
   status_rule_type?: string;
   status_formula?: string;
   decimal_places?: number;
+  diagram_image?: string;
+  diagram_image_width?: number;
+  diagram_image_height?: number;
+  diagram_image_alignment?: 'center' | 'left' | 'right';
+}
+
+interface TemplatePackageManifest {
+  version: string;
+  exportedAt: string;
+  templateCount: number;
+  generator: string;
+  templates: any[];
 }
 
 @Injectable()
@@ -40,38 +52,33 @@ export class TemplateExportService {
     companyId?: string;
     userId?: string;
     userName?: string;
-  }): Promise<{ zipBuffer: Buffer; filename: string; count: number }> {
+  }): Promise<{ filename: string; zipBuffer: Buffer; count: number }> {
     const { templateIds, companyId, userId, userName } = params;
-
-    let templates: CalibrationTemplate[] = [];
+    const query = this.templateRepository.createQueryBuilder('t');
 
     if (templateIds && templateIds.length > 0) {
-      templates = await this.templateRepository.find({
-        where: { id: In(templateIds) },
-      });
-    } else if (companyId) {
-      templates = await this.templateRepository.find({
-        where: [
-          { companyId },
-          { companyId: null as any },
-        ],
-      });
-    } else {
-      templates = await this.templateRepository.find();
+      query.andWhere('t.id IN (:...ids)', { ids: templateIds });
     }
 
-    if (!templates || templates.length === 0) {
-      throw new BadRequestException('No templates found to export.');
+    if (companyId) {
+      query.andWhere('(t.companyId = :companyId OR t.companyId IS NULL)', {
+        companyId,
+      });
+    }
+
+    const templates = await query.orderBy('t.name', 'ASC').getMany();
+
+    if (templates.length === 0) {
+      throw new BadRequestException('No templates found matching the export criteria');
     }
 
     const zip = new JSZip();
-    const manifest = {
-      formatVersion: '1.0',
-      templateBuilderVersion: '1.0',
+    const manifest: TemplatePackageManifest = {
+      version: '1.0.0',
       exportedAt: new Date().toISOString(),
       templateCount: templates.length,
-      sourceCompanyId: companyId || 'GLOBAL',
-      exportedBy: userName || userId || 'Admin',
+      generator: 'GaugeMaster Calibration System v2.0',
+      templates: [],
     };
 
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
@@ -92,6 +99,10 @@ export class TemplateExportService {
         column_order: tpl.column_order,
         hidden_columns: tpl.hidden_columns,
         acceptance_criteria: tpl.acceptance_criteria,
+        diagram_image: tpl.diagram_image,
+        diagram_image_width: tpl.diagram_image_width,
+        diagram_image_height: tpl.diagram_image_height,
+        diagram_image_alignment: tpl.diagram_image_alignment,
         remarks: tpl.remarks,
         standard_reference: tpl.standard_reference,
         procedure_reference: tpl.procedure_reference,

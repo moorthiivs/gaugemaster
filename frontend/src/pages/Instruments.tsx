@@ -47,6 +47,7 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
   { id: "frequency", label: "Frequency", visible: true },
   { id: "status", label: "Status", visible: true },
   { id: "item_status", label: "Item Status", visible: true },
+  { id: "device_type", label: "Device Type", visible: true },
   { id: "range", label: "Range", visible: false },
   { id: "serial_no", label: "Serial No", visible: false },
   { id: "least_count", label: "Least Count", visible: false },
@@ -116,6 +117,7 @@ export default function Instruments() {
   const initialExcludeModules = searchParams.get("exclude_modules") || "";
   
   const initialIsReferenceStandard = searchParams.get("is_reference_standard") || "All";
+  const initialDeviceType = searchParams.get("device_type") || "All";
 
   const [filters, setFilters] = useState<InstrumentQuery>({ 
     status: initialStatus as any, item_status: initialItemStatus as any, location: initialLocation, frequency: "All", calibration_source: initialCalibrationSource, module: initialModule, exclude_modules: initialExcludeModules, search: initialSearch, 
@@ -123,6 +125,7 @@ export default function Instruments() {
     last_cal_start: initialLastCalStart, last_cal_end: initialLastCalEnd,
     calibrated_in_range_start: initialCalibratedInRangeStart, calibrated_in_range_end: initialCalibratedInRangeEnd,
     is_reference_standard: initialIsReferenceStandard,
+    device_type: initialDeviceType,
     sortBy: (searchParams.get("sortBy") as any) || "sino",
     sortOrder: (searchParams.get("sortOrder") as any) || "ASC",
     page: 1, pageSize, limit: 10 
@@ -139,6 +142,7 @@ export default function Instruments() {
     least_count: false,
     make: false,
     item_type: false,
+    device_type: true,
     part_no: false,
     part_name: false,
     module: false,
@@ -239,6 +243,7 @@ export default function Instruments() {
   const [FrequencyFillter, setFrequencyFilter] = useState<string[]>([]);
   const [LocationFillter, setLocationFilter] = useState<string[]>([]);
   const [CalibrationSourceFilter, setCalibrationSourceFilter] = useState<string[]>([]);
+  const [DeviceTypeFilter, setDeviceTypeFilter] = useState<string[]>([]);
 
   const [isOpenupload, setisOpenupload] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
@@ -350,6 +355,7 @@ export default function Instruments() {
     { id: 'least_count', label: 'Least Count' },
     { id: 'make', label: 'Make' },
     { id: 'item_type', label: 'Item Type' },
+    { id: 'device_type', label: 'Device Type' },
     { id: 'part_no', label: 'Part No' },
     { id: 'part_name', label: 'Part Name' },
     { id: 'calibration_source', label: 'Calibration Source' },
@@ -393,6 +399,7 @@ export default function Instruments() {
       if (filters.page) queryParams.append("page", String(filters.page));
       if (filters.pageSize) queryParams.append("pageSize", String(filters.pageSize));
       if (filters.is_reference_standard && filters.is_reference_standard !== "All") queryParams.append("is_reference_standard", filters.is_reference_standard);
+      if (filters.device_type && filters.device_type !== "All") queryParams.append("device_type", filters.device_type);
 
       const result = await listInstruments({
         ...filters,
@@ -430,6 +437,7 @@ export default function Instruments() {
       setFrequencyFilter(["All", ...filterData.frequency]);
       setLocationFilter(["All", ...filterData.location]);
       setCalibrationSourceFilter(["All", ...(filterData.calibration_source || [])]);
+      setDeviceTypeFilter(filterData.device_type || []);
       await fetchData();
       toast({
         title: "Data Refreshed 🔄",
@@ -466,6 +474,7 @@ export default function Instruments() {
       module: searchParams.get("module") || "All",
       exclude_modules: searchParams.get("exclude_modules") || "",
       is_reference_standard: searchParams.get("is_reference_standard") || "All",
+      device_type: searchParams.get("device_type") || "All",
       sortBy: (searchParams.get("sortBy") as any) || f.sortBy || "sino",
       sortOrder: (searchParams.get("sortOrder") as any) || f.sortOrder || "ASC",
       page: 1
@@ -489,6 +498,7 @@ export default function Instruments() {
       if (next.last_cal_start) queryParams.append("last_cal_start", next.last_cal_start);
       if (next.last_cal_end) queryParams.append("last_cal_end", next.last_cal_end);
       if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.append("is_reference_standard", next.is_reference_standard);
+      if (next.device_type && next.device_type !== "All") queryParams.append("device_type", next.device_type);
 
       navigate(`/instruments?${queryParams.toString()}`, { replace: true });
       return next;
@@ -507,7 +517,7 @@ export default function Instruments() {
 
   useEffect(() => {
     fetchData();
-  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.due_date_start, filters.due_date_end, filters.is_reference_standard, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end, filters.sortBy, filters.sortOrder]);
+  }, [filters.page, filters.status, filters.item_status, filters.location, filters.frequency, filters.calibration_source, filters.module, filters.exclude_modules, filters.pageSize, filters.search, filters.due_date, filters.due_date_start, filters.due_date_end, filters.is_reference_standard, filters.device_type, filters.last_cal_start, filters.last_cal_end, filters.calibrated_in_range_start, filters.calibrated_in_range_end, filters.sortBy, filters.sortOrder]);
 
   useEffect(() => {
     const handleUploadComplete = () => {
@@ -576,6 +586,7 @@ export default function Instruments() {
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
       setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
+      setDeviceTypeFilter(data.device_type || []);
     });
   }, [user]);
 
@@ -711,6 +722,7 @@ export default function Instruments() {
           calibration_source: "Calibration Source",
           cert_no: "Cert. No.",
           item_type: "Item Type",
+          device_type: "Device Type",
           part_no: "Part No",
           part_name: "Part Name",
           customer: "Customer",
@@ -1048,6 +1060,7 @@ export default function Instruments() {
     least_count: { accessorKey: "least_count", header: "Least Count" },
     make: { accessorKey: "make", header: "Make" },
     item_type: { accessorKey: "item_type", header: "Item Type" },
+    device_type: { accessorKey: "device_type", header: "Device Type" },
     part_no: { accessorKey: "part_no", header: "Part No" },
     part_name: { accessorKey: "part_name", header: "Part Name" },
     calibration_source: { accessorKey: "calibration_source", header: "Calibration Source" },
@@ -1293,6 +1306,14 @@ export default function Instruments() {
     return activeCols;
   }, [columnConfigs, filters.page, filters.pageSize, filters.sortBy, filters.sortOrder, uploadingId]);
 
+  const availableDeviceTypes = useMemo(() => {
+    if (DeviceTypeFilter && DeviceTypeFilter.length > 0) {
+      const unique = Array.from(new Set(DeviceTypeFilter.map(d => d?.trim()).filter(Boolean)));
+      if (unique.length > 0) return unique;
+    }
+    return ["Instruments", "Gauges", "Reference Standards"];
+  }, [DeviceTypeFilter]);
+
   return (
     <>
       <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-500">
@@ -1329,14 +1350,14 @@ export default function Instruments() {
             <div className="flex items-center gap-2">
               <div className="h-5 w-1 bg-primary rounded-full" />
               <h2 className="text-base font-bold text-foreground">Filter Inventory</h2>
-              {(filters.status !== "All" || filters.item_status !== "Active" || filters.location !== "All" || filters.frequency !== "All" || filters.calibration_source !== "All" || localSearch || filters.due_date || filters.due_date_start) && (
+              {(filters.status !== "All" || filters.item_status !== "Active" || filters.location !== "All" || filters.frequency !== "All" || filters.calibration_source !== "All" || (filters.device_type && filters.device_type !== "All") || localSearch || filters.due_date || filters.due_date_start) && (
                 <Button 
                   variant="ghost" 
                   size="sm"
                   className="h-7 px-2 text-xs font-semibold text-muted-foreground hover:text-red-600 hover:bg-red-50/50 gap-1 transition-colors"
                   onClick={() => {
                     setLocalSearch("");
-                    setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
+                    setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", device_type: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
                     navigate("/instruments", { replace: true });
                   }}
                 >
@@ -1345,25 +1366,32 @@ export default function Instruments() {
               )}
             </div>
             
-            <div className="bg-muted p-1 rounded-lg inline-flex items-center self-stretch sm:self-auto justify-center">
+            <div className="bg-muted p-1 rounded-lg inline-flex flex-wrap items-center gap-1 self-stretch sm:self-auto justify-center">
               <button 
-                onClick={() => setFilters(f => ({ ...f, is_reference_standard: "false", page: 1 }))}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${(!filters.is_reference_standard || filters.is_reference_standard === "false") ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                Instruments
-              </button>
-              <button 
-                onClick={() => setFilters(f => ({ ...f, is_reference_standard: "true", page: 1 }))}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${filters.is_reference_standard === "true" ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                Reference Standards
-              </button>
-              <button 
-                onClick={() => setFilters(f => ({ ...f, is_reference_standard: "All", page: 1 }))}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${filters.is_reference_standard === "All" ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                type="button"
+                onClick={() => setFilters(f => ({ ...f, device_type: "All", is_reference_standard: "All", page: 1 }))}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${((!filters.device_type || filters.device_type === "All") && (!filters.is_reference_standard || filters.is_reference_standard === "All")) ? 'bg-background shadow-xs text-foreground font-bold' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 All
               </button>
+              {availableDeviceTypes.map((dt) => {
+                const isSelected = filters.device_type === dt || (dt.toLowerCase().includes("reference") && filters.is_reference_standard === "true");
+                return (
+                  <button 
+                    key={dt}
+                    type="button"
+                    onClick={() => setFilters(f => ({
+                      ...f,
+                      device_type: dt,
+                      is_reference_standard: dt.toLowerCase().includes("reference") ? "true" : "All",
+                      page: 1
+                    }))}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all capitalize ${isSelected ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+                  >
+                    {dt}
+                  </button>
+                );
+              })}
             </div>
           </div>
           
@@ -1770,11 +1798,25 @@ export default function Instruments() {
                 frequency: getVal(["Frequency", "CALIB. FREQUENCY in month", "CALIBRATION FREQUENCY", "Calib Frequency"]),
                 last_calibration_date: getVal(["Last Calibration Date", "LAST CALIBRATION DATE", "Last Cal. Date", "Last Cal Date"]),
                 due_date: getVal(["Due Date", "DUE DATE", "Next Cal. Date", "Next Cal Date"]),
-                agency: getVal(["Agency", "Service Provider", "CALIBRATION AGENCY AND TC No", "Calibration Agency"]),
-                status: getVal(["Status", "Calibration Status", "STATUS"]) || "OK",
-                item_status: getVal(["Item Status", "ITEM STATUS"]) || "Active",
+                status: (() => {
+                  const s = getVal(["Status", "Calibration Status", "STATUS"]);
+                  if (s && s.toString().trim().toLowerCase() === "active") return "OK";
+                  return s || "OK";
+                })(),
+                item_status: (() => {
+                  const s = getVal(["Item Status", "ITEM STATUS"]);
+                  if (!s || s.toString().trim().toLowerCase() === "ok") return "Active";
+                  return s;
+                })(),
                 make: getVal(["Make", "Item Make"]),
                 item_type: getVal(["Item Type", "Type"]),
+                device_type: (() => {
+                  const val = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"]);
+                  if (val) return val.toString().trim();
+                  const isRef = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
+                  if (isRef === "yes" || isRef === "true") return "Reference Standard";
+                  return "Instrument";
+                })(),
                 part_no: getVal(["Part No", "PART NO", "Part Number"]),
                 part_name: getVal(["Part Name"]),
                 module: getVal(["Module", "Moudle"]),
@@ -1791,7 +1833,10 @@ export default function Instruments() {
                 traceable: getVal(["Traceable", "Traceability"]),
                 is_reference_standard: (() => {
                   const val = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  return val === "yes" || val === "true";
+                  if (val === "yes" || val === "true") return true;
+                  const devType = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device"])?.toString().toLowerCase();
+                  if (devType && (devType.includes("reference") || devType.includes("master"))) return true;
+                  return false;
                 })(),
                 custom_parameters: (() => {
                   const params: Record<string, any> = {};

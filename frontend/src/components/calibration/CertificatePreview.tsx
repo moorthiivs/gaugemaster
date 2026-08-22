@@ -146,7 +146,12 @@ export function CertificatePreview({
       }
     });
 
-    const hidden = new Set(calibration.hidden_columns || []);
+    const hidden = new Set(
+      calibration.hidden_columns ||
+      ((calibration as any).template as any)?.hidden_columns ||
+      [],
+    );
+    const showStatusColumn = !hidden.has("status");
     const columnOrder =
       calibration.column_order && calibration.column_order.length > 0
         ? calibration.column_order
@@ -256,13 +261,15 @@ export function CertificatePreview({
       return k;
     };
 
+    const isCompact = points.length > 7;
+
     return (
       <div className="border border-black flex flex-col divide-y divide-black">
-        <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5">
+        <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold`}>
           Calibration Result (ALL VALUES ARE IN {unit})
         </div>
         {(calibration as any).acceptance_criteria?.enabled && (
-          <div className="bg-amber-100 text-black text-[9px] font-bold px-2 py-0.5 text-center">
+          <div className={`bg-amber-100 text-black ${isCompact ? "text-[8px] py-0.5 px-1.5" : "text-[9px] py-0.5 px-2"} font-bold text-center`}>
             Acceptance Criteria:{" "}
             {(calibration as any).acceptance_criteria.value}{" "}
             {(calibration as any).acceptance_criteria.type === "percentage"
@@ -270,28 +277,30 @@ export function CertificatePreview({
               : unit}
           </div>
         )}
-        <table className="w-full border-collapse text-[9.5px]">
+        <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
           <thead>
             {!hasAnyGroups ? (
               <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                <th className="border-r border-black p-1 w-12 align-middle">
+                <th className={`border-r border-black ${isCompact ? "py-0.5 px-1 w-10" : "p-1 w-12"} align-middle`}>
                   Sr No.
                 </th>
                 {activeColumnsNoStatus.map((k) => (
                   <th
                     key={k}
-                    className="border-r border-black p-1 align-middle"
+                    className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} align-middle`}
                   >
                     {renderCellTitle(k)}
                   </th>
                 ))}
-                <th className="p-1 align-middle">Status</th>
+                {showStatusColumn && (
+                  <th className={`${isCompact ? "py-0.5 px-1 w-12" : "p-1"} align-middle`}>Status</th>
+                )}
               </tr>
             ) : (
               <>
                 <tr className="bg-slate-100 border-b border-black font-bold text-center">
                   <th
-                    className="border-r border-black p-1 w-12 align-middle"
+                    className={`border-r border-black ${isCompact ? "py-0.5 px-1 w-10" : "p-1 w-12"} align-middle`}
                     rowSpan={2}
                   >
                     Sr No.
@@ -302,7 +311,7 @@ export function CertificatePreview({
                         <th
                           key={`group-${idx}`}
                           colSpan={cell.colSpan}
-                          className="border-r border-b border-black p-1 align-middle"
+                          className={`border-r border-b border-black ${isCompact ? "py-0.5 px-1" : "p-1"} align-middle`}
                         >
                           {cell.groupName}
                         </th>
@@ -312,16 +321,18 @@ export function CertificatePreview({
                         <th
                           key={`single-${cell.colKeys[0]}`}
                           rowSpan={2}
-                          className="border-r border-black p-1 align-middle"
+                          className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} align-middle`}
                         >
                           {renderCellTitle(cell.colKeys[0])}
                         </th>
                       );
                     }
                   })}
-                  <th className="p-1 align-middle" rowSpan={2}>
-                    Status
-                  </th>
+                  {showStatusColumn && (
+                    <th className={`${isCompact ? "py-0.5 px-1 w-12" : "p-1"} align-middle`} rowSpan={2}>
+                      Status
+                    </th>
+                  )}
                 </tr>
                 <tr className="bg-slate-100 border-b border-black font-bold text-center">
                   {activeColumnsNoStatus
@@ -329,7 +340,7 @@ export function CertificatePreview({
                     .map((k) => (
                       <th
                         key={`sub-${k}`}
-                        className="border-r border-black p-1 font-normal bg-slate-50"
+                        className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} font-normal bg-slate-50`}
                       >
                         {renderCellTitle(k)}
                       </th>
@@ -344,7 +355,7 @@ export function CertificatePreview({
                 key={idx}
                 className="text-center border-b border-black font-mono"
               >
-                <td className="border-r border-black p-1 font-sans">
+                <td className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} font-sans`}>
                   {String(pt.point_number || idx + 1).padStart(2, "0")}
                 </td>
                 {activeColumns.map((k) => {
@@ -352,26 +363,26 @@ export function CertificatePreview({
                     return (
                       <td
                         key={k}
-                        className="border-r border-black p-1 font-sans"
+                        className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} font-sans`}
                       >
                         {pt.description || "-"}
                       </td>
                     );
                   if (k === "nominal")
                     return (
-                      <td key={k} className="border-r border-black p-1">
+                      <td key={k} className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"}`}>
                         {parseFloat(Number(pt.nominal ?? 0).toFixed(4))}
                       </td>
                     );
                   if (k === "tolerance")
                     return (
-                      <td key={k} className="border-r border-black p-1">
+                      <td key={k} className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"}`}>
                         {parseFloat(Number(pt.tolerance ?? 0).toFixed(4))}
                       </td>
                     );
                   if (k === "ascending_reading")
                     return (
-                      <td key={k} className="border-r border-black p-1">
+                      <td key={k} className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"}`}>
                         {parseFloat(
                           Number(pt.ascending_reading ?? 0).toFixed(4),
                         )}
@@ -379,7 +390,7 @@ export function CertificatePreview({
                     );
                   if (k === "descending_reading")
                     return (
-                      <td key={k} className="border-r border-black p-1">
+                      <td key={k} className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"}`}>
                         {parseFloat(
                           Number(pt.descending_reading ?? 0).toFixed(4),
                         )}
@@ -387,33 +398,41 @@ export function CertificatePreview({
                     );
                   if (k === "error")
                     return (
-                      <td key={k} className="border-r border-black p-1">
+                      <td key={k} className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"}`}>
                         {parseFloat(Number(pt.error ?? 0).toFixed(4))}
                       </td>
                     );
-                  if (k === "status") return null;
                   const obj = pt.customFields?.[k];
                   const displayVal =
                     typeof obj === "object" && obj !== null && "value" in obj
                       ? obj.value
                       : (obj ?? "-");
+                  const isPass = String(displayVal).trim().toUpperCase() === "PASS";
+                  const isFail = String(displayVal).trim().toUpperCase() === "FAIL";
                   return (
-                    <td key={k} className="border-r border-black p-1">
-                      {String(displayVal)}
+                    <td
+                      key={k}
+                      className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} ${
+                        isPass ? "text-emerald-700 font-bold font-sans" : isFail ? "text-red-700 font-bold font-sans" : ""
+                      }`}
+                    >
+                      {String(displayVal ?? "-")}
                     </td>
                   );
                 })}
-                <td
-                  className={`p-1 font-bold font-sans ${pt.status === "PASS" ? "text-emerald-700" : pt.status === "FAIL" ? "text-red-700" : ""}`}
-                >
-                  {pt.status || "-"}
-                </td>
+                {showStatusColumn && (
+                  <td
+                    className={`${isCompact ? "py-0.5 px-1" : "p-1"} font-bold font-sans ${pt.status === "PASS" ? "text-emerald-700" : pt.status === "FAIL" ? "text-red-700" : ""}`}
+                  >
+                    {pt.status || "-"}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
         {calibration.uncertainty && calibration.uncertainty.trim() ? (
-          <div className="p-1.5 text-[9px] font-bold text-center bg-slate-50 mt-auto border-t">
+          <div className={`p-1 text-[8px] font-bold text-center bg-slate-50 mt-auto border-t`}>
             Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of
             confidence Level = {formatUncertainty(calibration.uncertainty, unit)}
           </div>
@@ -423,14 +442,15 @@ export function CertificatePreview({
   };
 
   const numPoints = points.length;
+  const isCompact = numPoints > 7;
   const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
   const sheetNoText = `1 of ${totalPages}`;
 
   return (
-    <div className="bg-white text-black border border-slate-300 rounded-md shadow-2xl overflow-hidden text-[10px] leading-tight font-sans mx-auto flex flex-col w-[794px] max-w-full min-h-[1123px] print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0">
+    <div className="bg-white text-black border border-slate-300 rounded-md shadow-2xl text-[10px] leading-tight font-sans mx-auto flex flex-col w-[794px] max-w-full min-h-[1123px] h-auto print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0">
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div
-        className="p-3 text-black w-full"
+        className="p-2.5 text-black w-full"
         style={{ backgroundColor: headerBgColor }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -441,7 +461,7 @@ export function CertificatePreview({
                 <img
                   src={`${import.meta.env.VITE_API_BASE_URL || ""}${companyLogoPath}`}
                   alt="Logo"
-                  className="max-h-9 w-auto object-contain"
+                  className="max-h-8 w-auto object-contain"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                   }}
@@ -454,87 +474,87 @@ export function CertificatePreview({
                 <h1 className="text-xs font-extrabold text-black uppercase leading-tight">
                   {headerCompanyName}
                 </h1>
-                <p className="text-[8px] font-bold text-black tracking-wider mt-0.5">
+                <p className="text-[7.5px] font-bold text-black tracking-wider mt-0.5">
                   {headerCompanySubtitle}
                 </p>
               </div>
             )}
           </div>
           <div className="text-center flex-1">
-            <h2 className="text-[25px] font-black tracking-tighter uppercase text-white leading-none scale-y-110 origin-center">
+            <h2 className="text-[22px] font-black tracking-tighter uppercase text-white leading-none scale-y-110 origin-center">
               CALIBRATION CERTIFICATE
             </h2>
           </div>
           <div className="text-right text-black min-w-[80px]">
-            <div className="text-[8px] font-bold">{headerRightBoxText1}</div>
-            <div className="text-[9.5px] font-black">{headerRightBoxText2}</div>
+            <div className="text-[7.5px] font-bold">{headerRightBoxText1}</div>
+            <div className="text-[9px] font-black">{headerRightBoxText2}</div>
           </div>
         </div>
       </div>
 
       {/* ── 2. BODY CONTENT SECTION ── */}
-      <div className="p-3 space-y-3 flex-1 flex flex-col">
-        <div className="border border-black p-2 space-y-3 flex-1">
+      <div className="p-2.5 flex-1 flex flex-col">
+        <div className={`border border-black ${isCompact ? "p-1.5 space-y-1.5 text-[8.5px]" : "p-2 space-y-2.5 text-[9.5px]"} flex-1`}>
           {/* Top Certificate Metadata Grid */}
-          <table className="w-full border-collapse border border-black text-[9px]">
+          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black text-center font-bold">
-                <th className="border-r border-black p-1">Calibration On</th>
-                <th className="border-r border-black p-1">
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration On</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                   Next Calibration Due
                 </th>
-                <th className="border-r border-black p-1">Certificate No.:</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certificate No.:</th>
                 {calibration.ulr_number && (
-                  <th className="border-r border-black p-1">ULR No.</th>
+                  <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
                 )}
-                <th className="border-r border-black p-1">Certi Issue Date</th>
-                <th className="p-1">Sheet No.</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
+                <th className={isCompact ? "p-0.5" : "p-1"}>Sheet No.</th>
               </tr>
             </thead>
             <tbody>
               <tr className="text-center font-semibold">
-                <td className="border-r border-black p-1">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                   {fmtDate(calibration.calibration_date)}
                 </td>
-                <td className="border-r border-black p-1">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                   {fmtDate(calibration.next_calibration_date)}
                 </td>
-                <td className="border-r border-black p-1 font-bold">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold`}>
                   {calibration.certificate_number || "—"}
                 </td>
                 {calibration.ulr_number && (
-                  <td className="border-r border-black p-1 font-bold text-slate-800">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-slate-800`}>
                     {calibration.ulr_number}
                   </td>
                 )}
-                <td className="border-r border-black p-1">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                   {fmtDate(
                     calibration.certificate_issue_date ||
                       calibration.calibration_date,
                   )}
                 </td>
-                <td className="p-1">{sheetNoText}</td>
+                <td className={isCompact ? "p-0.5" : "p-1"}>{sheetNoText}</td>
               </tr>
             </tbody>
           </table>
 
           {/* Customer & Reference Grid */}
-          <table className="w-full border-collapse border border-black text-[9.5px]">
+          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8.5px]" : "text-[9.5px]"}`}>
             <tbody>
               <tr>
-                <td className="border-r border-black p-1.5 w-1/2 align-top space-y-0.5">
-                  <div className="font-bold text-black text-[10px]">
+                <td className={`border-r border-black ${isCompact ? "p-1" : "p-1.5"} w-1/2 align-top space-y-0.5`}>
+                  <div className={`font-bold text-black ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
                     {inst?.location || "M/s Deepshikha Casting Pvt. Ltd."}
                   </div>
-                  <div className="text-slate-700 text-[8.5px]">
+                  <div className={`text-slate-700 ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
                     Calibration Customer
                   </div>
                 </td>
-                <td className="border-r border-black p-1.5 w-1/2 align-top space-y-0.5">
-                  <div className="font-bold text-black text-[10px]">
+                <td className={`border-r border-black ${isCompact ? "p-1" : "p-1.5"} w-1/2 align-top space-y-0.5`}>
+                  <div className={`font-bold text-black ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
                     {inst?.calibration_source || "M/s Deepshikha Casting Pvt. Ltd."}
                   </div>
-                  <div className="text-slate-700 text-[8.5px]">
+                  <div className={`text-slate-700 ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
                     Calibration Location
                   </div>
                 </td>
@@ -544,70 +564,70 @@ export function CertificatePreview({
 
           {/* Description & Identification */}
           <div className="border-t border-l border-r border-black">
-            <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5 border-b border-black">
+            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black`}>
               Description & Identification
             </div>
-            <table className="w-full border-collapse text-[9.5px]">
+            <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
               <tbody>
                 <tr className="border-b border-black">
-                  <td className="border-r border-black p-1 font-bold w-1/4 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-1/4 pl-1.5`}>
                     Instrument (UUC)
                   </td>
-                  <td className="border-r border-black p-1 w-1/4 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-1/4 pl-1.5`}>
                     {instrumentName || inst?.name || "-"}
                   </td>
-                  <td className="border-r border-black p-1 font-bold w-1/4 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-1/4 pl-1.5`}>
                     Model No.
                   </td>
-                  <td className="p-1 w-1/4 pl-2">{(inst as any)?.model_no || "-"}</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} w-1/4 pl-1.5`}>{(inst as any)?.model_no || "-"}</td>
                 </tr>
                 <tr className="border-b border-black">
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Make
                   </td>
-                  <td className="border-r border-black p-1 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
                     {inst?.make || "-"}
                   </td>
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Range
                   </td>
-                  <td className="p-1 pl-2">{inst?.range || "-"}</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>{inst?.range || "-"}</td>
                 </tr>
                 <tr className="border-b border-black">
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Serial No. :
                   </td>
-                  <td className="border-r border-black p-1 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
                     {inst?.serial_no || "-"}
                   </td>
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Least Count
                   </td>
-                  <td className="p-1 pl-2">{inst?.least_count || "-"}</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>{inst?.least_count || "-"}</td>
                 </tr>
                 <tr className="border-b border-black">
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     ID No.
                   </td>
-                  <td className="border-r border-black p-1 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
                     {inst?.id_code || "-"}
                   </td>
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Instrument Cond.
                   </td>
-                  <td className="p-1 pl-2">SATISFACTORY</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>SATISFACTORY</td>
                 </tr>
                 <tr className="border-b border-black">
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Calibration Range
                   </td>
-                  <td className="border-r border-black p-1 pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
                     {inst?.range || "-"}
                   </td>
-                  <td className="border-r border-black p-1 font-bold pl-2">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Location
                   </td>
-                  <td className="p-1 pl-2">
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
                     {inst?.location || "Permanent Laboratory"}
                   </td>
                 </tr>
@@ -616,70 +636,70 @@ export function CertificatePreview({
           </div>
 
           {/* Procedure & Environmental Conditions */}
-          <div className="border border-black p-1.5 space-y-0.5 text-[9.5px]">
+          <div className={`border border-black ${isCompact ? "p-1 space-y-0.5 text-[8px]" : "p-1.5 space-y-0.5 text-[9.5px]"}`}>
             <div className="flex">
-              <span className="font-bold w-48">Procedure reference</span>
+              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Procedure reference</span>
               <span>: {procedureReference}</span>
             </div>
             <div className="flex">
-              <span className="font-bold w-48">Environmental Conditions</span>
+              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Environmental Conditions</span>
               <span>
                 : Temperature at {env.temperature}° C RH {env.humidity} %
               </span>
             </div>
             <div className="flex">
-              <span className="font-bold w-48">Standard Reference</span>
+              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Standard Reference</span>
               <span>
                 : {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
               </span>
             </div>
             <div className="flex">
-              <span className="font-bold w-48">Discipline</span>
+              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Discipline</span>
               <span>: DIMENSION (Basic Measuring Instrument, Gauge etc)</span>
             </div>
           </div>
 
           {/* Traceability of Master Used */}
           <div className="border border-black flex flex-col divide-y divide-black">
-            <div className="bg-slate-200 text-black text-[10px] font-bold px-2 py-0.5">
+            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold`}>
               TRACEABILITY OF MASTER USED :
             </div>
             {calibration.reference_standards?.length > 0 ? (
-              <table className="w-full border-collapse text-[9px]">
+              <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
                 <thead>
                   <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                    <th className="border-r border-black p-1">
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       Instrument Desc.
                     </th>
-                    <th className="border-r border-black p-1">Make</th>
-                    <th className="border-r border-black p-1">
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       Sr No / Id. No.
                     </th>
-                    <th className="border-r border-black p-1">Cert.No.</th>
-                    <th className="border-r border-black p-1">Validity</th>
-                    <th className="p-1">Cal.Agency</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
+                    <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
                   </tr>
                 </thead>
                 <tbody>
                   {calibration.reference_standards.map(
                     (ref: any, idx: number) => (
-                      <tr key={idx} className="text-center ">
-                        <td className="border-r border-black p-1">
+                      <tr key={idx} className="text-center">
+                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                           {ref.name || ref.instrument_desc || ref.description || "-"}
                         </td>
-                        <td className="border-r border-black p-1">
+                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                           {ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || "-"}
                         </td>
-                        <td className="border-r border-black p-1">
+                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                           {ref.id || ref.id_code || ref.serial_no || ref.sr_no || "-"}
                         </td>
-                        <td className="border-r border-black p-1">
+                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                           {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
                         </td>
-                        <td className="border-r border-black p-1">
+                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                           {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
                         </td>
-                        <td className="p-1">
+                        <td className={isCompact ? "p-0.5" : "p-1"}>
                           {ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || "NABL Lab"}
                         </td>
                       </tr>
@@ -688,50 +708,94 @@ export function CertificatePreview({
                 </tbody>
               </table>
             ) : (
-              <table className="w-full border-collapse text-[9px]">
+              <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
                 <thead>
                   <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                    <th className="border-r border-black p-1">
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       Instrument Desc.
                     </th>
-                    <th className="border-r border-black p-1">Make</th>
-                    <th className="border-r border-black p-1">
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       Sr No / Id. No.
                     </th>
-                    <th className="border-r border-black p-1">Cert.No.</th>
-                    <th className="border-r border-black p-1">Validity</th>
-                    <th className="p-1">Cal.Agency</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
+                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
+                    <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr className="text-center">
-                    <td className="border-r border-black p-1">
+                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       {(calibration as any)?.reference_standard_name || "Gauge Block Set"}
                     </td>
-                    <td className="border-r border-black p-1">
+                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       {(calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || "Standard"}
                     </td>
-                    <td className="border-r border-black p-1">
+                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       {(calibration as any)?.reference_standard_id || "REF-01"}
                     </td>
-                    <td className="border-r border-black p-1">
+                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
                     </td>
-                    <td className="border-r border-black p-1">
+                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                       {fmtDate((calibration as any)?.reference_standard_validity)}
                     </td>
-                    <td className="p-1">
+                    <td className={isCompact ? "p-0.5" : "p-1"}>
                       {(calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || "NABL Accredited Lab"}
                     </td>
                   </tr>
                 </tbody>
               </table>
             )}
-            <div className="p-1 text-[8px] italic text-slate-700 bg-slate-50 mt-auto">
+            <div className={`p-1 ${isCompact ? "text-[7.5px]" : "text-[8px]"} italic text-slate-700 bg-slate-50 mt-auto`}>
               All the measurements performed are traceable to National/Int.
               standards through NABL accredited cal.lab.
             </div>
           </div>
+
+          {/* Optional Diagram / Schematic Image */}
+          {(() => {
+            const diagramImage =
+              calibration.diagram_image ||
+              ((calibration as any).template as any)?.diagram_image;
+            if (!diagramImage) return null;
+
+            const diagramWidth =
+              calibration.diagram_image_width ||
+              ((calibration as any).template as any)?.diagram_image_width ||
+              240;
+            const diagramHeight =
+              calibration.diagram_image_height ||
+              ((calibration as any).template as any)?.diagram_image_height ||
+              140;
+            const diagramAlignment =
+              calibration.diagram_image_alignment ||
+              ((calibration as any).template as any)?.diagram_image_alignment ||
+              "center";
+
+            return (
+              <div
+                className={`border border-black bg-white p-1.5 flex ${
+                  diagramAlignment === "left"
+                    ? "justify-start"
+                    : diagramAlignment === "right"
+                    ? "justify-end"
+                    : "justify-center"
+                } items-center`}
+              >
+                <img
+                  src={diagramImage}
+                  alt="Calibration Diagram"
+                  style={{
+                    width: `${diagramWidth}px`,
+                    maxHeight: `${diagramHeight}px`,
+                    objectFit: "contain",
+                  }}
+                  className="block"
+                />
+              </div>
+            );
+          })()}
 
           {/* Calibration Result */}
           {renderCalibrationResult()}
@@ -767,37 +831,37 @@ export function CertificatePreview({
                 )?.signature;
 
             return (
-              <div className="border border-black p-2 mt-4 grid grid-cols-3 gap-2 items-end">
-                <div className="text-center space-y-1">
-                  <div className="h-10 flex items-end justify-center">
+              <div className={`border border-black ${isCompact ? "p-1.5 mt-1.5" : "p-2 mt-3"} grid grid-cols-3 gap-2 items-end`}>
+                <div className="text-center space-y-0.5">
+                  <div className={`${isCompact ? "h-8" : "h-10"} flex items-end justify-center`}>
                     {calibratedSigImg ? (
                       <img
                         src={calibratedSigImg}
                         alt="Signature"
-                        className="max-h-9 max-w-[120px] object-contain mx-auto"
+                        className={`${isCompact ? "max-h-7 max-w-[90px]" : "max-h-9 max-w-[120px]"} object-contain mx-auto`}
                       />
                     ) : (
-                      <span className="font-cursive italic text-slate-700 text-xs">
+                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
                         {calibration.calibrated_by || "Sign"}
                       </span>
                     )}
                   </div>
                   <div className="border-t border-black pt-0.5">
-                    <p className="font-bold text-[9.5px]">
+                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
                       {calibration.calibrated_by || "Calibrated By"}
                     </p>
-                    <p className="text-[8.5px] text-slate-600">
+                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.calibrated_by_designation ||
                         "Calibration Engineer"}
                     </p>
                   </div>
                 </div>
 
-                <div className="text-center flex flex-col items-center justify-center space-y-1">
+                <div className="text-center flex flex-col items-center justify-center space-y-0.5">
                   <img
                     src="/Approved-seal1.png"
                     alt="Approval Seal"
-                    className="max-h-14 max-w-[85px] object-contain mx-auto"
+                    className={`${isCompact ? "max-h-9 max-w-[65px]" : "max-h-14 max-w-[85px]"} object-contain mx-auto`}
                     onError={(e) => {
                       const target = e.currentTarget;
                       target.style.display = "none";
@@ -806,23 +870,23 @@ export function CertificatePreview({
                       }
                     }}
                   />
-                  <div className="hidden w-14 h-14 rounded-full border-2 border-dashed border-sky-800 items-center justify-center text-[7px] font-bold text-sky-900 text-center leading-none p-1">
+                  <div className={`hidden ${isCompact ? "w-10 h-10 text-[6px]" : "w-14 h-14 text-[7px]"} rounded-full border-2 border-dashed border-sky-800 items-center justify-center font-bold text-sky-900 text-center leading-none p-1`}>
                     CALIBRATION
                     <br />
                     SEAL / STAMP
                   </div>
                 </div>
 
-                <div className="text-center space-y-1">
-                  <div className="h-10 flex items-end justify-center">
+                <div className="text-center space-y-0.5">
+                  <div className={`${isCompact ? "h-8" : "h-10"} flex items-end justify-center`}>
                     {approvedSigImg ? (
                       <img
                         src={approvedSigImg}
                         alt="Signature"
-                        className="max-h-9 max-w-[120px] object-contain mx-auto"
+                        className={`${isCompact ? "max-h-7 max-w-[90px]" : "max-h-9 max-w-[120px]"} object-contain mx-auto`}
                       />
                     ) : (
-                      <span className="font-cursive italic text-slate-700 text-xs">
+                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
                         {calibration.approved_by ||
                           calibration.reviewed_by ||
                           "Sign"}
@@ -830,12 +894,12 @@ export function CertificatePreview({
                     )}
                   </div>
                   <div className="border-t border-black pt-0.5">
-                    <p className="font-bold text-[9.5px]">
+                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
                       {calibration.approved_by ||
                         calibration.reviewed_by ||
                         "Authorized By"}
                     </p>
-                    <p className="text-[8.5px] text-slate-600">
+                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.approved_by_designation || "Quality Manager"}
                     </p>
                   </div>
@@ -848,10 +912,10 @@ export function CertificatePreview({
 
       {/* ── 3. FOOTER SECTION (Full Width Edge-to-Edge Banner at Bottom) ── */}
       <div
-        className="mt-auto w-full border-t border-black p-2 text-[9px] text-center space-y-0.5 text-black font-semibold"
+        className="mt-auto w-full border-t border-black p-1.5 text-[8.5px] text-center space-y-0.5 text-black font-semibold"
         style={{ backgroundColor: headerBgColor }}
       >
-        <div className="font-extrabold uppercase text-[9.5px]">
+        <div className="font-extrabold uppercase text-[9px]">
           {footerLine1 || "CALIBRATION CENTER :"}
         </div>
         <p className="font-bold">

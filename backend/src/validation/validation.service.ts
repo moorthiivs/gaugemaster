@@ -28,6 +28,7 @@ export class ValidationService {
       { fieldName: "serial_no", displayName: "Serial No", isRequired: false, isUnique: false, validationType: "text" },
       { fieldName: "least_count", displayName: "Least Count", isRequired: false, isUnique: false, validationType: "text" },
       { fieldName: "make", displayName: "Make", isRequired: false, isUnique: false, validationType: "text" },
+      { fieldName: "device_type", displayName: "Device Type", isRequired: false, isUnique: false, validationType: "text" },
       { fieldName: "remarks", displayName: "Remarks", isRequired: false, isUnique: false, validationType: "text" },
     ];
 

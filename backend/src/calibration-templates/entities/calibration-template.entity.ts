@@ -80,6 +80,18 @@ export class CalibrationTemplate {
   @Column({ type: 'int', nullable: true })
   decimal_places?: number;
 
+  @Column({ type: 'text', nullable: true })
+  diagram_image?: string;
+
+  @Column({ type: 'int', nullable: true })
+  diagram_image_width?: number;
+
+  @Column({ type: 'int', nullable: true })
+  diagram_image_height?: number;
+
+  @Column({ nullable: true })
+  diagram_image_alignment?: 'center' | 'left' | 'right';
+
   @Column({ nullable: true })
   userId: string;
 

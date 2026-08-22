@@ -76,6 +76,10 @@ export class CreateInstrumentDto {
 
     @IsOptional()
     @IsString()
+    device_type?: string;
+
+    @IsOptional()
+    @IsString()
     part_no?: string;
 
     @IsOptional()

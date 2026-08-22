@@ -22,6 +22,7 @@ export type Instrument = {
   notes?: string;
   make?: string;
   item_type?: string;
+  device_type?: string;
   equipment_type?: string;
   category?: string;
   part_no?: string;
@@ -101,6 +102,7 @@ export type InstrumentQuery = {
   calibrated_in_range_start?: string;
   calibrated_in_range_end?: string;
   is_reference_standard?: string; // "true", "false", or "all"
+  device_type?: string | "All";
   page?: number;
   pageSize?: number;
   limit?: number;

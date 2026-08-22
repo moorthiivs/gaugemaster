@@ -75,6 +75,9 @@ export class Instrument {
   item_type: string;
 
   @Column({ nullable: true })
+  device_type: string;
+
+  @Column({ nullable: true })
   part_no: string;
 
   @Column({ nullable: true })
