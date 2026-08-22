@@ -52,6 +52,11 @@ export interface CalibrationRecord {
   hidden_columns?: string[];
   template_id?: string;
   template_name?: string;
+  template?: any;
+  diagram_image?: string;
+  diagram_image_width?: number;
+  diagram_image_height?: number;
+  diagram_image_alignment?: "center" | "left" | "right";
 
   // Results
   uncertainty: string;

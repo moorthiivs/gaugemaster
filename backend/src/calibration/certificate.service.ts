@@ -410,7 +410,12 @@ export class CertificateService {
       return k;
     };
 
-    const hidden = new Set(calibration.hidden_columns || []);
+    const hidden = new Set(
+      calibration.hidden_columns ||
+      ((calibration as any).template as any)?.hidden_columns ||
+      [],
+    );
+    const showStatusColumn = !hidden.has('status');
     const columnOrder =
       calibration.column_order && calibration.column_order.length > 0
         ? calibration.column_order
@@ -502,13 +507,15 @@ export class CertificateService {
       });
       pushGroup();
 
-      dataTableHeader.push({
-        text: 'Status',
-        style: 'thCell',
-        rowSpan: 2,
-        margin: [0, 6, 0, 0],
-      });
-      dataTableSubHeader.push({}); // dummy for status
+      if (showStatusColumn) {
+        dataTableHeader.push({
+          text: 'Status',
+          style: 'thCell',
+          rowSpan: 2,
+          margin: [0, 6, 0, 0],
+        });
+        dataTableSubHeader.push({}); // dummy for status
+      }
     } else {
       dataTableHeader = [{ text: 'Sr No.', style: 'thCell' }];
       activeColumnsNoStatus.forEach((k) => {
@@ -517,7 +524,9 @@ export class CertificateService {
           style: 'thCell',
         });
       });
-      dataTableHeader.push({ text: 'Status', style: 'thCell' });
+      if (showStatusColumn) {
+        dataTableHeader.push({ text: 'Status', style: 'thCell' });
+      }
     }
 
     // ── Safe numeric formatter (never returns NaN to pdfmake) ──
@@ -578,11 +587,6 @@ export class CertificateService {
             text: safeNum(pt.error, getColDec('error')),
             style: 'tdCellMono',
           });
-        else if (k === 'tolerance')
-          row.push({
-            text: safeNum(pt.tolerance, getColDec('tolerance')),
-            style: 'tdCellMono',
-          });
         else if (k === 'status') return;
         else {
           // Custom column: extract raw value
@@ -592,33 +596,56 @@ export class CertificateService {
               ? obj.value
               : obj;
 
-          // Check column type — only apply numeric formatting for number/formula columns
+          // Check column type — only apply numeric formatting if value is actually numeric
           const colType = customColTypeMap.get(k) || 'text';
           let displayVal: string;
-          if (colType === 'number' || colType === 'formula') {
+          let cellColor = '#000000';
+          let isBold = false;
+
+          if (rawVal === undefined || rawVal === null || rawVal === '') {
+            displayVal = '-';
+          } else if (typeof rawVal === 'string' && isNaN(Number(rawVal.trim()))) {
+            // Non-numeric string from formula or text (e.g. "PASS", "FAIL", "OK")
+            displayVal = rawVal.trim();
+            if (displayVal.toUpperCase() === 'PASS') {
+              cellColor = '#15803d';
+              isBold = true;
+            } else if (displayVal.toUpperCase() === 'FAIL') {
+              cellColor = '#b91c1c';
+              isBold = true;
+            }
+          } else if (colType === 'number' || colType === 'formula') {
             displayVal = safeNum(rawVal, getColDec(k));
           } else {
             // Text column: print exactly as stored
-            displayVal =
-              rawVal !== undefined && rawVal !== null ? String(rawVal) : '-';
+            displayVal = String(rawVal);
           }
-          row.push({ text: displayVal, style: 'tdCellMono' });
+          row.push({
+            text: displayVal,
+            style: 'tdCellMono',
+            color: cellColor,
+            bold: isBold,
+          });
         }
       });
 
-      row.push({
-        text: status,
-        style: 'tdCell',
-        color: statusColor,
-        bold: true,
-      });
+      if (showStatusColumn) {
+        row.push({
+          text: status,
+          style: 'tdCell',
+          color: statusColor,
+          bold: true,
+        });
+      }
       dataTableBody.push(row);
     });
 
     const totalCols = dataTableHeader.length;
     const tableWidths: any[] = Array(totalCols).fill('*');
     tableWidths[0] = 35; // Sr No column width
-    tableWidths[totalCols - 1] = 45; // Status column width
+    if (showStatusColumn) {
+      tableWidths[totalCols - 1] = 45; // Status column width
+    }
 
     // ── Reference Standard rows ──
     let referenceStandards: any[] = [];
@@ -690,6 +717,41 @@ export class CertificateService {
           } else if (isJpeg) {
             sealDataUrl = `data:image/jpeg;base64,${sealBuffer.toString('base64')}`;
             break;
+          }
+        } catch (e) {}
+      }
+    }
+
+    // ── Resolve Diagram Image to base64 for pdfmake ──
+    const rawDiagram =
+      calibration.diagram_image ||
+      ((calibration as any).template as any)?.diagram_image;
+    const diagramWidth =
+      calibration.diagram_image_width ||
+      ((calibration as any).template as any)?.diagram_image_width ||
+      240;
+    const diagramHeight =
+      calibration.diagram_image_height ||
+      ((calibration as any).template as any)?.diagram_image_height ||
+      140;
+    const diagramAlignment =
+      calibration.diagram_image_alignment ||
+      ((calibration as any).template as any)?.diagram_image_alignment ||
+      'center';
+
+    let diagramDataUrl: string | null = null;
+    if (rawDiagram && typeof rawDiagram === 'string' && rawDiagram.trim()) {
+      if (rawDiagram.startsWith('data:image')) {
+        diagramDataUrl = rawDiagram;
+      } else {
+        try {
+          const diagramAbsPath = rawDiagram.startsWith('/')
+            ? path.join(process.cwd(), rawDiagram.slice(1))
+            : path.join(process.cwd(), rawDiagram);
+          if (fs.existsSync(diagramAbsPath)) {
+            const buf = fs.readFileSync(diagramAbsPath);
+            const mime = rawDiagram.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+            diagramDataUrl = `data:${mime};base64,${buf.toString('base64')}`;
           }
         } catch (e) {}
       }
@@ -769,11 +831,13 @@ export class CertificateService {
       };
     }
 
+    const isDense = points.length > 7;
+
     // ── PDF Document Definition (NABL Certificate Layout) ──
     const docDefinition = {
       pageSize: 'A4' as const,
       pageOrientation: 'portrait' as const,
-      pageMargins: [23, 54, 23, 58] as [number, number, number, number],
+      pageMargins: [20, 48, 20, 68] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
@@ -793,10 +857,10 @@ export class CertificateService {
             canvas: [
               {
                 type: 'rect',
-                x: 20,
-                y: 50,
-                w: 555.28,
-                h: 738,
+                x: 18,
+                y: 46,
+                w: 559.28,
+                h: 724,
                 lineWidth: 1,
                 lineColor: '#000000',
               },
@@ -997,7 +1061,7 @@ export class CertificateService {
             hLineColor: () => '#000',
             vLineColor: () => '#000',
           },
-          margin: [0, 0, 0, 4] as [number, number, number, number],
+          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
         // Customer & Location Grid
@@ -1011,32 +1075,32 @@ export class CertificateService {
                     {
                       text: inst?.location || '-',
                       bold: true,
-                      fontSize: 8.5,
+                      fontSize: isDense ? 7.5 : 8.5,
                     },
                     {
                       text: 'Calibration Customer',
-                      fontSize: 7.5,
+                      fontSize: isDense ? 6.5 : 7.5,
                       color: '#334155',
-                      margin: [0, 2, 0, 0],
+                      margin: [0, 1, 0, 0],
                     },
                   ],
-                  margin: [2, 2, 2, 2],
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   stack: [
                     {
                       text: 'IN - HOUSE',
                       bold: true,
-                      fontSize: 8.5,
+                      fontSize: isDense ? 7.5 : 8.5,
                     },
                     {
                       text: 'Calibration Location',
-                      fontSize: 7.5,
+                      fontSize: isDense ? 6.5 : 7.5,
                       color: '#334155',
-                      margin: [0, 2, 0, 0],
+                      margin: [0, 1, 0, 0],
                     },
                   ],
-                  margin: [2, 2, 2, 2],
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
             ],
@@ -1047,7 +1111,7 @@ export class CertificateService {
             hLineColor: () => '#000',
             vLineColor: () => '#000',
           },
-          margin: [0, 0, 0, 4] as [number, number, number, number],
+          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
         // Description & Identification Box
@@ -1069,120 +1133,120 @@ export class CertificateService {
                 {
                   text: 'Instrument (UUC)',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.name || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Model No.',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: (inst as any)?.model_no || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
               [
                 {
                   text: 'Make',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.make || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Range',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.range || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
               [
                 {
                   text: 'Serial No. :',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.serial_no || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Least Count',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.least_count || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
               [
                 {
                   text: 'ID No.',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.id_code || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Instrument Cond.',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'SATISFACTORY',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
               [
                 {
                   text: 'Calibration Range',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.range || '-',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Location',
                   bold: true,
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.location || 'Permanent Laboratory',
-                  fontSize: 8.5,
-                  margin: [2, 2, 2, 2],
+                  fontSize: isDense ? 7.5 : 8.5,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
             ],
@@ -1193,7 +1257,7 @@ export class CertificateService {
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
           },
-          margin: [0, 0, 0, 4] as [number, number, number, number],
+          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
         // Procedure & Environmental Conditions Box
@@ -1209,60 +1273,60 @@ export class CertificateService {
                         {
                           text: 'Procedure reference',
                           bold: true,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                           width: 140,
                         },
-                        { text: `: ${procedureReference}`, fontSize: 8 },
+                        { text: `: ${procedureReference}`, fontSize: isDense ? 7 : 8 },
                       ],
-                      margin: [0, 3, 0, 3],
+                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
                     },
                     {
                       columns: [
                         {
                           text: 'Environmental Conditions',
                           bold: true,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                           width: 140,
                         },
                         {
                           text: `: Temperature at ${env.temperature}° C  RH ${env.humidity} %`,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                         },
                       ],
-                      margin: [0, 3, 0, 3],
+                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
                     },
                     {
                       columns: [
                         {
                           text: 'Standard Reference',
                           bold: true,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                           width: 140,
                         },
                         {
                           text: `: ${standardReference}`,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                         },
                       ],
-                      margin: [0, 3, 0, 3],
+                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
                     },
                     {
                       columns: [
                         {
                           text: 'Discipline',
                           bold: true,
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                           width: 140,
                         },
                         {
                           text: ': DIMENSION (Basic Measuring Instrument, Gauge etc)',
-                          fontSize: 8,
+                          fontSize: isDense ? 7 : 8,
                         },
                       ],
-                      margin: [0, 3, 0, 3],
+                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
                     },
                   ],
-                  margin: [4, 3, 4, 3],
+                  margin: [4, isDense ? 2 : 3, 4, isDense ? 2 : 3],
                 },
               ],
             ],
@@ -1273,7 +1337,7 @@ export class CertificateService {
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
           },
-          margin: [0, 0, 0, 4] as [number, number, number, number],
+          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
         // Traceability of Master Used
@@ -1330,10 +1394,10 @@ export class CertificateService {
               [
                 {
                   text: 'All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.',
-                  fontSize: 7,
+                  fontSize: isDense ? 6.5 : 7,
                   italics: true,
                   color: '#334155',
-                  margin: [4, 2, 4, 2],
+                  margin: [4, 1.5, 4, 1.5],
                   fillColor: '#f8fafc',
                   colSpan: 6,
                 },
@@ -1351,13 +1415,26 @@ export class CertificateService {
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
           },
-          margin: [0, 0, 0, 4] as [number, number, number, number],
+          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
+
+        // ── Optional Diagram / Schematic Image (Printed above calibration results) ──
+        ...(diagramDataUrl
+          ? [
+              {
+                image: diagramDataUrl,
+                fit: [diagramWidth, diagramHeight] as [number, number],
+                alignment: diagramAlignment,
+                margin: [0, 2, 0, isDense ? 2 : 4] as [number, number, number, number],
+              },
+            ]
+          : []),
 
         // Calibration Result
         points.length > 0
           ? {
               table: {
+                dontBreakRows: true,
                 headerRows: (calibration as any).acceptance_criteria?.enabled
                   ? hasAnyGroups
                     ? 4
@@ -1380,11 +1457,11 @@ export class CertificateService {
                         [
                           {
                             text: `Acceptance Criteria: ${(calibration as any).acceptance_criteria.value} ${(calibration as any).acceptance_criteria.type === 'percentage' ? '%' : unit}`,
-                            fontSize: 8,
+                            fontSize: isDense ? 7.5 : 8,
                             bold: true,
                             alignment: 'center',
                             fillColor: '#fef3c7',
-                            margin: [2, 3, 2, 3],
+                            margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
                             colSpan: totalCols,
                           },
                           ...Array(totalCols - 1).fill({}),
@@ -1401,11 +1478,11 @@ export class CertificateService {
                                 ? String(calibration.uncertainty).trim()
                                 : `±${String(calibration.uncertainty).trim()}${unit ? ` ${unit}` : ''}`
                             }`,
-                            fontSize: 8,
+                            fontSize: isDense ? 7.5 : 8,
                             bold: true,
                             alignment: 'center',
                             fillColor: '#f8fafc',
-                            margin: [2, 3, 2, 3],
+                            margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
                             colSpan: totalCols,
                           },
                           ...Array(totalCols - 1).fill({}),
@@ -1430,12 +1507,13 @@ export class CertificateService {
                 hLineColor: () => '#000000',
                 vLineColor: () => '#000000',
               },
-              margin: [0, 0, 0, 4] as [number, number, number, number],
+              margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
             }
           : { text: '' },
 
         // Signature Block
         {
+          unbreakable: true,
           table: {
             widths: ['*', '*', '*'],
             body: [
@@ -1443,55 +1521,55 @@ export class CertificateService {
                 {
                   stack: [
                     calibratedSig && calibratedSig.startsWith('data:image')
-                      ? { image: calibratedSig, fit: [80, 26], alignment: 'center' }
-                      : { text: '________________________', alignment: 'center', fontSize: 8 },
+                      ? { image: calibratedSig, fit: isDense ? [70, 20] : [80, 26], alignment: 'center' }
+                      : { text: '________________________', alignment: 'center', fontSize: isDense ? 7 : 8 },
                     {
                       text: calibration.calibrated_by || 'Calibrated By',
                       alignment: 'center',
                       bold: true,
-                      fontSize: 8,
+                      fontSize: isDense ? 7.5 : 8,
                     },
                     {
                       text:
                         calibration.calibrated_by_designation ||
                         'Calibration Engineer',
                       alignment: 'center',
-                      fontSize: 7.5,
+                      fontSize: isDense ? 6.5 : 7.5,
                       color: '#475569',
                     },
                   ],
-                  margin: [2, 2, 2, 2],
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   stack: [
                     sealDataUrl
-                      ? { image: sealDataUrl, fit: [75, 45], alignment: 'center' }
+                      ? { image: sealDataUrl, fit: isDense ? [60, 32] : [75, 45], alignment: 'center' }
                       : {
                           stack: [
                             {
                               text: 'CALIBRATION',
                               alignment: 'center',
-                              fontSize: 7,
+                              fontSize: isDense ? 6 : 7,
                               bold: true,
                               color: '#0369a1',
                             },
                             {
                               text: 'SEAL / STAMP',
                               alignment: 'center',
-                              fontSize: 7,
+                              fontSize: isDense ? 6 : 7,
                               bold: true,
                               color: '#0369a1',
                             },
                           ],
                         },
                   ],
-                  margin: [2, 2, 2, 2],
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   stack: [
                     approvedSig && approvedSig.startsWith('data:image')
-                      ? { image: approvedSig, fit: [80, 26], alignment: 'center' }
-                      : { text: '________________________', alignment: 'center', fontSize: 8 },
+                      ? { image: approvedSig, fit: isDense ? [70, 20] : [80, 26], alignment: 'center' }
+                      : { text: '________________________', alignment: 'center', fontSize: isDense ? 7 : 8 },
                     {
                       text:
                         calibration.approved_by ||
@@ -1499,18 +1577,18 @@ export class CertificateService {
                         'Authorized By',
                       alignment: 'center',
                       bold: true,
-                      fontSize: 8,
+                      fontSize: isDense ? 7.5 : 8,
                     },
                     {
                       text:
                         calibration.approved_by_designation ||
                         'Quality Manager',
                       alignment: 'center',
-                      fontSize: 7.5,
+                      fontSize: isDense ? 6.5 : 7.5,
                       color: '#475569',
                     },
                   ],
-                  margin: [2, 2, 2, 2],
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
             ],
@@ -1527,64 +1605,64 @@ export class CertificateService {
 
       styles: {
         gridTh: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           bold: true,
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         gridTd: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           alignment: 'center' as const,
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         gridTdBold: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           bold: true,
           alignment: 'center' as const,
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         boxHeader: {
-          fontSize: 8.5,
+          fontSize: isDense ? 7.8 : 8.5,
           bold: true,
           color: '#000',
           fillColor: '#e2e8f0',
-          margin: [2, 2, 2, 2] as [number, number, number, number],
+          margin: isDense ? [2, 1, 2, 1] : [2, 2, 2, 2] as [number, number, number, number],
         },
         kvPair: {
-          fontSize: 8,
+          fontSize: isDense ? 7 : 8,
           bold: true,
           margin: [0, 1, 0, 1] as [number, number, number, number],
         },
         subNote: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           bold: true,
           margin: [0, 1, 0, 1] as [number, number, number, number],
         },
         thCellDark: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           bold: true,
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         thCell: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           bold: true,
           color: '#000',
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         tdCell: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           alignment: 'center' as const,
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         tdCellMono: {
-          fontSize: 7.5,
+          fontSize: isDense ? 6.8 : 7.5,
           alignment: 'center' as const,
-          margin: [0, 2, 0, 2] as [number, number, number, number],
+          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
       },
       defaultStyle: {

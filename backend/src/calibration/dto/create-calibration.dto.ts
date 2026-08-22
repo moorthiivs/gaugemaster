@@ -5,6 +5,7 @@ import {
   IsDateString,
   IsArray,
   IsObject,
+  IsNumber,
 } from 'class-validator';
 
 export class CreateCalibrationDto {
@@ -91,6 +92,22 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   decimal_places?: number;
+
+  @IsOptional()
+  @IsString()
+  diagram_image?: string;
+
+  @IsOptional()
+  @IsNumber()
+  diagram_image_width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  diagram_image_height?: number;
+
+  @IsOptional()
+  @IsString()
+  diagram_image_alignment?: 'center' | 'left' | 'right';
 
   @IsOptional()
   @IsObject()

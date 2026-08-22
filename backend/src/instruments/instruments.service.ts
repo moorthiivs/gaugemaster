@@ -34,6 +34,7 @@ interface InstrumentFilters {
     calibrated_in_range_start?: string;
     calibrated_in_range_end?: string;
     is_reference_standard?: string;
+    device_type?: string;
     page: number;
     pageSize: number;
     createdBy?: string;
@@ -89,7 +90,7 @@ export class InstrumentsService {
         const userIds = await this.getCompanyUserIds(createdById);
         const instruments = await this.instrumentRepository.find({
             where: userIds.length > 0 ? { created_by: { id: In(userIds) } } : {},
-            select: ['status', 'item_status', 'frequency', 'location', 'calibration_source'],
+            select: ['status', 'item_status', 'frequency', 'location', 'calibration_source', 'device_type'],
         });
 
         const unique = (arr: string[]) => {
@@ -108,6 +109,7 @@ export class InstrumentsService {
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),
             calibration_source: unique(instruments.map(i => i.calibration_source)),
+            device_type: unique(instruments.map(i => i.device_type)),
         };
     }
 
@@ -123,7 +125,7 @@ export class InstrumentsService {
     }
 
     async findAll(filters: InstrumentFilters) {
-        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, page, pageSize, createdBy, companyId, sortBy, sortOrder } = filters;
+        const { status, item_status, location, frequency, calibration_source, module, exclude_modules, search, due_date, due_date_start, due_date_end, last_cal_start, last_cal_end, calibrated_in_range_start, calibrated_in_range_end, is_reference_standard, device_type, page, pageSize, createdBy, companyId, sortBy, sortOrder } = filters;
 
         // If calibrated_in_range filter is active, use QueryBuilder with subquery on calibration_history
         if (calibrated_in_range_start && calibrated_in_range_end) {
@@ -131,6 +133,10 @@ export class InstrumentsService {
         }
 
         const baseWhere: any = {};
+
+        if (device_type && device_type !== 'All') {
+            baseWhere.device_type = ILike(device_type);
+        }
 
         if (status && status !== 'All') {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
@@ -246,12 +252,13 @@ export class InstrumentsService {
                 { ...baseWhere, name: searchPattern },
                 { ...baseWhere, id_code: searchPattern },
                 { ...baseWhere, make: searchPattern },
+                { ...baseWhere, item_type: searchPattern },
+                { ...baseWhere, device_type: searchPattern },
                 { ...baseWhere, location: searchPattern },
                 { ...baseWhere, serial_no: searchPattern },
                 { ...baseWhere, range: searchPattern },
                 { ...baseWhere, part_no: searchPattern },
                 { ...baseWhere, part_name: searchPattern },
-                { ...baseWhere, item_type: searchPattern },
                 { ...baseWhere, frequency: searchPattern },
                 { ...baseWhere, agency: searchPattern },
                 { ...baseWhere, least_count: searchPattern },
@@ -300,7 +307,7 @@ export class InstrumentsService {
      * countHistoryCalibrations() logic exactly.
      */
     private async findAllCalibratedInRange(filters: InstrumentFilters) {
-        const { item_status, location, frequency, calibration_source, search, is_reference_standard, calibrated_in_range_start, calibrated_in_range_end, page, pageSize, createdBy } = filters;
+        const { item_status, location, frequency, calibration_source, search, is_reference_standard, device_type, calibrated_in_range_start, calibrated_in_range_end, page, pageSize, createdBy } = filters;
 
         const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
         const sParts = calibrated_in_range_start!.split('-').map(Number);
@@ -323,6 +330,9 @@ export class InstrumentsService {
         if (location && location !== 'All') {
             historyQuery.andWhere('instrument.location ILIKE :location', { location });
         }
+        if (device_type && device_type !== 'All') {
+            historyQuery.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+        }
 
         const instrumentIds = await historyQuery.getRawMany();
         const ids = instrumentIds.map(r => r.id);
@@ -341,6 +351,9 @@ export class InstrumentsService {
         const query = this.instrumentRepository.createQueryBuilder('instrument')
             .where('instrument.id IN (:...ids)', { ids });
 
+        if (device_type && device_type !== 'All') {
+            query.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+        }
         if (frequency && frequency !== 'All') {
             query.andWhere('instrument.frequency ILIKE :frequency', { frequency });
         }
@@ -411,7 +424,16 @@ export class InstrumentsService {
             // Always auto-generate S.No — ignore any user-provided value
             const sinoValue = await this.generateNextSino(instrumentDto.companyId);
 
+            let autoItemStatus = instrumentDto.item_status;
+            if (!autoItemStatus || autoItemStatus.toString().trim().toLowerCase() === 'ok') {
+                autoItemStatus = 'Active';
+            }
+
             let autoStatus = instrumentDto.status;
+            if (autoStatus && autoStatus.toString().trim().toLowerCase() === 'active') {
+                autoStatus = 'OK';
+            }
+
             const parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
             if (parsedDueDate) {
                 const today = new Date();
@@ -429,6 +451,7 @@ export class InstrumentsService {
                 ...instrumentDto,
                 sino: sinoValue,
                 status: autoStatus,
+                item_status: autoItemStatus,
                 created_by: { id: instrumentDto.created_by },
                 updated_by: undefined,
                 last_calibration_date: this.parseDateSafe(instrumentDto.last_calibration_date),

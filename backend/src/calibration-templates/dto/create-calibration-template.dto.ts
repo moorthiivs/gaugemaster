@@ -90,6 +90,22 @@ export class CreateCalibrationTemplateDto {
 
   @IsOptional()
   @IsString()
+  diagram_image?: string;
+
+  @IsOptional()
+  @IsNumber()
+  diagram_image_width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  diagram_image_height?: number;
+
+  @IsOptional()
+  @IsString()
+  diagram_image_alignment?: 'center' | 'left' | 'right';
+
+  @IsOptional()
+  @IsString()
   userId?: string;
 
   @IsOptional()

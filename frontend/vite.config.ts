@@ -8,6 +8,9 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    watch: {
+      ignored: ['**/*.xlsx', '**/*.xls', '**/*.csv', '**/*.log']
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:5000',

@@ -98,7 +98,7 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
     "S.No", "NAME OF INSTRUMENT", "ID CODE", "RANGE", "SERIAL NO",
     "LEAST COUNT", "LOCATION", "CALIBRATION FREQUENCY",
     "LAST CALIBRATION DATE", "DUE DATE", "CALIBRATION AGENCY AND TC No", "STATUS", "ITEM STATUS",
-    "Item Make", "Item Type", "PART NO", "Part Name", "Module",
+    "Device Type", "Item Make", "Item Type", "PART NO", "Part Name", "Module",
     "Calibration Source", "Customer", "Sector", "Criticality Level",
     "Cert. No.", "Remarks", "Gauge Issue Date", "Gauges Received By",
     "Gauges Issued By", "Calibration Procedure& Ref Std", "Traceable",
@@ -109,7 +109,7 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
     "001", "Vernier Caliper", "VC-001", "0-150mm", "SN123456",
     "0.02mm", "Lab 1", "12 MONTH", "2024-01-10", "2024-07-10",
     "ABC Labs - TC123", "OK", "Active",
-    "Mitutoyo", "Mechanical", "PN-001", "Slide", "MOD1",
+    "Instrument", "Mitutoyo", "Mechanical", "PN-001", "Slide", "MOD1",
     "External", "Company Name", "Manufacturing", "High",
     "CERT-001", "Tested okay", "2024-01-01", "John Doe",
     "Jane Doe", "ISO 9001", "NABL", "No",
@@ -336,7 +336,35 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
         const data = new Uint8Array(evt.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: "" });
+
+        // Auto-fill / propagate merged cells so every row in a merged range gets the value
+        if (worksheet && worksheet['!merges'] && Array.isArray(worksheet['!merges'])) {
+          worksheet['!merges'].forEach((merge: XLSX.Range) => {
+            const startCellAddress = XLSX.utils.encode_cell(merge.s);
+            const startCell = worksheet[startCellAddress];
+            if (startCell && startCell.v !== undefined && startCell.v !== null && startCell.v !== "") {
+              for (let r = merge.s.r; r <= merge.e.r; ++r) {
+                for (let c = merge.s.c; c <= merge.e.c; ++c) {
+                  if (r === merge.s.r && c === merge.s.c) continue;
+                  const cellAddress = XLSX.utils.encode_cell({ r, c });
+                  worksheet[cellAddress] = {
+                    t: startCell.t,
+                    v: startCell.v,
+                    w: startCell.w,
+                    z: startCell.z,
+                  };
+                }
+              }
+            }
+          });
+        }
+
+        const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: "" });
+
+        // Filter out completely blank rows
+        const rows = rawRows.filter((r) =>
+          Object.values(r).some((val) => val !== undefined && val !== null && val.toString().trim() !== "")
+        );
 
         if (rows.length === 0) {
           toast({ title: "Empty file", description: "The Excel file has no data rows.", variant: "destructive" });

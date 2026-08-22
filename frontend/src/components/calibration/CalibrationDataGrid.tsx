@@ -221,11 +221,13 @@ export function CalibrationDataGrid({
 
       if (customColumns.length > 0) {
         const currentFields = copy.customFields || {};
-        const computedFields: Record<string, any> = {};
+        const computedFields: Record<string, any> = { ...currentFields };
         customColumns.forEach((col) => {
           if (col.type === "formula") {
             const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
             const activeOrder = getActiveColumnOrder();
+            // Provide the latest computed custom fields so subsequent formula columns can read preceding formula results
+            copy.customFields = computedFields;
             const val = evaluateFormulaValue(col, copy, hasDescending, customColumns, activeOrder, tolerance, accVal);
             computedFields[col.id] = { name: col.name, value: val };
           } else {
@@ -236,6 +238,7 @@ export function CalibrationDataGrid({
             const val = typeof existing === "object" && existing !== null && "value" in existing ? existing.value : existing;
             computedFields[col.id] = { name: col.name, value: val ?? "" };
           }
+          copy.customFields = computedFields;
         });
         copy.customFields = computedFields;
       }
@@ -551,18 +554,24 @@ export function CalibrationDataGrid({
     // Ensure custom columns are mapped with name and value for certificate generation
     if (customColumns.length > 0) {
       const currentFields = pt.customFields || {};
-      const computedFields: Record<string, any> = {};
+      const computedFields: Record<string, any> = { ...currentFields };
       customColumns.forEach((col) => {
         if (col.type === "formula") {
           const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
           const activeOrder = getActiveColumnOrder();
+          // Update pt.customFields incrementally so subsequent formula columns (col_error, col_judge) can read the newly computed preceding formula values
+          pt.customFields = computedFields;
           const val = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
           computedFields[col.id] = { name: col.name, value: val };
         } else {
-          const existing = currentFields[col.id];
+          let existing = currentFields[col.id];
+          if (existing === undefined && col.name) {
+            existing = currentFields[col.name];
+          }
           const val = typeof existing === "object" && existing !== null && "value" in existing ? existing.value : existing;
           computedFields[col.id] = { name: col.name, value: val ?? "" };
         }
+        pt.customFields = computedFields;
       });
       pt.customFields = computedFields;
     }

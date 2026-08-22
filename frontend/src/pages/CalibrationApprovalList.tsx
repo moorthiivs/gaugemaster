@@ -545,7 +545,12 @@ export default function CalibrationApprovalList() {
                   const customKeys = Array.from(customColMap.keys());
 
                   // Column ordering & hidden columns matching CertificatePreview & CalibrationWizard
-                  const hidden = new Set(selectedRecord.hidden_columns || []);
+                  const hidden = new Set(
+                    selectedRecord.hidden_columns ||
+                    (selectedRecord.template as any)?.hidden_columns ||
+                    []
+                  );
+                  const showStatusColumn = !hidden.has("status");
                   const columnOrder = selectedRecord.column_order && selectedRecord.column_order.length > 0
                     ? selectedRecord.column_order
                     : [
@@ -682,6 +687,54 @@ export default function CalibrationApprovalList() {
                         </div>
                       )}
 
+                      {/* Optional Diagram / Schematic Image */}
+                      {(() => {
+                        const diagramImg =
+                          selectedRecord.diagram_image ||
+                          ((selectedRecord as any).template as any)?.diagram_image;
+                        if (!diagramImg) return null;
+                        const diagramWidth =
+                          selectedRecord.diagram_image_width ||
+                          ((selectedRecord as any).template as any)?.diagram_image_width ||
+                          240;
+                        const diagramHeight =
+                          selectedRecord.diagram_image_height ||
+                          ((selectedRecord as any).template as any)?.diagram_image_height ||
+                          140;
+                        const diagramAlign =
+                          selectedRecord.diagram_image_alignment ||
+                          ((selectedRecord as any).template as any)?.diagram_image_alignment ||
+                          "center";
+
+                        return (
+                          <div className="border rounded-lg p-2 bg-card space-y-1">
+                            <div className="text-[10px] font-semibold text-muted-foreground uppercase">
+                              Instrument Schematic / Measurement Diagram
+                            </div>
+                            <div
+                              className={`flex ${
+                                diagramAlign === "left"
+                                  ? "justify-start"
+                                  : diagramAlign === "right"
+                                  ? "justify-end"
+                                  : "justify-center"
+                              } p-1 bg-muted/20 rounded`}
+                            >
+                              <img
+                                src={diagramImg}
+                                alt="Instrument Diagram"
+                                style={{
+                                  width: `${diagramWidth}px`,
+                                  maxHeight: `${diagramHeight}px`,
+                                  objectFit: "contain",
+                                }}
+                                className="rounded border bg-background"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })()}
+
                       {/* Test Points Table */}
                       <div className="border rounded-lg overflow-hidden">
                         <div className="bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground border-b flex justify-between items-center">
@@ -697,7 +750,7 @@ export default function CalibrationApprovalList() {
                               {activeColumns.map((colKey: string) => (
                                 <th key={colKey} className="px-3 py-2">{getColumnTitle(colKey)}</th>
                               ))}
-                              <th className="px-3 py-2">Status</th>
+                              {showStatusColumn && <th className="px-3 py-2">Status</th>}
                             </tr>
                           </thead>
                           <tbody className="divide-y font-mono">
@@ -711,18 +764,20 @@ export default function CalibrationApprovalList() {
                                       {getCellValue(pt, colKey)}
                                     </td>
                                   ))}
-                                  <td className="px-3 py-2 font-sans">
-                                    <Badge
-                                      variant="outline"
-                                      className={
-                                        ptStatus === "PASS"
-                                          ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 text-[10px]"
-                                          : "bg-red-500/10 text-red-700 border-red-500/30 text-[10px]"
-                                      }
-                                    >
-                                      {ptStatus}
-                                    </Badge>
-                                  </td>
+                                  {showStatusColumn && (
+                                    <td className="px-3 py-2 font-sans">
+                                      <Badge
+                                        variant="outline"
+                                        className={
+                                          ptStatus === "PASS"
+                                            ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 text-[10px]"
+                                            : "bg-red-500/10 text-red-700 border-red-500/30 text-[10px]"
+                                        }
+                                      >
+                                        {ptStatus}
+                                      </Badge>
+                                    </td>
+                                  )}
                                 </tr>
                               );
                             })}

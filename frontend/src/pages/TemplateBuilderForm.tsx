@@ -11,12 +11,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2 } from "lucide-react";
+import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { CALIBRATION_TYPES, CalibrationPoint } from "@/types/calibration";
 import { CalibrationTemplate } from "@/types/template";
 import { getTemplate, getTemplates, createTemplate, updateTemplate } from "@/lib/templateActions";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 
 export default function TemplateBuilderForm() {
   useSEO({
@@ -35,6 +36,7 @@ export default function TemplateBuilderForm() {
   const [isFullWindowPage, setIsFullWindowPage] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [showCertPreviewModal, setShowCertPreviewModal] = useState(false);
   const [existingTemplates, setExistingTemplates] = useState<CalibrationTemplate[]>([]);
 
   // Form State
@@ -74,6 +76,12 @@ export default function TemplateBuilderForm() {
   // Status Formula
   const [statusRuleType, setStatusRuleType] = useState<"default" | "custom_formula">("default");
   const [statusFormula, setStatusFormula] = useState<string>("");
+
+  // Diagram / Schematic Image State (Optional)
+  const [diagramImage, setDiagramImage] = useState<string | null>(null);
+  const [diagramWidth, setDiagramWidth] = useState<number>(240);
+  const [diagramHeight, setDiagramHeight] = useState<number>(140);
+  const [diagramAlignment, setDiagramAlignment] = useState<"center" | "left" | "right">("center");
 
   // Helper to mark form as modified
   const markDirty = () => {
@@ -131,6 +139,11 @@ export default function TemplateBuilderForm() {
         setProcedureReference(tpl.procedure_reference || "AE/CAL-SOP/01");
         setStatusRuleType((tpl.status_rule_type as "default" | "custom_formula") || "default");
         setStatusFormula(tpl.status_formula || "");
+
+        if (tpl.diagram_image) setDiagramImage(tpl.diagram_image);
+        if (tpl.diagram_image_width) setDiagramWidth(tpl.diagram_image_width);
+        if (tpl.diagram_image_height) setDiagramHeight(tpl.diagram_image_height);
+        if (tpl.diagram_image_alignment) setDiagramAlignment(tpl.diagram_image_alignment as "center" | "left" | "right");
 
         if ((tpl as any).acceptance_criteria) {
           setEnableAcceptance(!!(tpl as any).acceptance_criteria.enabled);
@@ -221,6 +234,10 @@ export default function TemplateBuilderForm() {
         column_order: columnOrder,
         hidden_columns: hiddenColumns,
         decimal_places: decimalPlaces,
+        diagram_image: diagramImage || undefined,
+        diagram_image_width: diagramWidth,
+        diagram_image_height: diagramHeight,
+        diagram_image_alignment: diagramAlignment,
         remarks,
         standard_reference: standardReference,
         procedure_reference: procedureReference,
@@ -315,6 +332,16 @@ export default function TemplateBuilderForm() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowCertPreviewModal(true)}
+            className="gap-1.5 text-xs font-semibold shadow-xs hover:bg-primary/5 hover:text-primary border-primary/30"
+            title="Preview Full Calibration Certificate layout with current template settings"
+          >
+            <Eye className="w-3.5 h-3.5 text-primary" />
+            Preview Certificate
+          </Button>
           <Button
             variant={isFullWindowPage ? "default" : "outline"}
             size="sm"
@@ -508,6 +535,226 @@ export default function TemplateBuilderForm() {
               )}
             </div>
 
+            {/* Optional Diagram / Schematic Image */}
+            <div className="p-3 bg-muted/30 rounded-xl space-y-3 border">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 font-bold text-xs">
+                  <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                  Diagram / Schematic Image (Optional)
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCertPreviewModal(true)}
+                    className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                    title="Open Full Certificate Preview"
+                  >
+                    <Eye className="w-3 h-3" />
+                    Full Preview
+                  </Button>
+                  {diagramImage && (
+                    <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 text-[10px]">
+                      Uploaded
+                    </Badge>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
+              </p>
+
+              {!diagramImage ? (
+                <div className="border-2 border-dashed border-muted-foreground/30 hover:border-primary/50 rounded-lg p-3 text-center transition-colors bg-background/50">
+                  <input
+                    type="file"
+                    id="diagram-upload"
+                    accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        if (file.size > 5 * 1024 * 1024) {
+                          toast.error("Image file size should be less than 5MB");
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          setDiagramImage(reader.result as string);
+                          markDirty();
+                          toast.success("Diagram image loaded!");
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                  <label htmlFor="diagram-upload" className="cursor-pointer flex flex-col items-center gap-1.5 py-1">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                      <Upload className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-semibold text-primary">Click to Upload Diagram Image</span>
+                    <span className="text-[10px] text-muted-foreground">PNG, JPG, SVG, WebP (Max 5MB)</span>
+                  </label>
+                </div>
+              ) : (
+                <div className="space-y-3 bg-background p-2.5 rounded-lg border">
+                  {/* Live Preview Box */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                      <span>Live Certificate Preview</span>
+                      <span className="font-mono text-[10px]">{diagramWidth}px × {diagramHeight}px • {diagramAlignment}</span>
+                    </div>
+                    <div className={`border rounded-md bg-slate-50 dark:bg-slate-900 p-2 flex ${diagramAlignment === 'left' ? 'justify-start' : diagramAlignment === 'right' ? 'justify-end' : 'justify-center'} overflow-hidden min-h-[90px] max-h-[200px] items-center`}>
+                      <img
+                        src={diagramImage}
+                        alt="Diagram Preview"
+                        style={{
+                          width: `${diagramWidth}px`,
+                          maxHeight: `${diagramHeight}px`,
+                          objectFit: "contain",
+                        }}
+                        className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Size & Alignment Customization Controls */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{diagramWidth}px</span></Label>
+                      </div>
+                      <input
+                        type="range"
+                        min={80}
+                        max={450}
+                        step={5}
+                        value={diagramWidth}
+                        onChange={(e) => {
+                          setDiagramWidth(parseInt(e.target.value, 10));
+                          markDirty();
+                        }}
+                        className="w-full accent-primary h-1.5 cursor-pointer"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{diagramHeight}px</span></Label>
+                      </div>
+                      <input
+                        type="range"
+                        min={40}
+                        max={260}
+                        step={5}
+                        value={diagramHeight}
+                        onChange={(e) => {
+                          setDiagramHeight(parseInt(e.target.value, 10));
+                          markDirty();
+                        }}
+                        className="w-full accent-primary h-1.5 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Alignment & Actions */}
+                  <div className="flex items-center justify-between gap-2 pt-1 border-t">
+                    <div className="flex items-center gap-1">
+                      <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
+                      <Button
+                        type="button"
+                        variant={diagramAlignment === "left" ? "default" : "outline"}
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => { setDiagramAlignment("left"); markDirty(); }}
+                        title="Align Left"
+                      >
+                        <AlignLeft className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={diagramAlignment === "center" ? "default" : "outline"}
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => { setDiagramAlignment("center"); markDirty(); }}
+                        title="Align Center"
+                      >
+                        <AlignCenter className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={diagramAlignment === "right" ? "default" : "outline"}
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => { setDiagramAlignment("right"); markDirty(); }}
+                        title="Align Right"
+                      >
+                        <AlignRight className="w-3 h-3" />
+                      </Button>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <label
+                        htmlFor="diagram-replace-upload"
+                        className="cursor-pointer inline-flex items-center gap-1 text-[10px] h-6 px-2 border rounded-md hover:bg-muted font-medium"
+                      >
+                        <Upload className="w-2.5 h-2.5" />
+                        Replace
+                      </label>
+                      <input
+                        type="file"
+                        id="diagram-replace-upload"
+                        accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (file.size > 5 * 1024 * 1024) {
+                              toast.error("Image file size should be less than 5MB");
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              setDiagramImage(reader.result as string);
+                              markDirty();
+                              toast.success("Diagram image replaced!");
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                          setDiagramImage(null);
+                          markDirty();
+                          toast.info("Diagram image removed");
+                        }}
+                      >
+                        <Trash2 className="w-2.5 h-2.5 mr-1" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Full Certificate Preview Button */}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCertPreviewModal(true)}
+                    className="w-full text-xs font-semibold gap-1.5 h-7.5 bg-primary/5 hover:bg-primary/10 text-primary border border-primary/20"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    View in Full Certificate Preview
+                  </Button>
+                </div>
+              )}
+            </div>
+
             {/* Procedure Reference Template */}
             <div className="space-y-1.5">
               <Label className="text-xs">Procedure Reference (SOP)</Label>
@@ -654,6 +901,101 @@ export default function TemplateBuilderForm() {
             >
               <Save className="w-3.5 h-3.5" />
               Save & Exit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Full Certificate Preview Modal */}
+      <Dialog open={showCertPreviewModal} onOpenChange={setShowCertPreviewModal}>
+        <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col p-4 sm:p-6 overflow-hidden">
+          <DialogHeader className="pb-3 border-b shrink-0 flex flex-row items-center justify-between">
+            <div>
+              <DialogTitle className="text-base font-bold flex items-center gap-2">
+                <Eye className="w-4 h-4 text-primary" />
+                Live Calibration Certificate Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs">
+                Simulated real-time layout of the calibration certificate with your template points, custom formula columns, and diagram schematic.
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto py-3 px-1 flex justify-center bg-slate-100 dark:bg-slate-900/60 rounded-lg">
+            <CertificatePreview
+              calibration={{
+                certificate_number: "PREVIEW-DEMO-001",
+                ulr_number: "ULR-DEMO-2026-0001",
+                calibration_date: new Date().toISOString().split("T")[0],
+                certificate_issue_date: new Date().toISOString().split("T")[0],
+                next_calibration_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+                instrument: {
+                  name: name || "Sample Instrument",
+                  make: "Standard Make",
+                  range: "0 - 100",
+                  least_count: "0.001",
+                  unit: defaultUnit || "mm",
+                  serial_no: "SN-SAMPLE-01",
+                  id_no: "ID-SAMPLE-01",
+                  location: "Quality Lab / Shop Floor",
+                  department: "Quality Assurance",
+                } as any,
+                reference_standards: [
+                  {
+                    name: "Gauge Block Set Grade K",
+                    make: "Mitutoyo",
+                    id: "REF-STD-01",
+                    traceable_to: "NPL / NABL Accredited Lab",
+                    validity: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+                  },
+                ],
+                environmental_conditions: {
+                  temperature: envTemp,
+                  humidity: envHumidity,
+                  pressure: envPressure,
+                },
+                procedure_reference: procedureReference || "AE/CAL-SOP/01",
+                standard_reference: standardReference || remarks || "Standard calibration per ISO/IEC 17025",
+                calibration_points: points,
+                custom_columns: customColumns,
+                standard_columns_config: standardColumnConfigs,
+                column_order: columnOrder,
+                hidden_columns: hiddenColumns,
+                decimal_places: decimalPlaces,
+                acceptance_criteria: {
+                  enabled: enableAcceptance,
+                  value: acceptanceValue === "" ? 0 : Number(acceptanceValue),
+                  type: acceptanceType,
+                },
+                diagram_image: diagramImage || undefined,
+                diagram_image_width: diagramWidth,
+                diagram_image_height: diagramHeight,
+                diagram_image_alignment: diagramAlignment,
+                uncertainty: "± 0.0015 mm",
+                verdict: "PASS",
+                remarks: remarks || "Standard calibration per ISO/IEC 17025",
+                calibrated_by: user?.name || "Calibrator",
+                calibrated_by_designation: "Calibration Engineer",
+                reviewed_by: "Quality Manager",
+                reviewed_by_designation: "Quality Head",
+                approved_by: "Authorised Signatory",
+                approved_by_designation: "Technical Director",
+              }}
+            />
+          </div>
+
+          <DialogFooter className="pt-3 border-t shrink-0 flex flex-row items-center justify-between sm:justify-between">
+            <div className="text-[11px] text-muted-foreground">
+              {diagramImage ? (
+                <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                  ✓ Diagram Schematic embedded: {diagramWidth}px × {diagramHeight}px ({diagramAlignment})
+                </span>
+              ) : (
+                <span>No diagram attached (Standard layout)</span>
+              )}
+            </div>
+            <Button variant="default" size="sm" onClick={() => setShowCertPreviewModal(false)}>
+              Close Preview
             </Button>
           </DialogFooter>
         </DialogContent>
