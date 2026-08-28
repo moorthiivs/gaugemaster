@@ -111,6 +111,7 @@ const fonts = {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
+import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
 
 @Injectable()
 export class CertificateService {
@@ -121,6 +122,8 @@ export class CertificateService {
     private readonly reportTemplatesService: ReportTemplatesService,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(CalibrationTemplate)
+    private readonly calibrationTemplateRepo: Repository<CalibrationTemplate>,
   ) {}
 
   /**
@@ -165,6 +168,11 @@ export class CertificateService {
       temperature: '-',
       humidity: '-',
     };
+    const isGauge =
+      (inst?.device_type || '').toLowerCase().includes('gauge') ||
+      ((inst as any)?.item_type || '').toLowerCase().includes('gauge') ||
+      (calibration.calibration_type || '').toLowerCase().includes('gauge');
+    const rangeLabel = isGauge ? 'Specification' : 'Range';
 
     // ── Resolve company header/footer ────────────────────────
     let headerText = '';
@@ -189,6 +197,31 @@ export class CertificateService {
       footerText = userSettings?.reportConfig?.footerText || '';
     }
 
+    // ── Fetch latest Calibration Template from database if linked ──
+    let latestTemplate: CalibrationTemplate | null = null;
+    const tplId = calibration.template_id || templateId;
+    if (tplId && tplId !== 'none' && tplId !== 'default' && tplId !== 'undefined' && tplId !== 'null') {
+      try {
+        latestTemplate = await this.calibrationTemplateRepo.findOne({ where: { id: tplId } });
+      } catch (e) {}
+    }
+    if (!latestTemplate && (calibration.template_name || (calibration as any).instrument?.item_type || (calibration as any).instrument?.name)) {
+      try {
+        const candidates = [
+          calibration.template_name,
+          (calibration as any).instrument?.item_type,
+          (calibration as any).instrument?.name,
+        ].filter(Boolean);
+        for (const c of candidates) {
+          const found = await this.calibrationTemplateRepo.findOne({ where: { name: c } });
+          if (found) {
+            latestTemplate = found;
+            break;
+          }
+        }
+      } catch (e) {}
+    }
+
     const certConfig = userId
       ? (await this.settingsService.findOneByUserId(userId))?.certificateConfig
       : null;
@@ -196,8 +229,15 @@ export class CertificateService {
       certConfig?.headerCompanyName || 'Company Name';
     const headerCompanySubtitle =
       certConfig?.headerCompanySubtitle || '(CALIBRATION LABORATORY)';
-    const headerRightBoxText1 = certConfig?.headerRightBoxText1 || 'NABL / LAB';
-    const headerRightBoxText2 = certConfig?.headerRightBoxText2 || 'CC - 2632';
+    const docNo =
+      calibration.doc_no ||
+      (calibration as any).docNo ||
+      latestTemplate?.doc_no ||
+      (latestTemplate as any)?.docNo ||
+      (calibration as any).template?.doc_no ||
+      (calibration as any).template?.docNo;
+    const headerRightBoxText1 = docNo ? 'Doc. No.' : (certConfig?.headerRightBoxText1 || 'NABL / LAB');
+    const headerRightBoxText2 = docNo || certConfig?.headerRightBoxText2 || 'CC - 2632';
     const footerLine1 = certConfig?.footerLine1 || 'CALIBRATION CENTER :';
     const footerLine2 =
       certConfig?.footerLine2 ||
@@ -310,6 +350,12 @@ export class CertificateService {
     };
 
     // ── Build calibration data table ─────────────────────────
+    const hasDiagram = Boolean(
+      calibration.diagram_image ||
+      latestTemplate?.diagram_image ||
+      ((calibration as any).template as any)?.diagram_image,
+    );
+    const isDense = hasDiagram || points.length > 5;
     const hasDescription = points.some(
       (pt: any) => pt.description && String(pt.description).trim() !== '',
     );
@@ -553,7 +599,7 @@ export class CertificateService {
         },
       ];
 
-      activeColumns.forEach((k) => {
+      activeColumnsNoStatus.forEach((k) => {
         if (k === 'description')
           row.push({
             text: String((pt as any).description || '-'),
@@ -587,7 +633,6 @@ export class CertificateService {
             text: safeNum(pt.error, getColDec('error')),
             style: 'tdCellMono',
           });
-        else if (k === 'status') return;
         else {
           // Custom column: extract raw value
           const obj = ((pt as any).customFields as any)?.[k];
@@ -641,11 +686,48 @@ export class CertificateService {
     });
 
     const totalCols = dataTableHeader.length;
-    const tableWidths: any[] = Array(totalCols).fill('*');
-    tableWidths[0] = 35; // Sr No column width
-    if (showStatusColumn) {
-      tableWidths[totalCols - 1] = 45; // Status column width
+    const tableFontSize =
+      totalCols > 14 ? 4.5 : totalCols > 12 ? 4.8 : totalCols > 10 ? 5.2 : totalCols > 7 ? 6.0 : isDense ? 6.8 : 7.5;
+    const tableMonoFontSize =
+      totalCols > 14 ? 4.2 : totalCols > 12 ? 4.5 : totalCols > 10 ? 4.9 : totalCols > 7 ? 5.7 : isDense ? 6.5 : 7.2;
+
+    // Auto landscape for very wide tables (12+ total columns)
+    const useLandscape = totalCols > 12;
+
+    // ── Auto-adjust column widths to strictly fit within printable page width ──
+    // Subtract cell padding (both sides per column) and border line widths from the budget
+    const cellPadPerCol = totalCols > 12 ? 1.6 : totalCols > 9 ? 2.0 : totalCols > 7 ? 3.0 : 5.0; // paddingLeft + paddingRight
+    const borderOverhead = (totalCols + 1) * 0.5; // 0.5pt border per vertical line
+    const pageContentWidth = useLandscape ? 802.0 : 555.0; // A4 landscape vs portrait usable width
+    const totalAvailableWidth = pageContentWidth - (totalCols * cellPadPerCol) - borderOverhead;
+    const srNoWidth = totalCols > 12 ? 18 : totalCols > 9 ? 22 : totalCols > 7 ? 26 : 30;
+    const statusWidth = showStatusColumn ? (totalCols > 12 ? 28 : totalCols > 9 ? 32 : totalCols > 7 ? 36 : 42) : 0;
+    const remainingWidth = totalAvailableWidth - srNoWidth - statusWidth;
+
+    const colWeights = activeColumnsNoStatus.map((k) =>
+      k === 'description' ? (totalCols > 12 ? 1.2 : totalCols > 8 ? 1.4 : 2.0) : 1.0,
+    );
+    const sumWeights = colWeights.reduce((a, b) => a + b, 0) || 1;
+
+    const dataColWidths = colWeights.map(
+      (w) => Math.round(((w * remainingWidth) / sumWeights) * 100) / 100,
+    );
+
+    // Adjust any rounding delta onto the first column
+    const currentSum =
+      srNoWidth +
+      statusWidth +
+      dataColWidths.reduce((a, b) => a + b, 0);
+    const delta = Math.round((totalAvailableWidth - currentSum) * 100) / 100;
+    if (dataColWidths.length > 0 && Math.abs(delta) > 0.01) {
+      dataColWidths[0] = Math.round((dataColWidths[0] + delta) * 100) / 100;
     }
+
+    const tableWidths: number[] = [
+      srNoWidth,
+      ...dataColWidths,
+      ...(showStatusColumn ? [statusWidth] : []),
+    ];
 
     // ── Reference Standard rows ──
     let referenceStandards: any[] = [];
@@ -724,17 +806,21 @@ export class CertificateService {
 
     // ── Resolve Diagram Image to base64 for pdfmake ──
     const rawDiagram =
+      latestTemplate?.diagram_image ||
       calibration.diagram_image ||
       ((calibration as any).template as any)?.diagram_image;
     const diagramWidth =
+      latestTemplate?.diagram_image_width ||
       calibration.diagram_image_width ||
       ((calibration as any).template as any)?.diagram_image_width ||
-      240;
+      350;
     const diagramHeight =
+      latestTemplate?.diagram_image_height ||
       calibration.diagram_image_height ||
       ((calibration as any).template as any)?.diagram_image_height ||
-      140;
+      160;
     const diagramAlignment =
+      latestTemplate?.diagram_image_alignment ||
       calibration.diagram_image_alignment ||
       ((calibration as any).template as any)?.diagram_image_alignment ||
       'center';
@@ -756,6 +842,9 @@ export class CertificateService {
         } catch (e) {}
       }
     }
+
+    const targetDiagramWidth = Math.min(diagramWidth, 545);
+    const targetDiagramHeight = Math.min(diagramHeight, 260);
 
     const headerBgColor = (certConfig as any)?.headerBgColor || '#54c6f3'; // Cyan sky blue banner color matching Image 1 & Image 2 layout
 
@@ -831,13 +920,353 @@ export class CertificateService {
       };
     }
 
-    const isDense = points.length > 7;
+    // ── Check for Canvas Template Layout Blocks ──
+    const isCanvasTemplate =
+      calibration.is_canvas_template ||
+      (calibration.layout_blocks && calibration.layout_blocks.length > 0) ||
+      (latestTemplate as any)?.is_canvas_template ||
+      ((latestTemplate as any)?.layout_blocks && (latestTemplate as any).layout_blocks.length > 0);
+
+    const canvasBlocks =
+      calibration.layout_blocks ||
+      (latestTemplate as any)?.layout_blocks ||
+      [];
+
+    const buildPdfCanvasBlocks = (blocks: any[], dense: boolean): any[] => {
+      const resultElements: any[] = [];
+
+      const evalRowFormula = (formula: string, row: any, tolerance: number = 0.02): string => {
+        if (!formula) return '-';
+        try {
+          const t1 = parseFloat(row.t1 ?? row.col_1) || 0;
+          const t2 = parseFloat(row.t2 ?? row.col_2) || 0;
+          const t3 = parseFloat(row.t3 ?? row.col_3) || 0;
+          const t4 = parseFloat(row.t4 ?? row.col_4) || 0;
+          const t5 = parseFloat(row.t5 ?? row.col_5) || 0;
+          const nominal = parseFloat(row.nominal) || 0;
+          const reading = parseFloat(row.reading ?? row.ascending_reading ?? row.t1) || 0;
+          const tol = parseFloat(row.tolerance ?? tolerance) || 0.02;
+
+          if (/AVERAGE/i.test(formula)) {
+            const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
+              .map((v) => parseFloat(v))
+              .filter((v) => !isNaN(v) && v !== 0);
+            if (trials.length > 0) {
+              const sum = trials.reduce((a, b) => a + b, 0);
+              return (sum / trials.length).toFixed(3);
+            }
+            return (t1 || nominal).toFixed(3);
+          }
+          if (/avg\s*-\s*nominal/i.test(formula)) {
+            const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
+            const err = avgVal - nominal;
+            return (err >= 0 ? '+' : '') + err.toFixed(3);
+          }
+          if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
+            const readVal = parseFloat(row.reading ?? row.ascending_reading ?? nominal);
+            const err = readVal - nominal;
+            return (err >= 0 ? '+' : '') + err.toFixed(3);
+          }
+          if (/PASS.*FAIL/i.test(formula)) {
+            const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
+            return errVal <= tol ? 'PASS' : 'FAIL';
+          }
+          return row[formula] || '-';
+        } catch {
+          return '-';
+        }
+      };
+
+      const buildSingleTableElement = (tbl: any, isHalf: boolean = false): any => {
+        const numCols = tbl.columns?.length || 1;
+        const colWidths = tbl.columns?.map(() => '*') || ['*'];
+        const tblBody: any[] = [];
+
+        // Title Row
+        tblBody.push([
+          {
+            text: `${tbl.title || 'Table'} ${tbl.unit ? `(ALL VALUES ARE IN ${tbl.unit})` : ''}`,
+            style: 'boxHeader',
+            fontSize: dense ? 6.8 : 7.5,
+            colSpan: numCols,
+          },
+          ...Array(numCols - 1).fill({}),
+        ]);
+
+        // Header Row
+        tblBody.push(
+          tbl.columns.map((col: any) => ({
+            text: col.label || col.id,
+            style: 'thCell',
+            fontSize: dense ? 6 : 7,
+            fillColor: '#f1f5f9',
+          }))
+        );
+
+        // Data Rows
+        (tbl.rows || []).forEach((row: any) => {
+          const rowCells: any[] = [];
+          tbl.columns.forEach((col: any) => {
+            let val: any = row[col.id];
+            if (col.type === 'nominal') {
+              val = row.nominal !== undefined ? Number(row.nominal).toFixed(2) : '-';
+            } else if (col.type === 'text') {
+              val = row.description || row[col.id] || '-';
+            } else if (col.type === 'formula' || col.type === 'status') {
+              val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
+            } else if (val === undefined || val === null || val === '') {
+              val = '-';
+            }
+
+            const isPass = String(val).toUpperCase() === 'PASS';
+            const isFail = String(val).toUpperCase() === 'FAIL';
+
+            rowCells.push({
+              text: String(val),
+              style: col.type === 'text' ? 'tdCell' : 'tdCellMono',
+              fontSize: dense ? 5.8 : 6.8,
+              color: isPass ? '#15803d' : isFail ? '#b91c1c' : '#000000',
+              bold: isPass || isFail || col.type === 'nominal',
+            });
+          });
+          tblBody.push(rowCells);
+        });
+
+        // Footer Note (if any)
+        if (tbl.footerNote) {
+          tblBody.push([
+            {
+              text: tbl.footerNote,
+              fontSize: dense ? 5.5 : 6.5,
+              italics: true,
+              alignment: 'center',
+              fillColor: '#f8fafc',
+              colSpan: numCols,
+            },
+            ...Array(numCols - 1).fill({}),
+          ]);
+        }
+
+        return {
+          table: {
+            dontBreakRows: true,
+            widths: colWidths,
+            body: tblBody,
+          },
+          layout: {
+            hLineWidth: () => 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#000000',
+            vLineColor: () => '#000000',
+          },
+          margin: [0, 0, 0, dense ? 2 : 3],
+        };
+      };
+
+      blocks.forEach((block: any) => {
+        if (block.type === 'table_grid') {
+          resultElements.push(buildSingleTableElement(block));
+        } else if (block.type === 'split_row') {
+          const leftChild = block.children?.[0];
+          const rightChild = block.children?.[1];
+
+          const buildChildPdf = (child: any) => {
+            if (!child || child.type === 'blank' || child.type === 'empty' || (child.type === 'text_block' && !child.content?.trim())) {
+              return [];
+            }
+            if (child.type === 'table_grid') {
+              return [buildSingleTableElement(child, true)];
+            }
+            if (child.type === 'text_block' && child.content?.trim()) {
+              return [
+                {
+                  table: {
+                    widths: ['*'],
+                    body: [
+                      [
+                        {
+                          text: child.content,
+                          fontSize: dense ? 6.5 : 7.5,
+                          alignment: 'center',
+                          italics: true,
+                          margin: [2, 2, 2, 2],
+                        },
+                      ],
+                    ],
+                  },
+                  layout: {
+                    hLineWidth: () => 0.5,
+                    vLineWidth: () => 0.5,
+                    hLineColor: () => '#000000',
+                    vLineColor: () => '#000000',
+                  },
+                },
+              ];
+            }
+            return [];
+          };
+
+          resultElements.push({
+            columns: [
+              {
+                width: '49%',
+                stack: buildChildPdf(leftChild),
+              },
+              { width: '2%', text: '' },
+              {
+                width: '49%',
+                stack: buildChildPdf(rightChild),
+              },
+            ],
+            margin: [0, 0, 0, dense ? 2 : 3],
+          });
+        } else if (block.type === 'matrix_table') {
+          const matrixBody: any[] = [];
+          
+          // 1. Calculate max columns from rows or headers
+          let matrixCols = block.rows?.[0]?.length || 1;
+          (block.headers || []).forEach((hRow: any[]) => {
+            let rowSpanSum = 0;
+            hRow.forEach((c: any) => {
+              rowSpanSum += (c.colSpan || 1);
+            });
+            if (rowSpanSum > matrixCols) matrixCols = rowSpanSum;
+          });
+          (block.rows || []).forEach((r: any[]) => {
+            if (r.length > matrixCols) matrixCols = r.length;
+          });
+
+          const colWidths = Array(matrixCols).fill('*');
+
+          // Title
+          matrixBody.push([
+            {
+              text: block.title || 'Matrix Table',
+              style: 'boxHeader',
+              fontSize: dense ? 6.8 : 7.5,
+              colSpan: matrixCols,
+            },
+            ...Array(matrixCols - 1).fill({}),
+          ]);
+
+          // Build 2D Header Grid to safely handle multi-row colSpan & rowSpan without undefined cells
+          const numHeaderRows = (block.headers || []).length;
+          const headerGrid: any[][] = Array.from({ length: numHeaderRows }, () =>
+            Array(matrixCols).fill(null)
+          );
+
+          (block.headers || []).forEach((hRow: any[], rIdx: number) => {
+            hRow.forEach((cell: any) => {
+              // Find first empty cell in this row
+              let cIdx = 0;
+              while (cIdx < matrixCols && headerGrid[rIdx][cIdx] !== null) {
+                cIdx++;
+              }
+              if (cIdx >= matrixCols) return;
+
+              const cSpan = Math.min(cell.colSpan || 1, matrixCols - cIdx);
+              const rSpan = Math.min(cell.rowSpan || 1, numHeaderRows - rIdx);
+
+              // Set the origin cell
+              headerGrid[rIdx][cIdx] = {
+                text: cell.text || '',
+                style: 'thCell',
+                fontSize: dense ? 5.5 : 6.5,
+                fillColor: '#f1f5f9',
+                colSpan: cSpan,
+                rowSpan: rSpan,
+              };
+
+              // Fill dummy objects for spanned slots
+              for (let dr = 0; dr < rSpan; dr++) {
+                for (let dc = 0; dc < cSpan; dc++) {
+                  if (dr !== 0 || dc !== 0) {
+                    const targetR = rIdx + dr;
+                    const targetC = cIdx + dc;
+                    if (targetR < numHeaderRows && targetC < matrixCols) {
+                      headerGrid[targetR][targetC] = {};
+                    }
+                  }
+                }
+              }
+            });
+          });
+
+          // Ensure no null entries exist in headerGrid
+          headerGrid.forEach((hRow) => {
+            for (let c = 0; c < matrixCols; c++) {
+              if (hRow[c] === null) {
+                hRow[c] = {};
+              }
+            }
+            matrixBody.push(hRow);
+          });
+
+          // Data Rows
+          (block.rows || []).forEach((r: any[]) => {
+            const rowCells: any[] = [];
+            for (let c = 0; c < matrixCols; c++) {
+              rowCells.push({
+                text: String(r[c] ?? '-'),
+                style: 'tdCellMono',
+                fontSize: dense ? 5.5 : 6.5,
+                alignment: 'center',
+              });
+            }
+            matrixBody.push(rowCells);
+          });
+
+          resultElements.push({
+            table: {
+              dontBreakRows: true,
+              widths: colWidths,
+              body: matrixBody,
+            },
+            layout: {
+              hLineWidth: () => 0.5,
+              vLineWidth: () => 0.5,
+              hLineColor: () => '#000000',
+              vLineColor: () => '#000000',
+            },
+            margin: [0, 0, 0, dense ? 2 : 3],
+          });
+        } else if (block.type === 'text_block') {
+          resultElements.push({
+            table: {
+              widths: ['*'],
+              body: [
+                [
+                  {
+                    text: block.content || '',
+                    fontSize: dense ? 6.5 : 7.5,
+                    alignment: 'center',
+                    italics: true,
+                    margin: [2, 2, 2, 2],
+                  },
+                ],
+              ],
+            },
+            layout: {
+              hLineWidth: () => 0.5,
+              vLineWidth: () => 0.5,
+              hLineColor: () => '#000000',
+              vLineColor: () => '#000000',
+            },
+            margin: [0, 0, 0, dense ? 2 : 3],
+          });
+        } else if (block.type === 'page_break') {
+          resultElements.push({ text: '', pageBreak: 'before' });
+        }
+      });
+
+      return resultElements;
+    };
 
     // ── PDF Document Definition (NABL Certificate Layout) ──
     const docDefinition = {
       pageSize: 'A4' as const,
-      pageOrientation: 'portrait' as const,
-      pageMargins: [20, 48, 20, 68] as [number, number, number, number],
+      pageOrientation: (useLandscape ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
+      pageMargins: [20, 48, 20, 48] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
@@ -850,19 +1279,44 @@ export class CertificateService {
           }
         : {}),
 
-      // ── 0. BACKGROUND OUTLINE BORDER (Always surrounds content on EVERY page) ──
+      // ── 0. BACKGROUND OUTLINE BORDER & FULL-BLEED BANNERS (On EVERY page) ──
       background: (currentPage: number, pageCount: number) => {
+        const pageWidth = useLandscape ? 841.89 : 595.28;
+        const pageHeight = useLandscape ? 595.28 : 841.89;
+        const footerY = useLandscape ? 547 : 794;
+        const footerHeight = pageHeight - footerY;
+        const rectHeight = footerY - 46;
+
         return [
           {
             canvas: [
+              // Top Header Banner background (edge-to-edge)
+              {
+                type: 'rect',
+                x: 0,
+                y: 0,
+                w: pageWidth,
+                h: 46,
+                color: headerBgColor,
+              },
+              // Outer border rect surrounding certificate body
               {
                 type: 'rect',
                 x: 18,
                 y: 46,
-                w: 559.28,
-                h: 724,
+                w: pageWidth - 36,
+                h: rectHeight,
                 lineWidth: 1,
                 lineColor: '#000000',
+              },
+              // Bottom Footer Banner background (Edge-to-edge flush to bottom edge of page)
+              {
+                type: 'rect',
+                x: 0,
+                y: footerY,
+                w: pageWidth,
+                h: footerHeight,
+                color: headerBgColor,
               },
             ],
           },
@@ -871,9 +1325,18 @@ export class CertificateService {
 
       // ── 1. HEADER (Edge-to-Edge Full Width Banner at Top) ──
       header: (currentPage: number, pageCount: number) => {
+        const rightTextSize =
+          headerRightBoxText2.length > 20
+            ? 7
+            : headerRightBoxText2.length > 15
+            ? 8
+            : headerRightBoxText2.length > 12
+            ? 8.5
+            : 9.5;
+
         return {
           table: {
-            widths: [190, '*', 70],
+            widths: [135, '*', 155],
             body: [
               [
                 {
@@ -884,7 +1347,7 @@ export class CertificateService {
                 {
                   text: 'CALIBRATION CERTIFICATE',
                   bold: true,
-                  fontSize: 20,
+                  fontSize: 19,
                   color: '#000',
                   alignment: 'center',
                   fillColor: headerBgColor,
@@ -894,22 +1357,24 @@ export class CertificateService {
                   stack: [
                     {
                       text: headerRightBoxText1,
-                      fontSize: 8,
+                      fontSize: 7.5,
                       bold: true,
                       alignment: 'right',
                       color: '#000000',
+                      noWrap: true,
                     },
                     {
                       text: headerRightBoxText2,
-                      fontSize: 10,
+                      fontSize: rightTextSize,
                       bold: true,
                       alignment: 'right',
                       color: '#000000',
+                      noWrap: true,
                       margin: [0, 2, 0, 0],
                     },
                   ],
                   fillColor: headerBgColor,
-                  margin: [0, 8, 25, 5],
+                  margin: [0, 8, 18, 5],
                 },
               ],
             ],
@@ -924,53 +1389,65 @@ export class CertificateService {
 
       // ── 3. FOOTER (Edge-to-Edge Full Width Banner at Absolute Bottom) ──
       footer: (currentPage: number, pageCount: number) => {
+        const pageWidth = useLandscape ? 841.89 : 595.28;
+        const footerItems: any[] = [
+          {
+            text: footerLine1 || 'CALIBRATION CENTER :',
+            bold: true,
+            fontSize: 7.5,
+            alignment: 'center',
+            color: '#000000',
+            margin: [0, 0, 0, 1],
+          },
+          ...(footerLine2
+            ? [
+                {
+                  text: footerLine2,
+                  fontSize: 6.8,
+                  bold: true,
+                  alignment: 'center',
+                  color: '#000000',
+                  margin: [0, 0, 0, 1],
+                },
+              ]
+            : []),
+          {
+            text:
+              footerLine3 ||
+              'Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948',
+            fontSize: 6.8,
+            bold: true,
+            alignment: 'center',
+            color: '#000000',
+            margin: [0, 0, 0, (certConfig as any)?.footerLine4 ? 1 : 0],
+          },
+          ...((certConfig as any)?.footerLine4
+            ? [
+                {
+                  text: (certConfig as any).footerLine4,
+                  fontSize: 6.8,
+                  bold: true,
+                  alignment: 'center',
+                  color: '#000000',
+                },
+              ]
+            : []),
+        ];
+
+        // Total footer banner height is ~48pt. Calculate vertical padding to vertically center content.
+        const lineCount = footerItems.length;
+        const totalTextHeight = lineCount * 8.5;
+        const verticalPad = Math.max(3, Math.round((48 - totalTextHeight) / 2));
+
         return {
           table: {
-            widths: [595.28],
+            widths: [pageWidth],
             body: [
               [
                 {
-                  stack: [
-                    {
-                      text: footerLine1 || 'CALIBRATION CENTER :',
-                      bold: true,
-                      fontSize: 8.5,
-                      alignment: 'center',
-                      color: '#000000',
-                      margin: [0, 0, 0, 1],
-                    },
-                    {
-                      text:
-                        footerLine2 ||
-                        "",
-                      fontSize: 7.5,
-                      bold: true,
-                      alignment: 'center',
-                      color: '#000000',
-                      margin: [0, 0, 0, 1],
-                    },
-                    {
-                      text:
-                        footerLine3 ||
-                        '☎ : xxxx-xxxxx, xx xx xx xx xx, x,x,x,x,x,x,x   website: xxxxxxxxx.in',
-                      fontSize: 7.5,
-                      bold: true,
-                      alignment: 'center',
-                      color: '#000000',
-                      margin: [0, 0, 0, 1],
-                    },
-                    {
-                      text:
-                        (certConfig as any)?.footerLine4 ||
-                        'Mob: +91 xxxxxxxx, xxxxxxxx • E-mail : xxxxxxxxx@xxxxx.com',
-                      fontSize: 7.5,
-                      bold: true,
-                      alignment: 'center',
-                      color: '#000000',
-                    },
-                  ],
+                  stack: footerItems,
                   fillColor: headerBgColor,
-                  margin: [25, 4, 25, 14],
+                  margin: [25, verticalPad, 25, verticalPad],
                 },
               ],
             ],
@@ -990,8 +1467,8 @@ export class CertificateService {
         {
           table: {
             widths: calibration.ulr_number
-              ? ['*', '*', '*', '*', '*', '*']
-              : ['*', '*', '*', '*', '*'],
+              ? ['13%', '14%', '15%', '13%', '13%', '9%', '23%']
+              : ['15%', '16%', '17%', '15%', '11%', '26%'],
             body: calibration.ulr_number
               ? [
                   [
@@ -1001,6 +1478,7 @@ export class CertificateService {
                     { text: 'ULR No.', style: 'gridTh' },
                     { text: 'Certi Issue Date', style: 'gridTh' },
                     { text: 'Sheet No.', style: 'gridTh' },
+                    { text: 'Calibration Location', style: 'gridTh' },
                   ],
                   [
                     {
@@ -1024,6 +1502,10 @@ export class CertificateService {
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
+                    {
+                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      style: 'gridTdBold',
+                    },
                   ],
                 ]
               : [
@@ -1033,6 +1515,7 @@ export class CertificateService {
                     { text: 'Certificate No.:', style: 'gridTh' },
                     { text: 'Certi Issue Date', style: 'gridTh' },
                     { text: 'Sheet No.', style: 'gridTh' },
+                    { text: 'Calibration Location', style: 'gridTh' },
                   ],
                   [
                     {
@@ -1052,6 +1535,10 @@ export class CertificateService {
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
+                    {
+                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      style: 'gridTdBold',
+                    },
                   ],
                 ],
           },
@@ -1064,188 +1551,129 @@ export class CertificateService {
           margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
-        // Customer & Location Grid
-        {
-          table: {
-            widths: ['55%', '45%'],
-            body: [
-              [
-                {
-                  stack: [
-                    {
-                      text: inst?.location || '-',
-                      bold: true,
-                      fontSize: isDense ? 7.5 : 8.5,
-                    },
-                    {
-                      text: 'Calibration Customer',
-                      fontSize: isDense ? 6.5 : 7.5,
-                      color: '#334155',
-                      margin: [0, 1, 0, 0],
-                    },
-                  ],
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  stack: [
-                    {
-                      text: 'IN - HOUSE',
-                      bold: true,
-                      fontSize: isDense ? 7.5 : 8.5,
-                    },
-                    {
-                      text: 'Calibration Location',
-                      fontSize: isDense ? 6.5 : 7.5,
-                      color: '#334155',
-                      margin: [0, 1, 0, 0],
-                    },
-                  ],
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-              ],
-            ],
-          },
-          layout: {
-            hLineWidth: () => 0.5,
-            vLineWidth: () => 0.5,
-            hLineColor: () => '#000',
-            vLineColor: () => '#000',
-          },
-          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
-        },
-
         // Description & Identification Box
+        // Description & Identification Table (3 Columns / 6 Cells per row)
         {
           table: {
-            widths: ['25%', '25%', '25%', '25%'],
+            widths: ['14%', '19%', '14%', '19%', '14%', '20%'],
             body: [
               [
                 {
                   text: 'Description & Identification',
                   style: 'boxHeader',
-                  colSpan: 4,
+                  colSpan: 6,
                 },
+                {},
+                {},
                 {},
                 {},
                 {},
               ],
+              // Row 1
               [
                 {
                   text: 'Instrument (UUC)',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.name || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                },
+                {
+                  text: 'Make',
+                  bold: true,
+                  fontSize: isDense ? 7 : 8,
+                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                },
+                {
+                  text: inst?.make || '-',
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Model No.',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: (inst as any)?.model_no || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
+              // Row 2
               [
                 {
-                  text: 'Make',
+                  text: rangeLabel,
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.make || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: 'Range',
-                  bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.range || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
-              ],
-              [
                 {
-                  text: 'Serial No. :',
+                  text: 'Serial No.',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.serial_no || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Least Count',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.least_count || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
+              // Row 3
               [
                 {
                   text: 'ID No.',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.id_code || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Instrument Cond.',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'SATISFACTORY',
-                  fontSize: isDense ? 7.5 : 8.5,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-              ],
-              [
-                {
-                  text: 'Calibration Range',
-                  bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.range || '-',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: 'Location',
                   bold: true,
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
                 {
                   text: inst?.location || 'Permanent Laboratory',
-                  fontSize: isDense ? 7.5 : 8.5,
+                  fontSize: isDense ? 7 : 8,
                   margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
               ],
@@ -1260,74 +1688,81 @@ export class CertificateService {
           margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
-        // Procedure & Environmental Conditions Box
+        // Procedure & Environmental Conditions Table (Compact 2-row table)
         {
           table: {
-            widths: ['*'],
+            widths: ['24%', '38%', '38%'],
             body: [
+              // Row 1: Headers
               [
                 {
-                  stack: [
-                    {
-                      columns: [
-                        {
-                          text: 'Procedure reference',
-                          bold: true,
-                          fontSize: isDense ? 7 : 8,
-                          width: 140,
-                        },
-                        { text: `: ${procedureReference}`, fontSize: isDense ? 7 : 8 },
-                      ],
-                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Environmental Conditions',
-                          bold: true,
-                          fontSize: isDense ? 7 : 8,
-                          width: 140,
-                        },
-                        {
-                          text: `: Temperature at ${env.temperature}° C  RH ${env.humidity} %`,
-                          fontSize: isDense ? 7 : 8,
-                        },
-                      ],
-                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Standard Reference',
-                          bold: true,
-                          fontSize: isDense ? 7 : 8,
-                          width: 140,
-                        },
-                        {
-                          text: `: ${standardReference}`,
-                          fontSize: isDense ? 7 : 8,
-                        },
-                      ],
-                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
-                    },
-                    {
-                      columns: [
-                        {
-                          text: 'Discipline',
-                          bold: true,
-                          fontSize: isDense ? 7 : 8,
-                          width: 140,
-                        },
-                        {
-                          text: ': DIMENSION (Basic Measuring Instrument, Gauge etc)',
-                          fontSize: isDense ? 7 : 8,
-                        },
-                      ],
-                      margin: [0, isDense ? 1.5 : 3, 0, isDense ? 1.5 : 3],
-                    },
-                  ],
-                  margin: [4, isDense ? 2 : 3, 4, isDense ? 2 : 3],
+                  text: 'Procedure No',
+                  bold: true,
+                  fontSize: isDense ? 7 : 8,
+                  fillColor: '#f1f5f9',
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
                 },
+                {
+                  text: 'Standard Reference',
+                  bold: true,
+                  fontSize: isDense ? 7 : 8,
+                  fillColor: '#f1f5f9',
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                },
+                {
+                  text: 'Discipline',
+                  bold: true,
+                  fontSize: isDense ? 7 : 8,
+                  fillColor: '#f1f5f9',
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                },
+              ],
+              // Row 2: Values
+              [
+                {
+                  text: procedureReference || 'AE/CAL-SOP/01',
+                  fontSize: isDense ? 7 : 8,
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                },
+                {
+                  text: standardReference || 'Standard calibration per ISO/IEC 17025',
+                  fontSize: isDense ? 7 : 8,
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                },
+                {
+                  text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)',
+                  fontSize: isDense ? 7 : 8,
+                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                },
+              ],
+              // Row 3: Environmental Conditions (Full Colspan)
+              [
+                {
+                  colSpan: 3,
+                  text: [
+                    { text: 'Environmental Conditions : ', bold: true },
+                    { text: `Temperature at ${env.temperature || '-'}° C  RH ${env.humidity || '-'} %` },
+                    ...(env.soaking_time || env.soaking_start_time || env.soaking_end_time
+                      ? [
+                          { text: '   |   ', bold: true },
+                          { text: 'Soaking Details : ', bold: true },
+                          {
+                            text: [
+                              env.soaking_start_time ? `Start: ${env.soaking_start_time}` : null,
+                              env.soaking_end_time ? `End: ${env.soaking_end_time}` : null,
+                              env.soaking_time ? `Soaking Time: ${env.soaking_time}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join('  |  '),
+                          },
+                        ]
+                      : []),
+                  ],
+                  fontSize: isDense ? 7 : 8,
+                  margin: [3, isDense ? 1.5 : 2.5, 3, isDense ? 1.5 : 2.5],
+                },
+                {},
+                {},
               ],
             ],
           },
@@ -1422,94 +1857,118 @@ export class CertificateService {
         ...(diagramDataUrl
           ? [
               {
-                image: diagramDataUrl,
-                fit: [diagramWidth, diagramHeight] as [number, number],
-                alignment: diagramAlignment,
-                margin: [0, 2, 0, isDense ? 2 : 4] as [number, number, number, number],
+                table: {
+                  widths: ['*'],
+                  body: [
+                    [
+                      {
+                        image: diagramDataUrl,
+                        fit: [targetDiagramWidth, targetDiagramHeight] as [number, number],
+                        alignment: diagramAlignment,
+                        margin: [0, 2, 0, 2],
+                      },
+                    ],
+                  ],
+                },
+                layout: {
+                  hLineWidth: () => 0.5,
+                  vLineWidth: () => 0.5,
+                  hLineColor: () => '#000000',
+                  vLineColor: () => '#000000',
+                },
+                margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
               },
             ]
           : []),
 
-        // Calibration Result
-        points.length > 0
-          ? {
-              table: {
-                dontBreakRows: true,
-                headerRows: (calibration as any).acceptance_criteria?.enabled
-                  ? hasAnyGroups
-                    ? 4
-                    : 3
-                  : hasAnyGroups
-                    ? 3
-                    : 2,
-                widths: tableWidths,
-                body: [
-                  [
-                    {
-                      text: `Calibration Result (ALL VALUES ARE IN ${unit})`,
-                      style: 'boxHeader',
-                      colSpan: totalCols,
+        // Calibration Result (Canvas Blocks or Standard Table)
+        ...(isCanvasTemplate && canvasBlocks.length > 0
+          ? buildPdfCanvasBlocks(canvasBlocks, isDense)
+          : points.length > 0
+            ? [
+                {
+                  table: {
+                    dontBreakRows: true,
+                    headerRows: (calibration as any).acceptance_criteria?.enabled
+                      ? hasAnyGroups
+                        ? 4
+                        : 3
+                      : hasAnyGroups
+                        ? 3
+                        : 2,
+                    widths: tableWidths,
+                    body: [
+                      [
+                        {
+                          text: `Calibration Result (ALL VALUES ARE IN ${unit})`,
+                          style: 'boxHeader',
+                          colSpan: totalCols,
+                        },
+                        ...Array(totalCols - 1).fill({}),
+                      ],
+                      ...((calibration as any).acceptance_criteria?.enabled
+                        ? [
+                            [
+                              {
+                                text: `Acceptance Criteria: ${(calibration as any).acceptance_criteria.value} ${(calibration as any).acceptance_criteria.type === 'percentage' ? '%' : unit}`,
+                                fontSize: isDense ? 7.5 : 8,
+                                bold: true,
+                                alignment: 'center',
+                                fillColor: '#fef3c7',
+                                margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
+                                colSpan: totalCols,
+                              },
+                              ...Array(totalCols - 1).fill({}),
+                            ],
+                          ]
+                        : []),
+                      ...dataTableBody,
+                      ...(calibration.uncertainty && String(calibration.uncertainty).trim()
+                        ? [
+                            [
+                              {
+                                text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ${
+                                  String(calibration.uncertainty).trim().startsWith('±') || /[a-zA-Z]/.test(String(calibration.uncertainty).trim())
+                                    ? String(calibration.uncertainty).trim()
+                                    : `±${String(calibration.uncertainty).trim()}${unit ? ` ${unit}` : ''}`
+                                }`,
+                                fontSize: isDense ? 7.5 : 8,
+                                bold: true,
+                                alignment: 'center',
+                                fillColor: '#f8fafc',
+                                margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
+                                colSpan: totalCols,
+                              },
+                              ...Array(totalCols - 1).fill({}),
+                            ],
+                          ]
+                        : []),
+                    ],
+                  },
+                  layout: {
+                    fillColor: (rowIndex: number) => {
+                      const headerStartIdx = (calibration as any)
+                        .acceptance_criteria?.enabled
+                        ? 2
+                        : 1;
+                      const headerEndIdx = headerStartIdx + (hasAnyGroups ? 2 : 1);
+                      if (rowIndex >= headerStartIdx && rowIndex < headerEndIdx)
+                        return '#f1f5f9';
+                      return null;
                     },
-                    ...Array(totalCols - 1).fill({}),
-                  ],
-                  ...((calibration as any).acceptance_criteria?.enabled
-                    ? [
-                        [
-                          {
-                            text: `Acceptance Criteria: ${(calibration as any).acceptance_criteria.value} ${(calibration as any).acceptance_criteria.type === 'percentage' ? '%' : unit}`,
-                            fontSize: isDense ? 7.5 : 8,
-                            bold: true,
-                            alignment: 'center',
-                            fillColor: '#fef3c7',
-                            margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
-                            colSpan: totalCols,
-                          },
-                          ...Array(totalCols - 1).fill({}),
-                        ],
-                      ]
-                    : []),
-                  ...dataTableBody,
-                  ...(calibration.uncertainty && String(calibration.uncertainty).trim()
-                    ? [
-                        [
-                          {
-                            text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ${
-                              String(calibration.uncertainty).trim().startsWith('±') || /[a-zA-Z]/.test(String(calibration.uncertainty).trim())
-                                ? String(calibration.uncertainty).trim()
-                                : `±${String(calibration.uncertainty).trim()}${unit ? ` ${unit}` : ''}`
-                            }`,
-                            fontSize: isDense ? 7.5 : 8,
-                            bold: true,
-                            alignment: 'center',
-                            fillColor: '#f8fafc',
-                            margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
-                            colSpan: totalCols,
-                          },
-                          ...Array(totalCols - 1).fill({}),
-                        ],
-                      ]
-                    : []),
-                ],
-              },
-              layout: {
-                fillColor: (rowIndex: number) => {
-                  const headerStartIdx = (calibration as any)
-                    .acceptance_criteria?.enabled
-                    ? 2
-                    : 1;
-                  const headerEndIdx = headerStartIdx + (hasAnyGroups ? 2 : 1);
-                  if (rowIndex >= headerStartIdx && rowIndex < headerEndIdx)
-                    return '#f1f5f9';
-                  return null;
+                    hLineWidth: () => 0.5,
+                    vLineWidth: () => 0.5,
+                    hLineColor: () => '#000000',
+                    vLineColor: () => '#000000',
+                    paddingLeft: () => (totalCols > 12 ? 0.8 : totalCols > 9 ? 1.0 : totalCols > 7 ? 1.5 : 2.5),
+                    paddingRight: () => (totalCols > 12 ? 0.8 : totalCols > 9 ? 1.0 : totalCols > 7 ? 1.5 : 2.5),
+                    paddingTop: () => (isDense ? 1.2 : 2.0),
+                    paddingBottom: () => (isDense ? 1.2 : 2.0),
+                  },
+                  margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
                 },
-                hLineWidth: () => 0.5,
-                vLineWidth: () => 0.5,
-                hLineColor: () => '#000000',
-                vLineColor: () => '#000000',
-              },
-              margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
-            }
-          : { text: '' },
+              ]
+            : []),
 
         // Signature Block
         {
@@ -1640,14 +2099,14 @@ export class CertificateService {
           margin: [0, 1, 0, 1] as [number, number, number, number],
         },
         thCellDark: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: tableFontSize,
           bold: true,
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
           margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         thCell: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: tableFontSize,
           bold: true,
           color: '#000',
           alignment: 'center' as const,
@@ -1655,12 +2114,12 @@ export class CertificateService {
           margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         tdCell: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: tableFontSize,
           alignment: 'center' as const,
           margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },
         tdCellMono: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: tableMonoFontSize,
           alignment: 'center' as const,
           margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
         },

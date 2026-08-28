@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { Instrument, InstrumentQuery } from "@/types/instrument";
 import { listInstruments, getFilterParams, updateInstrument, deleteInstrument, deleteInstrumentsBulk } from "@/lib/instrumentActions";
@@ -20,9 +20,9 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw } from "lucide-react";
+import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers } from "lucide-react";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
 
 import TooltipProv from "@/components/TooltipProv";
@@ -590,7 +590,7 @@ export default function Instruments() {
     });
   }, [user]);
 
-  const handleRowSelectionChange = (
+  const handleRowSelectionChange = useCallback((
     updaterOrValue: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)
   ) => {
     setSelected((prevSelected) => {
@@ -619,7 +619,7 @@ export default function Instruments() {
 
       return nextSelected;
     });
-  };
+  }, [data.items]);
 
   const handleDeselectItem = (id: string) => {
     setSelected((prev) => {
@@ -651,26 +651,86 @@ export default function Instruments() {
     }
   }, [selected, selectedObjects]);
 
-  const handleClearAllSelections = () => {
+  const handleClearAllSelections = useCallback(() => {
     setSelected({});
     setSelectedObjects({});
     try {
       sessionStorage.removeItem(SESSION_KEY_SELECTED);
       sessionStorage.removeItem(SESSION_KEY_OBJECTS);
     } catch (e) {}
-  };
+  }, []);
 
-  const toggleAll = (checked: boolean) => {
-    const map: Record<string, boolean> = { ...selected };
-    for (const i of data.items) {
-      if (checked) {
-        map[i.id] = true;
-      } else {
-        delete map[i.id];
+  const toggleAll = useCallback((checked: boolean) => {
+    setSelected((prevSelected) => {
+      const nextSelected = { ...prevSelected };
+      for (const i of data.items) {
+        if (checked) {
+          nextSelected[i.id] = true;
+        } else {
+          delete nextSelected[i.id];
+        }
       }
+      setSelectedObjects((prevObjects) => {
+        const nextObjects = { ...prevObjects };
+        for (const i of data.items) {
+          if (checked) {
+            nextObjects[i.id] = i;
+          } else {
+            delete nextObjects[i.id];
+          }
+        }
+        return nextObjects;
+      });
+      return nextSelected;
+    });
+  }, [data.items]);
+
+  const [selectingAll, setSelectingAll] = useState(false);
+
+  const handleSelectAllTotal = useCallback(async () => {
+    if (!data.total || data.total <= 0) return;
+    try {
+      setSelectingAll(true);
+      toast({
+        title: "Selecting All Items...",
+        description: `Fetching all ${data.total} instruments in inventory.`,
+      });
+
+      const res = await listInstruments({
+        ...filters,
+        page: 1,
+        pageSize: 99999,
+        limit: 99999,
+        createdBy: user?.id,
+      });
+
+      const allItems: Instrument[] = res.data || res.items || [];
+      const newSelected: Record<string, boolean> = {};
+      const newObjects: Record<string, Instrument> = {};
+
+      allItems.forEach((item) => {
+        newSelected[item.id] = true;
+        newObjects[item.id] = item;
+      });
+
+      setSelected(newSelected);
+      setSelectedObjects(newObjects);
+
+      toast({
+        title: "All Selected",
+        description: `Successfully selected all ${allItems.length} instruments in inventory.`,
+        variant: "success",
+      });
+    } catch (err) {
+      toast({
+        title: "Selection Failed",
+        description: "Failed to fetch all instruments for selection.",
+        variant: "destructive",
+      });
+    } finally {
+      setSelectingAll(false);
     }
-    handleRowSelectionChange(map);
-  };
+  }, [data.total, filters, user?.id]);
 
   const selectedIds = useMemo(() => Object.keys(selectedObjects), [selectedObjects]);
   const selectedItemsList = useMemo(() => Object.values(selectedObjects), [selectedObjects]);
@@ -1248,13 +1308,70 @@ export default function Instruments() {
     const activeCols: ColumnDef<Instrument>[] = [
       {
         id: "select",
-        header: ({ table }) => (
-          <Checkbox
-            checked={table.getIsAllPageRowsSelected()}
-            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-            aria-label="Select all"
-          />
-        ),
+        header: ({ table }) => {
+          const isAllPageSelected = table.getIsAllPageRowsSelected();
+          const isSomePageSelected = table.getIsSomePageRowsSelected();
+          const isAllTotalSelected = data.total > 0 && selectedIds.length >= data.total;
+          const isIndeterminate = !isAllTotalSelected && (isSomePageSelected || (selectedIds.length > 0 && !isAllPageSelected));
+
+          return (
+            <div className="flex items-center gap-0.5 justify-start">
+              <Checkbox
+                checked={isAllTotalSelected ? true : isAllPageSelected ? true : isIndeterminate ? "indeterminate" : false}
+                onCheckedChange={(value) => {
+                  if (value) {
+                    toggleAll(true);
+                  } else {
+                    handleClearAllSelections();
+                  }
+                }}
+                aria-label="Select all"
+              />
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-5 w-4 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+                    title="Selection Options"
+                  >
+                    <ChevronDown className="h-3 w-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56 text-xs">
+                  <DropdownMenuItem
+                    onClick={() => toggleAll(true)}
+                    className="gap-2 cursor-pointer text-xs"
+                  >
+                    <CheckSquare className="h-3.5 w-3.5 text-primary" />
+                    <span>Select Current Page ({data.items.length})</span>
+                  </DropdownMenuItem>
+                  {data.total > 0 && (
+                    <DropdownMenuItem
+                      onClick={handleSelectAllTotal}
+                      className="gap-2 cursor-pointer text-xs font-semibold text-primary hover:bg-primary/10"
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      <span>Select All ({data.total} Total)</span>
+                    </DropdownMenuItem>
+                  )}
+                  {selectedIds.length > 0 && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={handleClearAllSelections}
+                        className="gap-2 cursor-pointer text-xs text-destructive hover:bg-destructive/10"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        <span>Deselect All ({selectedIds.length})</span>
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
@@ -1304,7 +1421,20 @@ export default function Instruments() {
       } as ColumnDef<Instrument>);
     }
     return activeCols;
-  }, [columnConfigs, filters.page, filters.pageSize, filters.sortBy, filters.sortOrder, uploadingId]);
+  }, [
+    columnConfigs,
+    filters.page,
+    filters.pageSize,
+    filters.sortBy,
+    filters.sortOrder,
+    uploadingId,
+    data.items,
+    data.total,
+    selectedIds,
+    toggleAll,
+    handleSelectAllTotal,
+    handleClearAllSelections,
+  ]);
 
   const availableDeviceTypes = useMemo(() => {
     if (DeviceTypeFilter && DeviceTypeFilter.length > 0) {
@@ -1625,6 +1755,44 @@ export default function Instruments() {
             </div>
           )}
         </div>
+
+        {/* Bulk Selection Notification Banner */}
+        {selectedIds.length > 0 && data.total > data.items.length && (
+          <div className="bg-primary/10 border border-primary/25 text-primary text-xs py-2 px-3.5 rounded-lg flex items-center justify-between animate-in fade-in">
+            {selectedIds.length >= data.total ? (
+              <span className="flex items-center gap-1.5 font-medium">
+                <Check className="w-4 h-4 text-primary" />
+                All <strong>{data.total}</strong> instruments across the entire inventory are selected.
+              </span>
+            ) : (
+              <span>
+                <strong>{selectedIds.length}</strong> instruments selected on this page.
+              </span>
+            )}
+            <div className="flex items-center gap-3">
+              {selectedIds.length < data.total && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  disabled={selectingAll}
+                  onClick={handleSelectAllTotal}
+                  className="text-xs font-bold text-primary underline p-0 h-auto gap-1"
+                >
+                  {selectingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Layers className="w-3.5 h-3.5" />}
+                  Select all {data.total} instruments in inventory
+                </Button>
+              )}
+              <Button
+                variant="link"
+                size="sm"
+                onClick={handleClearAllSelections}
+                className="text-xs font-semibold text-muted-foreground hover:text-destructive underline p-0 h-auto"
+              >
+                Clear selection
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* ─── Data Table & Header Actions Bar ─── */}
         <DataTable

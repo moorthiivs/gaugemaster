@@ -670,7 +670,7 @@ export class CalibrationService {
     if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
     if ((dto as any).standard_reference !== undefined) (existing as any).standard_reference = (dto as any).standard_reference;
     if (dto.decimal_places !== undefined) existing.decimal_places = dto.decimal_places;
-    if (dto.diagram_image !== undefined) existing.diagram_image = dto.diagram_image;
+    if (dto.diagram_image !== undefined) existing.diagram_image = dto.diagram_image ? dto.diagram_image : (null as any);
     if (dto.diagram_image_width !== undefined) existing.diagram_image_width = dto.diagram_image_width;
     if (dto.diagram_image_height !== undefined) existing.diagram_image_height = dto.diagram_image_height;
     if (dto.diagram_image_alignment !== undefined) existing.diagram_image_alignment = dto.diagram_image_alignment;

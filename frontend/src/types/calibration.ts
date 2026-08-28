@@ -40,14 +40,21 @@ export interface CalibrationRecord {
     temperature: string;
     humidity: string;
     pressure?: string;
+    soaking_time?: string;
+    soaking_start_time?: string;
+    soaking_end_time?: string;
   };
   procedure_reference?: string;
+  doc_no?: string;
 
   // Data
+  is_canvas_template?: boolean;
+  layout_blocks?: any[];
   calibration_points: CalibrationPoint[];
   custom_columns?: any[];
   standard_columns_config?: Record<string, any>;
   acceptance_criteria?: any;
+  decimal_places?: number;
   column_order?: string[];
   hidden_columns?: string[];
   template_id?: string;

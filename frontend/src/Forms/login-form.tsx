@@ -28,6 +28,17 @@ export function LoginForm() {
     } | null>(null);
 
     useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        if (searchParams.get("session_expired") === "true") {
+            toast({
+                title: "Session Expired",
+                description: "Your session has expired. Please sign in again to continue.",
+                variant: "destructive",
+            });
+        }
+    }, [location.search, toast]);
+
+    useEffect(() => {
         axios.get(`/api/auth/config`)
             .then(res => setAuthConfig(res.data))
             .catch(() => {

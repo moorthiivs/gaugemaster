@@ -1,8 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { CalibrationRecord } from "@/types/calibration";
 import { format } from "date-fns";
 import httpClient from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
+import { toPng } from "html-to-image";
+import { saveAs } from "file-saver";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Download, ImageIcon, Loader2 } from "lucide-react";
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -19,6 +24,7 @@ export function formatUncertainty(val?: string | null, unit?: string): string {
 interface CertificatePreviewProps {
   calibration: Partial<CalibrationRecord>;
   instrumentName?: string;
+  showDownloadPng?: boolean;
 }
 
 /**
@@ -28,10 +34,13 @@ interface CertificatePreviewProps {
 export function CertificatePreview({
   calibration,
   instrumentName,
+  showDownloadPng = true,
 }: CertificatePreviewProps) {
   const { user } = useAuth();
   const [certConfig, setCertConfig] = useState<any>(null);
   const [usersList, setUsersList] = useState<any[]>([]);
+  const [downloadingPng, setDownloadingPng] = useState(false);
+  const certRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (user?.companyId) {
@@ -78,8 +87,18 @@ export function CertificatePreview({
   const headerCompanyName = certConfig?.headerCompanyName || "Company Name";
   const headerCompanySubtitle =
     certConfig?.headerCompanySubtitle || "(CALIBRATION LABORATORY)";
-  const headerRightBoxText1 = certConfig?.headerRightBoxText1 || "NABL / LAB";
-  const headerRightBoxText2 = certConfig?.headerRightBoxText2 || "CC - 2632";
+  const docNo =
+    calibration.doc_no ||
+    (calibration as any).docNo ||
+    ((calibration as any).template as any)?.doc_no ||
+    ((calibration as any).template as any)?.docNo;
+  const headerRightBoxText1 = docNo ? "Doc. No." : (certConfig?.headerRightBoxText1 || "NABL / LAB");
+  const headerRightBoxText2 = docNo || certConfig?.headerRightBoxText2 || "CC - 2632";
+  const isGauge =
+    (inst?.device_type || "").toLowerCase().includes("gauge") ||
+    ((inst as any)?.item_type || "").toLowerCase().includes("gauge") ||
+    (calibration.calibration_type || "").toLowerCase().includes("gauge");
+  const rangeLabel = isGauge ? "Specification" : "Range";
   const footerLine1 = certConfig?.footerLine1 || "CALIBRATION CENTER :";
   const footerLine2 =
     certConfig?.footerLine2 ||
@@ -95,8 +114,208 @@ export function CertificatePreview({
   const headerDisplayMode = certConfig?.headerDisplayMode || "name";
   const headerBgColor = certConfig?.headerBgColor || "#54c6f3";
 
+  const layoutBlocks =
+    (calibration as any).layout_blocks ||
+    ((calibration as any).template as any)?.layout_blocks;
+
+  // ── Render Canvas Layout Blocks (Multi-Table, Split-Row, Matrix, Notes) ──
+  const renderCanvasLayoutBlocks = (blocks: any[]) => {
+    if (!blocks || blocks.length === 0) return null;
+
+    const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01): any => {
+      if (!formula) return "";
+      try {
+        let expr = formula;
+        const t1 = parseFloat(row.t1 ?? row.col_1) || 0;
+        const t2 = parseFloat(row.t2 ?? row.col_2) || 0;
+        const t3 = parseFloat(row.t3 ?? row.col_3) || 0;
+        const t4 = parseFloat(row.t4 ?? row.col_4) || 0;
+        const t5 = parseFloat(row.t5 ?? row.col_5) || 0;
+        const nominal = parseFloat(row.nominal) || 0;
+        const reading = parseFloat(row.reading ?? row.ascending_reading ?? row.t1) || 0;
+        const tol = parseFloat(row.tolerance ?? tolerance) || 0.01;
+
+        const avgMatch = expr.match(/AVERAGE\(([^)]+)\)/i);
+        if (avgMatch) {
+          const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
+          let sum = 0;
+          let count = 0;
+          varNames.forEach((v: string) => {
+            const val = parseFloat(row[v] ?? row[`col_${v}`]);
+            if (!isNaN(val) && val !== 0) {
+              sum += val;
+              count++;
+            }
+          });
+          const avg = count > 0 ? sum / count : (t1 || nominal);
+          return avg.toFixed(3);
+        }
+
+        if (/avg\s*-\s*nominal/i.test(expr)) {
+          const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
+          const err = avgVal - nominal;
+          return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
+        }
+        if (/reading\s*-\s*nominal/i.test(expr) || /actual\s*-\s*nominal/i.test(expr)) {
+          const readVal = parseFloat(row.reading ?? row.ascending_reading ?? nominal);
+          const err = readVal - nominal;
+          return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
+        }
+
+        if (/IF\(.*PASS.*FAIL.*\)/i.test(expr)) {
+          const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
+          return errVal <= tol ? "PASS" : "FAIL";
+        }
+
+        return row[formula] || "-";
+      } catch {
+        return "-";
+      }
+    };
+
+    const renderSingleTableGrid = (tbl: any) => {
+      const unitStr = tbl.unit || "mm";
+
+      return (
+        <div key={tbl.id} className="border border-black flex flex-col divide-y divide-black bg-white">
+          <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+            {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
+          </div>
+          <table className="w-full border-collapse text-[8px] text-center">
+            <thead>
+              <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black">
+                {tbl.columns.map((col: any) => (
+                  <th key={col.id} style={{ width: col.width }} className="py-0.5 px-1">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black font-mono">
+              {tbl.rows.map((row: any, rIdx: number) => (
+                <tr key={rIdx} className="divide-x divide-black">
+                  {tbl.columns.map((col: any) => {
+                    let val: any = row[col.id];
+                    if (col.type === "nominal") val = row.nominal !== undefined ? Number(row.nominal).toFixed(2) : "-";
+                    else if (col.type === "text") val = row.description || row[col.id] || "-";
+                    else if (col.type === "formula" || col.type === "status") {
+                      val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
+                    } else if (val === undefined || val === null || val === "") {
+                      val = "-";
+                    }
+
+                    const isPass = val === "PASS";
+                    const isFail = val === "FAIL";
+
+                    return (
+                      <td
+                        key={col.id}
+                        className={`py-0.5 px-1 ${
+                          isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : ""
+                        }`}
+                      >
+                        {val}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {tbl.footerNote && (
+            <div className="p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black">
+              {tbl.footerNote}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="space-y-1.5 border border-black p-1 bg-white">
+        {blocks.map((block: any, idx: number) => {
+          if (block.type === "table_grid") {
+            return renderSingleTableGrid(block);
+          }
+          if (block.type === "split_row") {
+            return (
+              <div key={block.id || idx} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-1.5`}>
+                {block.children?.map((child: any, cIdx: number) => {
+                  const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
+                  return (
+                    <div key={child?.id || cIdx}>
+                      {child?.type === "table_grid" && renderSingleTableGrid(child)}
+                      {child?.type === "text_block" && child.content?.trim() && (
+                        <div className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
+                          {child.content}
+                        </div>
+                      )}
+                      {isBlank && <div className="w-full h-full min-h-[20px]" />}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          }
+          if (block.type === "matrix_table") {
+            return (
+              <div key={block.id || idx} className="border border-black flex flex-col divide-y divide-black bg-white">
+                <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+                  {block.title}
+                </div>
+                <table className="w-full border-collapse text-[7.5px] text-center font-mono">
+                  <thead>
+                    {block.headers?.map((hRow: any[], hIdx: number) => (
+                      <tr key={hIdx} className="bg-slate-100 font-bold border-b border-black divide-x divide-black">
+                        {hRow.map((cell: any, cIdx: number) => (
+                          <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-0.5 px-1">
+                            {cell.text}
+                          </th>
+                        ))}
+                      </tr>
+                    ))}
+                  </thead>
+                  <tbody className="divide-y divide-black">
+                    {block.rows?.map((row: any[], rIdx: number) => (
+                      <tr key={rIdx} className="divide-x divide-black">
+                        {row.map((cellVal: any, cIdx: number) => (
+                          <td key={cIdx} className="py-0.5 px-1">
+                            {cellVal}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+          if (block.type === "text_block") {
+            return (
+              <div key={block.id || idx} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
+                {block.content}
+              </div>
+            );
+          }
+          if (block.type === "page_break") {
+            return (
+              <div key={block.id || idx} className="border-t border-dashed border-slate-400 my-1 pt-0.5 text-center text-[7px] text-muted-foreground print:break-before-page">
+                --- PAGE BREAK ---
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
+  };
+
   // Helper to render Calibration Results
   const renderCalibrationResult = () => {
+    if (layoutBlocks && layoutBlocks.length > 0) {
+      return renderCanvasLayoutBlocks(layoutBlocks);
+    }
+
     if (!points || points.length === 0) return null;
     const hasDescending = points.some(
       (pt: any) =>
@@ -261,7 +480,8 @@ export function CertificatePreview({
       return k;
     };
 
-    const isCompact = points.length > 7;
+    const totalCols = 1 + activeColumnsNoStatus.length + (showStatusColumn ? 1 : 0);
+    const dynamicTextSize = totalCols > 10 ? "text-[7.5px]" : totalCols > 7 ? "text-[8.5px]" : isCompact ? "text-[8px]" : "text-[9.5px]";
 
     return (
       <div className="border border-black flex flex-col divide-y divide-black">
@@ -277,7 +497,7 @@ export function CertificatePreview({
               : unit}
           </div>
         )}
-        <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+        <table className={`w-full border-collapse ${dynamicTextSize}`}>
           <thead>
             {!hasAnyGroups ? (
               <tr className="bg-slate-100 border-b border-black font-bold text-center">
@@ -358,7 +578,7 @@ export function CertificatePreview({
                 <td className={`border-r border-black ${isCompact ? "py-0.5 px-1" : "p-1"} font-sans`}>
                   {String(pt.point_number || idx + 1).padStart(2, "0")}
                 </td>
-                {activeColumns.map((k) => {
+                {activeColumnsNoStatus.map((k) => {
                   if (k === "description")
                     return (
                       <td
@@ -446,8 +666,83 @@ export function CertificatePreview({
   const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
   const sheetNoText = `1 of ${totalPages}`;
 
+  const handleDownloadPng = async () => {
+    if (!certRef.current) return;
+    try {
+      setDownloadingPng(true);
+      toast.info("Generating high quality PNG image...");
+
+      if (document.fonts) {
+        await document.fonts.ready;
+      }
+
+      const certElement = certRef.current;
+      const targetWidth = 794;
+      const targetHeight = certElement.scrollHeight || certElement.offsetHeight;
+
+      const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
+      const dataUrl = await toPng(certElement, {
+        quality: 1.0,
+        pixelRatio: 2, // 2x high resolution: 1588px width, zero clipping
+        width: targetWidth,
+        height: targetHeight,
+        style: {
+          width: `${targetWidth}px`,
+          minWidth: `${targetWidth}px`,
+          maxWidth: `${targetWidth}px`,
+          height: `${targetHeight}px`,
+          margin: "0",
+          padding: "0",
+          left: "0",
+          top: "0",
+          position: "static",
+          transform: "none",
+          boxShadow: "none",
+          borderRadius: "0",
+          border: "none",
+        },
+        backgroundColor: "#ffffff",
+        cacheBust: true,
+      });
+
+      saveAs(dataUrl, `Certificate-${certNum}.png`);
+      toast.success("High quality PNG certificate downloaded successfully!");
+    } catch (err) {
+      console.error("Failed to export certificate image", err);
+      toast.error("Failed to generate PNG certificate image");
+    } finally {
+      setDownloadingPng(false);
+    }
+  };
+
   return (
-    <div className="bg-white text-black border border-slate-300 rounded-md shadow-2xl text-[10px] leading-tight font-sans mx-auto flex flex-col w-[794px] max-w-full min-h-[1123px] h-auto print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0">
+    <div className="flex flex-col items-center w-full max-w-full overflow-x-auto pb-4">
+      {/* Action Toolbar */}
+      {showDownloadPng !== false && (
+        <div className="w-[794px] shrink-0 max-w-full flex justify-end items-center gap-2 mb-2.5 print:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadPng}
+            disabled={downloadingPng}
+            className="h-8 gap-2 text-xs font-bold bg-white dark:bg-slate-900 border-primary/40 hover:bg-primary/5 hover:border-primary text-primary shadow-xs transition-all cursor-pointer"
+          >
+            {downloadingPng ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+            ) : (
+              <ImageIcon className="w-3.5 h-3.5 text-primary" />
+            )}
+            <span>{downloadingPng ? "Exporting High-Res PNG..." : "Download PNG (High Quality)"}</span>
+          </Button>
+        </div>
+      )}
+
+      {/* Main Certificate Sheet */}
+      <div
+        ref={certRef}
+        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-tight font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 h-auto overflow-hidden print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
+      >
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div
         className="p-2.5 text-black w-full"
@@ -485,16 +780,16 @@ export function CertificatePreview({
               CALIBRATION CERTIFICATE
             </h2>
           </div>
-          <div className="text-right text-black min-w-[80px]">
-            <div className="text-[7.5px] font-bold">{headerRightBoxText1}</div>
-            <div className="text-[9px] font-black">{headerRightBoxText2}</div>
+          <div className="text-right text-black min-w-[120px] shrink-0">
+            <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">{headerRightBoxText1}</div>
+            <div className="text-[9px] font-black tracking-tight whitespace-nowrap">{headerRightBoxText2}</div>
           </div>
         </div>
       </div>
 
       {/* ── 2. BODY CONTENT SECTION ── */}
-      <div className="p-2.5 flex-1 flex flex-col">
-        <div className={`border border-black ${isCompact ? "p-1.5 space-y-1.5 text-[8.5px]" : "p-2 space-y-2.5 text-[9.5px]"} flex-1`}>
+      <div className="p-2.5 flex flex-col">
+        <div className={`border border-black ${isCompact ? "p-1.5 space-y-1.5 text-[8.5px]" : "p-2 space-y-2 text-[9.5px]"}`}>
           {/* Top Certificate Metadata Grid */}
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
@@ -508,7 +803,8 @@ export function CertificatePreview({
                   <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
                 )}
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
-                <th className={isCompact ? "p-0.5" : "p-1"}>Sheet No.</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Sheet No.</th>
+                <th className={isCompact ? "p-0.5" : "p-1"}>Calibration Location</th>
               </tr>
             </thead>
             <tbody>
@@ -533,101 +829,78 @@ export function CertificatePreview({
                       calibration.calibration_date,
                   )}
                 </td>
-                <td className={isCompact ? "p-0.5" : "p-1"}>{sheetNoText}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Customer & Reference Grid */}
-          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8.5px]" : "text-[9.5px]"}`}>
-            <tbody>
-              <tr>
-                <td className={`border-r border-black ${isCompact ? "p-1" : "p-1.5"} w-1/2 align-top space-y-0.5`}>
-                  <div className={`font-bold text-black ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
-                    {inst?.location || "M/s Deepshikha Casting Pvt. Ltd."}
-                  </div>
-                  <div className={`text-slate-700 ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
-                    Calibration Customer
-                  </div>
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-1" : "p-1.5"} w-1/2 align-top space-y-0.5`}>
-                  <div className={`font-bold text-black ${isCompact ? "text-[9px]" : "text-[10px]"}`}>
-                    {inst?.calibration_source || "M/s Deepshikha Casting Pvt. Ltd."}
-                  </div>
-                  <div className={`text-slate-700 ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
-                    Calibration Location
-                  </div>
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>{sheetNoText}</td>
+                <td className={`${isCompact ? "p-0.5" : "p-1"} font-bold text-black`}>
+                  {inst?.calibration_source || inst?.location || "Permanent Laboratory"}
                 </td>
               </tr>
             </tbody>
           </table>
 
-          {/* Description & Identification */}
+          {/* Description & Identification (3 Columns) */}
           <div className="border-t border-l border-r border-black">
             <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black`}>
               Description & Identification
             </div>
-            <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+            <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
               <tbody>
                 <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-1/4 pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
                     Instrument (UUC)
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-1/4 pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-[19%] pl-1.5 truncate`}>
                     {instrumentName || inst?.name || "-"}
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-1/4 pl-1.5`}>
-                    Model No.
-                  </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} w-1/4 pl-1.5`}>{(inst as any)?.model_no || "-"}</td>
-                </tr>
-                <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
                     Make
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-[19%] pl-1.5 truncate`}>
                     {inst?.make || "-"}
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Range
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
+                    Model No.
                   </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>{inst?.range || "-"}</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} w-[20%] pl-1.5 truncate`}>
+                    {(inst as any)?.model_no || "-"}
+                  </td>
                 </tr>
                 <tr className="border-b border-black">
                   <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Serial No. :
+                    {rangeLabel}
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
+                    {inst?.range || "-"}
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
+                    Serial No.
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
                     {inst?.serial_no || "-"}
                   </td>
                   <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Least Count
                   </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>{inst?.least_count || "-"}</td>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
+                    {inst?.least_count || "-"}
+                  </td>
                 </tr>
                 <tr className="border-b border-black">
                   <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     ID No.
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
                     {inst?.id_code || "-"}
                   </td>
                   <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Instrument Cond.
                   </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>SATISFACTORY</td>
-                </tr>
-                <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Calibration Range
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
-                    {inst?.range || "-"}
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
+                    SATISFACTORY
                   </td>
                   <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
                     Location
                   </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5`}>
+                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
                     {inst?.location || "Permanent Laboratory"}
                   </td>
                 </tr>
@@ -635,123 +908,119 @@ export function CertificatePreview({
             </table>
           </div>
 
-          {/* Procedure & Environmental Conditions */}
-          <div className={`border border-black ${isCompact ? "p-1 space-y-0.5 text-[8px]" : "p-1.5 space-y-0.5 text-[9.5px]"}`}>
-            <div className="flex">
-              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Procedure reference</span>
-              <span>: {procedureReference}</span>
-            </div>
-            <div className="flex">
-              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Environmental Conditions</span>
-              <span>
-                : Temperature at {env.temperature}° C RH {env.humidity} %
-              </span>
-            </div>
-            <div className="flex">
-              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Standard Reference</span>
-              <span>
-                : {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
-              </span>
-            </div>
-            <div className="flex">
-              <span className={`font-bold ${isCompact ? "w-40" : "w-48"}`}>Discipline</span>
-              <span>: DIMENSION (Basic Measuring Instrument, Gauge etc)</span>
-            </div>
-          </div>
+          {/* Procedure & Environmental Conditions Table */}
+          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
+            <thead>
+              <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black text-left">
+                <th className={`w-[22%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No</th>
+                <th className={`w-[38%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+                <th className={`w-[40%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-black divide-x divide-black">
+                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>{procedureReference}</td>
+                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+                  {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
+                </td>
+                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+                  {(calibration as any).discipline || "DIMENSION (Basic Measuring Instrument, Gauge etc)"}
+                </td>
+              </tr>
+              <tr>
+                <td colSpan={3} className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"} font-medium`}>
+                  <span className="font-bold">Environmental Conditions</span> : Temperature at {env.temperature || "-"}° C RH {env.humidity || "-"} %
+                  {Boolean(env.soaking_time || env.soaking_start_time || env.soaking_end_time) && (
+                    <span className="ml-3">
+                      | <span className="font-bold">Soaking Details:</span> {env.soaking_start_time && `Start: ${env.soaking_start_time} `}
+                      {env.soaking_end_time && `| End: ${env.soaking_end_time} `}
+                      {env.soaking_time && `| Soaking Time: ${env.soaking_time}`}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
           {/* Traceability of Master Used */}
-          <div className="border border-black flex flex-col divide-y divide-black">
-            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold`}>
-              TRACEABILITY OF MASTER USED :
-            </div>
-            {calibration.reference_standards?.length > 0 ? (
-              <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
-                <thead>
-                  <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      Instrument Desc.
-                    </th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      Sr No / Id. No.
-                    </th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
-                    <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {calibration.reference_standards.map(
-                    (ref: any, idx: number) => (
-                      <tr key={idx} className="text-center">
-                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                          {ref.name || ref.instrument_desc || ref.description || "-"}
-                        </td>
-                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                          {ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || "-"}
-                        </td>
-                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                          {ref.id || ref.id_code || ref.serial_no || ref.sr_no || "-"}
-                        </td>
-                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                          {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
-                        </td>
-                        <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                          {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
-                        </td>
-                        <td className={isCompact ? "p-0.5" : "p-1"}>
-                          {ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || "NABL Lab"}
-                        </td>
-                      </tr>
-                    ),
-                  )}
-                </tbody>
-              </table>
-            ) : (
-              <table className={`w-full border-collapse ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
-                <thead>
-                  <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      Instrument Desc.
-                    </th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      Sr No / Id. No.
-                    </th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
-                    <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
-                    <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="text-center">
-                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      {(calibration as any)?.reference_standard_name || "Gauge Block Set"}
-                    </td>
-                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      {(calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || "Standard"}
-                    </td>
-                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      {(calibration as any)?.reference_standard_id || "REF-01"}
-                    </td>
-                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
-                    </td>
-                    <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                      {fmtDate((calibration as any)?.reference_standard_validity)}
-                    </td>
-                    <td className={isCompact ? "p-0.5" : "p-1"}>
-                      {(calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || "NABL Accredited Lab"}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            )}
-            <div className={`p-1 ${isCompact ? "text-[7.5px]" : "text-[8px]"} italic text-slate-700 bg-slate-50 mt-auto`}>
-              All the measurements performed are traceable to National/Int.
-              standards through NABL accredited cal.lab.
-            </div>
-          </div>
+          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
+            <thead>
+              <tr>
+                <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-left border-b border-black`}>
+                  TRACEABILITY OF MASTER USED :
+                </th>
+              </tr>
+              <tr className="bg-slate-100 border-b border-black font-bold text-center">
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  Instrument Desc.
+                </th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  Sr No / Id. No.
+                </th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
+                <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
+              </tr>
+            </thead>
+            <tbody>
+              {calibration.reference_standards?.length > 0 ? (
+                calibration.reference_standards.map(
+                  (ref: any, idx: number) => (
+                    <tr key={idx} className="text-center border-b border-black">
+                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                        {ref.name || ref.instrument_desc || ref.description || "-"}
+                      </td>
+                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                        {ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || "-"}
+                      </td>
+                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                        {ref.id || ref.id_code || ref.serial_no || ref.sr_no || "-"}
+                      </td>
+                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                        {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
+                      </td>
+                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                        {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
+                      </td>
+                      <td className={isCompact ? "p-0.5" : "p-1"}>
+                        {ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || "NABL Lab"}
+                      </td>
+                    </tr>
+                  ),
+                )
+              ) : (
+                <tr className="text-center border-b border-black">
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                    {(calibration as any)?.reference_standard_name || "Gauge Block Set"}
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                    {(calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || "Standard"}
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                    {(calibration as any)?.reference_standard_id || "REF-01"}
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                    {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
+                  </td>
+                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                    {fmtDate((calibration as any)?.reference_standard_validity)}
+                  </td>
+                  <td className={isCompact ? "p-0.5" : "p-1"}>
+                    {(calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || "NABL Accredited Lab"}
+                  </td>
+                </tr>
+              )}
+              <tr>
+                <td
+                  colSpan={6}
+                  className={`p-1 ${isCompact ? "text-[7.5px]" : "text-[8px]"} italic text-slate-700 bg-slate-50 border-b border-black`}
+                >
+                  All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
           {/* Optional Diagram / Schematic Image */}
           {(() => {
@@ -928,5 +1197,6 @@ export function CertificatePreview({
         </p>
       </div>
     </div>
+  </div>
   );
 }

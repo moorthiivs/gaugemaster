@@ -4,6 +4,8 @@ import {
   IsNumber,
   IsArray,
   IsObject,
+  IsBoolean,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateCalibrationTemplateDto {
@@ -34,7 +36,18 @@ export class CreateCalibrationTemplateDto {
     temperature?: string;
     humidity?: string;
     pressure?: string;
+    soaking_time?: string;
+    soaking_start_time?: string;
+    soaking_end_time?: string;
   };
+
+  @IsOptional()
+  @IsBoolean()
+  is_canvas_template?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  layout_blocks?: any[];
 
   @IsOptional()
   @IsArray()
@@ -71,6 +84,10 @@ export class CreateCalibrationTemplateDto {
   @IsOptional()
   @IsString()
   procedure_reference?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_no?: string;
 
   @IsOptional()
   @IsString()
