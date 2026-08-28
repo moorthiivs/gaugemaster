@@ -654,6 +654,11 @@ export default function CalibrationWizard() {
         if ((cal as any).decimal_places !== undefined) setWizardDecimalPlaces((cal as any).decimal_places);
         if ((cal as any).acceptance_criteria) setWizardAcceptanceCriteria((cal as any).acceptance_criteria);
 
+        if ((cal as any).is_canvas_template || ((cal as any).layout_blocks && (cal as any).layout_blocks.length > 0)) {
+          setWizardIsCanvas(true);
+          setWizardLayoutBlocks((cal as any).layout_blocks || []);
+        }
+
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
         if (cal.remarks) setRemarks(cal.remarks);
@@ -1109,32 +1114,57 @@ export default function CalibrationWizard() {
         // 1. AVERAGE
         if (/AVERAGE/i.test(formula)) {
           const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
+            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
             .map((v) => parseFloat(v))
-            .filter((v) => !isNaN(v) && v !== 0);
+            .filter((v) => !isNaN(v));
           if (trials.length > 0) {
             const sum = trials.reduce((a, b) => a + b, 0);
             row[col.id] = (sum / trials.length).toFixed(3);
             row.avg = row[col.id];
+          } else {
+            row[col.id] = "-";
+            row.avg = undefined;
           }
         }
         // 2. Error (avg - nominal or reading - nominal)
         else if (/avg\s*-\s*nominal/i.test(formula)) {
-          const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
-          const err = avgVal - nominal;
-          row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
-          row.error = err;
+          if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
+            const avgVal = parseFloat(row.avg ?? row.t1);
+            if (!isNaN(avgVal)) {
+              const err = avgVal - nominal;
+              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+              row.error = err;
+            }
+          } else {
+            row[col.id] = "-";
+            row.error = undefined;
+          }
         } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-          const readVal = parseFloat(row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
-          const err = readVal - nominal;
-          row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
-          row.error = err;
+          const readStr = row.reading ?? row.ascending_reading ?? row.t1;
+          if (readStr !== undefined && String(readStr).trim() !== "") {
+            const readVal = parseFloat(readStr);
+            if (!isNaN(readVal)) {
+              const err = readVal - nominal;
+              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+              row.error = err;
+            }
+          } else {
+            row[col.id] = "-";
+            row.error = undefined;
+          }
         }
         // 3. Status
         else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
-          const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
-          const errVal = Math.abs(parseFloat(row.error ?? (readVal - nominal)) || 0);
-          row[col.id] = errVal <= tol ? "PASS" : "FAIL";
-          row.status = row[col.id];
+          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
+          if (hasReading) {
+            const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
+            const errVal = Math.abs(parseFloat(row.error ?? (readVal - nominal)) || 0);
+            row[col.id] = errVal <= tol ? "PASS" : "FAIL";
+            row.status = row[col.id];
+          } else {
+            row[col.id] = "-";
+            row.status = "-";
+          }
         }
       }
     });
@@ -1216,7 +1246,7 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (col.type === "status") {
-                      const st = row[col.id] || row.status || "PASS";
+                      const st = row[col.id] || row.status || "-";
                       const isPass = st === "PASS";
                       return (
                         <td key={col.id} className="p-1.5">

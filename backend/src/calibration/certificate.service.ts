@@ -949,25 +949,33 @@ export class CertificateService {
 
           if (/AVERAGE/i.test(formula)) {
             const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
+              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
               .map((v) => parseFloat(v))
-              .filter((v) => !isNaN(v) && v !== 0);
+              .filter((v) => !isNaN(v));
             if (trials.length > 0) {
               const sum = trials.reduce((a, b) => a + b, 0);
               return (sum / trials.length).toFixed(3);
             }
-            return (t1 || nominal).toFixed(3);
+            return '-';
           }
           if (/avg\s*-\s*nominal/i.test(formula)) {
-            const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
+            if (row.avg === undefined && (row.t1 === undefined || String(row.t1).trim() === "")) return '-';
+            const avgVal = parseFloat(row.avg ?? row.t1);
+            if (isNaN(avgVal)) return '-';
             const err = avgVal - nominal;
             return (err >= 0 ? '+' : '') + err.toFixed(3);
           }
           if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-            const readVal = parseFloat(row.reading ?? row.ascending_reading ?? nominal);
+            const readStr = row.reading ?? row.ascending_reading ?? row.t1;
+            if (readStr === undefined || String(readStr).trim() === "") return '-';
+            const readVal = parseFloat(readStr);
+            if (isNaN(readVal)) return '-';
             const err = readVal - nominal;
             return (err >= 0 ? '+' : '') + err.toFixed(3);
           }
           if (/PASS.*FAIL/i.test(formula)) {
+            const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
+            if (!hasReading) return '-';
             const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
             return errVal <= tol ? 'PASS' : 'FAIL';
           }
@@ -1266,7 +1274,7 @@ export class CertificateService {
     const docDefinition = {
       pageSize: 'A4' as const,
       pageOrientation: (useLandscape ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
-      pageMargins: [20, 48, 20, 48] as [number, number, number, number],
+      pageMargins: [20, 48, 20, 36] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
@@ -1283,7 +1291,7 @@ export class CertificateService {
       background: (currentPage: number, pageCount: number) => {
         const pageWidth = useLandscape ? 841.89 : 595.28;
         const pageHeight = useLandscape ? 595.28 : 841.89;
-        const footerY = useLandscape ? 547 : 794;
+        const footerY = useLandscape ? 559 : 806;
         const footerHeight = pageHeight - footerY;
         const rectHeight = footerY - 46;
 
@@ -1434,10 +1442,10 @@ export class CertificateService {
             : []),
         ];
 
-        // Total footer banner height is ~48pt. Calculate vertical padding to vertically center content.
+        // Total footer banner height is ~36pt. Calculate vertical padding to vertically center content.
         const lineCount = footerItems.length;
         const totalTextHeight = lineCount * 8.5;
-        const verticalPad = Math.max(3, Math.round((48 - totalTextHeight) / 2));
+        const verticalPad = Math.max(3, Math.round((36 - totalTextHeight) / 2));
 
         return {
           table: {
@@ -1467,20 +1475,24 @@ export class CertificateService {
         {
           table: {
             widths: calibration.ulr_number
-              ? ['13%', '14%', '15%', '13%', '13%', '9%', '23%']
-              : ['15%', '16%', '17%', '15%', '11%', '26%'],
+              ? ['23%', '13%', '14%', '15%', '13%', '13%', '9%']
+              : ['26%', '15%', '16%', '17%', '15%', '11%'],
             body: calibration.ulr_number
               ? [
                   [
+                    { text: 'Calibration Location', style: 'gridTh' },
                     { text: 'Calibration On', style: 'gridTh' },
                     { text: 'Next Calibration Due', style: 'gridTh' },
                     { text: 'Certificate No.:', style: 'gridTh' },
                     { text: 'ULR No.', style: 'gridTh' },
                     { text: 'Certi Issue Date', style: 'gridTh' },
                     { text: 'Sheet No.', style: 'gridTh' },
-                    { text: 'Calibration Location', style: 'gridTh' },
                   ],
                   [
+                    {
+                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      style: 'gridTdBold',
+                    },
                     {
                       text: fmtDate(calibration.calibration_date),
                       style: 'gridTd',
@@ -1502,22 +1514,22 @@ export class CertificateService {
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
-                    {
-                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
-                      style: 'gridTdBold',
-                    },
                   ],
                 ]
               : [
                   [
+                    { text: 'Calibration Location', style: 'gridTh' },
                     { text: 'Calibration On', style: 'gridTh' },
                     { text: 'Next Calibration Due', style: 'gridTh' },
                     { text: 'Certificate No.:', style: 'gridTh' },
                     { text: 'Certi Issue Date', style: 'gridTh' },
                     { text: 'Sheet No.', style: 'gridTh' },
-                    { text: 'Calibration Location', style: 'gridTh' },
                   ],
                   [
+                    {
+                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      style: 'gridTdBold',
+                    },
                     {
                       text: fmtDate(calibration.calibration_date),
                       style: 'gridTd',
@@ -1535,10 +1547,6 @@ export class CertificateService {
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
-                    {
-                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
-                      style: 'gridTdBold',
-                    },
                   ],
                 ],
           },
@@ -1552,129 +1560,90 @@ export class CertificateService {
         },
 
         // Description & Identification Box
-        // Description & Identification Table (3 Columns / 6 Cells per row)
+        // Description & Identification Table (3 Columns / Stacked)
         {
           table: {
-            widths: ['14%', '19%', '14%', '19%', '14%', '20%'],
+            widths: ['33%', '34%', '33%'],
             body: [
               [
                 {
                   text: 'Description & Identification',
                   style: 'boxHeader',
-                  colSpan: 6,
+                  colSpan: 3,
                 },
-                {},
-                {},
-                {},
                 {},
                 {},
               ],
               // Row 1
               [
                 {
-                  text: 'Instrument (UUC)',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Instrument (UUC)', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.name || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: inst?.name || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Make', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.make || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: 'Make',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.make || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: 'Model No.',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: (inst as any)?.model_no || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Model No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: (inst as any)?.model_no || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
               ],
               // Row 2
               [
                 {
-                  text: rangeLabel,
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: rangeLabel, bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.range || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: inst?.range || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Serial No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.serial_no || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: 'Serial No.',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.serial_no || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: 'Least Count',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.least_count || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Least Count', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.least_count || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
               ],
               // Row 3
               [
                 {
-                  text: 'ID No.',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'ID No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.id_code || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: inst?.id_code || '-',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Instrument Cond.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: 'SATISFACTORY', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
                 {
-                  text: 'Instrument Cond.',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: 'SATISFACTORY',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: 'Location',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-                {
-                  text: inst?.location || 'Permanent Laboratory',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                  stack: [
+                    { text: 'Location', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
+                    { text: inst?.location || 'Permanent Laboratory', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                  ],
+                  margin: [4, 2, 4, 2],
                 },
               ],
             ],
@@ -1693,49 +1662,31 @@ export class CertificateService {
           table: {
             widths: ['24%', '38%', '38%'],
             body: [
-              // Row 1: Headers
+              // Row 1: Headers & Values
               [
                 {
-                  text: 'Procedure No',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  fillColor: '#f1f5f9',
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                  stack: [
+                    { text: 'Procedure No', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
+                    { text: procedureReference || 'AE/CAL-SOP/01', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
+                  ],
+                  margin: [2, 1, 2, 1],
                 },
                 {
-                  text: 'Standard Reference',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  fillColor: '#f1f5f9',
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                  stack: [
+                    { text: 'Standard Reference', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
+                    { text: standardReference || 'Standard calibration per ISO/IEC 17025', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
+                  ],
+                  margin: [2, 1, 2, 1],
                 },
                 {
-                  text: 'Discipline',
-                  bold: true,
-                  fontSize: isDense ? 7 : 8,
-                  fillColor: '#f1f5f9',
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
+                  stack: [
+                    { text: 'Discipline', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
+                    { text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
+                  ],
+                  margin: [2, 1, 2, 1],
                 },
               ],
-              // Row 2: Values
-              [
-                {
-                  text: procedureReference || 'AE/CAL-SOP/01',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
-                },
-                {
-                  text: standardReference || 'Standard calibration per ISO/IEC 17025',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
-                },
-                {
-                  text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)',
-                  fontSize: isDense ? 7 : 8,
-                  margin: [3, isDense ? 1.5 : 2, 3, isDense ? 1.5 : 2],
-                },
-              ],
-              // Row 3: Environmental Conditions (Full Colspan)
+              // Row 2: Environmental Conditions (Full Colspan)
               [
                 {
                   colSpan: 3,
@@ -1759,7 +1710,7 @@ export class CertificateService {
                       : []),
                   ],
                   fontSize: isDense ? 7 : 8,
-                  margin: [3, isDense ? 1.5 : 2.5, 3, isDense ? 1.5 : 2.5],
+                  margin: [2, 1, 2, 1],
                 },
                 {},
                 {},
