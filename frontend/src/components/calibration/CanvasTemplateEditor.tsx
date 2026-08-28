@@ -73,6 +73,8 @@ export function CanvasTemplateEditor({
   const [editingTableBlock, setEditingTableBlock] = useState<TableGridBlock | null>(null);
   const [showTableModal, setShowTableModal] = useState(false);
   const [showPresetsModal, setShowPresetsModal] = useState(false);
+  const [editingMatrixBlock, setEditingMatrixBlock] = useState<MatrixTableBlock | null>(null);
+  const [showMatrixModal, setShowMatrixModal] = useState(false);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     onChange(newBlocks);
@@ -260,6 +262,19 @@ export function CanvasTemplateEditor({
     markChanged(updated);
     setShowTableModal(false);
     toast.success("Table configuration updated");
+  };
+
+  const openMatrixEditor = (block: MatrixTableBlock) => {
+    setEditingMatrixBlock(JSON.parse(JSON.stringify(block)));
+    setShowMatrixModal(true);
+  };
+
+  const saveMatrixEditor = () => {
+    if (!editingMatrixBlock) return;
+    const updated = blocks.map((b) => (b.id === editingMatrixBlock.id ? editingMatrixBlock : b));
+    markChanged(updated);
+    setShowMatrixModal(false);
+    toast.success("Matrix table configuration updated");
   };
 
   // Helper to evaluate formula preview in builder
@@ -473,54 +488,131 @@ export function CanvasTemplateEditor({
 
                     {/* Table View */}
                     <div className="overflow-x-auto">
-                      <table className="w-full border-collapse text-[10px] text-center border-black">
-                        <thead>
-                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                            {block.columns.map((col) => (
-                              <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
-                                {col.label}
-                                {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
+                      {block.orientation === "horizontal" ? (
+                        <table className="w-full border-collapse text-[10px] text-center border-black">
+                          <thead>
+                            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                              <th className="py-1 px-2 text-left w-44 min-w-[130px] bg-slate-200/60 sticky left-0 z-20">
+                                Parameter / Sl no
                               </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-black">
-                          {block.rows.map((row, rIdx) => (
-                            <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                              {block.columns.map((col) => (
-                                <td key={col.id} className="py-1 px-1.5">
-                                  {col.type === "nominal" ? (
-                                    <Input
-                                      type="number"
-                                      step="any"
-                                      value={row.nominal ?? ""}
-                                      onChange={(e) => {
-                                        const newRows = [...block.rows];
-                                        newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
-                                        updateBlock(index, { ...block, rows: newRows });
-                                      }}
-                                      className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
-                                    />
-                                  ) : col.type === "text" ? (
-                                    <Input
-                                      value={row.description || ""}
-                                      onChange={(e) => {
-                                        const newRows = [...block.rows];
-                                        newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
-                                        updateBlock(index, { ...block, rows: newRows });
-                                      }}
-                                      className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
-                                      placeholder="Description"
-                                    />
-                                  ) : (
-                                    <span className="text-muted-foreground font-mono">{evaluatePreviewCell(row, col)}</span>
-                                  )}
-                                </td>
+                              {block.rows.map((r, rIdx) => (
+                                <th key={rIdx} className="py-1 px-1.5 min-w-[45px] font-bold text-foreground">
+                                  {r.point_number ?? (rIdx + 1)}
+                                </th>
                               ))}
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-black">
+                            {block.columns
+                              .filter((c) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino")
+                              .map((col) => (
+                                <tr key={col.id} className="divide-x divide-black hover:bg-slate-50/50">
+                                  <td className="py-1 px-2 text-left font-bold bg-slate-100/60 sticky left-0 z-10 whitespace-nowrap text-[10.5px]">
+                                    {col.label}
+                                    {col.type === "formula" && <span className="text-[8px] text-primary ml-1 font-normal">(fx)</span>}
+                                  </td>
+                                  {block.rows.map((row, rIdx) => (
+                                    <td key={rIdx} className="py-1 px-1 font-mono">
+                                      {col.type === "nominal" ? (
+                                        <Input
+                                          type="number"
+                                          step="any"
+                                          value={row.nominal ?? ""}
+                                          onChange={(e) => {
+                                            const newRows = [...block.rows];
+                                            newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                            updateBlock(index, { ...block, rows: newRows });
+                                          }}
+                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 w-full min-w-[40px] font-bold"
+                                        />
+                                      ) : col.type === "text" ? (
+                                        <Input
+                                          value={row.description || ""}
+                                          onChange={(e) => {
+                                            const newRows = [...block.rows];
+                                            newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                            updateBlock(index, { ...block, rows: newRows });
+                                          }}
+                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 w-full min-w-[40px]"
+                                          placeholder="Description"
+                                        />
+                                      ) : (
+                                        <span className="text-muted-foreground font-mono">{evaluatePreviewCell(row, col)}</span>
+                                      )}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <table className="w-full border-collapse text-[10px] text-center border-black">
+                          <thead>
+                            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                              {block.columns.map((col) => (
+                                <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                                  {col.label}
+                                  {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-black">
+                            {block.rows.map((row, rIdx) => (
+                              <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                {block.columns.map((col) => {
+                                  const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                                  if (isPointNo) {
+                                    return (
+                                      <td key={col.id} className="py-1 px-1.5 font-bold text-slate-700 dark:text-slate-300">
+                                        {row.point_number ?? (rIdx + 1)}
+                                      </td>
+                                    );
+                                  }
+                                  if (col.type === "nominal") {
+                                    return (
+                                      <td key={col.id} className="py-1 px-1.5">
+                                        <Input
+                                          type="number"
+                                          step="any"
+                                          value={row.nominal ?? ""}
+                                          onChange={(e) => {
+                                            const newRows = [...block.rows];
+                                            newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                            updateBlock(index, { ...block, rows: newRows });
+                                          }}
+                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                        />
+                                      </td>
+                                    );
+                                  }
+                                  if (col.type === "text") {
+                                    return (
+                                      <td key={col.id} className="py-1 px-1.5">
+                                        <Input
+                                          value={row.description || ""}
+                                          onChange={(e) => {
+                                            const newRows = [...block.rows];
+                                            newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                            updateBlock(index, { ...block, rows: newRows });
+                                          }}
+                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
+                                          placeholder="Description"
+                                        />
+                                      </td>
+                                    );
+                                  }
+                                  return (
+                                    <td key={col.id} className="py-1 px-1.5">
+                                      <span className="text-muted-foreground font-mono">{evaluatePreviewCell(row, col)}</span>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
                     </div>
 
                     {/* Table Row Footer Controls */}
@@ -675,11 +767,37 @@ export function CanvasTemplateEditor({
                                   <tbody className="divide-y divide-black">
                                     {child.rows.map((row, rIdx) => (
                                       <tr key={rIdx} className="divide-x divide-black">
-                                        {child.columns.map((col) => (
-                                          <td key={col.id} className="py-0.5 px-1 font-mono">
-                                            {col.type === "nominal" ? row.nominal : col.type === "text" ? row.description : "-"}
-                                          </td>
-                                        ))}
+                                        {child.columns.map((col) => {
+                                          const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                                          if (isPointNo) {
+                                            return (
+                                              <td key={col.id} className="py-0.5 px-1 font-bold text-slate-700 dark:text-slate-300">
+                                                {row.point_number ?? (rIdx + 1)}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "nominal") {
+                                            const dec = child.decimal_places !== undefined ? child.decimal_places : 3;
+                                            const val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                                            return (
+                                              <td key={col.id} className="py-0.5 px-1 font-mono font-semibold">
+                                                {val}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "text") {
+                                            return (
+                                              <td key={col.id} className="py-0.5 px-1 text-left pl-1">
+                                                {row.description || (row as any)[col.id] || "-"}
+                                              </td>
+                                            );
+                                          }
+                                          return (
+                                            <td key={col.id} className="py-0.5 px-1 font-mono text-muted-foreground">
+                                              -
+                                            </td>
+                                          );
+                                        })}
                                       </tr>
                                     ))}
                                   </tbody>
@@ -707,15 +825,31 @@ export function CanvasTemplateEditor({
                 {block.type === "matrix_table" && (
                   <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
                     <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 border-b border-black flex items-center justify-between">
-                      <Input
-                        value={block.title}
-                        onChange={(e) => {
-                          updateBlock(index, { ...block, title: e.target.value });
-                        }}
-                        className="h-6 text-xs font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-64"
-                        placeholder="Matrix Table Title"
-                      />
-                      <span className="text-[10px] text-muted-foreground font-mono">Reference Matrix Table</span>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          value={block.title}
+                          onChange={(e) => {
+                            updateBlock(index, { ...block, title: e.target.value });
+                          }}
+                          className="h-6 text-xs font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-64"
+                          placeholder="Matrix Table Title"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
+                          {block.headers.length} Header Rows • {block.rows.length} Data Rows
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openMatrixEditor(block)}
+                          className="h-5 px-1.5 text-[10px] font-bold text-primary hover:bg-primary/10 gap-1"
+                        >
+                          <Sliders className="w-2.5 h-2.5" />
+                          Configure
+                        </Button>
+                      </div>
                     </div>
 
                     <table className="w-full border-collapse text-[9.5px] text-center border-black">
@@ -799,7 +933,7 @@ export function CanvasTemplateEditor({
 
           {editingTableBlock && (
             <div className="space-y-4 pt-2">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div>
                   <Label className="text-xs">Table Title</Label>
                   <Input
@@ -824,6 +958,33 @@ export function CanvasTemplateEditor({
                     value={editingTableBlock.tolerance ?? 0.01}
                     onChange={(e) => setEditingTableBlock({ ...editingTableBlock, tolerance: parseFloat(e.target.value) || 0 })}
                     className="text-xs mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Orientation</Label>
+                  <Select
+                    value={editingTableBlock.orientation || "vertical"}
+                    onValueChange={(val: any) => setEditingTableBlock({ ...editingTableBlock, orientation: val })}
+                  >
+                    <SelectTrigger className="text-xs mt-1 h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="vertical">↕ Vertical (Standard)</SelectItem>
+                      <SelectItem value="horizontal">↔ Horizontal (Transposed)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-xs">Bottom Gap (px)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={editingTableBlock.marginBottom ?? 6}
+                    onChange={(e) => setEditingTableBlock({ ...editingTableBlock, marginBottom: parseInt(e.target.value) || 0 })}
+                    className="text-xs mt-1"
+                    placeholder="6"
                   />
                 </div>
               </div>
@@ -955,6 +1116,277 @@ export function CanvasTemplateEditor({
               Cancel
             </Button>
             <Button size="sm" onClick={saveTableEditor} className="gap-1.5 shadow-xs">
+              <Check className="w-3.5 h-3.5" />
+              Save Configuration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: Matrix Table Configuration */}
+      <Dialog open={showMatrixModal} onOpenChange={setShowMatrixModal}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-primary" />
+              Configure Matrix Table: {editingMatrixBlock?.title}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Edit headers, data rows, and layout settings for this reference / acceptance criteria table.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingMatrixBlock && (
+            <div className="space-y-4 pt-2">
+              {/* Title & Bottom Gap */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Label className="text-xs">Table Title</Label>
+                  <Input
+                    value={editingMatrixBlock.title}
+                    onChange={(e) => setEditingMatrixBlock({ ...editingMatrixBlock, title: e.target.value })}
+                    className="text-xs mt-1"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Bottom Gap (px)</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={editingMatrixBlock.marginBottom ?? 6}
+                    onChange={(e) => setEditingMatrixBlock({ ...editingMatrixBlock, marginBottom: parseInt(e.target.value) || 0 })}
+                    className="text-xs mt-1"
+                    placeholder="6"
+                  />
+                </div>
+              </div>
+
+              {/* Headers Configuration */}
+              <div className="space-y-2 border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold">Header Rows ({editingMatrixBlock.headers.length})</h4>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => {
+                      const colCount = editingMatrixBlock.rows[0]?.length || 3;
+                      const newHeaderRow: MatrixHeaderCell[] = Array.from({ length: colCount }, (_, i) => ({ text: `Header ${i + 1}` }));
+                      setEditingMatrixBlock({
+                        ...editingMatrixBlock,
+                        headers: [...editingMatrixBlock.headers, newHeaderRow],
+                      });
+                    }}
+                    className="h-6 text-[11px] gap-1"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add Header Row
+                  </Button>
+                </div>
+
+                {editingMatrixBlock.headers.map((hRow, hIdx) => (
+                  <div key={hIdx} className="bg-background p-2 rounded border space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-muted-foreground">Header Row {hIdx + 1}</span>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const newHeaders = [...editingMatrixBlock.headers];
+                            newHeaders[hIdx] = [...hRow, { text: "New" }];
+                            setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                          }}
+                          className="h-5 px-1 text-[10px] text-emerald-600 hover:bg-emerald-50"
+                        >
+                          <Plus className="w-2.5 h-2.5 mr-0.5" />Cell
+                        </Button>
+                        {editingMatrixBlock.headers.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              const newHeaders = editingMatrixBlock.headers.filter((_, i) => i !== hIdx);
+                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                            }}
+                            className="h-5 px-1 text-[10px] text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {hRow.map((cell, cIdx) => (
+                        <div key={cIdx} className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5 border">
+                          <Input
+                            value={cell.text}
+                            onChange={(e) => {
+                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
+                                hi === hIdx
+                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, text: e.target.value } : c)
+                                  : [...hr]
+                              );
+                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                            }}
+                            className="h-5 text-[10px] font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-28"
+                          />
+                          <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
+                            {cell.colSpan && cell.colSpan > 1 && (
+                              <span className="bg-blue-100 text-blue-700 px-1 rounded text-[8px]">cs:{cell.colSpan}</span>
+                            )}
+                            {cell.rowSpan && cell.rowSpan > 1 && (
+                              <span className="bg-purple-100 text-purple-700 px-1 rounded text-[8px]">rs:{cell.rowSpan}</span>
+                            )}
+                          </div>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={cell.colSpan ?? 1}
+                            onChange={(e) => {
+                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
+                                hi === hIdx
+                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, colSpan: parseInt(e.target.value) || 1 } : c)
+                                  : [...hr]
+                              );
+                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                            }}
+                            className="h-5 w-10 text-[9px] text-center bg-transparent border p-0 focus-visible:ring-1 rounded"
+                            title="ColSpan"
+                          />
+                          <Input
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={cell.rowSpan ?? 1}
+                            onChange={(e) => {
+                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
+                                hi === hIdx
+                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, rowSpan: parseInt(e.target.value) || 1 } : c)
+                                  : [...hr]
+                              );
+                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                            }}
+                            className="h-5 w-10 text-[9px] text-center bg-transparent border p-0 focus-visible:ring-1 rounded"
+                            title="RowSpan"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
+                                hi === hIdx ? hr.filter((_, ci) => ci !== cIdx) : [...hr]
+                              );
+                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
+                            }}
+                            className="text-muted-foreground hover:text-red-500 p-0.5"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Data Rows Configuration */}
+              <div className="space-y-2 border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold">Data Rows ({editingMatrixBlock.rows.length})</h4>
+                  <div className="flex gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        const colCount = editingMatrixBlock.rows[0]?.length || 3;
+                        const newRow = Array(colCount).fill("");
+                        setEditingMatrixBlock({
+                          ...editingMatrixBlock,
+                          rows: [...editingMatrixBlock.rows, newRow],
+                        });
+                      }}
+                      className="h-6 text-[11px] gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add Row
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const newRows = editingMatrixBlock.rows.map((r) => [...r, ""]);
+                        setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
+                      }}
+                      className="h-6 text-[11px] gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add Column
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  {editingMatrixBlock.rows.map((row, rIdx) => (
+                    <div key={rIdx} className="flex items-center gap-1.5 bg-background p-1.5 rounded border">
+                      <span className="text-[9px] font-mono text-muted-foreground w-5 shrink-0 text-center">{rIdx + 1}</span>
+                      {row.map((cellVal, cIdx) => (
+                        <Input
+                          key={cIdx}
+                          value={cellVal}
+                          onChange={(e) => {
+                            const newRows = editingMatrixBlock.rows.map((r, ri) =>
+                              ri === rIdx
+                                ? r.map((c, ci) => ci === cIdx ? e.target.value : c)
+                                : [...r]
+                            );
+                            setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
+                          }}
+                          className="h-6 text-[10px] text-center font-mono flex-1 min-w-0"
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newRows = editingMatrixBlock.rows.filter((_, ri) => ri !== rIdx);
+                          setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
+                        }}
+                        className="text-muted-foreground hover:text-red-500 p-0.5 shrink-0"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {editingMatrixBlock.rows.length > 0 && editingMatrixBlock.rows[0].length > 1 && (
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const newRows = editingMatrixBlock.rows.map((r) => r.slice(0, -1));
+                        setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
+                      }}
+                      className="h-5 text-[10px] text-destructive hover:bg-destructive/10"
+                    >
+                      Remove Last Column
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="pt-3 border-t">
+            <Button variant="outline" size="sm" onClick={() => setShowMatrixModal(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={saveMatrixEditor} className="gap-1.5 shadow-xs">
               <Check className="w-3.5 h-3.5" />
               Save Configuration
             </Button>
