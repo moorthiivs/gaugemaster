@@ -187,6 +187,75 @@ export function CertificatePreview({
     const renderSingleTableGrid = (tbl: any) => {
       const unitStr = tbl.unit || "mm";
 
+      if (tbl.orientation === "horizontal") {
+        const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
+        const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+
+        return (
+          <div key={tbl.id} className="border border-black flex flex-col divide-y divide-black bg-white">
+            <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+              {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
+            </div>
+            <div>
+              <table className="w-full border-collapse text-[7.5px] text-center" style={{ tableLayout: 'fixed' }}>
+                <thead>
+                  <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black">
+                    <th className="py-0.5 px-1 text-left bg-slate-200/50" style={{ width: '18%' }}>
+                      Parameter / Sl no
+                    </th>
+                    {tbl.rows.map((r: any, rIdx: number) => (
+                      <th key={rIdx} className="py-0.5 px-0.5 font-bold">
+                        {r.point_number ?? (rIdx + 1)}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-black font-mono">
+                  {displayCols.map((col: any) => (
+                    <tr key={col.id} className="divide-x divide-black">
+                      <td className="py-0.5 px-1 text-left font-bold bg-slate-50 text-[7px] overflow-hidden text-ellipsis">
+                        {col.label}
+                      </td>
+                      {tbl.rows.map((row: any, rIdx: number) => {
+                        let val: any = row[col.id];
+                        if (col.type === "nominal") {
+                          val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                        } else if (col.type === "text") {
+                          val = row.description || row[col.id] || "-";
+                        } else if (col.type === "formula" || col.type === "status") {
+                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
+                        } else if (val === undefined || val === null || val === "") {
+                          val = "-";
+                        }
+
+                        const isPass = val === "PASS" || val === "OK";
+                        const isFail = val === "FAIL" || val === "REJECT";
+
+                        return (
+                          <td
+                            key={rIdx}
+                            className={`py-0.5 px-0.5 ${
+                              isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : ""
+                            }`}
+                          >
+                            {val}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {tbl.footerNote && (
+              <div className="p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black">
+                {tbl.footerNote}
+              </div>
+            )}
+          </div>
+        );
+      }
+
       return (
         <div key={tbl.id} className="border border-black flex flex-col divide-y divide-black bg-white">
           <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
@@ -206,17 +275,23 @@ export function CertificatePreview({
               {tbl.rows.map((row: any, rIdx: number) => (
                 <tr key={rIdx} className="divide-x divide-black">
                   {tbl.columns.map((col: any) => {
+                    const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                     let val: any = row[col.id];
-                    if (col.type === "nominal") val = row.nominal !== undefined ? Number(row.nominal).toFixed(2) : "-";
-                    else if (col.type === "text") val = row.description || row[col.id] || "-";
-                    else if (col.type === "formula" || col.type === "status") {
+                    if (isPointNo) {
+                      val = row.point_number ?? row[col.id] ?? (rIdx + 1);
+                    } else if (col.type === "nominal") {
+                      const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+                      val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : "-";
+                    } else if (col.type === "text") {
+                      val = row.description || row[col.id] || "-";
+                    } else if (col.type === "formula" || col.type === "status") {
                       val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
                     } else if (val === undefined || val === null || val === "") {
                       val = "-";
                     }
 
-                    const isPass = val === "PASS";
-                    const isFail = val === "FAIL";
+                    const isPass = val === "PASS" || val === "OK";
+                    const isFail = val === "FAIL" || val === "REJECT";
 
                     return (
                       <td
@@ -243,14 +318,19 @@ export function CertificatePreview({
     };
 
     return (
-      <div className="space-y-1.5 flex flex-col">
+      <div className="flex flex-col">
         {blocks.map((block: any, idx: number) => {
+          const mbStyle = { marginBottom: `${block.marginBottom !== undefined ? block.marginBottom : 6}px` };
           if (block.type === "table_grid") {
-            return renderSingleTableGrid(block);
+            return (
+              <div key={block.id || idx} style={mbStyle}>
+                {renderSingleTableGrid(block)}
+              </div>
+            );
           }
           if (block.type === "split_row") {
             return (
-              <div key={block.id || idx} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-1.5`}>
+              <div key={block.id || idx} style={mbStyle} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-1.5`}>
                 {block.children?.map((child: any, cIdx: number) => {
                   const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
                   return (
@@ -270,7 +350,7 @@ export function CertificatePreview({
           }
           if (block.type === "matrix_table") {
             return (
-              <div key={block.id || idx} className="border border-black flex flex-col divide-y divide-black bg-white">
+              <div key={block.id || idx} style={mbStyle} className="border border-black flex flex-col divide-y divide-black bg-white">
                 <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
                   {block.title}
                 </div>
@@ -303,7 +383,7 @@ export function CertificatePreview({
           }
           if (block.type === "text_block") {
             return (
-              <div key={block.id || idx} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
+              <div key={block.id || idx} style={mbStyle} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
                 {block.content}
               </div>
             );
@@ -1002,14 +1082,7 @@ export function CertificatePreview({
                   </td>
                 </tr>
               )}
-              <tr>
-                <td
-                  colSpan={6}
-                  className={`p-1 ${isCompact ? "text-[7.5px]" : "text-[8px]"} italic text-slate-700 bg-slate-50 border-b border-black`}
-                >
-                  All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.
-                </td>
-              </tr>
+
             </tbody>
           </table>
 

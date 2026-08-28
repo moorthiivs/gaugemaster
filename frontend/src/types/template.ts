@@ -38,12 +38,14 @@ export interface TableGridBlock {
   type: "table_grid";
   title: string;
   width?: "100%" | "50%" | "33%" | "66%";
+  orientation?: "vertical" | "horizontal";
   unit?: string;
   tolerance?: number;
   decimal_places?: number;
   columns: CanvasColumnDef[];
   rows: CanvasRowData[];
   footerNote?: string;
+  marginBottom?: number;
 }
 
 export interface SplitRowBlock {
@@ -52,6 +54,7 @@ export interface SplitRowBlock {
   columnsCount: 2 | 3;
   columnRatio?: string; // e.g. "50/50" or "60/40"
   children: (TableGridBlock | TextBlock | MatrixTableBlock | BlankBlock)[];
+  marginBottom?: number;
 }
 
 export interface MatrixHeaderCell {
@@ -68,6 +71,7 @@ export interface MatrixTableBlock {
   headers: MatrixHeaderCell[][];
   rows: (string | number)[][];
   footerNote?: string;
+  marginBottom?: number;
 }
 
 export interface TextBlock {
@@ -75,6 +79,7 @@ export interface TextBlock {
   type: "text_block";
   content: string;
   style?: "standard" | "callout" | "bold" | "centered" | "bordered";
+  marginBottom?: number;
 }
 
 export interface DiagramBlock {

@@ -53,14 +53,35 @@ const parseFrequencyMonths = (freq?: string): number => {
   return val > 0 ? val : 6;
 };
 
+const toLocalYyyyMmDd = (d?: string | Date | null): string => {
+  if (!d) return "";
+  try {
+    const dateObj = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(dateObj.getTime())) return "";
+    return format(dateObj, "yyyy-MM-dd");
+  } catch {
+    return "";
+  }
+};
+
+const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-yyyy"): string => {
+  if (!d) return "-";
+  try {
+    const dateObj = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(dateObj.getTime())) return "-";
+    return format(dateObj, pattern);
+  } catch {
+    return "-";
+  }
+};
+
 const computeNextDueDate = (baseDateStr: string, frequencyStr?: string): string => {
   if (!baseDateStr) return "";
-  const baseDate = new Date(baseDateStr);
+  const baseDate = parseISO(baseDateStr.includes("T") ? baseDateStr.split("T")[0] : baseDateStr);
   if (isNaN(baseDate.getTime())) return "";
   
   const monthsToAdd = parseFrequencyMonths(frequencyStr);
-  const nextDate = new Date(baseDate);
-  nextDate.setMonth(nextDate.getMonth() + monthsToAdd);
+  const nextDate = addMonths(baseDate, monthsToAdd);
   
   return format(nextDate, "yyyy-MM-dd");
 };
@@ -156,8 +177,8 @@ export default function CalibrationWizard() {
   const [approvedBy, setApprovedBy] = useState("");
   const [approvedByDesignation, setApprovedByDesignation] = useState("");
   const [approvedBySignature, setApprovedBySignature] = useState("");
-  const [calDate, setCalDate] = useState(new Date().toISOString().split("T")[0]);
-  const [certIssueDate, setCertIssueDate] = useState(new Date().toISOString().split("T")[0]);
+  const [calDate, setCalDate] = useState(toLocalYyyyMmDd(new Date()));
+  const [certIssueDate, setCertIssueDate] = useState(toLocalYyyyMmDd(new Date()));
   const [nextCalDate, setNextCalDate] = useState("");
   const [systemUsers, setSystemUsers] = useState<any[]>([]);
 
@@ -314,9 +335,11 @@ export default function CalibrationWizard() {
 
     // Set Date of Calibration to previous calibration due date if present
     if (cal.next_calibration_date) {
-      const prevDueDate = cal.next_calibration_date.split("T")[0];
-      setCalDate(prevDueDate);
-      setCertIssueDate(prevDueDate);
+      const prevDueDate = toLocalYyyyMmDd(cal.next_calibration_date);
+      if (prevDueDate) {
+        setCalDate(prevDueDate);
+        setCertIssueDate(prevDueDate);
+      }
     }
 
     // 1. Reference standards
@@ -328,7 +351,7 @@ export default function CalibrationWizard() {
           name: cal.reference_standard_name,
           id: cal.reference_standard_id || "",
           traceable_to: cal.reference_standard_traceable_to || "",
-          validity: cal.reference_standard_validity ? cal.reference_standard_validity.split("T")[0] : "",
+          validity: cal.reference_standard_validity ? toLocalYyyyMmDd(cal.reference_standard_validity) : "",
           range: cal.reference_standard_range || "",
           least_count: cal.reference_standard_least_count || "",
         },
@@ -608,7 +631,7 @@ export default function CalibrationWizard() {
               id: cal.reference_standard_id || "",
               traceable_to: cal.reference_standard_traceable_to || "",
               validity: cal.reference_standard_validity
-                ? cal.reference_standard_validity.split("T")[0]
+                ? toLocalYyyyMmDd(cal.reference_standard_validity)
                 : "",
               range: cal.reference_standard_range || "",
               least_count: cal.reference_standard_least_count || "",
@@ -672,19 +695,15 @@ export default function CalibrationWizard() {
         setApprovedByDesignation(cal.approved_by_designation || "");
         setApprovedBySignature((cal as any).approved_by_signature || "");
         setCalDate(
-          cal.calibration_date
-            ? cal.calibration_date.split("T")[0]
-            : new Date().toISOString().split("T")[0]
+          toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date())
         );
         setCertIssueDate(
-          (cal as any).certificate_issue_date
-            ? (cal as any).certificate_issue_date.split("T")[0]
-            : cal.calibration_date
-              ? cal.calibration_date.split("T")[0]
-              : new Date().toISOString().split("T")[0]
+          toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
+            toLocalYyyyMmDd(cal.calibration_date) ||
+            toLocalYyyyMmDd(new Date())
         );
         setNextCalDate(
-          cal.next_calibration_date ? cal.next_calibration_date.split("T")[0] : ""
+          toLocalYyyyMmDd(cal.next_calibration_date)
         );
         setNextCertNumber(cal.certificate_number || "");
         if (cal.ulr_number) {
@@ -815,9 +834,11 @@ export default function CalibrationWizard() {
       getInstrument(instrumentId).then((inst) => {
         setSelectedInstrument(inst);
         if (inst.due_date) {
-          const prevDueDate = inst.due_date.split("T")[0];
-          setCalDate(prevDueDate);
-          setCertIssueDate(prevDueDate);
+          const prevDueDate = toLocalYyyyMmDd(inst.due_date);
+          if (prevDueDate) {
+            setCalDate(prevDueDate);
+            setCertIssueDate(prevDueDate);
+          }
         }
         // Try to auto-detect type from item_type
         const typeMatch = CALIBRATION_TYPES.find(
@@ -879,9 +900,11 @@ export default function CalibrationWizard() {
   const proceedWithInstrumentSelect = (inst: Instrument) => {
     setSelectedInstrument(inst);
     if (inst.due_date) {
-      const prevDueDate = inst.due_date.split("T")[0];
-      setCalDate(prevDueDate);
-      setCertIssueDate(prevDueDate);
+      const prevDueDate = toLocalYyyyMmDd(inst.due_date);
+      if (prevDueDate) {
+        setCalDate(prevDueDate);
+        setCertIssueDate(prevDueDate);
+      }
     }
     const typeMatch = CALIBRATION_TYPES.find(
       (t) => inst.item_type?.toLowerCase().includes(t.type) || inst.name?.toLowerCase().includes(t.type)
@@ -1174,9 +1197,132 @@ export default function CalibrationWizard() {
   };
 
   const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
+    if (tbl.orientation === "horizontal") {
+      const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
+      const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+
+      return (
+        <div key={tbl.id || `${bIdx}_${cIdx}`} className="border rounded-lg overflow-hidden bg-card shadow-xs">
+          <div className="bg-muted/70 px-3 py-1.5 border-b flex items-center justify-between">
+            <span className="font-bold text-xs flex items-center gap-1.5">
+              <Table className="w-3.5 h-3.5 text-primary" />
+              {tbl.title}
+            </span>
+            <span className="text-[10px] text-muted-foreground font-mono">
+              Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs text-center border-collapse">
+              <thead className="bg-muted/95 z-10">
+                <tr className="bg-muted/40 font-bold border-b divide-x text-[10.5px]">
+                  <th className="py-1 px-2 text-left w-48 min-w-[150px] bg-muted/60 sticky left-0 z-20">
+                    Parameter / Sl no
+                  </th>
+                  {tbl.rows.map((r: any, rIdx: number) => (
+                    <th key={rIdx} className="py-1 px-1.5 min-w-[50px] font-bold text-foreground">
+                      {r.point_number ?? (rIdx + 1)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y font-mono text-xs">
+                {displayCols.map((col: any) => (
+                  <tr key={col.id} className="divide-x hover:bg-muted/20">
+                    <td className="py-1 px-2 text-left font-bold text-foreground bg-muted/30 sticky left-0 z-10 whitespace-nowrap text-[11px]">
+                      {col.label}
+                    </td>
+                    {tbl.rows.map((row: any, rIdx: number) => {
+                      if (col.type === "nominal") {
+                        const val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                        return (
+                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
+                            {val}
+                          </td>
+                        );
+                      }
+                      if (col.type === "text") {
+                        return (
+                          <td key={rIdx} className="py-0.5 px-1 font-medium text-[11px]">
+                            {row.description || row[col.id] || "-"}
+                          </td>
+                        );
+                      }
+                      if (col.type === "trial" || col.type === "reading") {
+                        return (
+                          <td key={rIdx} className="p-0.5 min-w-[52px]">
+                            <Input
+                              type="number"
+                              step="any"
+                              value={row[col.id] ?? ""}
+                              onChange={(e) =>
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  e.target.value
+                                )
+                              }
+                              className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1 w-full min-w-[48px]"
+                              placeholder="0.000"
+                            />
+                          </td>
+                        );
+                      }
+                      if (col.type === "formula") {
+                        const val = row[col.id] ?? "-";
+                        return (
+                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
+                            {val}
+                          </td>
+                        );
+                      }
+                      if (col.type === "status") {
+                        const st = row[col.id] || row.status || "-";
+                        const isPass = st === "PASS" || st === "OK";
+                        const isFail = st === "FAIL" || st === "REJECT";
+                        return (
+                          <td key={rIdx} className="py-0.5 px-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] font-bold py-0 px-1 ${
+                                isPass
+                                  ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
+                                  : isFail
+                                    ? "border-red-500 text-red-600 bg-red-500/10"
+                                    : "border-border text-muted-foreground bg-muted"
+                              }`}
+                            >
+                              {st}
+                            </Badge>
+                          </td>
+                        );
+                      }
+                      return (
+                        <td key={rIdx} className="py-0.5 px-1 text-[11px]">
+                          {row[col.id] || "-"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {tbl.footerNote && (
+            <div className="p-1.5 text-[10px] italic bg-muted/20 border-t text-center text-muted-foreground">
+              {tbl.footerNote}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     return (
       <div key={tbl.id || `${bIdx}_${cIdx}`} className="border rounded-lg overflow-hidden bg-card shadow-xs">
-        <div className="bg-muted/70 px-3 py-2 border-b flex items-center justify-between">
+        <div className="bg-muted/70 px-3 py-1.5 border-b flex items-center justify-between">
           <span className="font-bold text-xs flex items-center gap-1.5">
             <Table className="w-3.5 h-3.5 text-primary" />
             {tbl.title}
@@ -1185,12 +1331,12 @@ export default function CalibrationWizard() {
             Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
           </span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
           <table className="w-full text-xs text-center border-collapse">
-            <thead>
-              <tr className="bg-muted/30 font-semibold border-b divide-x text-[10.5px]">
+            <thead className="sticky top-0 bg-muted/95 z-10 backdrop-blur-xs">
+              <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
                 {tbl.columns.map((col: any) => (
-                  <th key={col.id} style={{ width: col.width }} className="p-1.5">
+                  <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
                     {col.label}
                   </th>
                 ))}
@@ -1200,23 +1346,33 @@ export default function CalibrationWizard() {
               {tbl.rows.map((row: any, rIdx: number) => (
                 <tr key={rIdx} className="divide-x hover:bg-muted/20">
                   {tbl.columns.map((col: any) => {
-                    if (col.type === "nominal") {
+                    const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                    if (isPointNo) {
                       return (
-                        <td key={col.id} className="p-1.5 font-bold">
-                          {row.nominal !== undefined ? Number(row.nominal).toFixed(2) : "-"}
+                        <td key={col.id} className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]">
+                          {row.point_number ?? row[col.id] ?? (rIdx + 1)}
+                        </td>
+                      );
+                    }
+                    if (col.type === "nominal") {
+                      const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+                      const val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : (row[col.id] ?? "-");
+                      return (
+                        <td key={col.id} className="py-0.5 px-1.5 font-bold text-foreground text-[11px]">
+                          {val}
                         </td>
                       );
                     }
                     if (col.type === "text") {
                       return (
-                        <td key={col.id} className="p-1.5 font-medium text-left pl-2">
-                          {row.description || "-"}
+                        <td key={col.id} className="py-0.5 px-1.5 font-medium text-left pl-2 text-[11px]">
+                          {row.description || row[col.id] || (row.point_number ?? (rIdx + 1))}
                         </td>
                       );
                     }
                     if (col.type === "trial" || col.type === "reading") {
                       return (
-                        <td key={col.id} className="p-1">
+                        <td key={col.id} className="p-0.5">
                           <Input
                             type="number"
                             step="any"
@@ -1231,7 +1387,7 @@ export default function CalibrationWizard() {
                                 e.target.value
                               )
                             }
-                            className="h-7 text-xs text-center font-mono font-semibold"
+                            className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
                             placeholder="0.000"
                           />
                         </td>
@@ -1240,22 +1396,25 @@ export default function CalibrationWizard() {
                     if (col.type === "formula") {
                       const val = row[col.id] ?? "-";
                       return (
-                        <td key={col.id} className="p-1.5 font-bold text-foreground">
+                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
                           {val}
                         </td>
                       );
                     }
                     if (col.type === "status") {
                       const st = row[col.id] || row.status || "-";
-                      const isPass = st === "PASS";
+                      const isPass = st === "PASS" || st === "OK";
+                      const isFail = st === "FAIL" || st === "REJECT";
                       return (
-                        <td key={col.id} className="p-1.5">
+                        <td key={col.id} className="py-0.5 px-1">
                           <Badge
                             variant="outline"
-                            className={`text-[10px] font-bold ${
+                            className={`text-[9px] font-bold py-0 px-1.5 ${
                               isPass
                                 ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                : "border-red-500 text-red-600 bg-red-500/10"
+                                : isFail
+                                  ? "border-red-500 text-red-600 bg-red-500/10"
+                                  : "border-border text-muted-foreground bg-muted"
                             }`}
                           >
                             {st}
@@ -1263,7 +1422,7 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    return <td key={col.id} className="p-1.5">{row[col.id] || "-"}</td>;
+                    return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] || "-"}</td>;
                   })}
                 </tr>
               ))}
@@ -1271,7 +1430,7 @@ export default function CalibrationWizard() {
           </table>
         </div>
         {tbl.footerNote && (
-          <div className="p-2 text-[11px] italic bg-muted/20 border-t text-center text-muted-foreground">
+          <div className="p-1.5 text-[10px] italic bg-muted/20 border-t text-center text-muted-foreground">
             {tbl.footerNote}
           </div>
         )}
@@ -1458,7 +1617,7 @@ export default function CalibrationWizard() {
                 </button>
 
                 {!step1Collapsed && selectedInstrument && (
-                  <div className="p-4 border-t bg-card text-xs grid grid-cols-2 sm:grid-cols-4 gap-3 animate-in fade-in-50 duration-200">
+                  <div className="p-4 border-t bg-card text-xs grid grid-cols-2 sm:grid-cols-5 gap-3 animate-in fade-in-50 duration-200">
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Instrument Name</span><span className="font-semibold text-sm">{selectedInstrument.name}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">ID Code</span><span className="font-medium">{selectedInstrument.id_code}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Make</span><span className="font-medium">{selectedInstrument.make || "-"}</span></div>
@@ -1467,6 +1626,8 @@ export default function CalibrationWizard() {
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Serial No</span><span className="font-medium">{selectedInstrument.serial_no || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Location</span><span className="font-medium">{selectedInstrument.location || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Calibration Type</span><span className="font-medium text-primary">{selectedType?.label || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">DOC (Last Cal)</span><span className="font-medium">{formatDisplayDate(selectedInstrument.last_calibration_date)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="font-medium text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
                   </div>
                 )}
               </div>
@@ -1507,7 +1668,7 @@ export default function CalibrationWizard() {
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                           <div><span className="text-muted-foreground block text-[10px]">Traceable To</span><span className="font-medium">{ref.traceable_to || "NABL Accredited Lab"}</span></div>
-                          <div><span className="text-muted-foreground block text-[10px]">Validity</span><span className="font-medium">{ref.validity ? ref.validity.split('T')[0] : "-"}</span></div>
+                          <div><span className="text-muted-foreground block text-[10px]">Validity</span><span className="font-medium">{ref.validity ? formatDisplayDate(ref.validity) : "-"}</span></div>
                           <div><span className="text-muted-foreground block text-[10px]">Range</span><span className="font-medium">{ref.range || "-"}</span></div>
                           <div><span className="text-muted-foreground block text-[10px]">Least Count</span><span className="font-medium">{ref.least_count || "-"}</span></div>
                         </div>
@@ -1628,8 +1789,12 @@ export default function CalibrationWizard() {
                         </div>
                         <Badge variant="outline" className="text-[10px]">{inst.status}</Badge>
                       </div>
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {inst.make && `Make: ${inst.make}`} {inst.range && `• Range: ${inst.range}`} {inst.location && `• Location: ${inst.location}`}
+                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                        {inst.make && <span>Make: {inst.make}</span>}
+                        {inst.range && <span>Range: {inst.range}</span>}
+                        {inst.location && <span>Location: {inst.location}</span>}
+                        {inst.last_calibration_date && <span>DOC: {formatDisplayDate(inst.last_calibration_date)}</span>}
+                        {inst.due_date && <span className="text-amber-600 dark:text-amber-400 font-medium">Due Date: {formatDisplayDate(inst.due_date)}</span>}
                       </div>
                     </div>
                   ))}
@@ -1640,13 +1805,17 @@ export default function CalibrationWizard() {
               {selectedInstrument && (
                 <div className="border rounded-lg p-4 bg-primary/5">
                   <h4 className="font-semibold text-sm mb-2">Selected Instrument</h4>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <span><b>Name:</b> {selectedInstrument.name}</span>
-                    <span><b>ID Code:</b> {selectedInstrument.id_code}</span>
-                    <span><b>Make:</b> {selectedInstrument.make || "-"}</span>
-                    <span><b>Range:</b> {selectedInstrument.range || "-"}</span>
-                    <span><b>Least Count:</b> {selectedInstrument.least_count || "-"}</span>
-                    <span><b>Serial No:</b> {selectedInstrument.serial_no || "-"}</span>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Name</span><span className="font-semibold">{selectedInstrument.name}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">ID Code</span><span className="font-medium">{selectedInstrument.id_code}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Make</span><span className="font-medium">{selectedInstrument.make || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Range</span><span className="font-medium">{selectedInstrument.range || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Least Count</span><span className="font-medium">{selectedInstrument.least_count || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Serial No</span><span className="font-medium">{selectedInstrument.serial_no || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Location</span><span className="font-medium">{selectedInstrument.location || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Calibration Type</span><span className="font-medium text-primary">{selectedType?.label || selectedInstrument.item_type || "-"}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">DOC (Last Cal Date)</span><span className="font-medium">{formatDisplayDate(selectedInstrument.last_calibration_date)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="font-medium text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
                   </div>
                 </div>
               )}
@@ -1703,7 +1872,7 @@ export default function CalibrationWizard() {
                               id: master.id_code || master.id || "",
                               range: master.range || "",
                               least_count: master.least_count || "",
-                              validity: master.due_date ? master.due_date.split('T')[0] : "",
+                              validity: master.due_date ? toLocalYyyyMmDd(master.due_date) : "",
                               traceable_to: initialCertNo,
                               cert_no: initialCertNo,
                               agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
@@ -1782,7 +1951,7 @@ export default function CalibrationWizard() {
                       <Label className="text-xs">Validity / Due Date</Label>
                       <Input 
                         type="date" 
-                        value={ref.validity ? ref.validity.split('T')[0] : ""} 
+                        value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""} 
                         onChange={(e) => {
                           const newRefs = [...referenceStandards];
                           newRefs[index].validity = e.target.value;
@@ -2147,7 +2316,7 @@ export default function CalibrationWizard() {
                     </span>
                     {selectedInstrument?.due_date && (
                       <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full" title="Previous Calibration Due Date Reference">
-                        Prev Due: {format(parseISO(selectedInstrument.due_date.split("T")[0]), "dd-MMM-yyyy")}
+                        Prev Due: {formatDisplayDate(selectedInstrument.due_date)}
                       </span>
                     )}
                   </Label>
@@ -2432,8 +2601,8 @@ export default function CalibrationWizard() {
                 Notice: <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) was already calibrated recently.
               </p>
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-1 text-xs font-medium">
-                <div><span className="text-muted-foreground">Previous Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? format(parseISO(recentCalDetails.lastCalDate.split('T')[0]), "dd-MMM-yyyy") : "Recent"}</strong></div>
-                <div><span className="text-muted-foreground">Current Due Date:</span> <strong>{recentCalDetails?.dueDate ? format(parseISO(recentCalDetails.dueDate.split('T')[0]), "dd-MMM-yyyy") : "N/A"}</strong></div>
+                <div><span className="text-muted-foreground">Previous Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? formatDisplayDate(recentCalDetails.lastCalDate) : "Recent"}</strong></div>
+                <div><span className="text-muted-foreground">Current Due Date:</span> <strong>{recentCalDetails?.dueDate ? formatDisplayDate(recentCalDetails.dueDate) : "N/A"}</strong></div>
               </div>
               <p className="text-xs text-muted-foreground">
                 Are you sure you want to perform another calibration for this instrument?

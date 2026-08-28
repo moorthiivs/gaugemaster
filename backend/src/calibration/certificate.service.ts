@@ -986,6 +986,120 @@ export class CertificateService {
       };
 
       const buildSingleTableElement = (tbl: any, isHalf: boolean = false): any => {
+        if (tbl.orientation === 'horizontal') {
+          const displayCols = (tbl.columns || []).filter((c: any) => c.id !== 'point_number' && c.id !== 'sl_no' && c.id !== 'sino');
+          const rowCount = (tbl.rows || []).length;
+          const numCols = rowCount + 1;
+          const colWidths = ['auto', ...Array(rowCount).fill('*')];
+          const tblBody: any[] = [];
+          const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+
+          // Title Row
+          tblBody.push([
+            {
+              text: `${tbl.title || 'Table'} ${tbl.unit ? `(ALL VALUES ARE IN ${tbl.unit})` : ''}`,
+              style: 'boxHeader',
+              fontSize: dense ? 6.5 : 7.2,
+              colSpan: numCols,
+            },
+            ...Array(numCols - 1).fill({}),
+          ]);
+
+          // Header Row: Parameter + Point numbers 1..N
+          tblBody.push([
+            {
+              text: 'Parameter / Sl no',
+              style: 'thCell',
+              fontSize: dense ? 5.8 : 6.5,
+              fillColor: '#e2e8f0',
+              alignment: 'left',
+              bold: true,
+            },
+            ...(tbl.rows || []).map((r: any, rIdx: number) => ({
+              text: String(r.point_number ?? (rIdx + 1)),
+              style: 'thCell',
+              fontSize: dense ? 5.8 : 6.5,
+              fillColor: '#f1f5f9',
+              bold: true,
+            })),
+          ]);
+
+          // Data Rows (one row per parameter)
+          displayCols.forEach((col: any) => {
+            const rowCells: any[] = [
+              {
+                text: col.label || col.id,
+                style: 'tdCell',
+                fontSize: dense ? 5.6 : 6.5,
+                fillColor: '#f8fafc',
+                alignment: 'left',
+                bold: true,
+              },
+            ];
+
+            (tbl.rows || []).forEach((row: any) => {
+              let val: any = row[col.id];
+              if (col.type === 'nominal') {
+                val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : '-';
+              } else if (col.type === 'text') {
+                val = row.description || row[col.id] || '-';
+              } else if (col.type === 'formula' || col.type === 'status') {
+                val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
+              } else if (val === undefined || val === null || val === '') {
+                val = '-';
+              }
+
+              const isPass = String(val).toUpperCase() === 'PASS' || String(val).toUpperCase() === 'OK';
+              const isFail = String(val).toUpperCase() === 'FAIL' || String(val).toUpperCase() === 'REJECT';
+
+              rowCells.push({
+                text: String(val),
+                style: col.type === 'text' ? 'tdCell' : 'tdCellMono',
+                fontSize: dense ? 5.5 : 6.2,
+                color: isPass ? '#15803d' : isFail ? '#b91c1c' : '#000000',
+                bold: isPass || isFail || col.type === 'nominal',
+              });
+            });
+
+            tblBody.push(rowCells);
+          });
+
+          // Footer Note (if any)
+          if (tbl.footerNote) {
+            tblBody.push([
+              {
+                text: tbl.footerNote,
+                style: 'tdCell',
+                fontSize: 5.5,
+                italics: true,
+                alignment: 'center',
+                fillColor: '#f8fafc',
+                colSpan: numCols,
+              },
+              ...Array(numCols - 1).fill({}),
+            ]);
+          }
+
+          return {
+            table: {
+              headerRows: 2,
+              widths: colWidths,
+              body: tblBody,
+            },
+            layout: {
+              hLineWidth: (i: number, node: any) => (i === 0 || i === 1 || i === 2 || i === node.table.body.length ? 0.75 : 0.4),
+              vLineWidth: (i: number, node: any) => (i === 0 || i === node.table.widths.length ? 0.75 : 0.4),
+              hLineColor: () => '#000000',
+              vLineColor: () => '#000000',
+              paddingLeft: () => 1.5,
+              paddingRight: () => 1.5,
+              paddingTop: () => (dense ? 1 : 1.5),
+              paddingBottom: () => (dense ? 1 : 1.5),
+            },
+            margin: [0, 0, 0, tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 5 : 7)],
+          };
+        }
+
         const numCols = tbl.columns?.length || 1;
         const colWidths = tbl.columns?.map(() => '*') || ['*'];
         const tblBody: any[] = [];
@@ -1015,9 +1129,13 @@ export class CertificateService {
         (tbl.rows || []).forEach((row: any) => {
           const rowCells: any[] = [];
           tbl.columns.forEach((col: any) => {
+            const isPointNo = col.id === 'point_number' || col.id === 'sl_no' || col.id === 'sino';
             let val: any = row[col.id];
-            if (col.type === 'nominal') {
-              val = row.nominal !== undefined ? Number(row.nominal).toFixed(2) : '-';
+            if (isPointNo) {
+              val = row.point_number ?? row[col.id] ?? (tblBody.length - 1);
+            } else if (col.type === 'nominal') {
+              const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+              val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : '-';
             } else if (col.type === 'text') {
               val = row.description || row[col.id] || '-';
             } else if (col.type === 'formula' || col.type === 'status') {
@@ -1026,8 +1144,8 @@ export class CertificateService {
               val = '-';
             }
 
-            const isPass = String(val).toUpperCase() === 'PASS';
-            const isFail = String(val).toUpperCase() === 'FAIL';
+            const isPass = String(val).toUpperCase() === 'PASS' || String(val).toUpperCase() === 'OK';
+            const isFail = String(val).toUpperCase() === 'FAIL' || String(val).toUpperCase() === 'REJECT';
 
             rowCells.push({
               text: String(val),
@@ -1067,7 +1185,7 @@ export class CertificateService {
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
           },
-          margin: [0, 0, 0, dense ? 2 : 3],
+          margin: [0, 0, 0, tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 5 : 7)],
         };
       };
 
@@ -1126,7 +1244,7 @@ export class CertificateService {
                 stack: buildChildPdf(rightChild),
               },
             ],
-            margin: [0, 0, 0, dense ? 2 : 3],
+            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
           });
         } else if (block.type === 'matrix_table') {
           const matrixBody: any[] = [];
@@ -1236,7 +1354,7 @@ export class CertificateService {
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
             },
-            margin: [0, 0, 0, dense ? 2 : 3],
+            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
           });
         } else if (block.type === 'text_block') {
           resultElements.push({
@@ -1260,7 +1378,7 @@ export class CertificateService {
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
             },
-            margin: [0, 0, 0, dense ? 2 : 3],
+            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
           });
         } else if (block.type === 'page_break') {
           resultElements.push({ text: '', pageBreak: 'before' });
@@ -1777,22 +1895,7 @@ export class CertificateService {
                   style: 'tdCell',
                 },
               ]),
-              [
-                {
-                  text: 'All the measurements performed are traceable to National/Int. standards through NABL accredited cal.lab.',
-                  fontSize: isDense ? 6.5 : 7,
-                  italics: true,
-                  color: '#334155',
-                  margin: [4, 1.5, 4, 1.5],
-                  fillColor: '#f8fafc',
-                  colSpan: 6,
-                },
-                {},
-                {},
-                {},
-                {},
-                {},
-              ],
+
             ],
           },
           layout: {
