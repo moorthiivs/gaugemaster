@@ -667,6 +667,8 @@ export class CalibrationService {
     if (dto.hidden_columns !== undefined) existing.hidden_columns = dto.hidden_columns;
     if (dto.template_id !== undefined) existing.template_id = dto.template_id;
     if (dto.template_name !== undefined) existing.template_name = dto.template_name;
+    if (dto.is_canvas_template !== undefined) existing.is_canvas_template = dto.is_canvas_template;
+    if (dto.layout_blocks !== undefined) existing.layout_blocks = dto.layout_blocks;
     if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
     if ((dto as any).standard_reference !== undefined) (existing as any).standard_reference = (dto as any).standard_reference;
     if (dto.decimal_places !== undefined) existing.decimal_places = dto.decimal_places;

@@ -141,28 +141,39 @@ export function CertificatePreview({
           let sum = 0;
           let count = 0;
           varNames.forEach((v: string) => {
-            const val = parseFloat(row[v] ?? row[`col_${v}`]);
-            if (!isNaN(val) && val !== 0) {
-              sum += val;
-              count++;
+            const rawVal = row[v] ?? row[`col_${v}`];
+            if (rawVal !== undefined && String(rawVal).trim() !== "") {
+              const val = parseFloat(rawVal);
+              if (!isNaN(val)) {
+                sum += val;
+                count++;
+              }
             }
           });
-          const avg = count > 0 ? sum / count : (t1 || nominal);
+          if (count === 0) return "-";
+          const avg = sum / count;
           return avg.toFixed(3);
         }
 
         if (/avg\s*-\s*nominal/i.test(expr)) {
-          const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
+          if (row.avg === undefined && (row.t1 === undefined || String(row.t1).trim() === "")) return "-";
+          const avgVal = parseFloat(row.avg ?? row.t1);
+          if (isNaN(avgVal)) return "-";
           const err = avgVal - nominal;
           return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
         }
         if (/reading\s*-\s*nominal/i.test(expr) || /actual\s*-\s*nominal/i.test(expr)) {
-          const readVal = parseFloat(row.reading ?? row.ascending_reading ?? nominal);
+          const readStr = row.reading ?? row.ascending_reading ?? row.t1;
+          if (readStr === undefined || String(readStr).trim() === "") return "-";
+          const readVal = parseFloat(readStr);
+          if (isNaN(readVal)) return "-";
           const err = readVal - nominal;
           return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
         }
 
         if (/IF\(.*PASS.*FAIL.*\)/i.test(expr)) {
+          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
+          if (!hasReading) return "-";
           const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
           return errVal <= tol ? "PASS" : "FAIL";
         }
@@ -232,7 +243,7 @@ export function CertificatePreview({
     };
 
     return (
-      <div className="space-y-1.5 border border-black p-1 bg-white">
+      <div className="space-y-1.5 flex flex-col">
         {blocks.map((block: any, idx: number) => {
           if (block.type === "table_grid") {
             return renderSingleTableGrid(block);
@@ -794,21 +805,22 @@ export function CertificatePreview({
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black text-center font-bold">
+                <th className={isCompact ? "p-0.5" : "p-1"}>Calibration Location</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration On</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  Next Calibration Due
-                </th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Next Calibration Due</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certificate No.:</th>
                 {calibration.ulr_number && (
                   <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
                 )}
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Sheet No.</th>
-                <th className={isCompact ? "p-0.5" : "p-1"}>Calibration Location</th>
               </tr>
             </thead>
             <tbody>
               <tr className="text-center font-semibold">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-black`}>
+                  {inst?.calibration_source || inst?.location || "Permanent Laboratory"}
+                </td>
                 <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
                   {fmtDate(calibration.calibration_date)}
                 </td>
@@ -830,78 +842,57 @@ export function CertificatePreview({
                   )}
                 </td>
                 <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>{sheetNoText}</td>
-                <td className={`${isCompact ? "p-0.5" : "p-1"} font-bold text-black`}>
-                  {inst?.calibration_source || inst?.location || "Permanent Laboratory"}
-                </td>
               </tr>
             </tbody>
           </table>
 
-          {/* Description & Identification (3 Columns) */}
-          <div className="border-t border-l border-r border-black">
-            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black`}>
+          {/* Description & Identification (3 Columns Stacked) */}
+          <div className="border border-black">
+            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black text-center uppercase`}>
               Description & Identification
             </div>
             <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
               <tbody>
-                <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
-                    Instrument (UUC)
+                <tr className="border-b border-black divide-x divide-black">
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Instrument (UUC)</div>
+                    <div className="font-bold">{instrumentName || inst?.name || "-"}</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-[19%] pl-1.5 truncate`}>
-                    {instrumentName || inst?.name || "-"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Make</div>
+                    <div className="font-bold">{inst?.make || "-"}</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
-                    Make
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} w-[19%] pl-1.5 truncate`}>
-                    {inst?.make || "-"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold w-[14%] pl-1.5`}>
-                    Model No.
-                  </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} w-[20%] pl-1.5 truncate`}>
-                    {(inst as any)?.model_no || "-"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Model No.</div>
+                    <div className="font-bold">{(inst as any)?.model_no || "-"}</div>
                   </td>
                 </tr>
-                <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    {rangeLabel}
+                <tr className="border-b border-black divide-x divide-black">
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">{rangeLabel}</div>
+                    <div className="font-bold">{inst?.range || "-"}</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    {inst?.range || "-"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Serial No.</div>
+                    <div className="font-bold">{inst?.serial_no || "-"}</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Serial No.
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    {inst?.serial_no || "-"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Least Count
-                  </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    {inst?.least_count || "-"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
+                    <div className="font-bold">{inst?.least_count || "-"}</div>
                   </td>
                 </tr>
-                <tr className="border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    ID No.
+                <tr className="divide-x divide-black">
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">ID No.</div>
+                    <div className="font-bold">{inst?.id_code || "-"}</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    {inst?.id_code || "-"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Instrument Cond.</div>
+                    <div className="font-bold">SATISFACTORY</div>
                   </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Instrument Cond.
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    SATISFACTORY
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold pl-1.5`}>
-                    Location
-                  </td>
-                  <td className={`${isCompact ? "p-0.5" : "p-1"} pl-1.5 truncate`}>
-                    {inst?.location || "Permanent Laboratory"}
+                  <td className="w-1/3 p-1">
+                    <div className="font-bold text-slate-600 text-[8px]">Location</div>
+                    <div className="font-bold">{inst?.location || "Permanent Laboratory"}</div>
                   </td>
                 </tr>
               </tbody>
