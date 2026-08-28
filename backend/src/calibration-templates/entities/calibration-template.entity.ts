@@ -38,7 +38,16 @@ export class CalibrationTemplate {
     temperature?: string;
     humidity?: string;
     pressure?: string;
+    soaking_time?: string;
+    soaking_start_time?: string;
+    soaking_end_time?: string;
   };
+
+  @Column({ type: 'boolean', default: false })
+  is_canvas_template?: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  layout_blocks?: any[]; // Array of modular Canvas Blocks (table_grid, split_row, matrix_table, text_block, diagram_block, page_break)
 
   @Column({ type: 'jsonb', nullable: true })
   calibration_points: any[]; // Array of template calibration points with nominal, description, tolerance, etc.
@@ -70,6 +79,9 @@ export class CalibrationTemplate {
 
   @Column({ nullable: true })
   procedure_reference?: string;
+
+  @Column({ nullable: true })
+  doc_no?: string;
 
   @Column({ nullable: true })
   status_rule_type?: string;

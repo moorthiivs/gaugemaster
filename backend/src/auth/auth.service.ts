@@ -42,6 +42,37 @@ export class AuthService {
     };
   }
 
+  /** Helper to generate Access Token (15m) and Refresh Token (7d) */
+  private generateTokens(payload: any) {
+    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
+    const accessTokenExpiry = this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
+    const refreshTokenExpiry = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
+
+    const accessToken = this.jwtService.sign(payload, {
+      secret: jwtSecret,
+      expiresIn: accessTokenExpiry,
+    });
+
+    const refreshPayload = {
+      sub: payload.sub,
+      email: payload.email,
+      type: 'refresh',
+    };
+
+    const refreshToken = this.jwtService.sign(refreshPayload, {
+      secret: refreshSecret,
+      expiresIn: refreshTokenExpiry,
+    });
+
+    return {
+      accessToken,
+      refreshToken,
+      expiresIn: 900, // 15 minutes in seconds
+      user: payload,
+    };
+  }
+
   async validateUser(profile: any) {
     const payload = {
       sub: profile.id,
@@ -49,23 +80,24 @@ export class AuthService {
       name: profile.name,
     };
 
-    return {
-      accessToken: this.jwtService.sign(payload),
-      user: payload,
-    };
+    return this.generateTokens(payload);
   }
-
 
   async register(createUserDto: CreateUserDto) {
     const user = await this.usersService.create(createUserDto);
     const roleName = user.role?.name || user.roleId || 'Admin';
-    const payload = { sub: user.id, email: user.email, name: user.name, role: roleName, userRole: user.role, onboarded: user.onboarded, companyId: user.companyId, isSuperAdmin: user.isSuperAdmin || false };
-    return {
-      accessToken: this.jwtService.sign(payload),
-      user: payload,
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId,
+      isSuperAdmin: user.isSuperAdmin || false,
     };
+    return this.generateTokens(payload);
   }
-
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
@@ -91,10 +123,7 @@ export class AuthService {
         onboarded: true,
         companyId: user.companyId || null,
       };
-      return {
-        accessToken: this.jwtService.sign(payload),
-        user: payload,
-      };
+      return this.generateTokens(payload);
     }
 
     // Regular user — check company access status
@@ -145,10 +174,7 @@ export class AuthService {
         expiryDate: targetCompany.accessExpiryDate,
       } : null,
     };
-    return {
-      accessToken: this.jwtService.sign(payload),
-      user: payload,
-    };
+    return this.generateTokens(payload);
   }
 
   async loginWithGoogleToken(token: string) {
@@ -162,7 +188,7 @@ export class AuthService {
     });
 
     const payload = ticket.getPayload();
-    const { sub: googleId, email, name } = payload || {}
+    const { sub: googleId, email, name } = payload || {};
 
     if (!googleId || !email || !name) {
       throw new UnauthorizedException('Invalid Google token');
@@ -189,10 +215,81 @@ export class AuthService {
       }
     }
 
-    const jwtPayload = { sub: user.id, email: user.email, name: user.name, onboarded: user.onboarded, companyId: user.companyId, isSuperAdmin: user.isSuperAdmin || false };
-    return {
-      accessToken: this.jwtService.sign(jwtPayload),
-      user: jwtPayload,
+    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    const jwtPayload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId,
+      isSuperAdmin: user.isSuperAdmin || false,
     };
+    return this.generateTokens(jwtPayload);
+  }
+
+  /**
+   * Refreshes access and refresh tokens using a valid refresh token.
+   * Validates user existence and current company access status.
+   */
+  async refreshToken(refreshTokenStr: string) {
+    if (!refreshTokenStr) {
+      throw new UnauthorizedException('Refresh token is required');
+    }
+
+    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
+
+    let decoded: any;
+    try {
+      decoded = this.jwtService.verify(refreshTokenStr, { secret: refreshSecret });
+    } catch (err: any) {
+      throw new UnauthorizedException('Session expired. Please log in again.');
+    }
+
+    if (!decoded || decoded.type !== 'refresh' || !decoded.sub) {
+      throw new UnauthorizedException('Invalid refresh token format');
+    }
+
+    const user = await this.usersService.findOne(decoded.sub);
+    if (!user) {
+      throw new UnauthorizedException('User not found or account no longer active');
+    }
+
+    // Verify company status if not superadmin
+    if (user.companyId && !user.isSuperAdmin && user.company) {
+      if (user.company.accessStatus === 'disabled') {
+        throw new ForbiddenException('Your company access has been disabled. Contact administrator.');
+      }
+      if (user.company.accessStatus === 'time_limited') {
+        const now = new Date();
+        if (user.company.accessStartDate && now < user.company.accessStartDate) {
+          throw new ForbiddenException('Your company access has not started yet. Contact administrator.');
+        }
+        if (user.company.accessExpiryDate && now > user.company.accessExpiryDate) {
+          throw new ForbiddenException('Your company access has expired. Contact administrator.');
+        }
+      }
+    }
+
+    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    const newPayload = {
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.isSuperAdmin ? 'SuperAdmin' : roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId || null,
+      isSuperAdmin: user.isSuperAdmin || false,
+      companyAccess: user.company ? {
+        status: user.company.accessStatus,
+        startDate: user.company.accessStartDate,
+        expiryDate: user.company.accessExpiryDate,
+      } : null,
+    };
+
+    return this.generateTokens(newPayload);
   }
 }

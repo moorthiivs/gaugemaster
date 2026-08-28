@@ -110,6 +110,9 @@ export class CalibrationTemplatesService {
       }
     }
     Object.assign(template, dto);
+    if (dto.diagram_image !== undefined) {
+      template.diagram_image = dto.diagram_image ? dto.diagram_image : (null as any);
+    }
     return this.repository.save(template);
   }
 

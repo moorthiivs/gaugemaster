@@ -67,9 +67,18 @@ export class Calibration {
     temperature: string;
     humidity: string;
     pressure?: string;
+    soaking_time?: string;
+    soaking_start_time?: string;
+    soaking_end_time?: string;
   };
 
-  // ── Calibration Data Points ──────────────────────────────────
+  // ── Calibration Data Points & Canvas Layout ───────────────────
+  @Column({ type: 'boolean', default: false })
+  is_canvas_template?: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  layout_blocks?: any[];
+
   @Column({ type: 'jsonb', nullable: true })
   calibration_points: CalibrationPoint[];
 
@@ -134,6 +143,9 @@ export class Calibration {
 
   @Column({ nullable: true })
   procedure_reference?: string;
+
+  @Column({ nullable: true })
+  doc_no?: string;
 
   // ── Approval Workflow ────────────────────────────────────────
   @Column({ default: 'Calibration Completed' })

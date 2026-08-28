@@ -6,6 +6,7 @@ import {
   IsArray,
   IsObject,
   IsNumber,
+  ValidateIf,
 } from 'class-validator';
 
 export class CreateCalibrationDto {
@@ -59,9 +60,20 @@ export class CreateCalibrationDto {
     temperature: string;
     humidity: string;
     pressure?: string;
+    soaking_time?: string;
+    soaking_start_time?: string;
+    soaking_end_time?: string;
   };
 
-  // Calibration Data Points
+  // Calibration Data Points & Canvas Layout
+  @IsOptional()
+  @IsBoolean()
+  is_canvas_template?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  layout_blocks?: any[];
+
   @IsOptional()
   @IsArray()
   calibration_points?: any[];
@@ -141,6 +153,10 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   procedure_reference?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_no?: string;
 
   // Approval Workflow
   @IsOptional()

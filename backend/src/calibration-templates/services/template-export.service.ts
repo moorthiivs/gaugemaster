@@ -13,6 +13,8 @@ export interface TemplatePackageSpec {
   default_unit?: string;
   default_tolerance?: number;
   environmental_defaults?: any;
+  is_canvas_template?: boolean;
+  layout_blocks?: any[];
   calibration_points?: any[];
   custom_columns?: any[];
   standard_columns_config?: Record<string, any>;
@@ -93,6 +95,8 @@ export class TemplateExportService {
         default_unit: tpl.default_unit,
         default_tolerance: tpl.default_tolerance,
         environmental_defaults: tpl.environmental_defaults,
+        is_canvas_template: tpl.is_canvas_template,
+        layout_blocks: tpl.layout_blocks,
         calibration_points: tpl.calibration_points,
         custom_columns: tpl.custom_columns,
         standard_columns_config: tpl.standard_columns_config,

@@ -10,12 +10,13 @@ import { SettingsModule } from '../settings/settings.module';
 import { ReportTemplatesModule } from '../report-templates/report-templates.module';
 import { InstrumentsModule } from '../instruments/instruments.module';
 
+import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
 import { User } from 'src/users/user.entity';
 import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Calibration, CalibrationDraft, CalibrationAuditLog, User]),
+    TypeOrmModule.forFeature([Calibration, CalibrationDraft, CalibrationAuditLog, User, CalibrationTemplate]),
     SettingsModule,
     ReportTemplatesModule,
     InstrumentsModule,

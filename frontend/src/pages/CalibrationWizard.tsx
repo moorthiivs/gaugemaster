@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -29,6 +29,7 @@ import { VerdictBadge } from "@/components/calibration/VerdictBadge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPicker } from "@/components/ui/calendar";
 import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
+import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn, getRoleName } from "@/lib/utils";
 
@@ -91,7 +92,49 @@ export default function CalibrationWizard() {
   // Step 3 — Environmental + Data
   const [envTemp, setEnvTemp] = useState("");
   const [envHumidity, setEnvHumidity] = useState("");
-  const [envPressure, setEnvPressure] = useState("");
+  const [envSoakingTime, setEnvSoakingTime] = useState("");
+  const [envSoakingStartTime, setEnvSoakingStartTime] = useState("");
+  const [envSoakingEndTime, setEnvSoakingEndTime] = useState("");
+  const [docNo, setDocNo] = useState("");
+
+  // Helper to calculate soaking duration from Start and End times
+  const calculateSoakingDuration = (startTimeStr: string, endTimeStr: string): string => {
+    if (!startTimeStr || !endTimeStr) return "";
+    const parseParts = (t: string) => {
+      const parts = t.trim().split(":").map((p) => parseInt(p, 10));
+      const h = isNaN(parts[0]) ? 0 : parts[0];
+      const m = isNaN(parts[1]) ? 0 : parts[1];
+      const s = isNaN(parts[2]) ? 0 : parts[2];
+      return h * 3600 + m * 60 + s;
+    };
+    const startSec = parseParts(startTimeStr);
+    const endSec = parseParts(endTimeStr);
+    let diffSec = endSec - startSec;
+    if (diffSec < 0) diffSec += 24 * 3600;
+    const h = Math.floor(diffSec / 3600);
+    const m = Math.floor((diffSec % 3600) / 60);
+    const s = diffSec % 60;
+    if (s > 0 || startTimeStr.split(":").length === 3 || endTimeStr.split(":").length === 3) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+
+  const handleSoakingStartChange = (val: string) => {
+    setEnvSoakingStartTime(val);
+    if (val && envSoakingEndTime) {
+      const dur = calculateSoakingDuration(val, envSoakingEndTime);
+      if (dur) setEnvSoakingTime(dur);
+    }
+  };
+
+  const handleSoakingEndChange = (val: string) => {
+    setEnvSoakingEndTime(val);
+    if (envSoakingStartTime && val) {
+      const dur = calculateSoakingDuration(envSoakingStartTime, val);
+      if (dur) setEnvSoakingTime(dur);
+    }
+  };
   const [procedureReference, setProcedureReference] = useState("");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
@@ -242,6 +285,8 @@ export default function CalibrationWizard() {
       });
   }, [user, selectedType]);
 
+  const [wizardIsCanvas, setWizardIsCanvas] = useState<boolean>(false);
+  const [wizardLayoutBlocks, setWizardLayoutBlocks] = useState<any[]>([]);
   const [wizardCustomColumns, setWizardCustomColumns] = useState<CustomColumn[]>([]);
   const [wizardStandardColumnConfigs, setWizardStandardColumnConfigs] = useState<Record<string, CustomColumn>>({});
   const [wizardColumnOrder, setWizardColumnOrder] = useState<string[]>([]);
@@ -294,8 +339,11 @@ export default function CalibrationWizard() {
     if (cal.environmental_conditions) {
       if (cal.environmental_conditions.temperature) setEnvTemp(cal.environmental_conditions.temperature);
       if (cal.environmental_conditions.humidity) setEnvHumidity(cal.environmental_conditions.humidity);
-      if (cal.environmental_conditions.pressure) setEnvPressure(cal.environmental_conditions.pressure);
+      if (cal.environmental_conditions.soaking_time) setEnvSoakingTime(cal.environmental_conditions.soaking_time);
+      if (cal.environmental_conditions.soaking_start_time) setEnvSoakingStartTime(cal.environmental_conditions.soaking_start_time);
+      if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
     }
+    if (cal.doc_no) setDocNo(cal.doc_no);
 
     // 3. SOP & Standard Reference
     if (cal.procedure_reference) setProcedureReference(cal.procedure_reference);
@@ -306,7 +354,14 @@ export default function CalibrationWizard() {
     if (cal.status_rule_type) setStatusRuleType(cal.status_rule_type as "default" | "custom_formula");
     if (cal.status_formula) setStatusFormula(cal.status_formula);
 
-    // 5. Custom grid schema & columns
+    // 5. Custom grid schema & columns & canvas layout
+    if (cal.is_canvas_template || (cal.layout_blocks && cal.layout_blocks.length > 0)) {
+      setWizardIsCanvas(true);
+      setWizardLayoutBlocks(cal.layout_blocks || []);
+    } else {
+      setWizardIsCanvas(false);
+      setWizardLayoutBlocks([]);
+    }
     if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns);
     if (cal.standard_columns_config) setWizardStandardColumnConfigs(cal.standard_columns_config);
     if (cal.column_order && cal.column_order.length > 0) setWizardColumnOrder(cal.column_order);
@@ -368,6 +423,8 @@ export default function CalibrationWizard() {
 
   const handleClearTemplate = () => {
     setSelectedTemplateId("none");
+    setWizardIsCanvas(false);
+    setWizardLayoutBlocks([]);
     setWizardCustomColumns([]);
     setWizardStandardColumnConfigs({});
     setWizardColumnOrder([]);
@@ -375,6 +432,7 @@ export default function CalibrationWizard() {
     setWizardDecimalPlaces(4);
     setWizardAcceptanceCriteria({});
     setWizardDiagramImage(null);
+    setDocNo("");
     toast.info("Cleared template selection (Custom Grid)");
   };
 
@@ -388,13 +446,25 @@ export default function CalibrationWizard() {
     if (tpl.environmental_defaults) {
       if (tpl.environmental_defaults.temperature) setEnvTemp(tpl.environmental_defaults.temperature);
       if (tpl.environmental_defaults.humidity) setEnvHumidity(tpl.environmental_defaults.humidity);
-      if (tpl.environmental_defaults.pressure) setEnvPressure(tpl.environmental_defaults.pressure);
+      if (tpl.environmental_defaults.soaking_time) setEnvSoakingTime(tpl.environmental_defaults.soaking_time);
+      if (tpl.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(tpl.environmental_defaults.soaking_start_time);
+      if (tpl.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(tpl.environmental_defaults.soaking_end_time);
     }
+    setDocNo((tpl as any).doc_no || (tpl as any).docNo || "");
     if (tpl.remarks) setRemarks(tpl.remarks);
     if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
     if (tpl.procedure_reference) setProcedureReference(tpl.procedure_reference);
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
+
+    // Check if canvas template
+    if (tpl.is_canvas_template || (tpl.layout_blocks && tpl.layout_blocks.length > 0)) {
+      setWizardIsCanvas(true);
+      setWizardLayoutBlocks(JSON.parse(JSON.stringify(tpl.layout_blocks || [])));
+    } else {
+      setWizardIsCanvas(false);
+      setWizardLayoutBlocks([]);
+    }
 
     // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria, diagram from template
     setWizardCustomColumns((tpl as any).custom_columns || []);
@@ -466,6 +536,9 @@ export default function CalibrationWizard() {
       if (isPreloadedFromPreviousRef.current) {
         // Set matching template ID for display without overwriting preloaded points or formulas!
         setSelectedTemplateId(match.id);
+        if ((match as any).doc_no || (match as any).docNo) {
+          setDocNo((match as any).doc_no || (match as any).docNo);
+        }
       } else {
         handleApplyTemplate(match.id);
       }
@@ -546,7 +619,12 @@ export default function CalibrationWizard() {
         if (cal.environmental_conditions) {
           if (cal.environmental_conditions.temperature) setEnvTemp(cal.environmental_conditions.temperature);
           if (cal.environmental_conditions.humidity) setEnvHumidity(cal.environmental_conditions.humidity);
-          if (cal.environmental_conditions.pressure) setEnvPressure(cal.environmental_conditions.pressure);
+          if (cal.environmental_conditions.soaking_time) setEnvSoakingTime(cal.environmental_conditions.soaking_time);
+          if (cal.environmental_conditions.soaking_start_time) setEnvSoakingStartTime(cal.environmental_conditions.soaking_start_time);
+          if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
+        }
+        if (cal.doc_no) {
+          setDocNo(cal.doc_no);
         }
         if ((cal as any).procedure_reference) {
           setProcedureReference((cal as any).procedure_reference);
@@ -635,7 +713,10 @@ export default function CalibrationWizard() {
         referenceStandards,
         envTemp,
         envHumidity,
-        envPressure,
+        envSoakingTime,
+        envSoakingStartTime,
+        envSoakingEndTime,
+        docNo,
         procedureReference,
         calPoints,
         wizardCustomColumns,
@@ -668,7 +749,7 @@ export default function CalibrationWizard() {
     }, 1500); // 1.5s debounce
     return () => clearTimeout(timeout);
   }, [
-    step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envPressure, procedureReference,
+    step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envSoakingTime, envSoakingStartTime, envSoakingEndTime, docNo, procedureReference,
     calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
@@ -689,7 +770,10 @@ export default function CalibrationWizard() {
           setReferenceStandards(d.referenceStandards || [{ name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }]);
           setEnvTemp(d.envTemp || "");
           setEnvHumidity(d.envHumidity || "");
-          setEnvPressure(d.envPressure || "");
+          setEnvSoakingTime(d.envSoakingTime || "");
+          setEnvSoakingStartTime(d.envSoakingStartTime || "");
+          setEnvSoakingEndTime(d.envSoakingEndTime || "");
+          setDocNo(d.docNo || "");
           setProcedureReference(d.procedureReference || "");
           setCalPoints(d.calPoints || []);
           setWizardCustomColumns(d.wizardCustomColumns || []);
@@ -880,10 +964,15 @@ export default function CalibrationWizard() {
         environmental_conditions: {
           temperature: envTemp,
           humidity: envHumidity,
-          pressure: envPressure || undefined,
+          soaking_time: envSoakingTime || undefined,
+          soaking_start_time: envSoakingStartTime || undefined,
+          soaking_end_time: envSoakingEndTime || undefined,
         },
+        doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
         procedure_reference: procedureReference || undefined,
         standard_reference: standardReference || remarks || undefined,
+        is_canvas_template: wizardIsCanvas,
+        layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
         calibration_points: calPoints,
         custom_columns: wizardCustomColumns,
         standard_columns_config: wizardStandardColumnConfigs,
@@ -893,7 +982,7 @@ export default function CalibrationWizard() {
         template_name: selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.name : undefined,
         decimal_places: wizardDecimalPlaces,
         acceptance_criteria: wizardAcceptanceCriteria,
-        diagram_image: wizardDiagramImage || undefined,
+        diagram_image: wizardDiagramImage ? wizardDiagramImage : "",
         diagram_image_width: wizardDiagramWidth,
         diagram_image_height: wizardDiagramHeight,
         diagram_image_alignment: wizardDiagramAlignment,
@@ -990,11 +1079,181 @@ export default function CalibrationWizard() {
     pageStyle: "@page { size: A4 portrait; margin: 0; } body { margin: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }",
   });
 
+  const handleWizardCanvasCellChange = (
+    blockIndex: number,
+    isSplit: boolean,
+    childIndex: number,
+    rowIndex: number,
+    colId: string,
+    val: any
+  ) => {
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[blockIndex].children[childIndex];
+    } else {
+      targetTbl = updatedBlocks[blockIndex];
+    }
+
+    if (!targetTbl || !targetTbl.rows) return;
+
+    const row = { ...targetTbl.rows[rowIndex], [colId]: val };
+    const tol = parseFloat(row.tolerance ?? targetTbl.tolerance ?? 0.02);
+    const nominal = parseFloat(row.nominal) || 0;
+
+    // Recalculate formulas for all columns in this table
+    targetTbl.columns.forEach((col: any) => {
+      if (col.type === "formula" || col.type === "status") {
+        const formula = col.formula || "";
+        
+        // 1. AVERAGE
+        if (/AVERAGE/i.test(formula)) {
+          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
+            .map((v) => parseFloat(v))
+            .filter((v) => !isNaN(v) && v !== 0);
+          if (trials.length > 0) {
+            const sum = trials.reduce((a, b) => a + b, 0);
+            row[col.id] = (sum / trials.length).toFixed(3);
+            row.avg = row[col.id];
+          }
+        }
+        // 2. Error (avg - nominal or reading - nominal)
+        else if (/avg\s*-\s*nominal/i.test(formula)) {
+          const avgVal = parseFloat(row.avg ?? row.t1 ?? nominal);
+          const err = avgVal - nominal;
+          row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+          row.error = err;
+        } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
+          const readVal = parseFloat(row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
+          const err = readVal - nominal;
+          row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+          row.error = err;
+        }
+        // 3. Status
+        else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
+          const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
+          const errVal = Math.abs(parseFloat(row.error ?? (readVal - nominal)) || 0);
+          row[col.id] = errVal <= tol ? "PASS" : "FAIL";
+          row.status = row[col.id];
+        }
+      }
+    });
+
+    targetTbl.rows[rowIndex] = row;
+    setWizardLayoutBlocks(updatedBlocks);
+  };
+
+  const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
+    return (
+      <div key={tbl.id || `${bIdx}_${cIdx}`} className="border rounded-lg overflow-hidden bg-card shadow-xs">
+        <div className="bg-muted/70 px-3 py-2 border-b flex items-center justify-between">
+          <span className="font-bold text-xs flex items-center gap-1.5">
+            <Table className="w-3.5 h-3.5 text-primary" />
+            {tbl.title}
+          </span>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-center border-collapse">
+            <thead>
+              <tr className="bg-muted/30 font-semibold border-b divide-x text-[10.5px]">
+                {tbl.columns.map((col: any) => (
+                  <th key={col.id} style={{ width: col.width }} className="p-1.5">
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y font-mono text-xs">
+              {tbl.rows.map((row: any, rIdx: number) => (
+                <tr key={rIdx} className="divide-x hover:bg-muted/20">
+                  {tbl.columns.map((col: any) => {
+                    if (col.type === "nominal") {
+                      return (
+                        <td key={col.id} className="p-1.5 font-bold">
+                          {row.nominal !== undefined ? Number(row.nominal).toFixed(2) : "-"}
+                        </td>
+                      );
+                    }
+                    if (col.type === "text") {
+                      return (
+                        <td key={col.id} className="p-1.5 font-medium text-left pl-2">
+                          {row.description || "-"}
+                        </td>
+                      );
+                    }
+                    if (col.type === "trial" || col.type === "reading") {
+                      return (
+                        <td key={col.id} className="p-1">
+                          <Input
+                            type="number"
+                            step="any"
+                            value={row[col.id] ?? ""}
+                            onChange={(e) =>
+                              handleWizardCanvasCellChange(
+                                bIdx,
+                                isSplit,
+                                cIdx,
+                                rIdx,
+                                col.id,
+                                e.target.value
+                              )
+                            }
+                            className="h-7 text-xs text-center font-mono font-semibold"
+                            placeholder="0.000"
+                          />
+                        </td>
+                      );
+                    }
+                    if (col.type === "formula") {
+                      const val = row[col.id] ?? "-";
+                      return (
+                        <td key={col.id} className="p-1.5 font-bold text-foreground">
+                          {val}
+                        </td>
+                      );
+                    }
+                    if (col.type === "status") {
+                      const st = row[col.id] || row.status || "PASS";
+                      const isPass = st === "PASS";
+                      return (
+                        <td key={col.id} className="p-1.5">
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-bold ${
+                              isPass
+                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
+                                : "border-red-500 text-red-600 bg-red-500/10"
+                            }`}
+                          >
+                            {st}
+                          </Badge>
+                        </td>
+                      );
+                    }
+                    return <td key={col.id} className="p-1.5">{row[col.id] || "-"}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {tbl.footerNote && (
+          <div className="p-2 text-[11px] italic bg-muted/20 border-t text-center text-muted-foreground">
+            {tbl.footerNote}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const canProceed = () => {
     switch (step) {
       case 0: return !!selectedInstrument && !!selectedType;
       case 1: return true; // Reference standard is optional
-      case 2: return calPoints.length > 0;
+      case 2: return wizardIsCanvas ? wizardLayoutBlocks.length > 0 : calPoints.length > 0;
       case 3: return true;
       default: return true;
     }
@@ -1255,11 +1514,12 @@ export default function CalibrationWizard() {
 
                   {!step3Collapsed && (
                     <div className="p-4 border-t bg-card text-xs space-y-3 animate-in fade-in-50 duration-200">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-muted/20 p-2.5 rounded-lg border">
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs bg-muted/20 p-2.5 rounded-lg border">
                         <div><span className="text-muted-foreground block text-[10px]">Procedure SOP</span><span className="font-medium">{procedureReference || "-"}</span></div>
-                        <div><span className="text-muted-foreground block text-[10px]">Temperature</span><span className="font-medium">{envTemp || "-"}</span></div>
-                        <div><span className="text-muted-foreground block text-[10px]">Humidity</span><span className="font-medium">{envHumidity || "-"}</span></div>
-                        <div><span className="text-muted-foreground block text-[10px]">Pressure</span><span className="font-medium">{envPressure || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Doc. No.</span><span className="font-medium">{docNo || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Temperature</span><span className="font-medium">{envTemp ? `${envTemp}°C` : "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Humidity</span><span className="font-medium">{envHumidity ? `${envHumidity}%` : "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Soaking Time</span><span className="font-medium text-primary">{envSoakingTime || (envSoakingStartTime && envSoakingEndTime ? `${envSoakingStartTime} - ${envSoakingEndTime}` : "-")}</span></div>
                       </div>
 
                       {calPoints.length > 0 && (
@@ -1669,56 +1929,180 @@ export default function CalibrationWizard() {
                 </Popover>
               </div>
 
-              <div className="flex flex-wrap items-end gap-3 mb-6">
-                <div className="space-y-1.5 flex-1 min-w-[260px]">
-                  <Label className="text-xs font-semibold">Standard Reference</Label>
-                  <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
+              <div className="space-y-3 mb-6 p-3 bg-card border rounded-xl shadow-xs">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="space-y-1.5 flex-1 min-w-[240px]">
+                    <Label className="text-xs font-semibold">Standard Reference</Label>
+                    <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
+                  </div>
+                  <div className="space-y-1.5 w-36 sm:w-44">
+                    <Label className="text-xs font-semibold">Doc. No.</Label>
+                    <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
+                  </div>
+                  <div className="space-y-1.5 w-44 sm:w-52">
+                    <Label className="text-xs font-semibold">Procedure Reference</Label>
+                    <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" className="text-xs font-medium" />
+                  </div>
+                  <div className="space-y-1.5 w-20 sm:w-24">
+                    <Label className="text-xs font-medium">Temp (°C)</Label>
+                    <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
+                  </div>
+                  <div className="space-y-1.5 w-20 sm:w-24">
+                    <Label className="text-xs font-medium">Humidity (%)</Label>
+                    <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
+                  </div>
                 </div>
-                <div className="space-y-1.5 w-48 sm:w-56">
-                  <Label className="text-xs font-semibold">Procedure Reference</Label>
-                  <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" className="text-xs font-medium" />
-                </div>
-                <div className="space-y-1.5 w-24">
-                  <Label className="text-xs font-medium">Temperature</Label>
-                  <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
-                </div>
-                <div className="space-y-1.5 w-24">
-                  <Label className="text-xs font-medium">Humidity</Label>
-                  <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
-                </div>
-                <div className="space-y-1.5 w-28">
-                  <Label className="text-xs font-medium truncate" title="Pressure (optional)">Pressure (opt)</Label>
-                  <Input value={envPressure} onChange={(e) => setEnvPressure(e.target.value)} placeholder="1013" className="text-xs text-center font-medium" />
+
+                {/* Soaking Time Row */}
+                <div className="pt-2.5 border-t border-border/70 flex flex-wrap items-end gap-3">
+                  <div className="space-y-1 w-32 sm:w-36">
+                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                      Soaking Start Time
+                    </Label>
+                    <TimePicker
+                      value={envSoakingStartTime}
+                      onChange={(val) => handleSoakingStartChange(val)}
+                      placeholder="08:30"
+                    />
+                  </div>
+                  <div className="space-y-1 w-32 sm:w-36">
+                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                      Soaking End Time
+                    </Label>
+                    <TimePicker
+                      value={envSoakingEndTime}
+                      onChange={(val) => handleSoakingEndChange(val)}
+                      placeholder="10:30"
+                    />
+                  </div>
+                  <div className="space-y-1 w-32 sm:w-36">
+                    <Label className="text-[11px] text-primary font-bold flex items-center gap-1">
+                      Soaking Time (hh:mm)
+                    </Label>
+                    <DurationPicker
+                      value={envSoakingTime}
+                      onChange={(val) => setEnvSoakingTime(val)}
+                      placeholder="02:00"
+                    />
+                  </div>
+                  {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
+                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium self-center mt-3">
+                      ✓ Soaking details active
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <CalibrationDataGrid
-                typeConfig={selectedType}
-                points={calPoints}
-                onPointsChange={setCalPoints}
-                unit={calUnit}
-                onUnitChange={setCalUnit}
-                tolerance={calTolerance}
-                onToleranceChange={setCalTolerance}
-                initialCustomColumns={wizardCustomColumns}
-                initialStandardColumnConfigs={wizardStandardColumnConfigs}
-                initialColumnOrder={wizardColumnOrder}
-                initialHiddenColumns={wizardHiddenColumns}
-                initialDecimalPlaces={wizardDecimalPlaces}
-                acceptanceCriteria={wizardAcceptanceCriteria}
-                onCustomColumnsChange={setWizardCustomColumns}
-                onStandardColumnConfigsChange={setWizardStandardColumnConfigs}
-                onColumnOrderChange={setWizardColumnOrder}
-                onHiddenColumnsChange={setWizardHiddenColumns}
-                onDecimalPlacesChange={setWizardDecimalPlaces}
-                onAcceptanceCriteriaChange={setWizardAcceptanceCriteria}
-                initialStatusRuleType={statusRuleType}
-                initialStatusFormula={statusFormula}
-                onStatusRuleChange={(type, formula) => {
-                  setStatusRuleType(type);
-                  setStatusFormula(formula);
-                }}
-              />
+              {wizardIsCanvas && wizardLayoutBlocks.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between bg-primary/10 border border-primary/20 p-2.5 rounded-lg text-xs">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-primary" />
+                      <span className="font-bold text-foreground">Canvas Template Data Entry ({wizardLayoutBlocks.length} Sections)</span>
+                    </div>
+                    <span className="text-[11px] text-muted-foreground">
+                      Readings calculate automatically based on template formulas
+                    </span>
+                  </div>
+
+                  {wizardLayoutBlocks.map((block: any, bIdx: number) => {
+                    if (block.type === "table_grid") {
+                      return renderWizardTableGrid(block, bIdx, false, 0);
+                    }
+                    if (block.type === "split_row") {
+                      return (
+                        <div key={block.id || bIdx} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-3`}>
+                          {block.children?.map((child: any, cIdx: number) => {
+                            const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
+                            return (
+                              <div key={child?.id || cIdx}>
+                                {child?.type === "table_grid" && renderWizardTableGrid(child, bIdx, true, cIdx)}
+                                {child?.type === "text_block" && child.content?.trim() && (
+                                  <div className="p-3 border rounded-lg bg-card text-xs font-medium text-center">
+                                    {child.content}
+                                  </div>
+                                )}
+                                {isBlank && <div className="hidden md:block" />}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    }
+                    if (block.type === "matrix_table") {
+                      return (
+                        <div key={block.id || bIdx} className="border rounded-lg overflow-hidden bg-card shadow-xs">
+                          <div className="bg-muted px-3 py-1.5 font-bold text-xs border-b">
+                            {block.title} (Reference Matrix)
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-center border-collapse">
+                              <thead>
+                                {block.headers?.map((hRow: any[], hIdx: number) => (
+                                  <tr key={hIdx} className="bg-muted/40 font-bold border-b divide-x text-[11px]">
+                                    {hRow.map((cell: any, cIdx: number) => (
+                                      <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="p-1.5">
+                                        {cell.text}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </thead>
+                              <tbody className="divide-y font-mono text-[11px]">
+                                {block.rows?.map((row: any[], rIdx: number) => (
+                                  <tr key={rIdx} className="divide-x hover:bg-muted/20">
+                                    {row.map((cellVal: any, cIdx: number) => (
+                                      <td key={cIdx} className="p-1.5">
+                                        {cellVal}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    }
+                    if (block.type === "text_block") {
+                      return (
+                        <div key={block.id || bIdx} className="p-3 border rounded-lg bg-card text-xs font-medium text-center">
+                          {block.content}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })}
+                </div>
+              ) : (
+                <CalibrationDataGrid
+                  typeConfig={selectedType}
+                  points={calPoints}
+                  onPointsChange={setCalPoints}
+                  unit={calUnit}
+                  onUnitChange={setCalUnit}
+                  tolerance={calTolerance}
+                  onToleranceChange={setCalTolerance}
+                  initialCustomColumns={wizardCustomColumns}
+                  initialStandardColumnConfigs={wizardStandardColumnConfigs}
+                  initialColumnOrder={wizardColumnOrder}
+                  initialHiddenColumns={wizardHiddenColumns}
+                  initialDecimalPlaces={wizardDecimalPlaces}
+                  acceptanceCriteria={wizardAcceptanceCriteria}
+                  onCustomColumnsChange={setWizardCustomColumns}
+                  onStandardColumnConfigsChange={setWizardStandardColumnConfigs}
+                  onColumnOrderChange={setWizardColumnOrder}
+                  onHiddenColumnsChange={setWizardHiddenColumns}
+                  onDecimalPlacesChange={setWizardDecimalPlaces}
+                  onAcceptanceCriteriaChange={setWizardAcceptanceCriteria}
+                  initialStatusRuleType={statusRuleType}
+                  initialStatusFormula={statusFormula}
+                  onStatusRuleChange={(type, formula) => {
+                    setStatusRuleType(type);
+                    setStatusFormula(formula);
+                  }}
+                />
+              )}
             </>
           )}
 
@@ -1921,7 +2305,16 @@ export default function CalibrationWizard() {
                       reference_standard_id: referenceStandards[0]?.id,
                       reference_standard_traceable_to: referenceStandards[0]?.traceable_to,
                       reference_standard_validity: referenceStandards[0]?.validity,
-                      environmental_conditions: { temperature: envTemp, humidity: envHumidity, pressure: envPressure },
+                      environmental_conditions: {
+                        temperature: envTemp,
+                        humidity: envHumidity,
+                        soaking_time: envSoakingTime || undefined,
+                        soaking_start_time: envSoakingStartTime || undefined,
+                        soaking_end_time: envSoakingEndTime || undefined,
+                      },
+                      doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+                      is_canvas_template: wizardIsCanvas,
+                      layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
                       calibration_points: calPoints,
                       uncertainty,
                       verdict,

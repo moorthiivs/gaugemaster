@@ -53,6 +53,7 @@
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
     "framer-motion": "^12.23.12",
+    "html-to-image": "^1.11.13",
     "hyperformula": "^3.3.0",
     "input-otp": "^1.4.2",
     "jodit-react": "^4.1.2",

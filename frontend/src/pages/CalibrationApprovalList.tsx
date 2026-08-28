@@ -508,11 +508,9 @@ export default function CalibrationApprovalList() {
 
                   const envTemp = selectedRecord.environmental_conditions?.temperature ?? "20";
                   const envHum = selectedRecord.environmental_conditions?.humidity ?? "55";
-                  const envPress = selectedRecord.environmental_conditions?.pressure ?? "1013";
                   const tempStr = String(envTemp).includes("°") ? envTemp : `${envTemp}°C`;
                   const humStr = String(envHum).includes("%") ? envHum : `${envHum}%`;
-                  const pressStr = envPress ? ` / ${envPress}` : "";
-                  const envDisplay = `${tempStr} / ${humStr}${pressStr}`;
+                  const envDisplay = `${tempStr} / ${humStr}`;
 
                   const uncertaintyStr = selectedRecord.uncertainty && selectedRecord.uncertainty.trim()
                     ? formatUncertainty(selectedRecord.uncertainty, unit)
