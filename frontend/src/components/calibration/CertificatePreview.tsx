@@ -192,28 +192,28 @@ export function CertificatePreview({
         const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
 
         return (
-          <div key={tbl.id} className="border border-black flex flex-col divide-y divide-black bg-white">
-            <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+          <div key={tbl.id} className="border border-black flex flex-col bg-white">
+            <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
               {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
             </div>
-            <div>
+            <div className="w-full">
               <table className="w-full border-collapse text-[7.5px] text-center" style={{ tableLayout: 'fixed' }}>
                 <thead>
-                  <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black">
-                    <th className="py-0.5 px-1 text-left bg-slate-200/50" style={{ width: '18%' }}>
+                  <tr className="bg-slate-100 font-bold">
+                    <th className="py-1 px-1 text-left bg-slate-200/60 border border-black font-bold text-black" style={{ width: '18%' }}>
                       Parameter / Sl no
                     </th>
                     {tbl.rows.map((r: any, rIdx: number) => (
-                      <th key={rIdx} className="py-0.5 px-0.5 font-bold">
+                      <th key={rIdx} className="py-1 px-0.5 font-bold border border-black text-black">
                         {r.point_number ?? (rIdx + 1)}
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-black font-mono">
+                <tbody className="font-mono">
                   {displayCols.map((col: any) => (
-                    <tr key={col.id} className="divide-x divide-black">
-                      <td className="py-0.5 px-1 text-left font-bold bg-slate-50 text-[7px] overflow-hidden text-ellipsis">
+                    <tr key={col.id}>
+                      <td className="py-1 px-1 text-left font-bold bg-slate-50 text-[7px] leading-snug font-sans border border-black text-black">
                         {col.label}
                       </td>
                       {tbl.rows.map((row: any, rIdx: number) => {
@@ -234,8 +234,8 @@ export function CertificatePreview({
                         return (
                           <td
                             key={rIdx}
-                            className={`py-0.5 px-0.5 ${
-                              isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : ""
+                            className={`py-1 px-0.5 border border-black leading-snug ${
+                              isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : "text-black"
                             }`}
                           >
                             {val}
@@ -257,57 +257,63 @@ export function CertificatePreview({
       }
 
       return (
-        <div key={tbl.id} className="border border-black flex flex-col divide-y divide-black bg-white">
-          <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+        <div key={tbl.id} className="border border-black flex flex-col bg-white">
+          <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
             {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
           </div>
-          <table className="w-full border-collapse text-[8px] text-center">
-            <thead>
-              <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black">
-                {tbl.columns.map((col: any) => (
-                  <th key={col.id} style={{ width: col.width }} className="py-0.5 px-1">
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-black font-mono">
-              {tbl.rows.map((row: any, rIdx: number) => (
-                <tr key={rIdx} className="divide-x divide-black">
-                  {tbl.columns.map((col: any) => {
-                    const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
-                    let val: any = row[col.id];
-                    if (isPointNo) {
-                      val = row.point_number ?? row[col.id] ?? (rIdx + 1);
-                    } else if (col.type === "nominal") {
-                      const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-                      val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : "-";
-                    } else if (col.type === "text") {
-                      val = row.description || row[col.id] || "-";
-                    } else if (col.type === "formula" || col.type === "status") {
-                      val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
-                    } else if (val === undefined || val === null || val === "") {
-                      val = "-";
-                    }
-
-                    const isPass = val === "PASS" || val === "OK";
-                    const isFail = val === "FAIL" || val === "REJECT";
-
-                    return (
-                      <td
-                        key={col.id}
-                        className={`py-0.5 px-1 ${
-                          isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : ""
-                        }`}
-                      >
-                        {val}
-                      </td>
-                    );
-                  })}
+          <div className="w-full">
+            <table className="w-full border-collapse text-[8px] text-center">
+              <thead>
+                <tr className="bg-slate-100 font-bold">
+                  {tbl.columns.map((col: any) => (
+                    <th
+                      key={col.id}
+                      style={{ width: col.width }}
+                      className="py-1 px-1 border border-black text-black font-bold"
+                    >
+                      {col.label}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="font-mono">
+                {tbl.rows.map((row: any, rIdx: number) => (
+                  <tr key={rIdx}>
+                    {tbl.columns.map((col: any) => {
+                      const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                      let val: any = row[col.id];
+                      if (isPointNo) {
+                        val = row.point_number ?? row[col.id] ?? (rIdx + 1);
+                      } else if (col.type === "nominal") {
+                        const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+                        val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : "-";
+                      } else if (col.type === "text") {
+                        val = row.description || row[col.id] || "-";
+                      } else if (col.type === "formula" || col.type === "status") {
+                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
+                      } else if (val === undefined || val === null || val === "") {
+                        val = "-";
+                      }
+
+                      const isPass = val === "PASS" || val === "OK";
+                      const isFail = val === "FAIL" || val === "REJECT";
+
+                      return (
+                        <td
+                          key={col.id}
+                          className={`py-1 px-1 border border-black leading-snug ${
+                            isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : "text-black"
+                          }`}
+                        >
+                          {val}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {tbl.footerNote && (
             <div className="p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black">
               {tbl.footerNote}
@@ -320,28 +326,33 @@ export function CertificatePreview({
     return (
       <div className="flex flex-col">
         {blocks.map((block: any, idx: number) => {
-          const mbStyle = { marginBottom: `${block.marginBottom !== undefined ? block.marginBottom : 6}px` };
+          const mt = block.marginTop !== undefined ? Number(block.marginTop) : 0;
+          const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : (block.type === "page_break" ? 0 : 6);
+          const blockSpacingStyle: React.CSSProperties = {
+            marginTop: `${mt}px`,
+            marginBottom: `${mb}px`,
+          };
           if (block.type === "table_grid") {
             return (
-              <div key={block.id || idx} style={mbStyle}>
+              <div key={block.id || idx} style={blockSpacingStyle}>
                 {renderSingleTableGrid(block)}
               </div>
             );
           }
           if (block.type === "split_row") {
             return (
-              <div key={block.id || idx} style={mbStyle} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-1.5`}>
+              <div key={block.id || idx} style={blockSpacingStyle} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-2 items-start`}>
                 {block.children?.map((child: any, cIdx: number) => {
                   const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
                   return (
                     <div key={child?.id || cIdx}>
                       {child?.type === "table_grid" && renderSingleTableGrid(child)}
                       {child?.type === "text_block" && child.content?.trim() && (
-                        <div className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
+                        <div className="p-1.5 border border-black text-[8px] bg-slate-50 text-center font-medium">
                           {child.content}
                         </div>
                       )}
-                      {isBlank && <div className="w-full h-full min-h-[20px]" />}
+                      {isBlank && <div className="w-full min-h-[20px]" />}
                     </div>
                   );
                 })}
@@ -350,27 +361,35 @@ export function CertificatePreview({
           }
           if (block.type === "matrix_table") {
             return (
-              <div key={block.id || idx} style={mbStyle} className="border border-black flex flex-col divide-y divide-black bg-white">
-                <div className="bg-slate-200 text-black text-[9px] font-bold py-0.5 px-2 text-center uppercase tracking-wide">
+              <div key={block.id || idx} style={blockSpacingStyle} className="border border-black flex flex-col bg-white">
+                <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
                   {block.title}
                 </div>
                 <table className="w-full border-collapse text-[7.5px] text-center font-mono">
                   <thead>
                     {block.headers?.map((hRow: any[], hIdx: number) => (
-                      <tr key={hIdx} className="bg-slate-100 font-bold border-b border-black divide-x divide-black">
+                      <tr key={hIdx} className="bg-slate-100 font-bold">
                         {hRow.map((cell: any, cIdx: number) => (
-                          <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-0.5 px-1">
+                          <th
+                            key={cIdx}
+                            colSpan={cell.colSpan}
+                            rowSpan={cell.rowSpan}
+                            className="py-1 px-1 border border-black text-black font-bold"
+                          >
                             {cell.text}
                           </th>
                         ))}
                       </tr>
                     ))}
                   </thead>
-                  <tbody className="divide-y divide-black">
+                  <tbody>
                     {block.rows?.map((row: any[], rIdx: number) => (
-                      <tr key={rIdx} className="divide-x divide-black">
+                      <tr key={rIdx}>
                         {row.map((cellVal: any, cIdx: number) => (
-                          <td key={cIdx} className="py-0.5 px-1">
+                          <td
+                            key={cIdx}
+                            className="py-1 px-1 border border-black leading-snug text-black"
+                          >
                             {cellVal}
                           </td>
                         ))}
@@ -383,14 +402,42 @@ export function CertificatePreview({
           }
           if (block.type === "text_block") {
             return (
-              <div key={block.id || idx} style={mbStyle} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
+              <div key={block.id || idx} style={blockSpacingStyle} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
                 {block.content}
+              </div>
+            );
+          }
+          if (block.type === "diagram_block" || block.type === "diagram") {
+            const dImg = block.imageUrl || block.image;
+            if (!dImg) return null;
+            return (
+              <div
+                key={block.id || idx}
+                style={blockSpacingStyle}
+                className={`border border-black bg-white p-1.5 flex ${
+                  block.alignment === "left"
+                    ? "justify-start"
+                    : block.alignment === "right"
+                    ? "justify-end"
+                    : "justify-center"
+                } items-center`}
+              >
+                <img
+                  src={dImg}
+                  alt={block.caption || "Calibration Diagram"}
+                  style={{
+                    width: block.width ? `${block.width}px` : "240px",
+                    maxHeight: block.height ? `${block.height}px` : "140px",
+                    objectFit: "contain",
+                  }}
+                  className="block"
+                />
               </div>
             );
           }
           if (block.type === "page_break") {
             return (
-              <div key={block.id || idx} className="border-t border-dashed border-slate-400 my-1 pt-0.5 text-center text-[7px] text-muted-foreground print:break-before-page">
+              <div key={block.id || idx} style={blockSpacingStyle} className="border-t border-dashed border-slate-400 my-1 pt-0.5 text-center text-[7px] text-muted-foreground print:break-before-page">
                 --- PAGE BREAK ---
               </div>
             );
@@ -769,7 +816,7 @@ export function CertificatePreview({
 
       const certElement = certRef.current;
       const targetWidth = 794;
-      const targetHeight = certElement.scrollHeight || certElement.offsetHeight;
+      const targetHeight = Math.ceil(Math.max(certElement.scrollHeight, certElement.offsetHeight)) + 8;
 
       const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
       const dataUrl = await toPng(certElement, {
@@ -781,7 +828,8 @@ export function CertificatePreview({
           width: `${targetWidth}px`,
           minWidth: `${targetWidth}px`,
           maxWidth: `${targetWidth}px`,
-          height: `${targetHeight}px`,
+          height: "auto",
+          minHeight: `${targetHeight}px`,
           margin: "0",
           padding: "0",
           left: "0",
@@ -791,6 +839,7 @@ export function CertificatePreview({
           boxShadow: "none",
           borderRadius: "0",
           border: "none",
+          overflow: "visible",
         },
         backgroundColor: "#ffffff",
         cacheBust: true,
@@ -832,7 +881,7 @@ export function CertificatePreview({
       {/* Main Certificate Sheet */}
       <div
         ref={certRef}
-        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-tight font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 h-auto overflow-hidden print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
+        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 h-auto overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
       >
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div
@@ -885,7 +934,7 @@ export function CertificatePreview({
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black text-center font-bold">
-                <th className={isCompact ? "p-0.5" : "p-1"}>Calibration Location</th>
+                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration Location</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration On</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Next Calibration Due</th>
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certificate No.:</th>
@@ -893,7 +942,7 @@ export function CertificatePreview({
                   <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
                 )}
                 <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Sheet No.</th>
+                <th className={isCompact ? "p-0.5" : "p-1"}>Sheet No.</th>
               </tr>
             </thead>
             <tbody>
@@ -921,7 +970,7 @@ export function CertificatePreview({
                       calibration.calibration_date,
                   )}
                 </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>{sheetNoText}</td>
+                <td className={isCompact ? "p-0.5" : "p-1"}>{sheetNoText}</td>
               </tr>
             </tbody>
           </table>
@@ -933,12 +982,12 @@ export function CertificatePreview({
             </div>
             <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
               <tbody>
-                <tr className="border-b border-black divide-x divide-black">
-                  <td className="w-1/3 p-1">
+                <tr className="border-b border-black">
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">Instrument (UUC)</div>
                     <div className="font-bold">{instrumentName || inst?.name || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1">
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">Make</div>
                     <div className="font-bold">{inst?.make || "-"}</div>
                   </td>
@@ -947,12 +996,12 @@ export function CertificatePreview({
                     <div className="font-bold">{(inst as any)?.model_no || "-"}</div>
                   </td>
                 </tr>
-                <tr className="border-b border-black divide-x divide-black">
-                  <td className="w-1/3 p-1">
+                <tr className="border-b border-black">
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">{rangeLabel}</div>
                     <div className="font-bold">{inst?.range || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1">
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">Serial No.</div>
                     <div className="font-bold">{inst?.serial_no || "-"}</div>
                   </td>
@@ -961,12 +1010,12 @@ export function CertificatePreview({
                     <div className="font-bold">{inst?.least_count || "-"}</div>
                   </td>
                 </tr>
-                <tr className="divide-x divide-black">
-                  <td className="w-1/3 p-1">
+                <tr>
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">ID No.</div>
                     <div className="font-bold">{inst?.id_code || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1">
+                  <td className="w-1/3 p-1 border-r border-black">
                     <div className="font-bold text-slate-600 text-[8px]">Instrument Cond.</div>
                     <div className="font-bold">SATISFACTORY</div>
                   </td>
@@ -982,16 +1031,16 @@ export function CertificatePreview({
           {/* Procedure & Environmental Conditions Table */}
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
             <thead>
-              <tr className="bg-slate-100 border-b border-black font-bold divide-x divide-black text-left">
-                <th className={`w-[22%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No</th>
-                <th className={`w-[38%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+              <tr className="bg-slate-100 border-b border-black font-bold text-left">
+                <th className={`w-[22%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No</th>
+                <th className={`w-[38%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
                 <th className={`w-[40%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-black divide-x divide-black">
-                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>{procedureReference}</td>
-                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+              <tr className="border-b border-black">
+                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>{procedureReference}</td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
                   {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
                 </td>
                 <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>

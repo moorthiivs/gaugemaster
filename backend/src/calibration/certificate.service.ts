@@ -1185,11 +1185,19 @@ export class CertificateService {
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
           },
-          margin: [0, 0, 0, tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 5 : 7)],
+          margin: [
+            0,
+            tbl.marginTop !== undefined ? Number(tbl.marginTop) : 0,
+            0,
+            tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 4 : 6),
+          ],
         };
       };
 
       blocks.forEach((block: any) => {
+        const mt = block.marginTop !== undefined ? Number(block.marginTop) : 0;
+        const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 4 : 6);
+
         if (block.type === 'table_grid') {
           resultElements.push(buildSingleTableElement(block));
         } else if (block.type === 'split_row') {
@@ -1244,7 +1252,7 @@ export class CertificateService {
                 stack: buildChildPdf(rightChild),
               },
             ],
-            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
+            margin: [0, mt, 0, mb],
           });
         } else if (block.type === 'matrix_table') {
           const matrixBody: any[] = [];
@@ -1354,7 +1362,7 @@ export class CertificateService {
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
             },
-            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
+            margin: [0, mt, 0, mb],
           });
         } else if (block.type === 'text_block') {
           resultElements.push({
@@ -1378,8 +1386,34 @@ export class CertificateService {
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
             },
-            margin: [0, 0, 0, block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 5 : 7)],
+            margin: [0, mt, 0, mb],
           });
+        } else if (block.type === 'diagram_block' || block.type === 'diagram') {
+          const dImg = block.imageUrl || block.image;
+          if (dImg) {
+            resultElements.push({
+              table: {
+                widths: ['*'],
+                body: [
+                  [
+                    {
+                      image: dImg,
+                      width: block.width ? Math.min(Number(block.width), 360) : 240,
+                      alignment: block.alignment || 'center',
+                      margin: [2, 2, 2, 2],
+                    },
+                  ],
+                ],
+              },
+              layout: {
+                hLineWidth: () => 0.5,
+                vLineWidth: () => 0.5,
+                hLineColor: () => '#000000',
+                vLineColor: () => '#000000',
+              },
+              margin: [0, mt, 0, mb],
+            });
+          }
         } else if (block.type === 'page_break') {
           resultElements.push({ text: '', pageBreak: 'before' });
         }
@@ -1392,7 +1426,7 @@ export class CertificateService {
     const docDefinition = {
       pageSize: 'A4' as const,
       pageOrientation: (useLandscape ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
-      pageMargins: [20, 48, 20, 36] as [number, number, number, number],
+      pageMargins: [20, 48, 20, 48] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
@@ -1409,8 +1443,8 @@ export class CertificateService {
       background: (currentPage: number, pageCount: number) => {
         const pageWidth = useLandscape ? 841.89 : 595.28;
         const pageHeight = useLandscape ? 595.28 : 841.89;
-        const footerY = useLandscape ? 559 : 806;
-        const footerHeight = pageHeight - footerY;
+        const footerHeight = 46;
+        const footerY = pageHeight - footerHeight;
         const rectHeight = footerY - 46;
 
         return [
@@ -1560,10 +1594,10 @@ export class CertificateService {
             : []),
         ];
 
-        // Total footer banner height is ~36pt. Calculate vertical padding to vertically center content.
+        // Total footer banner height is 46pt. Calculate vertical padding to vertically center content perfectly.
         const lineCount = footerItems.length;
         const totalTextHeight = lineCount * 8.5;
-        const verticalPad = Math.max(3, Math.round((36 - totalTextHeight) / 2));
+        const verticalPad = Math.max(3, Math.round((46 - totalTextHeight) / 2));
 
         return {
           table: {
@@ -1573,7 +1607,7 @@ export class CertificateService {
                 {
                   stack: footerItems,
                   fillColor: headerBgColor,
-                  margin: [25, verticalPad, 25, verticalPad],
+                  margin: [15, verticalPad, 15, verticalPad],
                 },
               ],
             ],

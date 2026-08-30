@@ -58,7 +58,7 @@ export default function TemplateBuilderForm() {
   const [defaultUnit, setDefaultUnit] = useState("mm");
   const [defaultTolerance, setDefaultTolerance] = useState<number | "">(0.001);
 
-  const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(false);
+  const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(true);
 
   // Environmental Defaults
   const [envTemp, setEnvTemp] = useState("20");
@@ -1194,8 +1194,47 @@ export default function TemplateBuilderForm() {
                   markDirty();
                   toast.success(`Loaded "${preset.name}" preset layout and properties!`);
                 }}
+                onApplyGeneratedTemplate={(result) => {
+                  if (result.name && (!templateId || name === "New Template" || !name.trim())) {
+                    setName(result.name);
+                  }
+                  if (result.description) {
+                    setDescription(result.description);
+                  }
+                  if (result.instrumentType) {
+                    setInstrumentType(result.instrumentType);
+                  }
+                  if (result.defaultTolerance !== undefined) {
+                    setDefaultTolerance(result.defaultTolerance);
+                  }
+                  if (result.defaultUnit) {
+                    setDefaultUnit(result.defaultUnit);
+                  }
+                  if (result.decimalPlaces !== undefined) {
+                    setDecimalPlaces(result.decimalPlaces);
+                  }
+                  if (result.acceptanceCriteria) {
+                    setEnableAcceptance(result.acceptanceCriteria.enabled);
+                    setAcceptanceType(result.acceptanceCriteria.type);
+                    setAcceptanceValue(result.acceptanceCriteria.value);
+                  }
+                  if (result.blocks && result.blocks.length > 0) {
+                    setLayoutBlocks(result.blocks);
+                  }
+                  markDirty();
+                }}
                 defaultUnit={defaultUnit}
                 defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
+                decimalPlaces={decimalPlaces}
+                templateName={name}
+                diagramImage={diagramImage}
+                diagramImageWidth={diagramWidth}
+                diagramImageHeight={diagramHeight}
+                diagramImageAlignment={diagramAlignment}
+                onDecimalPlacesChange={(dp) => {
+                  setDecimalPlaces(dp);
+                  markDirty();
+                }}
               />
             ) : (
               <CalibrationDataGrid

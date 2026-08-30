@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   Trash2,
@@ -30,27 +31,22 @@ import {
   Sliders,
   SplitSquareVertical,
   Layers,
-  Edit3,
-  AlignLeft,
-  AlignCenter,
-  AlignRight,
-  Maximize2,
   Check,
   RotateCcw,
   BookOpen,
+  Settings2,
+  MousePointerClick,
+  CheckCircle2,
+  HelpCircle,
+  FlaskConical,
+  X,
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Textarea } from "@/components/ui/textarea";
-
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
+import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
+import { TrialRunModal } from "@/components/calibration/template-management/TrialRunModal";
+import { GeneratedTemplateResult } from "@/lib/geminiService";
+
 export { CANVAS_PRESETS };
 export type { CanvasTemplatePreset };
 
@@ -58,23 +54,38 @@ interface CanvasTemplateEditorProps {
   blocks: CanvasBlock[];
   onChange: (blocks: CanvasBlock[]) => void;
   onSelectPreset?: (preset: CanvasTemplatePreset) => void;
+  onApplyGeneratedTemplate?: (template: GeneratedTemplateResult) => void;
+  templateName?: string;
+  diagramImage?: string | null;
+  diagramImageWidth?: number;
+  diagramImageHeight?: number;
+  diagramImageAlignment?: "center" | "left" | "right";
   defaultUnit?: string;
   defaultTolerance?: number;
+  decimalPlaces?: number;
+  onDecimalPlacesChange?: (dp: number) => void;
 }
 
 export function CanvasTemplateEditor({
   blocks,
   onChange,
   onSelectPreset,
+  onApplyGeneratedTemplate,
+  templateName,
+  diagramImage,
+  diagramImageWidth,
+  diagramImageHeight,
+  diagramImageAlignment,
   defaultUnit = "mm",
   defaultTolerance = 0.01,
+  decimalPlaces = 3,
+  onDecimalPlacesChange,
 }: CanvasTemplateEditorProps) {
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
-  const [editingTableBlock, setEditingTableBlock] = useState<TableGridBlock | null>(null);
-  const [showTableModal, setShowTableModal] = useState(false);
-  const [showPresetsModal, setShowPresetsModal] = useState(false);
-  const [editingMatrixBlock, setEditingMatrixBlock] = useState<MatrixTableBlock | null>(null);
-  const [showMatrixModal, setShowMatrixModal] = useState(false);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(() => blocks[0]?.id || null);
+  const [selectedChildTableId, setSelectedChildTableId] = useState<string | null>(null);
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [showTrialRun, setShowTrialRun] = useState(false);
+  const [showInspector, setShowInspector] = useState(false);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     onChange(newBlocks);
@@ -89,7 +100,7 @@ export function CanvasTemplateEditor({
       width: "100%",
       unit: defaultUnit,
       tolerance: defaultTolerance,
-      decimal_places: 3,
+      decimal_places: decimalPlaces,
       columns: [
         { id: "point_number", label: "Sl.No.", type: "nominal", width: "8%" },
         { id: "nominal", label: "Std. Spec", type: "nominal", width: "22%" },
@@ -105,6 +116,7 @@ export function CanvasTemplateEditor({
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(null);
     toast.success("Added Table Grid block");
   };
 
@@ -121,7 +133,7 @@ export function CanvasTemplateEditor({
           title: "Left Section Table",
           unit: defaultUnit,
           tolerance: defaultTolerance,
-          decimal_places: 3,
+          decimal_places: decimalPlaces,
           columns: [
             { id: "nominal", label: "Std Spec", type: "nominal", width: "30%" },
             { id: "reading", label: "Observed", type: "reading", width: "35%" },
@@ -138,7 +150,7 @@ export function CanvasTemplateEditor({
           title: "Right Section Table",
           unit: defaultUnit,
           tolerance: defaultTolerance,
-          decimal_places: 3,
+          decimal_places: decimalPlaces,
           columns: [
             { id: "description", label: "Item", type: "text", width: "35%" },
             { id: "reading", label: "Observed", type: "reading", width: "35%" },
@@ -153,6 +165,7 @@ export function CanvasTemplateEditor({
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(newBlock.children[0]?.id || null);
     toast.success("Added Side-by-Side Split Row container");
   };
 
@@ -160,7 +173,7 @@ export function CanvasTemplateEditor({
     const newBlock: MatrixTableBlock = {
       id: `matrix_${Date.now()}`,
       type: "matrix_table",
-      title: "Acceptance Criteria Reference Table",
+      title: "Acceptance Criteria Reference Matrix",
       width: "100%",
       headers: [
         [
@@ -180,11 +193,11 @@ export function CanvasTemplateEditor({
       rows: [
         ["0 - 100", "±0.010", "±0.020", "±0.020", "±0.030"],
         ["100 - 300", "±0.020", "±0.030", "±0.030", "±0.040"],
-        ["300 - 600", "±0.030", "±0.040", "±0.040", "±0.050"],
       ],
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(null);
     toast.success("Added Acceptance Criteria Matrix table");
   };
 
@@ -197,6 +210,7 @@ export function CanvasTemplateEditor({
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(null);
     toast.success("Added Note / Condition block");
   };
 
@@ -208,6 +222,7 @@ export function CanvasTemplateEditor({
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(null);
     toast.success("Added Page Break");
   };
 
@@ -227,12 +242,16 @@ export function CanvasTemplateEditor({
     const updated = [...blocks];
     updated.splice(index + 1, 0, clone);
     markChanged(updated);
+    setSelectedBlockId(clone.id);
     toast.success("Block duplicated");
   };
 
   const deleteBlock = (index: number) => {
     const updated = blocks.filter((_, i) => i !== index);
     markChanged(updated);
+    if (selectedBlockId === blocks[index]?.id) {
+      setSelectedBlockId(updated[0]?.id || null);
+    }
     toast.info("Block removed from canvas");
   };
 
@@ -242,315 +261,356 @@ export function CanvasTemplateEditor({
     markChanged(updated);
   };
 
-  const openTableEditor = (block: TableGridBlock) => {
-    setEditingTableBlock(JSON.parse(JSON.stringify(block)));
-    setShowTableModal(true);
+  // Find currently selected block
+  const selectedBlockIndex = blocks.findIndex((b) => b.id === selectedBlockId);
+  const selectedBlock = selectedBlockIndex !== -1 ? blocks[selectedBlockIndex] : null;
+
+  // Selected Table inside Split Row or Root Table
+  let activeTableBlock: TableGridBlock | null = null;
+  if (selectedBlock?.type === "table_grid") {
+    activeTableBlock = selectedBlock as TableGridBlock;
+  } else if (selectedBlock?.type === "split_row") {
+    const split = selectedBlock as SplitRowBlock;
+    activeTableBlock = (split.children.find((c) => c.id === selectedChildTableId && c.type === "table_grid") as TableGridBlock) ||
+      (split.children.find((c) => c.type === "table_grid") as TableGridBlock) || null;
+  }
+
+  // Update active table block either at root or inside split row
+  const updateActiveTable = (updatedTbl: TableGridBlock) => {
+    if (!selectedBlock) return;
+    if (selectedBlock.type === "table_grid") {
+      updateBlock(selectedBlockIndex, updatedTbl);
+    } else if (selectedBlock.type === "split_row") {
+      const split = selectedBlock as SplitRowBlock;
+      const updatedChildren = split.children.map((c) => (c.id === updatedTbl.id ? updatedTbl : c));
+      updateBlock(selectedBlockIndex, { ...split, children: updatedChildren });
+    }
   };
 
-  const saveTableEditor = () => {
-    if (!editingTableBlock) return;
-    const updated = blocks.map((b) => {
-      if (b.id === editingTableBlock.id) return editingTableBlock;
-      if (b.type === "split_row") {
-        return {
-          ...b,
-          children: b.children.map((c) => (c.id === editingTableBlock.id ? editingTableBlock : c)),
-        };
-      }
-      return b;
-    });
-    markChanged(updated);
-    setShowTableModal(false);
-    toast.success("Table configuration updated");
-  };
-
-  const openMatrixEditor = (block: MatrixTableBlock) => {
-    setEditingMatrixBlock(JSON.parse(JSON.stringify(block)));
-    setShowMatrixModal(true);
-  };
-
-  const saveMatrixEditor = () => {
-    if (!editingMatrixBlock) return;
-    const updated = blocks.map((b) => (b.id === editingMatrixBlock.id ? editingMatrixBlock : b));
-    markChanged(updated);
-    setShowMatrixModal(false);
-    toast.success("Matrix table configuration updated");
-  };
-
-  // Helper to evaluate formula preview in builder
-  const evaluatePreviewCell = (row: CanvasRowData, col: CanvasColumnDef): string => {
-    if (col.type === "nominal") return row.nominal !== undefined ? `${row.nominal}` : "-";
+  // Helper to evaluate formula preview in builder with decimal formatting
+  const evaluatePreviewCell = (
+    row: CanvasRowData,
+    col: CanvasColumnDef,
+    tableDec: number = 3
+  ): React.ReactNode => {
+    const dec = col.decimal_places ?? tableDec ?? decimalPlaces ?? 3;
+    if (col.type === "nominal") {
+      return row.nominal !== undefined && row.nominal !== null
+        ? Number(row.nominal).toFixed(dec)
+        : "-";
+    }
     if (col.type === "text") return row.description || "-";
-    if (col.type === "trial" || col.type === "reading") return row[col.id] !== undefined ? `${row[col.id]}` : "";
-    if (col.type === "formula" || col.type === "status") {
-      return "(Formula)";
+    if (col.type === "trial" || col.type === "reading") {
+      const val = row[col.id] ?? row.reading ?? row.nominal;
+      return val !== undefined && val !== null ? Number(val).toFixed(dec) : "-";
+    }
+    if (col.type === "formula") {
+      const formula = (col.formula || "").toLowerCase();
+      const nom = Number(row.nominal ?? 0);
+      if (formula.includes("average")) {
+        return nom.toFixed(dec);
+      }
+      if (formula.includes("reading - nominal") || formula.includes("avg - nominal") || formula.includes("error")) {
+        return `+${(0).toFixed(dec)}`;
+      }
+      return `+${(0).toFixed(dec)}`;
+    }
+    if (col.type === "status") {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+          PASS
+        </span>
+      );
     }
     return "-";
   };
 
+  const handleApplyAiGenerated = (result: GeneratedTemplateResult) => {
+    if (result.blocks && result.blocks.length > 0) {
+      markChanged(result.blocks);
+      setSelectedBlockId(result.blocks[0]?.id || null);
+    }
+    if (onApplyGeneratedTemplate) {
+      onApplyGeneratedTemplate(result);
+    }
+    toast.success(`Loaded "${result.name}" with ${result.blocks.length} blocks!`);
+  };
+
   return (
     <div className="space-y-4">
-      {/* Canvas Action Bar */}
-      <div className="flex items-center justify-between flex-wrap gap-2 bg-slate-900 text-white p-3 rounded-lg shadow-md border border-slate-800">
+      {/* Top Banner & Quick Presets Header */}
+      <div className="bg-slate-900 text-white p-3 rounded-xl shadow-md border border-slate-800 flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <Layers className="w-5 h-5 text-amber-400" />
+          <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
+            <Layers className="w-5 h-5" />
+          </div>
           <div>
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              Visual Canvas Layout Designer
+              WYSIWYG Visual Canvas Designer 2.0
               <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
                 {blocks.length} Modular Blocks
               </Badge>
             </h3>
             <p className="text-[11px] text-slate-400">
-              Build custom multi-table, side-by-side split, reference matrices, and multi-page calibration certificates
+              Click any block on the central certificate to edit its properties, formulas & tolerances in the Right Inspector Panel.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           <Button
             type="button"
-            variant="outline"
+            variant={showInspector ? "default" : "outline"}
             size="sm"
-            onClick={() => setShowPresetsModal(true)}
-            className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/40 gap-1.5 h-8 shadow-xs"
+            onClick={() => setShowInspector(!showInspector)}
+            className={`text-xs gap-1.5 h-8 font-bold shadow-sm ${
+              showInspector ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+            }`}
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+            {showInspector ? "Hide Properties" : "⚙️ Block Properties"}
+          </Button>
+
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setShowTrialRun(true)}
+            disabled={blocks.length === 0}
+            className="text-xs bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 hover:to-cyan-800 text-white gap-1.5 h-8 font-bold shadow-sm"
+          >
+            <FlaskConical className="w-3.5 h-3.5" />
+            🧪 Trial Run & Certificate Preview
+          </Button>
+
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => setShowAiModal(true)}
+            className="text-xs bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white gap-1.5 h-8 font-bold shadow-sm"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            Load Preset (IS 3651 / 2967)
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            onClick={addTableBlock}
-            className="text-xs bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5 h-8 shadow-xs"
-          >
-            <Table className="w-3.5 h-3.5" />
-            + Data Table
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={addSplitRowBlock}
-            className="text-xs gap-1.5 h-8 shadow-xs"
-          >
-            <SplitSquareVertical className="w-3.5 h-3.5 text-blue-500" />
-            + Side-by-Side (50/50)
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={addMatrixBlock}
-            className="text-xs gap-1.5 h-8 shadow-xs"
-          >
-            <LayoutGrid className="w-3.5 h-3.5 text-purple-500" />
-            + Matrix Table
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={addTextBlock}
-            className="text-xs gap-1.5 h-8 shadow-xs"
-          >
-            <FileText className="w-3.5 h-3.5 text-emerald-500" />
-            + Note
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            onClick={addPageBreak}
-            className="text-xs gap-1.5 h-8 shadow-xs"
-          >
-            <Columns className="w-3.5 h-3.5 text-amber-500" />
-            + Page Break
+            AI Smart Generate (Excel / Image)
           </Button>
         </div>
       </div>
 
-      {/* Main Canvas Workspace (Simulates Printed Certificate Sheet) */}
-      <div className="bg-slate-100 dark:bg-slate-950 p-4 sm:p-6 rounded-xl border border-slate-300 dark:border-slate-800 min-h-[500px] flex flex-col items-center">
-        <div className="w-full max-w-[1000px] bg-white dark:bg-slate-900 shadow-xl border border-black/80 rounded-sm p-4 sm:p-6 space-y-4 text-black dark:text-slate-100 font-sans">
-          
-          {/* Simulated Certificate Header */}
-          <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
-            <span className="font-bold tracking-wide uppercase text-[11px] text-slate-700 dark:text-slate-300">
-              [ Instrument Certificate Header & Metadata Area ]
-            </span>
-            <span className="font-mono text-[10px] text-muted-foreground">Document Sheet Preview</span>
+      {/* 3-COLUMN WYSIWYG WORKSPACE */}
+      <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
+        
+        {/* ========================================================================= */}
+        {/* COLUMN 1: LEFT TOOLBOX & PRESETS (240px) */}
+        {/* ========================================================================= */}
+        <div className="w-full lg:w-[240px] shrink-0 space-y-4">
+          {/* Add Blocks Toolbox */}
+          <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
+            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Plus className="w-3.5 h-3.5 text-primary" />
+              Add Modular Blocks
+            </h4>
+            <div className="grid grid-cols-1 gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addTableBlock}
+                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+              >
+                <Table className="w-3.5 h-3.5 text-blue-500" />
+                + Data Table Grid
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addSplitRowBlock}
+                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+              >
+                <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
+                + Side-by-Side (50/50)
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addMatrixBlock}
+                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+              >
+                <LayoutGrid className="w-3.5 h-3.5 text-purple-500" />
+                + Reference Matrix
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addTextBlock}
+                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                + Note / Statement
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addPageBreak}
+                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+              >
+                <Columns className="w-3.5 h-3.5 text-amber-500" />
+                + Page Break
+              </Button>
+            </div>
           </div>
 
-          {/* Render Blocks */}
-          {blocks.length === 0 ? (
-            <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-12 text-center space-y-3">
-              <Table className="w-10 h-10 mx-auto text-muted-foreground/50" />
-              <div className="space-y-1">
-                <h4 className="font-bold text-sm">Your Canvas is Empty</h4>
-                <p className="text-xs text-muted-foreground">
-                  Click <strong>&quot;Load Preset&quot;</strong> above to quickly load the Vernier Caliper (IS 3651) layout, or add your custom tables and split rows.
-                </p>
-              </div>
-              <div className="pt-2">
-                <Button size="sm" onClick={() => setShowPresetsModal(true)} className="gap-2">
-                  <Sparkles className="w-4 h-4 text-amber-400" />
-                  Load Vernier Caliper Preset (IS 3651)
-                </Button>
-              </div>
+          {/* Standard Presets List */}
+          <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
+            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5 text-amber-500" />
+              1-Click Standard Presets
+            </h4>
+            <div className="space-y-1.5">
+              {CANVAS_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    if (onSelectPreset) {
+                      onSelectPreset(preset);
+                    } else {
+                      markChanged(JSON.parse(JSON.stringify(preset.blocks)));
+                    }
+                    setSelectedBlockId(preset.blocks[0]?.id || null);
+                    toast.success(`Loaded "${preset.name}" preset!`);
+                  }}
+                  className="w-full text-left p-2 rounded-lg border bg-slate-50/60 dark:bg-slate-900/40 hover:bg-primary/5 hover:border-primary/40 transition-all group space-y-0.5"
+                >
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 group-hover:text-primary flex items-center justify-between">
+                    {preset.name}
+                    <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
+                      {preset.instrumentType}
+                    </Badge>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground line-clamp-2">
+                    {preset.description}
+                  </p>
+                </button>
+              ))}
             </div>
-          ) : (
-            blocks.map((block, index) => (
-              <div
-                key={block.id}
-                onClick={() => setSelectedBlockId(block.id)}
-                className={`relative group border transition-all rounded-sm ${
-                  selectedBlockId === block.id
-                    ? "ring-2 ring-primary border-primary bg-primary/[0.02]"
-                    : "border-slate-300 hover:border-primary/50"
-                }`}
-              >
-                {/* Block Controls Float Bar */}
-                <div className="absolute -top-3.5 right-2 z-10 hidden group-hover:flex items-center gap-1 bg-slate-900 text-white px-2 py-0.5 rounded shadow text-xs">
-                  <span className="text-[10px] font-mono text-slate-300 mr-1 uppercase">{block.type}</span>
-                  <button
-                    type="button"
-                    disabled={index === 0}
-                    onClick={(e) => { e.stopPropagation(); moveBlock(index, "up"); }}
-                    className="p-1 hover:text-amber-400 disabled:opacity-30"
-                    title="Move Up"
-                  >
-                    <ChevronUp className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={index === blocks.length - 1}
-                    onClick={(e) => { e.stopPropagation(); moveBlock(index, "down"); }}
-                    className="p-1 hover:text-amber-400 disabled:opacity-30"
-                    title="Move Down"
-                  >
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); duplicateBlock(block, index); }}
-                    className="p-1 hover:text-emerald-400"
-                    title="Duplicate Block"
-                  >
-                    <Copy className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); deleteBlock(index); }}
-                    className="p-1 hover:text-red-400"
-                    title="Delete Block"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
+          </div>
+        </div>
 
-                {/* 1. TABLE GRID BLOCK */}
-                {block.type === "table_grid" && (
-                  <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                    <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black">
-                      <div className="flex items-center gap-2">
+        {/* ========================================================================= */}
+        {/* COLUMN 2: CENTRAL CANVAS WORKSPACE (LIVE A4 CERTIFICATE SHEET) */}
+        {/* ========================================================================= */}
+        <div className="flex-1 w-full bg-slate-100 dark:bg-slate-950 p-3 sm:p-5 rounded-xl border border-slate-300 dark:border-slate-800 min-h-[700px] flex flex-col items-center overflow-x-auto">
+          <div className="w-full max-w-[850px] bg-white dark:bg-slate-900 shadow-xl border border-black/80 rounded-sm p-4 sm:p-6 space-y-3.5 text-black dark:text-slate-100 font-sans">
+            
+            {/* Certificate Header Banner */}
+            <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
+              <span className="font-bold tracking-wide uppercase text-[10.5px] text-slate-700 dark:text-slate-300">
+                [ Calibration Certificate Live Layout Preview ]
+              </span>
+              <span className="font-mono text-[10px] text-muted-foreground">ISO/IEC 17025 Accredited Sheet</span>
+            </div>
+
+            {/* Blocks List */}
+            {blocks.length === 0 ? (
+              <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-10 text-center space-y-3">
+                <Table className="w-8 h-8 mx-auto text-muted-foreground/50" />
+                <div className="space-y-1">
+                  <h4 className="font-bold text-xs">Your Certificate Canvas is Empty</h4>
+                  <p className="text-[11px] text-muted-foreground">
+                    Click a block on the left or use <strong>AI Smart Generate</strong> to build your template.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              blocks.map((block, index) => (
+                <div
+                  key={block.id}
+                  onClick={() => {
+                    setSelectedBlockId(block.id);
+                    setShowInspector(true);
+                  }}
+                  style={{
+                    marginTop: `${(block as any).marginTop !== undefined ? (block as any).marginTop : 0}px`,
+                    marginBottom: `${(block as any).marginBottom !== undefined ? (block as any).marginBottom : 6}px`,
+                  }}
+                  className={`relative group border transition-all rounded-sm cursor-pointer ${
+                    selectedBlockId === block.id
+                      ? "ring-2 ring-primary border-primary shadow-sm bg-primary/[0.01]"
+                      : "border-slate-300 hover:border-primary/50"
+                  }`}
+                >
+                  {/* Floating Action Controls on Hover */}
+                  <div className="absolute -top-3.5 right-2 z-10 hidden group-hover:flex items-center gap-1 bg-slate-900 text-white px-2 py-0.5 rounded shadow text-xs">
+                    <span className="text-[9px] font-mono text-amber-400 mr-1 uppercase font-bold">{block.type}</span>
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={(e) => { e.stopPropagation(); moveBlock(index, "up"); }}
+                      className="p-0.5 hover:text-amber-400 disabled:opacity-30"
+                      title="Move Up"
+                    >
+                      <ChevronUp className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === blocks.length - 1}
+                      onClick={(e) => { e.stopPropagation(); moveBlock(index, "down"); }}
+                      className="p-0.5 hover:text-amber-400 disabled:opacity-30"
+                      title="Move Down"
+                    >
+                      <ChevronDown className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); duplicateBlock(block, index); }}
+                      className="p-0.5 hover:text-emerald-400"
+                      title="Duplicate Block"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); deleteBlock(index); }}
+                      className="p-0.5 hover:text-red-400"
+                      title="Delete Block"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+
+                  {/* 1. TABLE GRID BLOCK */}
+                  {block.type === "table_grid" && (
+                    <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
+                      <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black">
                         <Input
                           value={block.title}
                           onChange={(e) => {
                             const updated = { ...block, title: e.target.value };
                             updateBlock(index, updated);
                           }}
-                          className="h-6 text-xs font-bold bg-transparent border-none focus-visible:ring-1 focus-visible:ring-primary w-64 p-0"
+                          className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 focus-visible:ring-primary w-64 p-0"
                           placeholder="Table Section Title"
                         />
+                        <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
+                          <span>Unit: {block.unit || "mm"}</span>
+                          <span>• Tol: ±{block.tolerance ?? "0.01"}</span>
+                          <span>• Dec: {block.decimal_places ?? decimalPlaces}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
-                          Unit: {block.unit || "mm"} • Tol: ±{block.tolerance ?? "0.01"}
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openTableEditor(block)}
-                          className="h-5 px-1.5 text-[10px] font-bold text-primary hover:bg-primary/10 gap-1"
-                        >
-                          <Sliders className="w-2.5 h-2.5" />
-                          Configure Columns ({block.columns.length})
-                        </Button>
-                      </div>
-                    </div>
 
-                    {/* Table View */}
-                    <div className="overflow-x-auto">
-                      {block.orientation === "horizontal" ? (
-                        <table className="w-full border-collapse text-[10px] text-center border-black">
-                          <thead>
-                            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                              <th className="py-1 px-2 text-left w-44 min-w-[130px] bg-slate-200/60 sticky left-0 z-20">
-                                Parameter / Sl no
-                              </th>
-                              {block.rows.map((r, rIdx) => (
-                                <th key={rIdx} className="py-1 px-1.5 min-w-[45px] font-bold text-foreground">
-                                  {r.point_number ?? (rIdx + 1)}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-black">
-                            {block.columns
-                              .filter((c) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino")
-                              .map((col) => (
-                                <tr key={col.id} className="divide-x divide-black hover:bg-slate-50/50">
-                                  <td className="py-1 px-2 text-left font-bold bg-slate-100/60 sticky left-0 z-10 whitespace-nowrap text-[10.5px]">
-                                    {col.label}
-                                    {col.type === "formula" && <span className="text-[8px] text-primary ml-1 font-normal">(fx)</span>}
-                                  </td>
-                                  {block.rows.map((row, rIdx) => (
-                                    <td key={rIdx} className="py-1 px-1 font-mono">
-                                      {col.type === "nominal" ? (
-                                        <Input
-                                          type="number"
-                                          step="any"
-                                          value={row.nominal ?? ""}
-                                          onChange={(e) => {
-                                            const newRows = [...block.rows];
-                                            newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
-                                            updateBlock(index, { ...block, rows: newRows });
-                                          }}
-                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 w-full min-w-[40px] font-bold"
-                                        />
-                                      ) : col.type === "text" ? (
-                                        <Input
-                                          value={row.description || ""}
-                                          onChange={(e) => {
-                                            const newRows = [...block.rows];
-                                            newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
-                                            updateBlock(index, { ...block, rows: newRows });
-                                          }}
-                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 w-full min-w-[40px]"
-                                          placeholder="Description"
-                                        />
-                                      ) : (
-                                        <span className="text-muted-foreground font-mono">{evaluatePreviewCell(row, col)}</span>
-                                      )}
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
-                      ) : (
+                      {/* Table Rows & Columns */}
+                      <div className="overflow-x-auto">
                         <table className="w-full border-collapse text-[10px] text-center border-black">
                           <thead>
                             <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
                               {block.columns.map((col) => (
-                                <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                                <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5 font-bold">
                                   {col.label}
                                   {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
                                 </th>
@@ -571,7 +631,7 @@ export function CanvasTemplateEditor({
                                   }
                                   if (col.type === "nominal") {
                                     return (
-                                      <td key={col.id} className="py-1 px-1.5">
+                                      <td key={col.id} className="py-0.5 px-1">
                                         <Input
                                           type="number"
                                           step="any"
@@ -588,7 +648,7 @@ export function CanvasTemplateEditor({
                                   }
                                   if (col.type === "text") {
                                     return (
-                                      <td key={col.id} className="py-1 px-1.5">
+                                      <td key={col.id} className="py-0.5 px-1">
                                         <Input
                                           value={row.description || ""}
                                           onChange={(e) => {
@@ -604,7 +664,9 @@ export function CanvasTemplateEditor({
                                   }
                                   return (
                                     <td key={col.id} className="py-1 px-1.5">
-                                      <span className="text-muted-foreground font-mono">{evaluatePreviewCell(row, col)}</span>
+                                      <span className="text-muted-foreground font-mono">
+                                        {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
+                                      </span>
                                     </td>
                                   );
                                 })}
@@ -612,153 +674,78 @@ export function CanvasTemplateEditor({
                             ))}
                           </tbody>
                         </table>
-                      )}
-                    </div>
+                      </div>
 
-                    {/* Table Row Footer Controls */}
-                    <div className="bg-slate-50 dark:bg-slate-800/40 p-1 flex items-center justify-between text-[10px] border-t border-black">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const newRow: CanvasRowData = {
-                            point_number: block.rows.length + 1,
-                            nominal: (block.rows[block.rows.length - 1]?.nominal || 0) + 10,
-                            unit: block.unit || "mm",
-                          };
-                          updateBlock(index, { ...block, rows: [...block.rows, newRow] });
-                        }}
-                        className="h-5 px-1.5 text-[10px] text-primary gap-1 font-semibold hover:bg-primary/10"
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                        Add Row
-                      </Button>
-                      {block.rows.length > 1 && (
+                      {/* Add Row Controls */}
+                      <div className="bg-slate-50 dark:bg-slate-800/40 p-1 flex items-center justify-between text-[10px] border-t border-black">
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           onClick={() => {
-                            const newRows = block.rows.slice(0, -1);
-                            updateBlock(index, { ...block, rows: newRows });
+                            const newRow: CanvasRowData = {
+                              point_number: block.rows.length + 1,
+                              nominal: (block.rows[block.rows.length - 1]?.nominal || 0) + 10,
+                              unit: block.unit || "mm",
+                            };
+                            updateBlock(index, { ...block, rows: [...block.rows, newRow] });
                           }}
-                          className="h-5 px-1.5 text-[10px] text-destructive hover:bg-destructive/10"
+                          className="h-5 px-1.5 text-[10px] text-primary gap-1 font-semibold hover:bg-primary/10"
                         >
-                          Remove Last Row
+                          <Plus className="w-2.5 h-2.5" />
+                          Add Row
                         </Button>
-                      )}
+                        {block.rows.length > 1 && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              const newRows = block.rows.slice(0, -1);
+                              updateBlock(index, { ...block, rows: newRows });
+                            }}
+                            className="h-5 px-1.5 text-[10px] text-destructive hover:bg-destructive/10"
+                          >
+                            Remove Last Row
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* 2. SPLIT ROW (SIDE-BY-SIDE 50/50 OR 60/40) */}
-                {block.type === "split_row" && (
-                  <div className="space-y-2 p-1 bg-slate-50/50 dark:bg-slate-800/30 rounded border border-dashed border-blue-400">
-                    <div className="flex items-center justify-between text-[10px] text-blue-600 font-bold px-1">
-                      <span className="flex items-center gap-1">
-                        <SplitSquareVertical className="w-3 h-3" />
-                        Side-by-Side Container ({block.children.length} Columns)
-                      </span>
-                    </div>
+                  {/* 2. SPLIT ROW CONTAINER */}
+                  {block.type === "split_row" && (
+                    <div className="space-y-2 p-1.5 bg-slate-50/50 dark:bg-slate-800/30 rounded border border-dashed border-indigo-400">
+                      <div className="flex items-center justify-between text-[10px] text-indigo-600 dark:text-indigo-400 font-bold px-1">
+                        <span className="flex items-center gap-1">
+                          <SplitSquareVertical className="w-3 h-3" />
+                          Side-by-Side Split ({block.children.length} Columns)
+                        </span>
+                      </div>
 
-                    <div className={`grid grid-cols-1 md:grid-cols-${block.children.length} gap-2 items-start`}>
-                      {block.children.map((child, cIdx) => {
-                        const isBlank = child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content);
-                        return (
+                      <div className={`grid grid-cols-1 md:grid-cols-${block.children.length} gap-2 items-start`}>
+                        {block.children.map((child, cIdx) => (
                           <div
                             key={child.id || cIdx}
-                            className={
-                              isBlank
-                                ? "border border-dashed border-slate-300 dark:border-slate-700 rounded p-4 flex flex-col items-center justify-center bg-slate-50/50 dark:bg-slate-900/30 text-center min-h-[90px]"
-                                : "border border-black overflow-hidden bg-white dark:bg-slate-900 flex flex-col"
-                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedBlockId(block.id);
+                              setSelectedChildTableId(child.id);
+                              setShowInspector(true);
+                            }}
+                            className={`border border-black overflow-hidden bg-white dark:bg-slate-900 flex flex-col ${
+                              selectedChildTableId === child.id ? "ring-2 ring-indigo-500" : ""
+                            }`}
                           >
-                            {isBlank ? (
-                              <div className="space-y-1.5">
-                                <span className="text-[11px] text-muted-foreground italic font-medium flex items-center justify-center gap-1">
-                                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-slate-400" />
-                                  Empty / Blank Space (Invisible in Certificate)
-                                </span>
-                                <div className="flex items-center gap-1.5 justify-center">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => {
-                                      const updatedChildren = [...block.children];
-                                      updatedChildren[cIdx] = {
-                                        id: `tbl_${Date.now()}_${cIdx}`,
-                                        type: "table_grid",
-                                        title: `Section ${cIdx + 1} Table`,
-                                        unit: defaultUnit,
-                                        tolerance: defaultTolerance,
-                                        decimal_places: 3,
-                                        columns: [
-                                          { id: "nominal", label: "Nominal Value", type: "nominal", width: "35%" },
-                                          { id: "reading", label: "Actual Value", type: "reading", width: "35%" },
-                                          { id: "error", label: "Error", type: "formula", formula: "reading - nominal", width: "30%" },
-                                        ],
-                                        rows: [
-                                          { point_number: 1, nominal: 10.0, unit: defaultUnit },
-                                        ],
-                                      };
-                                      updateBlock(index, { ...block, children: updatedChildren });
-                                    }}
-                                    className="h-5 px-2 text-[9px] gap-1 font-semibold"
-                                  >
-                                    <Plus className="w-2.5 h-2.5" />
-                                    Add Table
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : child.type === "table_grid" ? (
+                            {child.type === "table_grid" && (
                               <>
                                 <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-0.5 flex items-center justify-between border-b border-black">
-                                  <Input
-                                    value={child.title}
-                                    onChange={(e) => {
-                                      const updatedChildren = [...block.children];
-                                      updatedChildren[cIdx] = { ...child, title: e.target.value };
-                                      updateBlock(index, { ...block, children: updatedChildren });
-                                    }}
-                                    className="h-5 text-[10px] font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-40"
-                                  />
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => openTableEditor(child)}
-                                      className="h-4 px-1 text-[9px] text-primary"
-                                    >
-                                      Configure
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      onClick={() => {
-                                        const updatedChildren = [...block.children];
-                                        updatedChildren[cIdx] = {
-                                          id: `blank_${Date.now()}_${cIdx}`,
-                                          type: "blank",
-                                          content: "",
-                                        };
-                                        updateBlock(index, { ...block, children: updatedChildren });
-                                        toast.info("Converted column to Empty Blank Space");
-                                      }}
-                                      className="h-4 px-1 text-[9px] text-muted-foreground hover:text-destructive"
-                                      title="Clear this column to empty blank space"
-                                    >
-                                      Make Blank
-                                    </Button>
-                                  </div>
+                                  <span className="text-[10px] font-bold">{child.title}</span>
+                                  <span className="text-[9px] text-muted-foreground">Dec: {child.decimal_places ?? decimalPlaces}</span>
                                 </div>
-
-                                <table className="w-full border-collapse text-[9px] text-center">
+                                <table className="w-full border-collapse text-[9.5px] text-center border-black">
                                   <thead>
-                                    <tr className="bg-slate-100 font-bold border-b border-black divide-x divide-black">
+                                    <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
                                       {child.columns.map((col) => (
                                         <th key={col.id} className="py-0.5 px-1">{col.label}</th>
                                       ))}
@@ -767,232 +754,276 @@ export function CanvasTemplateEditor({
                                   <tbody className="divide-y divide-black">
                                     {child.rows.map((row, rIdx) => (
                                       <tr key={rIdx} className="divide-x divide-black">
-                                        {child.columns.map((col) => {
-                                          const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
-                                          if (isPointNo) {
-                                            return (
-                                              <td key={col.id} className="py-0.5 px-1 font-bold text-slate-700 dark:text-slate-300">
-                                                {row.point_number ?? (rIdx + 1)}
-                                              </td>
-                                            );
-                                          }
-                                          if (col.type === "nominal") {
-                                            const dec = child.decimal_places !== undefined ? child.decimal_places : 3;
-                                            const val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
-                                            return (
-                                              <td key={col.id} className="py-0.5 px-1 font-mono font-semibold">
-                                                {val}
-                                              </td>
-                                            );
-                                          }
-                                          if (col.type === "text") {
-                                            return (
-                                              <td key={col.id} className="py-0.5 px-1 text-left pl-1">
-                                                {row.description || (row as any)[col.id] || "-"}
-                                              </td>
-                                            );
-                                          }
-                                          return (
-                                            <td key={col.id} className="py-0.5 px-1 font-mono text-muted-foreground">
-                                              -
-                                            </td>
-                                          );
-                                        })}
+                                        {child.columns.map((col) => (
+                                          <td key={col.id} className="py-0.5 px-1 font-mono">
+                                            {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
+                                          </td>
+                                        ))}
                                       </tr>
                                     ))}
                                   </tbody>
                                 </table>
-
-                                {child.footerNote && (
-                                  <div className="p-1 text-[9px] italic border-t border-black text-center bg-slate-50">
-                                    {child.footerNote}
-                                  </div>
-                                )}
                               </>
-                            ) : child.type === "text_block" && child.content ? (
-                              <div className="p-2 text-[10px] text-center italic bg-slate-50 dark:bg-slate-800">
-                                {child.content}
-                              </div>
-                            ) : null}
+                            )}
                           </div>
-                        );
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* 3. MATRIX TABLE BLOCK (ACCEPTANCE CRITERIA) */}
-                {block.type === "matrix_table" && (
-                  <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                    <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 border-b border-black flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                  {/* 3. MATRIX TABLE */}
+                  {block.type === "matrix_table" && (
+                    <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
+                      <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black">
                         <Input
                           value={block.title}
                           onChange={(e) => {
-                            updateBlock(index, { ...block, title: e.target.value });
+                            const updated = { ...block, title: e.target.value };
+                            updateBlock(index, updated);
                           }}
-                          className="h-6 text-xs font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-64"
-                          placeholder="Matrix Table Title"
+                          className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 w-80 p-0"
                         />
+                        <Badge variant="outline" className="text-[9px] uppercase">
+                          Matrix Table
+                        </Badge>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-600 dark:text-slate-400 font-mono">
-                          {block.headers.length} Header Rows • {block.rows.length} Data Rows
-                        </span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openMatrixEditor(block)}
-                          className="h-5 px-1.5 text-[10px] font-bold text-primary hover:bg-primary/10 gap-1"
-                        >
-                          <Sliders className="w-2.5 h-2.5" />
-                          Configure
-                        </Button>
+                      <table className="w-full border-collapse text-[10px] text-center border-black">
+                        <thead>
+                          {block.headers.map((hRow, hIdx) => (
+                            <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
+                              {hRow.map((cell, cIdx) => (
+                                <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5 font-bold border border-black">
+                                  {cell.text}
+                                </th>
+                              ))}
+                            </tr>
+                          ))}
+                        </thead>
+                        <tbody>
+                          {block.rows.map((r, rIdx) => (
+                            <tr key={rIdx} className="hover:bg-slate-50/50">
+                              {r.map((val, cIdx) => (
+                                <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
+                                  {val}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* 4. NOTE / CALLOUT */}
+                  {block.type === "text_block" && (
+                    <div className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <Input
+                        value={block.content}
+                        onChange={(e) => updateBlock(index, { ...block, content: e.target.value })}
+                        className="text-xs bg-transparent border-none p-0 focus-visible:ring-1 font-medium"
+                        placeholder="Enter statement or observation notes..."
+                      />
+                    </div>
+                  )}
+
+                  {/* 5. PAGE BREAK */}
+                  {block.type === "page_break" && (
+                    <div className="border-2 border-dashed border-amber-500/80 bg-amber-50 dark:bg-amber-950/20 p-2 rounded text-center my-2">
+                      <div className="flex items-center justify-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+                        <Columns className="w-4 h-4" />
+                        PAGE BREAK (Next content starts on new certificate sheet)
                       </div>
                     </div>
+                  )}
+                </div>
+              ))
+            )}
 
-                    <table className="w-full border-collapse text-[9.5px] text-center border-black">
-                      <thead>
-                        {block.headers.map((hRow, hIdx) => (
-                          <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                            {hRow.map((cell, cIdx) => (
-                              <th
-                                key={cIdx}
-                                colSpan={cell.colSpan}
-                                rowSpan={cell.rowSpan}
-                                className="py-1 px-1.5"
-                              >
-                                {cell.text}
-                              </th>
-                            ))}
-                          </tr>
-                        ))}
-                      </thead>
-                      <tbody className="divide-y divide-black font-mono">
-                        {block.rows.map((row, rIdx) => (
-                          <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                            {row.map((cellVal, cIdx) => (
-                              <td key={cIdx} className="py-1 px-1.5">
-                                {cellVal}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {/* 4. TEXT BLOCK */}
-                {block.type === "text_block" && (
-                  <div className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <Input
-                      value={block.content}
-                      onChange={(e) => updateBlock(index, { ...block, content: e.target.value })}
-                      className="text-xs bg-transparent border-none p-0 focus-visible:ring-1 font-medium"
-                      placeholder="Enter compliance statement or observation notes..."
-                    />
-                  </div>
-                )}
-
-                {/* 5. PAGE BREAK BLOCK */}
-                {block.type === "page_break" && (
-                  <div className="border-2 border-dashed border-amber-500/80 bg-amber-50 dark:bg-amber-950/20 p-2 rounded text-center my-3">
-                    <div className="flex items-center justify-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
-                      <Columns className="w-4 h-4" />
-                      PAGE BREAK (Next content starts on new page)
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-
-          {/* Bottom Simulated Footer */}
-          <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[10px] text-muted-foreground">
-            <span>Standard Signatures & NABL Accreditation Footer</span>
-            <span>Page 1 of 1</span>
+            {/* Simulated Footer */}
+            <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[10px] text-muted-foreground">
+              <span>Standard Signatures & NABL Calibration Footer</span>
+              <span>Page 1 of 1</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* MODAL: Table Column & Formula Configuration */}
-      <Dialog open={showTableModal} onOpenChange={setShowTableModal}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-primary" />
-              Configure Columns & Formulas: {editingTableBlock?.title}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Add custom columns, set types (trial, reading, formula), and configure Excel-like formulas (e.g. AVERAGE, SUBTRACT).
-            </DialogDescription>
-          </DialogHeader>
+        {/* ========================================================================= */}
+        {/* COLUMN 3: RIGHT INSPECTOR PANEL (DEFAULT HIDDEN, TOGGLEABLE!) (340px) */}
+        {/* ========================================================================= */}
+        {showInspector && (
+          <div className="w-full lg:w-[340px] shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h4 className="text-xs font-bold flex items-center gap-1.5 text-foreground">
+                <Settings2 className="w-4 h-4 text-primary" />
+                Inspector & Properties
+              </h4>
+              <div className="flex items-center gap-1.5">
+                {selectedBlock && (
+                  <Badge variant="secondary" className="text-[10px] uppercase font-mono">
+                    {selectedBlock.type}
+                  </Badge>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowInspector(false)}
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                  title="Close Inspector"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
 
-          {editingTableBlock && (
-            <div className="space-y-4 pt-2">
-              <div className="grid grid-cols-5 gap-3">
-                <div>
-                  <Label className="text-xs">Table Title</Label>
+          {/* Universal Spacing & Gaps Control for Selected Block */}
+          {selectedBlock && (
+            <div className="p-2.5 bg-slate-50 dark:bg-slate-900/70 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1">
+                  <Sliders className="w-3 h-3 text-primary" />
+                  Block Spacing & Gaps (px)
+                </Label>
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  Top: {(selectedBlock as any).marginTop ?? 0}px • Bottom: {(selectedBlock as any).marginBottom ?? 6}px
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {/* Top Gap */}
+                <div className="space-y-1">
+                  <Label className="text-[10.5px] text-muted-foreground font-semibold">Top Gap (px)</Label>
                   <Input
-                    value={editingTableBlock.title}
-                    onChange={(e) => setEditingTableBlock({ ...editingTableBlock, title: e.target.value })}
-                    className="text-xs mt-1"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={(selectedBlock as any).marginTop ?? 0}
+                    onChange={(e) => {
+                      const val = Math.max(0, parseInt(e.target.value) || 0);
+                      updateBlock(selectedBlockIndex, { ...selectedBlock, marginTop: val } as any);
+                    }}
+                    className="h-7 text-xs font-mono"
+                  />
+                  <div className="flex gap-1 flex-wrap">
+                    {[0, 4, 8, 12, 16].map((gap) => (
+                      <button
+                        key={gap}
+                        type="button"
+                        onClick={() => updateBlock(selectedBlockIndex, { ...selectedBlock, marginTop: gap } as any)}
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-mono transition-colors ${
+                          ((selectedBlock as any).marginTop ?? 0) === gap
+                            ? "bg-primary text-primary-foreground font-bold"
+                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-primary/20"
+                        }`}
+                      >
+                        {gap}px
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Bottom Gap */}
+                <div className="space-y-1">
+                  <Label className="text-[10.5px] text-muted-foreground font-semibold">Bottom Gap (px)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={(selectedBlock as any).marginBottom ?? 6}
+                    onChange={(e) => {
+                      const val = Math.max(0, parseInt(e.target.value) || 0);
+                      updateBlock(selectedBlockIndex, { ...selectedBlock, marginBottom: val } as any);
+                    }}
+                    className="h-7 text-xs font-mono"
+                  />
+                  <div className="flex gap-1 flex-wrap">
+                    {[0, 4, 6, 12, 18, 24].map((gap) => (
+                      <button
+                        key={gap}
+                        type="button"
+                        onClick={() => updateBlock(selectedBlockIndex, { ...selectedBlock, marginBottom: gap } as any)}
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-mono transition-colors ${
+                          ((selectedBlock as any).marginBottom ?? 6) === gap
+                            ? "bg-primary text-primary-foreground font-bold"
+                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-primary/20"
+                        }`}
+                      >
+                        {gap}px
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* INSPECTOR: Table Grid Selected */}
+          {activeTableBlock ? (
+            <div className="space-y-3.5">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Table Section Title</Label>
+                <Input
+                  value={activeTableBlock.title}
+                  onChange={(e) => updateActiveTable({ ...activeTableBlock!, title: e.target.value })}
+                  className="h-8 text-xs font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Unit</Label>
+                  <Input
+                    value={activeTableBlock.unit || "mm"}
+                    onChange={(e) => updateActiveTable({ ...activeTableBlock!, unit: e.target.value })}
+                    className="h-8 text-xs"
                   />
                 </div>
-                <div>
-                  <Label className="text-xs">Unit</Label>
-                  <Input
-                    value={editingTableBlock.unit || "mm"}
-                    onChange={(e) => setEditingTableBlock({ ...editingTableBlock, unit: e.target.value })}
-                    className="text-xs mt-1"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">Default Tolerance (±)</Label>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Tolerance (±)</Label>
                   <Input
                     type="number"
                     step="any"
-                    value={editingTableBlock.tolerance ?? 0.01}
-                    onChange={(e) => setEditingTableBlock({ ...editingTableBlock, tolerance: parseFloat(e.target.value) || 0 })}
-                    className="text-xs mt-1"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">Orientation</Label>
-                  <Select
-                    value={editingTableBlock.orientation || "vertical"}
-                    onValueChange={(val: any) => setEditingTableBlock({ ...editingTableBlock, orientation: val })}
-                  >
-                    <SelectTrigger className="text-xs mt-1 h-9">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="vertical">↕ Vertical (Standard)</SelectItem>
-                      <SelectItem value="horizontal">↔ Horizontal (Transposed)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-xs">Bottom Gap (px)</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="50"
-                    value={editingTableBlock.marginBottom ?? 6}
-                    onChange={(e) => setEditingTableBlock({ ...editingTableBlock, marginBottom: parseInt(e.target.value) || 0 })}
-                    className="text-xs mt-1"
-                    placeholder="6"
+                    value={activeTableBlock.tolerance ?? 0.01}
+                    onChange={(e) => updateActiveTable({ ...activeTableBlock!, tolerance: parseFloat(e.target.value) || 0 })}
+                    className="h-8 text-xs"
                   />
                 </div>
               </div>
 
-              {/* Columns List */}
-              <div className="space-y-2 border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Decimal Precision</Label>
+                <Select
+                  value={String(activeTableBlock.decimal_places ?? decimalPlaces)}
+                  onValueChange={(val) => {
+                    const dp = parseInt(val) || 3;
+                    updateActiveTable({ ...activeTableBlock!, decimal_places: dp });
+                    if (onDecimalPlacesChange) onDecimalPlacesChange(dp);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs font-medium">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1">1 (0.0)</SelectItem>
+                    <SelectItem value="2">2 (0.00)</SelectItem>
+                    <SelectItem value="3">3 (0.000)</SelectItem>
+                    <SelectItem value="4">4 (0.0000)</SelectItem>
+                    <SelectItem value="5">5 (0.00000)</SelectItem>
+                    <SelectItem value="6">6 (0.000000)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Columns Editor with Variable Chips & Snippets */}
+              <div className="border rounded-lg p-2.5 bg-slate-50/50 dark:bg-slate-900/40 space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold">Columns Definition ({editingTableBlock.columns.length})</h4>
+                  <span className="text-xs font-bold flex items-center gap-1">
+                    <Columns className="w-3 h-3 text-primary" />
+                    Columns ({activeTableBlock.columns.length})
+                  </span>
                   <Button
                     type="button"
                     size="sm"
@@ -1000,449 +1031,285 @@ export function CanvasTemplateEditor({
                       const newColId = `col_${Date.now().toString().slice(-4)}`;
                       const newCol: CanvasColumnDef = {
                         id: newColId,
-                        label: `Col ${editingTableBlock.columns.length + 1}`,
+                        label: `Col ${activeTableBlock!.columns.length + 1}`,
                         type: "trial",
-                        width: "10%",
+                        width: "14%",
                       };
-                      setEditingTableBlock({
-                        ...editingTableBlock,
-                        columns: [...editingTableBlock.columns, newCol],
-                      });
+                      updateActiveTable({ ...activeTableBlock!, columns: [...activeTableBlock!.columns, newCol] });
                     }}
-                    className="h-6 text-[11px] gap-1"
+                    className="h-6 text-[10px] gap-1 bg-primary text-primary-foreground font-semibold"
                   >
-                    <Plus className="w-3 h-3" />
-                    Add Column
+                    <Plus className="w-3 h-3" /> Add Col
                   </Button>
                 </div>
 
-                <div className="space-y-2">
-                  {editingTableBlock.columns.map((col, cIdx) => (
-                    <div key={col.id} className="grid grid-cols-12 gap-2 items-center bg-background p-2 rounded border text-xs">
-                      <div className="col-span-3">
-                        <Label className="text-[10px] text-muted-foreground">Header Label</Label>
+                <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
+                  {activeTableBlock.columns.map((col, cIdx) => (
+                    <div key={col.id || cIdx} className="p-2 border rounded bg-card space-y-1.5 text-xs shadow-sm">
+                      <div className="flex items-center justify-between gap-1">
                         <Input
                           value={col.label}
                           onChange={(e) => {
-                            const updated = [...editingTableBlock.columns];
-                            updated[cIdx] = { ...col, label: e.target.value };
-                            setEditingTableBlock({ ...editingTableBlock, columns: updated });
+                            const updatedCols = [...activeTableBlock!.columns];
+                            updatedCols[cIdx] = { ...col, label: e.target.value };
+                            updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
                           }}
-                          className="h-7 text-xs mt-0.5"
+                          className="h-6 text-xs font-bold"
+                          placeholder="Header Label"
                         />
-                      </div>
-
-                      <div className="col-span-3">
-                        <Label className="text-[10px] text-muted-foreground">Column Type</Label>
-                        <Select
-                          value={col.type}
-                          onValueChange={(val: any) => {
-                            const updated = [...editingTableBlock.columns];
-                            updated[cIdx] = { ...col, type: val };
-                            setEditingTableBlock({ ...editingTableBlock, columns: updated });
-                          }}
-                        >
-                          <SelectTrigger className="h-7 text-xs mt-0.5">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="nominal">Nominal / Spec</SelectItem>
-                            <SelectItem value="trial">Trial / Reading</SelectItem>
-                            <SelectItem value="formula">Formula (fx)</SelectItem>
-                            <SelectItem value="status">Status (PASS/FAIL)</SelectItem>
-                            <SelectItem value="text">Text / Description</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="col-span-4">
-                        {col.type === "formula" || col.type === "status" ? (
-                          <div>
-                            <Label className="text-[10px] text-muted-foreground font-mono">Formula (e.g. AVERAGE(t1,t2))</Label>
-                            <Input
-                              value={col.formula || ""}
-                              onChange={(e) => {
-                                const updated = [...editingTableBlock.columns];
-                                updated[cIdx] = { ...col, formula: e.target.value };
-                                setEditingTableBlock({ ...editingTableBlock, columns: updated });
-                              }}
-                              className="h-7 text-xs font-mono mt-0.5"
-                              placeholder="e.g. AVERAGE(t1,t2,t3)"
-                            />
-                          </div>
-                        ) : (
-                          <div>
-                            <Label className="text-[10px] text-muted-foreground">Column Key</Label>
-                            <Input value={col.id} disabled className="h-7 text-xs font-mono mt-0.5 bg-muted" />
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="col-span-2 flex items-center justify-end gap-1 pt-3">
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon"
-                          disabled={editingTableBlock.columns.length <= 1}
+                          disabled={activeTableBlock!.columns.length <= 1}
                           onClick={() => {
-                            const updated = editingTableBlock.columns.filter((_, i) => i !== cIdx);
-                            setEditingTableBlock({ ...editingTableBlock, columns: updated });
+                            const updatedCols = activeTableBlock!.columns.filter((_, i) => i !== cIdx);
+                            updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
                           }}
-                          className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                          className="h-6 w-6 text-destructive hover:bg-destructive/10 shrink-0"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3 h-3" />
                         </Button>
                       </div>
+
+                      <Select
+                        value={col.type}
+                        onValueChange={(val: any) => {
+                          const updatedCols = [...activeTableBlock!.columns];
+                          let defFormula = col.formula;
+                          if (val === "formula" && !defFormula) defFormula = "reading - nominal";
+                          if (val === "status" && !defFormula) defFormula = "IF(ABS(error)<=tolerance,'PASS','FAIL')";
+                          updatedCols[cIdx] = { ...col, type: val, formula: defFormula };
+                          updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                        }}
+                      >
+                        <SelectTrigger className="h-6 text-[11px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="nominal">Nominal / Spec</SelectItem>
+                          <SelectItem value="reading">Actual / Reading</SelectItem>
+                          <SelectItem value="trial">Trial (t1, t2..)</SelectItem>
+                          <SelectItem value="formula">Formula (fx)</SelectItem>
+                          <SelectItem value="status">Status (PASS/FAIL)</SelectItem>
+                          <SelectItem value="text">Text / Desc</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {(col.type === "formula" || col.type === "status") && (
+                        <div className="space-y-1 pt-1 border-t border-dashed">
+                          <Input
+                            value={col.formula || ""}
+                            onChange={(e) => {
+                              const updatedCols = [...activeTableBlock!.columns];
+                              updatedCols[cIdx] = { ...col, formula: e.target.value };
+                              updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                            }}
+                            className="h-6 text-[10px] font-mono bg-slate-50 dark:bg-slate-900"
+                            placeholder="e.g. reading - nominal"
+                          />
+
+                          {/* Variable Chips */}
+                          <div className="flex flex-wrap gap-1 pt-0.5">
+                            {["nominal", "reading", "error", "tolerance", "MPE", "t1", "t2", "avg"].map((tok) => (
+                              <button
+                                key={tok}
+                                type="button"
+                                onClick={() => {
+                                  const updatedCols = [...activeTableBlock!.columns];
+                                  const cur = col.formula || "";
+                                  updatedCols[cIdx] = { ...col, formula: cur ? `${cur} ${tok}` : tok };
+                                  updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                                }}
+                                className="px-1 py-0.2 rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-mono text-[9px]"
+                              >
+                                +{tok}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Footer Note */}
-              <div>
-                <Label className="text-xs">Table Footer Note / Statement (Optional)</Label>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Footer Reference Statement</Label>
                 <Input
-                  value={editingTableBlock.footerNote || ""}
-                  onChange={(e) => setEditingTableBlock({ ...editingTableBlock, footerNote: e.target.value })}
-                  placeholder="e.g., All the jaws are free from dent and damages."
-                  className="text-xs mt-1"
+                  value={activeTableBlock.footerNote || ""}
+                  onChange={(e) => updateActiveTable({ ...activeTableBlock!, footerNote: e.target.value })}
+                  className="h-8 text-xs"
+                  placeholder="e.g. All dimensions verified via length masters."
                 />
               </div>
             </div>
-          )}
-
-          <DialogFooter className="pt-3 border-t">
-            <Button variant="outline" size="sm" onClick={() => setShowTableModal(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={saveTableEditor} className="gap-1.5 shadow-xs">
-              <Check className="w-3.5 h-3.5" />
-              Save Configuration
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* MODAL: Matrix Table Configuration */}
-      <Dialog open={showMatrixModal} onOpenChange={setShowMatrixModal}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <Sliders className="w-4 h-4 text-primary" />
-              Configure Matrix Table: {editingMatrixBlock?.title}
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Edit headers, data rows, and layout settings for this reference / acceptance criteria table.
-            </DialogDescription>
-          </DialogHeader>
-
-          {editingMatrixBlock && (
-            <div className="space-y-4 pt-2">
-              {/* Title & Bottom Gap */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <Label className="text-xs">Table Title</Label>
-                  <Input
-                    value={editingMatrixBlock.title}
-                    onChange={(e) => setEditingMatrixBlock({ ...editingMatrixBlock, title: e.target.value })}
-                    className="text-xs mt-1"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">Bottom Gap (px)</Label>
+          ) : selectedBlock?.type === "text_block" ? (
+            /* INSPECTOR: Note / Statement Block */
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Note / Compliance Content</Label>
+                <Textarea
+                  value={(selectedBlock as TextBlock).content}
+                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, content: e.target.value })}
+                  className="text-xs h-24"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Style</Label>
+                <Select
+                  value={(selectedBlock as TextBlock).style || "callout"}
+                  onValueChange={(val: any) => updateBlock(selectedBlockIndex, { ...selectedBlock, style: val })}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="callout">Callout Box</SelectItem>
+                    <SelectItem value="standard">Standard Text</SelectItem>
+                    <SelectItem value="bold">Bold Statement</SelectItem>
+                    <SelectItem value="centered">Centered</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : selectedBlock?.type === "diagram_block" ? (
+            /* INSPECTOR: Diagram / Schematic Block */
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Diagram Caption</Label>
+                <Input
+                  value={(selectedBlock as DiagramBlock).caption || ""}
+                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, caption: e.target.value } as any)}
+                  className="h-8 text-xs"
+                  placeholder="e.g. Measurement Points Schematic"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Width (px)</Label>
                   <Input
                     type="number"
-                    min="0"
-                    max="50"
-                    value={editingMatrixBlock.marginBottom ?? 6}
-                    onChange={(e) => setEditingMatrixBlock({ ...editingMatrixBlock, marginBottom: parseInt(e.target.value) || 0 })}
-                    className="text-xs mt-1"
-                    placeholder="6"
+                    value={(selectedBlock as DiagramBlock).width || 320}
+                    onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, width: parseInt(e.target.value) || 320 } as any)}
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs font-semibold">Height (px)</Label>
+                  <Input
+                    type="number"
+                    value={(selectedBlock as DiagramBlock).height || 160}
+                    onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, height: parseInt(e.target.value) || 160 } as any)}
+                    className="h-8 text-xs font-mono"
                   />
                 </div>
               </div>
-
-              {/* Headers Configuration */}
-              <div className="space-y-2 border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold">Header Rows ({editingMatrixBlock.headers.length})</h4>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      const colCount = editingMatrixBlock.rows[0]?.length || 3;
-                      const newHeaderRow: MatrixHeaderCell[] = Array.from({ length: colCount }, (_, i) => ({ text: `Header ${i + 1}` }));
-                      setEditingMatrixBlock({
-                        ...editingMatrixBlock,
-                        headers: [...editingMatrixBlock.headers, newHeaderRow],
-                      });
-                    }}
-                    className="h-6 text-[11px] gap-1"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Add Header Row
-                  </Button>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Alignment</Label>
+                <Select
+                  value={(selectedBlock as DiagramBlock).alignment || "center"}
+                  onValueChange={(val: any) => updateBlock(selectedBlockIndex, { ...selectedBlock, alignment: val } as any)}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="center">Center</SelectItem>
+                    <SelectItem value="left">Left</SelectItem>
+                    <SelectItem value="right">Right</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          ) : selectedBlock?.type === "split_row" ? (
+            /* INSPECTOR: Split Row Container */
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Column Layout</Label>
+                <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border text-xs font-medium text-muted-foreground">
+                  Side-by-Side Dual Column Grid ({(selectedBlock as SplitRowBlock).children.length} columns)
                 </div>
-
-                {editingMatrixBlock.headers.map((hRow, hIdx) => (
-                  <div key={hIdx} className="bg-background p-2 rounded border space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-muted-foreground">Header Row {hIdx + 1}</span>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const newHeaders = [...editingMatrixBlock.headers];
-                            newHeaders[hIdx] = [...hRow, { text: "New" }];
-                            setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                          }}
-                          className="h-5 px-1 text-[10px] text-emerald-600 hover:bg-emerald-50"
-                        >
-                          <Plus className="w-2.5 h-2.5 mr-0.5" />Cell
-                        </Button>
-                        {editingMatrixBlock.headers.length > 1 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              const newHeaders = editingMatrixBlock.headers.filter((_, i) => i !== hIdx);
-                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                            }}
-                            className="h-5 px-1 text-[10px] text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="w-2.5 h-2.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {hRow.map((cell, cIdx) => (
-                        <div key={cIdx} className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded px-1.5 py-0.5 border">
-                          <Input
-                            value={cell.text}
-                            onChange={(e) => {
-                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
-                                hi === hIdx
-                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, text: e.target.value } : c)
-                                  : [...hr]
-                              );
-                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                            }}
-                            className="h-5 text-[10px] font-bold bg-transparent border-none p-0 focus-visible:ring-1 w-28"
-                          />
-                          <div className="flex items-center gap-0.5 text-[9px] text-muted-foreground">
-                            {cell.colSpan && cell.colSpan > 1 && (
-                              <span className="bg-blue-100 text-blue-700 px-1 rounded text-[8px]">cs:{cell.colSpan}</span>
-                            )}
-                            {cell.rowSpan && cell.rowSpan > 1 && (
-                              <span className="bg-purple-100 text-purple-700 px-1 rounded text-[8px]">rs:{cell.rowSpan}</span>
-                            )}
-                          </div>
-                          <Input
-                            type="number"
-                            min="1"
-                            max="10"
-                            value={cell.colSpan ?? 1}
-                            onChange={(e) => {
-                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
-                                hi === hIdx
-                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, colSpan: parseInt(e.target.value) || 1 } : c)
-                                  : [...hr]
-                              );
-                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                            }}
-                            className="h-5 w-10 text-[9px] text-center bg-transparent border p-0 focus-visible:ring-1 rounded"
-                            title="ColSpan"
-                          />
-                          <Input
-                            type="number"
-                            min="1"
-                            max="10"
-                            value={cell.rowSpan ?? 1}
-                            onChange={(e) => {
-                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
-                                hi === hIdx
-                                  ? hr.map((c, ci) => ci === cIdx ? { ...c, rowSpan: parseInt(e.target.value) || 1 } : c)
-                                  : [...hr]
-                              );
-                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                            }}
-                            className="h-5 w-10 text-[9px] text-center bg-transparent border p-0 focus-visible:ring-1 rounded"
-                            title="RowSpan"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const newHeaders = editingMatrixBlock.headers.map((hr, hi) =>
-                                hi === hIdx ? hr.filter((_, ci) => ci !== cIdx) : [...hr]
-                              );
-                              setEditingMatrixBlock({ ...editingMatrixBlock, headers: newHeaders });
-                            }}
-                            className="text-muted-foreground hover:text-red-500 p-0.5"
-                          >
-                            <Trash2 className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+              </div>
+            </div>
+          ) : selectedBlock?.type === "matrix_table" ? (
+            /* INSPECTOR: Matrix Table Block */
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Matrix Section Title</Label>
+                <Input
+                  value={(selectedBlock as MatrixTableBlock).title || ""}
+                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, title: e.target.value } as any)}
+                  className="h-8 text-xs font-medium"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs font-semibold">Footer Note</Label>
+                <Input
+                  value={(selectedBlock as MatrixTableBlock).footerNote || ""}
+                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, footerNote: e.target.value } as any)}
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+          ) : (
+            /* INSPECTOR: Global Template Settings */
+            <div className="space-y-3 text-xs text-muted-foreground">
+              <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border space-y-1.5">
+                <div className="font-bold text-foreground flex items-center gap-1.5">
+                  <MousePointerClick className="w-4 h-4 text-primary" />
+                  Select a Block on Canvas
+                </div>
+                <p className="text-[11px]">
+                  Click on any table, note, or matrix on the certificate sheet to edit its specific columns, formulas, and tolerances.
+                </p>
               </div>
 
-              {/* Data Rows Configuration */}
-              <div className="space-y-2 border rounded-lg p-3 bg-slate-50 dark:bg-slate-900/50">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold">Data Rows ({editingMatrixBlock.rows.length})</h4>
-                  <div className="flex gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => {
-                        const colCount = editingMatrixBlock.rows[0]?.length || 3;
-                        const newRow = Array(colCount).fill("");
-                        setEditingMatrixBlock({
-                          ...editingMatrixBlock,
-                          rows: [...editingMatrixBlock.rows, newRow],
-                        });
-                      }}
-                      className="h-6 text-[11px] gap-1"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Add Row
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        const newRows = editingMatrixBlock.rows.map((r) => [...r, ""]);
-                        setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
-                      }}
-                      className="h-6 text-[11px] gap-1"
-                    >
-                      <Plus className="w-3 h-3" />
-                      Add Column
-                    </Button>
-                  </div>
+              <div className="space-y-2 pt-2 border-t">
+                <div className="flex justify-between">
+                  <span>Default Unit:</span>
+                  <span className="font-bold text-foreground">{defaultUnit}</span>
                 </div>
-
-                <div className="space-y-1.5">
-                  {editingMatrixBlock.rows.map((row, rIdx) => (
-                    <div key={rIdx} className="flex items-center gap-1.5 bg-background p-1.5 rounded border">
-                      <span className="text-[9px] font-mono text-muted-foreground w-5 shrink-0 text-center">{rIdx + 1}</span>
-                      {row.map((cellVal, cIdx) => (
-                        <Input
-                          key={cIdx}
-                          value={cellVal}
-                          onChange={(e) => {
-                            const newRows = editingMatrixBlock.rows.map((r, ri) =>
-                              ri === rIdx
-                                ? r.map((c, ci) => ci === cIdx ? e.target.value : c)
-                                : [...r]
-                            );
-                            setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
-                          }}
-                          className="h-6 text-[10px] text-center font-mono flex-1 min-w-0"
-                        />
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newRows = editingMatrixBlock.rows.filter((_, ri) => ri !== rIdx);
-                          setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
-                        }}
-                        className="text-muted-foreground hover:text-red-500 p-0.5 shrink-0"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ))}
+                <div className="flex justify-between">
+                  <span>Default Tolerance:</span>
+                  <span className="font-bold text-foreground">±{defaultTolerance}</span>
                 </div>
-
-                {editingMatrixBlock.rows.length > 0 && editingMatrixBlock.rows[0].length > 1 && (
-                  <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        const newRows = editingMatrixBlock.rows.map((r) => r.slice(0, -1));
-                        setEditingMatrixBlock({ ...editingMatrixBlock, rows: newRows });
-                      }}
-                      className="h-5 text-[10px] text-destructive hover:bg-destructive/10"
-                    >
-                      Remove Last Column
-                    </Button>
-                  </div>
-                )}
+                <div className="flex justify-between">
+                  <span>Global Decimals:</span>
+                  <span className="font-bold text-foreground">{decimalPlaces} digits</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Total Canvas Blocks:</span>
+                  <span className="font-bold text-foreground">{blocks.length}</span>
+                </div>
               </div>
             </div>
           )}
+        </div>
+        )}
+      </div>
 
-          <DialogFooter className="pt-3 border-t">
-            <Button variant="outline" size="sm" onClick={() => setShowMatrixModal(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={saveMatrixEditor} className="gap-1.5 shadow-xs">
-              <Check className="w-3.5 h-3.5" />
-              Save Configuration
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* MODAL: AI Template Generator (Gemini 1.5 Flash / 2.0 Flash) */}
+      <AiTemplateGeneratorModal
+        open={showAiModal}
+        onOpenChange={setShowAiModal}
+        onApplyTemplate={handleApplyAiGenerated}
+      />
 
-      {/* MODAL: Load Standard Presets */}
-      <Dialog open={showPresetsModal} onOpenChange={setShowPresetsModal}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-base font-bold flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-primary" />
-              Standard Calibration Template Presets
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              Select an industry-standard preset to immediately populate your canvas with calibrated layouts.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid grid-cols-1 gap-3 py-2">
-            {CANVAS_PRESETS.map((preset) => (
-              <div
-                key={preset.id}
-                onClick={() => {
-                  if (onSelectPreset) {
-                    onSelectPreset(preset);
-                  } else {
-                    markChanged(JSON.parse(JSON.stringify(preset.blocks)));
-                    toast.success(`Loaded "${preset.name}" preset!`);
-                  }
-                  setShowPresetsModal(false);
-                }}
-                className="p-3.5 border rounded-lg hover:border-primary/80 hover:bg-primary/[0.03] cursor-pointer transition-all space-y-1 group"
-              >
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors flex items-center gap-2">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    {preset.name}
-                  </h4>
-                  <Badge variant="secondary" className="text-[10px]">
-                    {preset.blocks.length} Blocks
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">{preset.description}</p>
-              </div>
-            ))}
-          </div>
-
-          <DialogFooter className="pt-2 border-t">
-            <Button variant="outline" size="sm" onClick={() => setShowPresetsModal(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* MODAL: Trial Run & Certificate Live Verification */}
+      <TrialRunModal
+        open={showTrialRun}
+        onOpenChange={setShowTrialRun}
+        blocks={blocks}
+        templateName={templateName || "Visual Canvas Template"}
+        diagramImage={diagramImage}
+        diagramImageWidth={diagramImageWidth}
+        diagramImageHeight={diagramImageHeight}
+        diagramImageAlignment={diagramImageAlignment}
+        defaultUnit={defaultUnit}
+        defaultTolerance={defaultTolerance}
+        decimalPlaces={decimalPlaces}
+      />
     </div>
   );
 }

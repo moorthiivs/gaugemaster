@@ -9,7 +9,7 @@ export default defineConfig(({ mode }) => ({
     host: "::",
     port: 8080,
     watch: {
-      ignored: ['**/*.xlsx', '**/*.xls', '**/*.csv', '**/*.log']
+      ignored: ['**/*.xlsx', '**/*.xls', '**/*.csv', '**/*.log', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.tmp', '**/*.~tmp', '**/Certificate-*']
     },
     proxy: {
       '/api': {

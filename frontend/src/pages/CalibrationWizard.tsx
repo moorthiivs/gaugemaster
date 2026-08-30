@@ -1128,6 +1128,7 @@ export default function CalibrationWizard() {
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
     const tol = parseFloat(row.tolerance ?? targetTbl.tolerance ?? 0.02);
     const nominal = parseFloat(row.nominal) || 0;
+    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
     // Recalculate formulas for all columns in this table
     targetTbl.columns.forEach((col: any) => {
@@ -1142,7 +1143,8 @@ export default function CalibrationWizard() {
             .filter((v) => !isNaN(v));
           if (trials.length > 0) {
             const sum = trials.reduce((a, b) => a + b, 0);
-            row[col.id] = (sum / trials.length).toFixed(3);
+            const avgVal = parseFloat((sum / trials.length).toFixed(dec));
+            row[col.id] = avgVal.toFixed(dec);
             row.avg = row[col.id];
           } else {
             row[col.id] = "-";
@@ -1154,8 +1156,8 @@ export default function CalibrationWizard() {
           if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
             const avgVal = parseFloat(row.avg ?? row.t1);
             if (!isNaN(avgVal)) {
-              const err = avgVal - nominal;
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+              const err = parseFloat((avgVal - nominal).toFixed(dec));
+              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
               row.error = err;
             }
           } else {
@@ -1167,8 +1169,8 @@ export default function CalibrationWizard() {
           if (readStr !== undefined && String(readStr).trim() !== "") {
             const readVal = parseFloat(readStr);
             if (!isNaN(readVal)) {
-              const err = readVal - nominal;
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(3);
+              const err = parseFloat((readVal - nominal).toFixed(dec));
+              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
               row.error = err;
             }
           } else {
@@ -1181,7 +1183,7 @@ export default function CalibrationWizard() {
           const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
           if (hasReading) {
             const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
-            const errVal = Math.abs(parseFloat(row.error ?? (readVal - nominal)) || 0);
+            const errVal = Math.abs(parseFloat(row.error !== undefined ? Number(row.error).toFixed(dec) : (readVal - nominal).toFixed(dec)) || 0);
             row[col.id] = errVal <= tol ? "PASS" : "FAIL";
             row.status = row[col.id];
           } else {
@@ -1627,7 +1629,7 @@ export default function CalibrationWizard() {
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Location</span><span className="font-medium">{selectedInstrument.location || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Calibration Type</span><span className="font-medium text-primary">{selectedType?.label || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">DOC (Last Cal)</span><span className="font-medium">{formatDisplayDate(selectedInstrument.last_calibration_date)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="font-medium text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
                   </div>
                 )}
               </div>
@@ -1815,7 +1817,7 @@ export default function CalibrationWizard() {
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Location</span><span className="font-medium">{selectedInstrument.location || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Calibration Type</span><span className="font-medium text-primary">{selectedType?.label || selectedInstrument.item_type || "-"}</span></div>
                     <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">DOC (Last Cal Date)</span><span className="font-medium">{formatDisplayDate(selectedInstrument.last_calibration_date)}</span></div>
-                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="font-medium text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
+                    <div><span className="text-muted-foreground block text-[10px] font-semibold uppercase">Due Date</span><span className="text-amber-600 dark:text-amber-400 font-semibold">{formatDisplayDate(selectedInstrument.due_date || selectedInstrument.next_due_date)}</span></div>
                   </div>
                 </div>
               )}
