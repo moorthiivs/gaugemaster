@@ -20,6 +20,7 @@ export interface CanvasColumnDef {
   width?: string;
   readOnly?: boolean;
   unit?: string;
+  decimal_places?: number;
 }
 
 export interface CanvasRowData {
@@ -45,6 +46,7 @@ export interface TableGridBlock {
   columns: CanvasColumnDef[];
   rows: CanvasRowData[];
   footerNote?: string;
+  marginTop?: number;
   marginBottom?: number;
 }
 
@@ -54,6 +56,7 @@ export interface SplitRowBlock {
   columnsCount: 2 | 3;
   columnRatio?: string; // e.g. "50/50" or "60/40"
   children: (TableGridBlock | TextBlock | MatrixTableBlock | BlankBlock)[];
+  marginTop?: number;
   marginBottom?: number;
 }
 
@@ -71,6 +74,7 @@ export interface MatrixTableBlock {
   headers: MatrixHeaderCell[][];
   rows: (string | number)[][];
   footerNote?: string;
+  marginTop?: number;
   marginBottom?: number;
 }
 
@@ -79,6 +83,7 @@ export interface TextBlock {
   type: "text_block";
   content: string;
   style?: "standard" | "callout" | "bold" | "centered" | "bordered";
+  marginTop?: number;
   marginBottom?: number;
 }
 
@@ -90,18 +95,24 @@ export interface DiagramBlock {
   height: number;
   alignment: "center" | "left" | "right";
   caption?: string;
+  marginTop?: number;
+  marginBottom?: number;
 }
 
 export interface PageBreakBlock {
   id: string;
   type: "page_break";
   label?: string;
+  marginTop?: number;
+  marginBottom?: number;
 }
 
 export interface BlankBlock {
   id: string;
   type: "blank" | "empty";
   content?: string;
+  marginTop?: number;
+  marginBottom?: number;
 }
 
 export type CanvasBlock =
