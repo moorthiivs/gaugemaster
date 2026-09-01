@@ -55,6 +55,10 @@ export class ReminderFrequncy {
   @Column({ default: 'single', nullable: true })
   email_mode: string;
 
+  /** Customized master columns to include in bulk reminder emails */
+  @Column({ type: "json", nullable: true })
+  bulk_columns?: string[];
+
   @Column({ default: true })
   isactive: boolean;
 

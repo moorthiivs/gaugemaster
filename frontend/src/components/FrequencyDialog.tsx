@@ -18,11 +18,29 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Card } from "@/components/ui/card";
-import { Trash2, Mail, Layers, CheckCircle2 } from "lucide-react";
+import { Trash2, Mail, Layers, CheckCircle2, Columns } from "lucide-react";
 import { useEffect, useState } from "react";
 import httpClient from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
 import { toast } from "sonner";
+
+export const MASTER_COLUMNS_OPTIONS = [
+    { key: "sino", label: "# (S.No)" },
+    { key: "name", label: "Device / Gauge Name" },
+    { key: "id_code", label: "Gauge ID / Serial No" },
+    { key: "location", label: "Location" },
+    { key: "module", label: "Department / Module" },
+    { key: "due_date", label: "Calibration Due Date" },
+    { key: "last_calibration_date", label: "Last Cal. Date" },
+    { key: "frequency", label: "Calibration Frequency" },
+    { key: "make", label: "Make / Model" },
+    { key: "range", label: "Range / Size" },
+    { key: "least_count", label: "Least Count" },
+    { key: "item_status", label: "Status" },
+    { key: "calibration_source", label: "Cal. Source" },
+];
+
+export const DEFAULT_BULK_COLUMNS = ["sino", "name", "id_code", "location", "due_date"];
 
 interface FrequencyDialogProps {
     open: boolean;
@@ -47,6 +65,7 @@ interface FrequencyForm {
     mail_template: string;
     /** 'single' = one email per instrument | 'bulk' = all instruments in one grouped email */
     email_mode: 'single' | 'bulk';
+    bulk_columns?: string[];
 }
 
 export default function FrequencyDialog({
@@ -73,6 +92,7 @@ export default function FrequencyDialog({
             reminder_start_unit: "Days",
             reminder_field: "due_date",
             email_mode: "single",
+            bulk_columns: ["sino", "name", "id_code", "location", "due_date"],
             mail_template:
                 "Hi\n\nThe device {{device_name}} with serial number {{serial_number}} is due for calibration on {{calibration_date}}. Please do the needful.",
         },
@@ -108,8 +128,8 @@ export default function FrequencyDialog({
             const fetchedData = res.data.map((item: any) => ({
                 ...item,
                 mail_times: ensureMailTimes(item),
-                // ensure priority exists
                 priority: item.priority ?? "normal",
+                bulk_columns: Array.isArray(item.bulk_columns) && item.bulk_columns.length > 0 ? item.bulk_columns : DEFAULT_BULK_COLUMNS,
             }));
             setData(fetchedData);
             if (fetchedData.length > 0) {
@@ -127,6 +147,70 @@ export default function FrequencyDialog({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // ---------- Column toggles for existing templates ----------
+    const toggleExistingBulkColumn = (idx: number, colKey: string) => {
+        const updated = [...data];
+        const currentCols: string[] = Array.isArray(updated[idx].bulk_columns) && updated[idx].bulk_columns.length > 0
+            ? [...updated[idx].bulk_columns]
+            : [...DEFAULT_BULK_COLUMNS];
+
+        if (currentCols.includes(colKey)) {
+            if (currentCols.length > 1) {
+                updated[idx].bulk_columns = currentCols.filter(c => c !== colKey);
+            } else {
+                toast.error("At least one column must be selected");
+                return;
+            }
+        } else {
+            updated[idx].bulk_columns = [...currentCols, colKey];
+        }
+        setData(updated);
+    };
+
+    const setExistingBulkPreset = (idx: number, preset: 'standard' | 'compact' | 'full') => {
+        const updated = [...data];
+        if (preset === 'compact') {
+            updated[idx].bulk_columns = ["sino", "name", "id_code", "due_date"];
+        } else if (preset === 'full') {
+            updated[idx].bulk_columns = ["sino", "name", "id_code", "location", "module", "due_date", "last_calibration_date", "frequency", "make", "range", "item_status"];
+        } else {
+            updated[idx].bulk_columns = ["sino", "name", "id_code", "location", "due_date"];
+        }
+        setData(updated);
+    };
+
+    // ---------- Column toggles for new form templates ----------
+    const toggleFormBulkColumn = (formIdx: number, colKey: string) => {
+        const updated = [...forms];
+        const currentCols: string[] = Array.isArray(updated[formIdx].bulk_columns) && updated[formIdx].bulk_columns.length > 0
+            ? [...updated[formIdx].bulk_columns]
+            : [...DEFAULT_BULK_COLUMNS];
+
+        if (currentCols.includes(colKey)) {
+            if (currentCols.length > 1) {
+                updated[formIdx].bulk_columns = currentCols.filter(c => c !== colKey);
+            } else {
+                toast.error("At least one column must be selected");
+                return;
+            }
+        } else {
+            updated[formIdx].bulk_columns = [...currentCols, colKey];
+        }
+        setForms(updated);
+    };
+
+    const setFormBulkPreset = (formIdx: number, preset: 'standard' | 'compact' | 'full') => {
+        const updated = [...forms];
+        if (preset === 'compact') {
+            updated[formIdx].bulk_columns = ["sino", "name", "id_code", "due_date"];
+        } else if (preset === 'full') {
+            updated[formIdx].bulk_columns = ["sino", "name", "id_code", "location", "module", "due_date", "last_calibration_date", "frequency", "make", "range", "item_status"];
+        } else {
+            updated[formIdx].bulk_columns = ["sino", "name", "id_code", "location", "due_date"];
+        }
+        setForms(updated);
+    };
+
     // ---------- new-template helpers ----------
     const addTemplate = () => {
         setForms([
@@ -140,6 +224,7 @@ export default function FrequencyDialog({
                 reminder_start_unit: "Days",
                 reminder_field: "due_date",
                 email_mode: "single",
+                bulk_columns: ["sino", "name", "id_code", "location", "due_date"],
                 mail_template:
                     "Hi\n\nThe device {{device_name}} with serial number {{serial_number}} is due for calibration on {{calibration_date}}. Please do the needful.",
             },
@@ -534,6 +619,64 @@ export default function FrequencyDialog({
                                                         )}
                                                     </button>
                                                 </div>
+
+                                                {/* Bulk Columns Customizer (Existing) */}
+                                                {item.email_mode === 'bulk' && (
+                                                    <div className="mt-3 p-3.5 bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-2.5 animate-in fade-in">
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex items-center gap-2">
+                                                                <Columns className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                                                                <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                                                                    Bulk Email Table Columns ({((item.bulk_columns || DEFAULT_BULK_COLUMNS) as string[]).length} selected)
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setExistingBulkPreset(idx, 'compact')}
+                                                                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                                >
+                                                                    Compact
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setExistingBulkPreset(idx, 'standard')}
+                                                                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                                >
+                                                                    Standard
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setExistingBulkPreset(idx, 'full')}
+                                                                    className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                                >
+                                                                    Full Details
+                                                                </button>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex flex-wrap gap-1.5 pt-1">
+                                                            {MASTER_COLUMNS_OPTIONS.map((col) => {
+                                                                const isSelected = (item.bulk_columns || DEFAULT_BULK_COLUMNS).includes(col.key);
+                                                                return (
+                                                                    <button
+                                                                        key={col.key}
+                                                                        type="button"
+                                                                        onClick={() => toggleExistingBulkColumn(idx, col.key)}
+                                                                        className={`text-xs px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer font-medium ${
+                                                                            isSelected
+                                                                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
+                                                                                : 'bg-white dark:bg-card text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-300'
+                                                                        }`}
+                                                                    >
+                                                                        {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                                                        {col.label}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                )}
                                             </div>
 
                                             {/* MAIL TIMES */}
@@ -718,6 +861,64 @@ export default function FrequencyDialog({
                                                 )}
                                             </button>
                                         </div>
+
+                                        {/* Bulk Columns Customizer (New Form) */}
+                                        {form.email_mode === 'bulk' && (
+                                            <div className="mt-3 p-3.5 bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-2.5 animate-in fade-in">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex items-center gap-2">
+                                                        <Columns className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                                                        <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                                                            Bulk Email Table Columns ({((form.bulk_columns || DEFAULT_BULK_COLUMNS) as string[]).length} selected)
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setFormBulkPreset(idx, 'compact')}
+                                                            className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                        >
+                                                            Compact
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setFormBulkPreset(idx, 'standard')}
+                                                            className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                        >
+                                                            Standard
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setFormBulkPreset(idx, 'full')}
+                                                            className="text-[10px] font-semibold px-2 py-0.5 rounded bg-white dark:bg-emerald-900 border border-emerald-300 text-emerald-700 dark:text-emerald-200 hover:bg-emerald-100 cursor-pointer"
+                                                        >
+                                                            Full Details
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex flex-wrap gap-1.5 pt-1">
+                                                    {MASTER_COLUMNS_OPTIONS.map((col) => {
+                                                        const isSelected = (form.bulk_columns || DEFAULT_BULK_COLUMNS).includes(col.key);
+                                                        return (
+                                                            <button
+                                                                key={col.key}
+                                                                type="button"
+                                                                onClick={() => toggleFormBulkColumn(idx, col.key)}
+                                                                className={`text-xs px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer font-medium ${
+                                                                    isSelected
+                                                                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs font-semibold'
+                                                                        : 'bg-white dark:bg-card text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-emerald-300'
+                                                                }`}
+                                                            >
+                                                                {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                                                {col.label}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="mt-4 space-y-2">

@@ -8,6 +8,7 @@ import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Download, ImageIcon, Loader2 } from "lucide-react";
+import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -186,8 +187,9 @@ export function CertificatePreview({
 
     const renderSingleTableGrid = (tbl: any) => {
       const unitStr = tbl.unit || "mm";
+      const effOrientation = getEffectiveTableOrientation(tbl);
 
-      if (tbl.orientation === "horizontal") {
+      if (effOrientation === "horizontal") {
         const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
         const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
 

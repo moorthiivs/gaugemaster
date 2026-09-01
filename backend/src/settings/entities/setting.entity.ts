@@ -1,6 +1,11 @@
 import { Entity, Column, PrimaryColumn } from "typeorm";
 import { v4 as uuidv4 } from "uuid";
 
+export interface ReminderRecipientConfig {
+    email: string;
+    location?: string;
+}
+
 @Entity({ name: "settings" })
 export class Setting {
     @PrimaryColumn("uuid")
@@ -27,15 +32,18 @@ export class Setting {
     reminderFrequency: string;
 
     @Column({ type: "jsonb", default: () => "'[]'", nullable: true })
-    juniorRecipients: string[];
+    juniorRecipients: (string | ReminderRecipientConfig)[];
 
     // Calibration Senior recipients
     @Column({ type: "jsonb", default: () => "'[]'", nullable: true })
-    seniorRecipients: string[];
+    seniorRecipients: (string | ReminderRecipientConfig)[];
 
     // Supervisor recipients
     @Column({ type: "jsonb", default: () => "'[]'", nullable: true })
-    supervisorRecipients: string[];
+    supervisorRecipients: (string | ReminderRecipientConfig)[];
+
+    @Column({ type: "jsonb", nullable: true })
+    defaultBulkReminderColumns?: string[];
 
     @Column({ type: "jsonb", nullable: true })
     themeSettings: {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "@/hooks/use-toast";
-import { X, Plus, Mail, Clock, AlertCircle, Loader2, LayoutDashboard, Sliders, ShieldCheck } from "lucide-react";
+import { X, Plus, Mail, Clock, AlertCircle, Loader2, LayoutDashboard, Sliders, ShieldCheck, MapPin, Globe } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
@@ -16,12 +16,22 @@ import FrequencyDialog from "@/components/FrequencyDialog";
 type ReminderRole = "junior" | "senior" | "supervisor";
 type ReminderFrequency = "normal" | "important" | "critical";
 
+export interface ReminderRecipientItem {
+  email: string;
+  location?: string;
+}
+
+export const normalizeRecipient = (item: string | ReminderRecipientItem): ReminderRecipientItem => {
+  if (typeof item === "string") return { email: item, location: "" };
+  return { email: item.email || "", location: item.location || "" };
+};
+
 interface ReminderConfig {
   frequency: ReminderFrequency;
   recipients: {
-    junior: string[];
-    senior: string[];
-    supervisor: string[];
+    junior: (string | ReminderRecipientItem)[];
+    senior: (string | ReminderRecipientItem)[];
+    supervisor: (string | ReminderRecipientItem)[];
   };
 }
 
@@ -66,6 +76,18 @@ export default function ReminderConfig() {
     senior: "",
     supervisor: "",
   });
+
+  const [locationInputs, setLocationInputs] = useState<{
+    junior: string;
+    senior: string;
+    supervisor: string;
+  }>({
+    junior: "ALL",
+    senior: "ALL",
+    supervisor: "ALL",
+  });
+
+  const [availableLocations, setAvailableLocations] = useState<string[]>([]);
 
   const roleInfo = {
     junior: {
@@ -115,8 +137,34 @@ export default function ReminderConfig() {
     return emailRegex.test(email.trim());
   };
 
+  const fetchAvailableLocations = async () => {
+    try {
+      const locSet = new Set<string>();
+      if (user?.id) {
+        const res1 = await httpClient.get(`/instruments/filters/${user.id}`).catch(() => null);
+        if (res1?.data?.location && Array.isArray(res1.data.location)) {
+          res1.data.location.forEach((l: string) => {
+            if (l && l.trim()) locSet.add(l.trim());
+          });
+        }
+      }
+      if (user?.companyId) {
+        const res2 = await httpClient.get(`/settings/location-emails?companyId=${user.companyId}`).catch(() => null);
+        if (Array.isArray(res2?.data)) {
+          res2.data.forEach((item: any) => {
+            if (item.location && item.location.trim()) locSet.add(item.location.trim());
+          });
+        }
+      }
+      setAvailableLocations(Array.from(locSet).sort());
+    } catch (err) {
+      console.error("Failed to load locations", err);
+    }
+  };
+
   const addEmail = (role: ReminderRole) => {
     const email = emailInputs[role].trim();
+    const location = locationInputs[role] === "ALL" ? "" : locationInputs[role].trim();
 
     if (!email) {
       toast({
@@ -136,43 +184,58 @@ export default function ReminderConfig() {
       return;
     }
 
-    if (config.recipients[role].includes(email)) {
+    const isDuplicate = config.recipients[role].some((r) => {
+      const norm = normalizeRecipient(r);
+      return (
+        norm.email.toLowerCase() === email.toLowerCase() &&
+        norm.location.toLowerCase() === location.toLowerCase()
+      );
+    });
+
+    if (isDuplicate) {
       toast({
-        title: "Duplicate email",
-        description: "This email is already added",
+        title: "Duplicate recipient",
+        description: location
+          ? `${email} is already added for location "${location}"`
+          : `${email} is already added as Global recipient`,
         variant: "destructive",
       });
       return;
     }
 
+    const newRecipient: ReminderRecipientItem = { email, location };
+
     setConfig((prev) => ({
       ...prev,
       recipients: {
         ...prev.recipients,
-        [role]: [...prev.recipients[role], email],
+        [role]: [...prev.recipients[role], newRecipient],
       },
     }));
 
     setEmailInputs((prev) => ({ ...prev, [role]: "" }));
+    setLocationInputs((prev) => ({ ...prev, [role]: "ALL" }));
 
     toast({
-      title: "Email added",
-      description: `${email} will receive ${role} reminders`,
+      title: "Recipient added",
+      description: location
+        ? `${email} added for ${roleInfo[role].title} (${location})`
+        : `${email} added for ${roleInfo[role].title} (Global / All Locations)`,
     });
   };
 
-  const removeEmail = (role: ReminderRole, email: string) => {
+  const removeEmail = (role: ReminderRole, indexToRemove: number) => {
     setConfig((prev) => ({
       ...prev,
       recipients: {
         ...prev.recipients,
-        [role]: prev.recipients[role].filter((e) => e !== email),
+        [role]: prev.recipients[role].filter((_, idx) => idx !== indexToRemove),
       },
     }));
 
     toast({
-      title: "Email removed",
-      description: `${email} has been removed from ${role} recipients`,
+      title: "Recipient removed",
+      description: `Recipient has been removed from ${roleInfo[role].title}`,
     });
   };
 
@@ -252,7 +315,8 @@ export default function ReminderConfig() {
 
 
   useEffect(() => {
-    fetchemailConfig()
+    fetchemailConfig();
+    fetchAvailableLocations();
   }, [user])
 
 
@@ -369,12 +433,12 @@ export default function ReminderConfig() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Add Email Input */}
-            <div className="flex gap-2">
+            {/* Add Email & Optional Location Input */}
+            <div className="flex flex-col sm:flex-row gap-2">
               <div className="flex-1">
                 <Input
                   type="email"
-                  placeholder="Enter email address"
+                  placeholder="Enter email address (e.g. user@company.com)"
                   value={emailInputs[role]}
                   onChange={(e) =>
                     setEmailInputs((prev) => ({ ...prev, [role]: e.target.value }))
@@ -390,35 +454,86 @@ export default function ReminderConfig() {
                   className="h-10"
                 />
               </div>
-              <Button onClick={() => addEmail(role)} size="default">
-                <Plus className="w-4 h-4 mr-2" />
-                Add
+
+              {/* Location Selector (Optional) */}
+              <div className="w-full sm:w-64">
+                <Select
+                  value={locationInputs[role]}
+                  onValueChange={(val) =>
+                    setLocationInputs((prev) => ({ ...prev, [role]: val }))
+                  }
+                >
+                  <SelectTrigger className="h-10">
+                    <SelectValue placeholder="Select Location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">
+                      <span className="flex items-center gap-1.5 font-medium">
+                        <Globe className="w-3.5 h-3.5 text-blue-500" />
+                        All Locations (Global)
+                      </span>
+                    </SelectItem>
+                    {availableLocations.map((loc) => (
+                      <SelectItem key={loc} value={loc}>
+                        <span className="flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-amber-500" />
+                          {loc}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button onClick={() => addEmail(role)} size="default" className="h-10 shrink-0">
+                <Plus className="w-4 h-4 mr-1.5" />
+                Add Recipient
               </Button>
             </div>
 
-            {/* Email List */}
+            {/* Email List with Location Badges */}
             {config.recipients[role].length > 0 ? (
               <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  Recipients ({config.recipients[role].length})
-                </Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">
+                    Recipients ({config.recipients[role].length})
+                  </Label>
+                  <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                    Location-specific emails only receive reminders for instruments in their location
+                  </span>
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  {config.recipients[role].map((email) => (
-                    <Badge
-                      key={email}
-                      variant="secondary"
-                      className="px-3 py-1.5 text-sm flex items-center gap-2 hover:bg-secondary/80 transition-colors"
-                    >
-                      <Mail className="w-3 h-3" />
-                      {email}
-                      <button
-                        onClick={() => removeEmail(role, email)}
-                        className="ml-1 hover:text-destructive transition-colors"
+                  {config.recipients[role].map((recipient, idx) => {
+                    const norm = normalizeRecipient(recipient);
+                    return (
+                      <div
+                        key={idx}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-secondary/50 hover:bg-secondary/70 transition-colors shadow-2xs text-xs"
                       >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </Badge>
-                  ))}
+                        <Mail className="w-3.5 h-3.5 text-primary" />
+                        <span className="font-semibold text-foreground">{norm.email}</span>
+                        {norm.location ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                            <MapPin className="w-3 h-3 text-amber-500" />
+                            {norm.location}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium bg-blue-500/10 text-blue-700 dark:text-blue-300 border border-blue-500/20">
+                            <Globe className="w-3 h-3 text-blue-500" />
+                            All Locations (Global)
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeEmail(role, idx)}
+                          className="ml-1 p-0.5 text-muted-foreground hover:text-destructive transition-colors rounded-sm cursor-pointer"
+                          title="Remove recipient"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : (
