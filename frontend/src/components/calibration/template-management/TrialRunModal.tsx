@@ -24,6 +24,7 @@ import {
 import { CanvasBlock, TableGridBlock, SplitRowBlock, MatrixTableBlock, TextBlock, DiagramBlock } from "@/types/template";
 import { CalibrationRecord } from "@/types/calibration";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { toast } from "sonner";
 
 interface TrialRunModalProps {
@@ -375,83 +376,175 @@ export function TrialRunModal({
 
               {testBlocks.map((block, bIdx) => (
                 <div key={block.id || bIdx} className="space-y-2">
-                  {block.type === "table_grid" && (
-                    <div className="border border-black overflow-hidden bg-white dark:bg-slate-900 rounded-sm shadow-xs">
-                      <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-3 py-1.5 flex items-center justify-between border-b border-black text-xs font-bold">
-                        <span>{(block as TableGridBlock).title}</span>
-                        <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
-                          <span>Unit: {(block as TableGridBlock).unit || defaultUnit}</span>
-                          <span>• Tol: ±{(block as TableGridBlock).tolerance ?? defaultTolerance}</span>
-                          <span>• Dec: {(block as TableGridBlock).decimal_places ?? decimalPlaces}</span>
-                        </div>
-                      </div>
+                  {block.type === "table_grid" && (() => {
+                    const tbl = block as TableGridBlock;
+                    const effOrient = getEffectiveTableOrientation(tbl);
+                    const displayCols = (tbl.columns || []).filter(
+                      (c) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino" && c.id !== "slno"
+                    );
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse text-xs text-center border-black">
-                          <thead>
-                            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black text-[11px]">
-                              {(block as TableGridBlock).columns.map((col) => (
-                                <th key={col.id} style={{ width: col.width }} className="py-1.5 px-2">
-                                  {col.label}
-                                  {col.type === "formula" && <span className="text-[9px] text-primary block font-normal">(fx)</span>}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-black">
-                            {(block as TableGridBlock).rows.map((row, rIdx) => (
-                              <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                {(block as TableGridBlock).columns.map((col) => {
-                                  const dec = (block as TableGridBlock).decimal_places ?? decimalPlaces ?? 3;
-                                  if (col.id === "point_number" || col.id === "sl_no") {
-                                    return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
-                                  }
-                                  if (col.type === "nominal") {
-                                    return <td key={col.id} className="py-1 px-2 font-bold font-mono">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
-                                  }
-                                  if (col.type === "reading" || col.type === "trial") {
-                                    return (
-                                      <td key={col.id} className="p-1">
-                                        <Input
-                                          type="number"
-                                          step="any"
-                                          value={row[col.id] ?? ""}
-                                          onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
-                                          className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
-                                        />
-                                      </td>
-                                    );
-                                  }
-                                  if (col.type === "formula") {
-                                    return (
-                                      <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
-                                        {row[col.id] ?? "-"}
-                                      </td>
-                                    );
-                                  }
-                                  if (col.type === "status") {
-                                    const isPass = row[col.id] === "PASS";
-                                    return (
-                                      <td key={col.id} className="py-1 px-2">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          isPass
-                                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                            : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
-                                        }`}>
+                    return (
+                      <div className="border border-black overflow-hidden bg-white dark:bg-slate-900 rounded-sm shadow-xs">
+                        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-3 py-1.5 flex items-center justify-between border-b border-black text-xs font-bold">
+                          <span className="flex items-center gap-1.5">
+                            <Table className="w-3.5 h-3.5 text-primary" />
+                            {tbl.title}
+                          </span>
+                          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground">
+                            <span>Unit: {tbl.unit || defaultUnit}</span>
+                            <span>• Tol: ±{tbl.tolerance ?? defaultTolerance}</span>
+                            <span>• Dec: {tbl.decimal_places ?? decimalPlaces}</span>
+                            <Badge variant="outline" className="text-[9px] font-mono uppercase bg-background/50">
+                              {effOrient}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        {effOrient === "horizontal" ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-xs text-center border-black" style={{ tableLayout: 'auto' }}>
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black text-[11px]">
+                                  <th className="py-1.5 px-2 text-left bg-slate-200/80 dark:bg-slate-700/80 font-bold w-36 min-w-[140px] text-black dark:text-white">
+                                    Parameter / Sl no
+                                  </th>
+                                  {tbl.rows.map((r, rIdx) => (
+                                    <th key={rIdx} className="py-1 px-1.5 font-bold min-w-[55px] text-black dark:text-white">
+                                      {r.point_number ?? (rIdx + 1)}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-black font-mono">
+                                {displayCols.map((col) => (
+                                  <tr key={col.id} className="divide-x divide-black hover:bg-slate-50/50">
+                                    <td className="py-1 px-2 text-left font-bold bg-slate-50 dark:bg-slate-800/60 text-[11px] font-sans text-black dark:text-slate-200">
+                                      {col.label}
+                                      {col.type === "formula" && <span className="text-[9px] text-primary ml-1 font-normal">(fx)</span>}
+                                    </td>
+                                    {tbl.rows.map((row, rIdx) => {
+                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+                                      if (col.type === "nominal") {
+                                        return (
+                                          <td key={rIdx} className="py-1 px-1.5 font-bold font-mono text-foreground">
+                                            {Number(row.nominal ?? 0).toFixed(dec)}
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "reading" || col.type === "trial") {
+                                        return (
+                                          <td key={rIdx} className="p-1">
+                                            <Input
+                                              type="number"
+                                              step="any"
+                                              value={row[col.id] ?? ""}
+                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
+                                              className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "formula") {
+                                        return (
+                                          <td key={rIdx} className="py-1 px-1.5 font-mono font-bold text-primary">
+                                            {row[col.id] ?? "-"}
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "status") {
+                                        const isPass = row[col.id] === "PASS";
+                                        return (
+                                          <td key={rIdx} className="py-1 px-1">
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                              isPass
+                                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                            }`}>
+                                              {row[col.id] || "-"}
+                                            </span>
+                                          </td>
+                                        );
+                                      }
+                                      return (
+                                        <td key={rIdx} className="py-1 px-1.5">
                                           {row[col.id] || "-"}
-                                        </span>
-                                      </td>
-                                    );
-                                  }
-                                  return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-xs text-center border-black">
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black text-[11px]">
+                                  {tbl.columns.map((col) => (
+                                    <th key={col.id} style={{ width: col.width }} className="py-1.5 px-2">
+                                      {col.label}
+                                      {col.type === "formula" && <span className="text-[9px] text-primary block font-normal">(fx)</span>}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-black">
+                                {tbl.rows.map((row, rIdx) => (
+                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                    {tbl.columns.map((col) => {
+                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+                                      if (col.id === "point_number" || col.id === "sl_no") {
+                                        return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
+                                      }
+                                      if (col.type === "nominal") {
+                                        return <td key={col.id} className="py-1 px-2 font-bold font-mono">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                                      }
+                                      if (col.type === "reading" || col.type === "trial") {
+                                        return (
+                                          <td key={col.id} className="p-1">
+                                            <Input
+                                              type="number"
+                                              step="any"
+                                              value={row[col.id] ?? ""}
+                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
+                                              className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "formula") {
+                                        return (
+                                          <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
+                                            {row[col.id] ?? "-"}
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "status") {
+                                        const isPass = row[col.id] === "PASS";
+                                        return (
+                                          <td key={col.id} className="py-1 px-2">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                              isPass
+                                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                            }`}>
+                                              {row[col.id] || "-"}
+                                            </span>
+                                          </td>
+                                        );
+                                      }
+                                      return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {block.type === "matrix_table" && (
                     <div className="border border-black overflow-hidden bg-white dark:bg-slate-900 rounded-sm">

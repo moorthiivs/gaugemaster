@@ -20,6 +20,7 @@ import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveD
 import { getTemplates, getTemplate } from "@/lib/templateActions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
+import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getInstrument } from "@/lib/instrumentActions";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
@@ -1199,7 +1200,8 @@ export default function CalibrationWizard() {
   };
 
   const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
-    if (tbl.orientation === "horizontal") {
+    const effOrientation = getEffectiveTableOrientation(tbl);
+    if (effOrientation === "horizontal") {
       const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
       const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
 

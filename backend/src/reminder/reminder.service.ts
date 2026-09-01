@@ -230,6 +230,94 @@ export class ReminderService {
     }
 
 
+    /**
+     * Filters recipient entries by instrument location.
+     * Recipient entry can be:
+     * 1. A plain email string: "user@example.com" -> Treated as Global (matches all locations).
+     * 2. An object: { email: "user@example.com", location?: "Plant 1" }
+     *    - If location is empty, null, undefined, "ALL", or "GLOBAL", matches all locations.
+     *    - If location matches targetLocation (case-insensitive trimmed), matches.
+     *    - Otherwise filtered out.
+     */
+    private filterRecipientsByLocation(rawRecipients: any[], targetLocation?: string): string[] {
+        if (!Array.isArray(rawRecipients) || rawRecipients.length === 0) return [];
+        const normalizedTarget = (targetLocation || '').toLowerCase().trim();
+
+        const matchingEmails = new Set<string>();
+
+        for (const item of rawRecipients) {
+            if (!item) continue;
+            if (typeof item === 'string') {
+                const email = item.trim();
+                if (email) matchingEmails.add(email);
+                continue;
+            }
+
+            if (typeof item === 'object' && item.email) {
+                const email = String(item.email).trim();
+                if (!email) continue;
+
+                const loc = (item.location || '').toLowerCase().trim();
+                const isGlobal = !loc || loc === 'all' || loc === 'global' || loc === 'all locations';
+
+                if (isGlobal || (normalizedTarget && loc === normalizedTarget)) {
+                    matchingEmails.add(email);
+                }
+            }
+        }
+
+        return Array.from(matchingEmails);
+    }
+
+    /**
+     * Builds customized HTML table for bulk calibration reminder emails.
+     */
+    private buildBulkInstrumentsTableHtml(instruments: Instrument[], customColumns?: string[]): string {
+        const AVAILABLE_COLUMNS: Record<string, { label: string; getValue: (inst: Instrument, idx: number) => string }> = {
+            sino: { label: '#', getValue: (inst, idx) => String(idx + 1) },
+            name: { label: 'Device / Gauge Name', getValue: (inst) => inst.name || '-' },
+            id_code: { label: 'Gauge ID / Serial No', getValue: (inst) => inst.id_code || inst.serial_no || '-' },
+            location: { label: 'Location', getValue: (inst) => inst.location || '-' },
+            module: { label: 'Department / Module', getValue: (inst) => inst.module || '-' },
+            due_date: { label: 'Due Date', getValue: (inst) => inst.due_date ? new Date(inst.due_date).toDateString() : '-' },
+            last_calibration_date: { label: 'Last Cal. Date', getValue: (inst) => inst.last_calibration_date ? new Date(inst.last_calibration_date).toDateString() : '-' },
+            frequency: { label: 'Frequency', getValue: (inst) => inst.frequency || '-' },
+            make: { label: 'Make / Model', getValue: (inst) => inst.make || '-' },
+            range: { label: 'Range / Size', getValue: (inst) => inst.range || '-' },
+            least_count: { label: 'Least Count', getValue: (inst) => inst.least_count || '-' },
+            item_status: { label: 'Status', getValue: (inst) => inst.item_status || inst.status || '-' },
+            calibration_source: { label: 'Cal. Source', getValue: (inst) => inst.calibration_source || '-' },
+        };
+
+        const activeColumnKeys = Array.isArray(customColumns) && customColumns.length > 0
+            ? customColumns.filter(k => AVAILABLE_COLUMNS[k])
+            : ['sino', 'name', 'id_code', 'location', 'due_date'];
+
+        const activeCols = activeColumnKeys.map(k => ({ key: k, ...AVAILABLE_COLUMNS[k] }));
+
+        const headerCells = activeCols
+            .map(c => `<th style="padding:10px;border:1px solid #ddd;text-align:left;">${c.label}</th>`)
+            .join('');
+
+        const tableRows = instruments.map((inst, i) => {
+            const rowBg = i % 2 === 0 ? '#f9f9f9' : '#ffffff';
+            const cells = activeCols
+                .map(c => `<td style="padding:8px;border:1px solid #ddd;">${c.getValue(inst, i)}</td>`)
+                .join('');
+            return `<tr style="background:${rowBg}">${cells}</tr>`;
+        }).join('');
+
+        return `
+            <table style="width:100%;border-collapse:collapse;margin-top:16px;font-family:sans-serif;font-size:14px;">
+                <thead>
+                    <tr style="background:#2563eb;color:#fff;">
+                        ${headerCells}
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>`;
+    }
+
     async saveReminder(data: any) {
         for (const item of data.items) {
             const saveData = {
@@ -244,6 +332,8 @@ export class ReminderService {
                 mail_times: item.mail_times,
                 priority: item.priority,
                 recipient_role: item.recipient_role,
+                email_mode: item.email_mode || 'single',
+                bulk_columns: item.bulk_columns || ['sino', 'name', 'id_code', 'location', 'due_date'],
                 reminder_date: item.reminder_date || new Date(),
                 isactive: true
             };
@@ -252,8 +342,6 @@ export class ReminderService {
             const saved = await this.remainderRepository.save(entity);
 
             await this.scheduleReminderJobs(saved);
-
-
         }
 
         return { message: "Reminder saved successfully" };
@@ -277,7 +365,6 @@ export class ReminderService {
         // Reschedule with updated data
         await this.scheduleReminderJobs(result);
 
-
         return result;
     }
 
@@ -289,7 +376,6 @@ export class ReminderService {
         reminder.isactive = false;
         reminder.updated_at = new Date();
         await this.remainderRepository.save(reminder);
-
 
         try {
             await this.reminderJobService.unschedule().catch(() => null);
@@ -303,7 +389,7 @@ export class ReminderService {
 
 
     // ------------------------
-    // Worker handler: executes when PgBoss fires the job (UNTOUCHED)
+    // Worker handler: executes when PgBoss fires the job
     // ------------------------
     @ReminderJob.Handle()
     async handleReminderJob(job: PGBoss.Job<{ reminderId: string, instrumentId: string }>) {
@@ -342,13 +428,13 @@ export class ReminderService {
             return;
         }
 
-        let recipients: string[] = [];
-        if (role.includes('junior')) recipients = config.juniorRecipients || [];
-        else if (role.includes('senior')) recipients = config.seniorRecipients || [];
-        else recipients = config.supervisorRecipients || [];
+        let rawRecipients: any[] = [];
+        if (role.includes('junior')) rawRecipients = config.juniorRecipients || [];
+        else if (role.includes('senior')) rawRecipients = config.seniorRecipients || [];
+        else rawRecipients = config.supervisorRecipients || [];
 
-        if ((recipients || []).length === 0) {
-            this.logger.warn(`No recipients found for role: ${r.recipient_role}`);
+        if ((rawRecipients || []).length === 0) {
+            this.logger.warn(`No recipients configured for role: ${r.recipient_role}`);
             return;
         }
 
@@ -371,44 +457,76 @@ export class ReminderService {
                 return;
             }
 
-            // Build HTML table of all instruments
-            const tableRows = dueInstruments
-                .map(
-                    (inst, i) =>
-                        `<tr style="background:${i % 2 === 0 ? '#f9f9f9' : '#ffffff'}">
-                            <td style="padding:8px;border:1px solid #ddd;">${i + 1}</td>
-                            <td style="padding:8px;border:1px solid #ddd;">${inst.name}</td>
-                            <td style="padding:8px;border:1px solid #ddd;">${inst.id_code ?? '-'}</td>
-                            <td style="padding:8px;border:1px solid #ddd;">${inst.due_date ? new Date(inst.due_date).toDateString() : '-'}</td>
-                        </tr>`,
-                )
-                .join('');
+            // Categorize recipients into global vs location-specific
+            const globalRecipients = new Set<string>();
+            const locationRecipientsMap = new Map<string, Set<string>>();
 
-            const tableHtml = `
-                <table style="width:100%;border-collapse:collapse;margin-top:16px;font-family:sans-serif;font-size:14px;">
-                    <thead>
-                        <tr style="background:#2563eb;color:#fff;">
-                            <th style="padding:10px;border:1px solid #ddd;text-align:left;">#</th>
-                            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Device Name</th>
-                            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Serial Number</th>
-                            <th style="padding:10px;border:1px solid #ddd;text-align:left;">Calibration Due Date</th>
-                        </tr>
-                    </thead>
-                    <tbody>${tableRows}</tbody>
-                </table>`;
+            for (const item of rawRecipients) {
+                if (!item) continue;
+                if (typeof item === 'string') {
+                    if (item.trim()) globalRecipients.add(item.trim());
+                    continue;
+                }
+                if (typeof item === 'object' && item.email) {
+                    const email = String(item.email).trim();
+                    if (!email) continue;
+                    const loc = (item.location || '').trim();
+                    const isGlobal = !loc || loc.toLowerCase() === 'all' || loc.toLowerCase() === 'global' || loc.toLowerCase() === 'all locations';
+                    if (isGlobal) {
+                        globalRecipients.add(email);
+                    } else {
+                        const locKey = loc.toLowerCase();
+                        if (!locationRecipientsMap.has(locKey)) {
+                            locationRecipientsMap.set(locKey, new Set<string>());
+                        }
+                        locationRecipientsMap.get(locKey)!.add(email);
+                    }
+                }
+            }
 
-            const html = `
-                <div style="font-family:sans-serif;">
-                    <p>${r.mail_template || 'Please find the list of instruments due for calibration.'}</p>
-                    ${tableHtml}
-                    <br/>
-                    <p>Priority: <b>${priority.toUpperCase()}</b></p>
-                    <p>Reminder: ${when.toUpperCase()} ${offsetDays} days</p>
-                </div>`;
+            const bulkCols = r.bulk_columns || config.defaultBulkReminderColumns || ['sino', 'name', 'id_code', 'location', 'due_date'];
 
-            const subject = `${priorityLabel} Calibration Reminder: ${dueInstruments.length} instrument${dueInstruments.length > 1 ? 's' : ''} due`;
+            // 1. Send to Global Recipients (all due instruments across all locations)
+            if (globalRecipients.size > 0) {
+                const globalRecipList = Array.from(globalRecipients);
+                const tableHtml = this.buildBulkInstrumentsTableHtml(dueInstruments, bulkCols);
+                const html = `
+                    <div style="font-family:sans-serif;">
+                        <p>${r.mail_template || 'Please find the list of instruments due for calibration.'}</p>
+                        ${tableHtml}
+                        <br/>
+                        <p>Priority: <b>${priority.toUpperCase()}</b></p>
+                        <p>Reminder: ${when.toUpperCase()} ${offsetDays} days</p>
+                    </div>`;
+                const subject = `${priorityLabel} Calibration Reminder: ${dueInstruments.length} instrument${dueInstruments.length > 1 ? 's' : ''} due`;
 
-            await this.mailerService.sendMail({ to: recipients, subject, html, userId: r.created_by.id });
+                await this.mailerService.sendMail({ to: globalRecipList, subject, html, userId: r.created_by.id });
+                this.logger.log(`[BULK EMAIL SENT - GLOBAL] ${dueInstruments.length} instruments → ${globalRecipList.join(', ')}`);
+            }
+
+            // 2. Send to Location-Specific Recipients (filtered strictly by recipient location)
+            for (const [locKey, emailsSet] of locationRecipientsMap.entries()) {
+                const locEmails = Array.from(emailsSet);
+                const locInstruments = dueInstruments.filter(
+                    i => (i.location || '').toLowerCase().trim() === locKey
+                );
+
+                if (locInstruments.length > 0 && locEmails.length > 0) {
+                    const tableHtml = this.buildBulkInstrumentsTableHtml(locInstruments, bulkCols);
+                    const html = `
+                        <div style="font-family:sans-serif;">
+                            <p>${r.mail_template || 'Please find the list of instruments due for calibration.'}</p>
+                            ${tableHtml}
+                            <br/>
+                            <p>Priority: <b>${priority.toUpperCase()}</b></p>
+                            <p>Reminder: ${when.toUpperCase()} ${offsetDays} days</p>
+                        </div>`;
+                    const subject = `${priorityLabel} Calibration Reminder [Location: ${locInstruments[0]?.location || locKey}]: ${locInstruments.length} instrument${locInstruments.length > 1 ? 's' : ''} due`;
+
+                    await this.mailerService.sendMail({ to: locEmails, subject, html, userId: r.created_by.id });
+                    this.logger.log(`[BULK EMAIL SENT - LOCATION: ${locKey}] ${locInstruments.length} instruments → ${locEmails.join(', ')}`);
+                }
+            }
 
             await this.notificationsService.createNotification({
                 companyId: r.companyId,
@@ -418,7 +536,6 @@ export class ReminderService {
                 message: `${dueInstruments.length} instrument(s) are due for calibration.`,
             });
 
-            this.logger.log(`[BULK EMAIL SENT] ${dueInstruments.length} instruments → reminder ${r.id}`);
             return;
         }
 
@@ -441,12 +558,20 @@ export class ReminderService {
             return;
         }
 
+        // Location-based recipient matching:
+        const recipients = this.filterRecipientsByLocation(rawRecipients, inst.location);
+        if (recipients.length === 0) {
+            this.logger.warn(`[SKIPPED REMINDER] No matching recipients for role "${r.recipient_role}" at location "${inst.location || 'N/A'}" (Gauge: ${inst.name} / ${inst.id_code})`);
+            return;
+        }
+
         const html =
             (r.mail_template || '')
-                .replace('{{device_name}}', inst.name)
-                .replace('{{serial_number}}', inst.id_code)
-                .replace('{{calibration_date}}', inst.due_date.toDateString()) +
-            `<br/><br/>Priority: <b>${priority.toUpperCase()}</b>` +
+                .replace('{{device_name}}', inst.name || '')
+                .replace('{{serial_number}}', inst.id_code || inst.serial_no || '')
+                .replace('{{calibration_date}}', inst.due_date ? inst.due_date.toDateString() : '') +
+            `<br/><br/>Location: <b>${inst.location || 'N/A'}</b>` +
+            `<br/>Priority: <b>${priority.toUpperCase()}</b>` +
             `<br/>Reminder: ${when.toUpperCase()} ${offsetDays} days`;
 
         await this.mailerService.sendMail({
@@ -461,10 +586,10 @@ export class ReminderService {
             userId: r.created_by.id,
             type: 'gauge_due',
             title: 'Gauge Due Alert',
-            message: `Instrument "${inst.name}" (S/N: ${inst.id_code}) is due for calibration on ${inst.due_date.toDateString()}.`,
+            message: `Instrument "${inst.name}" (S/N: ${inst.id_code}) is due for calibration on ${inst.due_date ? inst.due_date.toDateString() : 'N/A'}.`,
         });
 
-        this.logger.log(`[SINGLE EMAIL SENT] ${inst.name} → reminder ${r.id}`);
+        this.logger.log(`[SINGLE EMAIL SENT] ${inst.name} → ${recipients.join(', ')}`);
     }
 
     // Helper for listing reminders (unchanged)

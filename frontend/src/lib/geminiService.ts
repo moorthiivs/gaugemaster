@@ -211,6 +211,7 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
       return {
         ...tbl,
         id: bId,
+        orientation: tbl.orientation || "auto",
         decimal_places: tbl.decimal_places ?? result.decimalPlaces,
         unit: tbl.unit ?? result.defaultUnit,
         tolerance: tbl.tolerance ?? result.defaultTolerance,

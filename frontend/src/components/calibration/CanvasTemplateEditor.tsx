@@ -40,12 +40,19 @@ import {
   HelpCircle,
   FlaskConical,
   X,
+  ArrowUpDown,
+  ArrowLeftRight,
+  SlidersHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
 import { TrialRunModal } from "@/components/calibration/template-management/TrialRunModal";
 import { GeneratedTemplateResult } from "@/lib/geminiService";
+import {
+  getEffectiveTableOrientation,
+  getTableOrientationRecommendation,
+} from "@/lib/tableLayoutOptimizer";
 
 export { CANVAS_PRESETS };
 export type { CanvasTemplatePreset };
@@ -585,133 +592,240 @@ export function CanvasTemplateEditor({
                   </div>
 
                   {/* 1. TABLE GRID BLOCK */}
-                  {block.type === "table_grid" && (
-                    <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                      <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black">
-                        <Input
-                          value={block.title}
-                          onChange={(e) => {
-                            const updated = { ...block, title: e.target.value };
-                            updateBlock(index, updated);
-                          }}
-                          className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 focus-visible:ring-primary w-64 p-0"
-                          placeholder="Table Section Title"
-                        />
-                        <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
-                          <span>Unit: {block.unit || "mm"}</span>
-                          <span>• Tol: ±{block.tolerance ?? "0.01"}</span>
-                          <span>• Dec: {block.decimal_places ?? decimalPlaces}</span>
+                  {block.type === "table_grid" && (() => {
+                    const effOrient = getEffectiveTableOrientation(block as TableGridBlock);
+                    const isAuto = !block.orientation || block.orientation === "auto";
+                    const displayCols = (block.columns || []).filter(
+                      (c) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino" && c.id !== "slno"
+                    );
+
+                    return (
+                      <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
+                        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black flex-wrap gap-1">
+                          <Input
+                            value={block.title}
+                            onChange={(e) => {
+                              const updated = { ...block, title: e.target.value };
+                              updateBlock(index, updated);
+                            }}
+                            className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 focus-visible:ring-primary w-56 p-0"
+                            placeholder="Table Section Title"
+                          />
+                          <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
+                            <span>Unit: {block.unit || "mm"}</span>
+                            <span>• Tol: ±{block.tolerance ?? "0.01"}</span>
+                            <span>• Dec: {block.decimal_places ?? decimalPlaces}</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const nextOrient =
+                                  block.orientation === "horizontal"
+                                    ? "vertical"
+                                    : block.orientation === "vertical"
+                                    ? "auto"
+                                    : "horizontal";
+                                updateBlock(index, { ...block, orientation: nextOrient });
+                                toast.info(`Print Orientation: ${nextOrient === "auto" ? `Auto (${getEffectiveTableOrientation({ ...block, orientation: "auto" })})` : nextOrient}`);
+                              }}
+                              title="Click to toggle print orientation (Auto / Horizontal / Vertical)"
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 border transition-colors ${
+                                effOrient === "horizontal"
+                                  ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border-indigo-400 hover:bg-indigo-200"
+                                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-400 hover:bg-slate-200"
+                              }`}
+                            >
+                              {effOrient === "horizontal" ? (
+                                <ArrowLeftRight className="w-2.5 h-2.5" />
+                              ) : (
+                                <ArrowUpDown className="w-2.5 h-2.5" />
+                              )}
+                              <span>{isAuto ? `Auto (${effOrient})` : effOrient}</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Table Rows & Columns */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse text-[10px] text-center border-black">
-                          <thead>
-                            <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                              {block.columns.map((col) => (
-                                <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5 font-bold">
-                                  {col.label}
-                                  {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-black">
-                            {block.rows.map((row, rIdx) => (
-                              <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                {block.columns.map((col) => {
-                                  const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
-                                  if (isPointNo) {
-                                    return (
-                                      <td key={col.id} className="py-1 px-1.5 font-bold text-slate-700 dark:text-slate-300">
-                                        {row.point_number ?? (rIdx + 1)}
-                                      </td>
-                                    );
-                                  }
-                                  if (col.type === "nominal") {
-                                    return (
-                                      <td key={col.id} className="py-0.5 px-1">
-                                        <Input
-                                          type="number"
-                                          step="any"
-                                          value={row.nominal ?? ""}
-                                          onChange={(e) => {
-                                            const newRows = [...block.rows];
-                                            newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
-                                            updateBlock(index, { ...block, rows: newRows });
-                                          }}
-                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
-                                        />
-                                      </td>
-                                    );
-                                  }
-                                  if (col.type === "text") {
-                                    return (
-                                      <td key={col.id} className="py-0.5 px-1">
-                                        <Input
-                                          value={row.description || ""}
-                                          onChange={(e) => {
-                                            const newRows = [...block.rows];
-                                            newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
-                                            updateBlock(index, { ...block, rows: newRows });
-                                          }}
-                                          className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
-                                          placeholder="Description"
-                                        />
-                                      </td>
-                                    );
-                                  }
-                                  return (
-                                    <td key={col.id} className="py-1 px-1.5">
-                                      <span className="text-muted-foreground font-mono">
-                                        {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
-                                      </span>
+                        {/* HORIZONTAL TRANSPOSED VIEW */}
+                        {effOrient === "horizontal" ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-[10px] text-center border-black" style={{ tableLayout: 'auto' }}>
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                                  <th className="py-1 px-2 text-left bg-slate-200/80 dark:bg-slate-700/80 font-bold w-36 min-w-[130px] text-black dark:text-white">
+                                    Parameter / Sl no
+                                  </th>
+                                  {block.rows.map((r, rIdx) => (
+                                    <th key={rIdx} className="py-1 px-1.5 font-bold min-w-[45px] text-black dark:text-white">
+                                      {r.point_number ?? (rIdx + 1)}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-black font-mono">
+                                {displayCols.map((col) => (
+                                  <tr key={col.id} className="divide-x divide-black hover:bg-slate-50/50">
+                                    <td className="py-1 px-2 text-left font-bold bg-slate-50 dark:bg-slate-800/60 text-[9.5px] font-sans text-black dark:text-slate-200">
+                                      {col.label}
+                                      {col.type === "formula" && <span className="text-[8px] text-primary ml-1 font-normal">(fx)</span>}
                                     </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                                    {block.rows.map((row, rIdx) => {
+                                      if (col.type === "nominal") {
+                                        return (
+                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                            <Input
+                                              type="number"
+                                              step="any"
+                                              value={row.nominal ?? ""}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "text") {
+                                        return (
+                                          <td key={rIdx} className="py-0.5 px-1 min-w-[50px]">
+                                            <Input
+                                              value={row.description || ""}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
+                                              placeholder="Desc"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      return (
+                                        <td key={rIdx} className="py-1 px-1.5 min-w-[45px]">
+                                          <span className="text-muted-foreground font-mono">
+                                            {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          /* VERTICAL STANDARD VIEW */
+                          <div className="overflow-x-auto">
+                            <table className="w-full border-collapse text-[10px] text-center border-black">
+                              <thead>
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                                  {block.columns.map((col) => (
+                                    <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5 font-bold">
+                                      {col.label}
+                                      {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-black">
+                                {block.rows.map((row, rIdx) => (
+                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                    {block.columns.map((col) => {
+                                      const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                                      if (isPointNo) {
+                                        return (
+                                          <td key={col.id} className="py-1 px-1.5 font-bold text-slate-700 dark:text-slate-300">
+                                            {row.point_number ?? (rIdx + 1)}
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "nominal") {
+                                        return (
+                                          <td key={col.id} className="py-0.5 px-1">
+                                            <Input
+                                              type="number"
+                                              step="any"
+                                              value={row.nominal ?? ""}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "text") {
+                                        return (
+                                          <td key={col.id} className="py-0.5 px-1">
+                                            <Input
+                                              value={row.description || ""}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
+                                              placeholder="Description"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      return (
+                                        <td key={col.id} className="py-1 px-1.5">
+                                          <span className="text-muted-foreground font-mono">
+                                            {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
+                                          </span>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
 
-                      {/* Add Row Controls */}
-                      <div className="bg-slate-50 dark:bg-slate-800/40 p-1 flex items-center justify-between text-[10px] border-t border-black">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const newRow: CanvasRowData = {
-                              point_number: block.rows.length + 1,
-                              nominal: (block.rows[block.rows.length - 1]?.nominal || 0) + 10,
-                              unit: block.unit || "mm",
-                            };
-                            updateBlock(index, { ...block, rows: [...block.rows, newRow] });
-                          }}
-                          className="h-5 px-1.5 text-[10px] text-primary gap-1 font-semibold hover:bg-primary/10"
-                        >
-                          <Plus className="w-2.5 h-2.5" />
-                          Add Row
-                        </Button>
-                        {block.rows.length > 1 && (
+                        {/* Add Row Controls */}
+                        <div className="bg-slate-50 dark:bg-slate-800/40 p-1 flex items-center justify-between text-[10px] border-t border-black">
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
                             onClick={() => {
-                              const newRows = block.rows.slice(0, -1);
-                              updateBlock(index, { ...block, rows: newRows });
+                              const newRow: CanvasRowData = {
+                                point_number: block.rows.length + 1,
+                                nominal: (block.rows[block.rows.length - 1]?.nominal || 0) + 10,
+                                unit: block.unit || "mm",
+                              };
+                              updateBlock(index, { ...block, rows: [...block.rows, newRow] });
                             }}
-                            className="h-5 px-1.5 text-[10px] text-destructive hover:bg-destructive/10"
+                            className="h-5 px-1.5 text-[10px] text-primary gap-1 font-semibold hover:bg-primary/10"
                           >
-                            Remove Last Row
+                            <Plus className="w-2.5 h-2.5" />
+                            Add Point / Row
                           </Button>
-                        )}
+                          {block.rows.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const newRows = block.rows.slice(0, -1);
+                                updateBlock(index, { ...block, rows: newRows });
+                              }}
+                              className="h-5 px-1.5 text-[10px] text-destructive hover:bg-destructive/10"
+                            >
+                              Remove Last Point
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* 2. SPLIT ROW CONTAINER */}
                   {block.type === "split_row" && (
@@ -737,34 +851,72 @@ export function CanvasTemplateEditor({
                               selectedChildTableId === child.id ? "ring-2 ring-indigo-500" : ""
                             }`}
                           >
-                            {child.type === "table_grid" && (
-                              <>
-                                <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-0.5 flex items-center justify-between border-b border-black">
-                                  <span className="text-[10px] font-bold">{child.title}</span>
-                                  <span className="text-[9px] text-muted-foreground">Dec: {child.decimal_places ?? decimalPlaces}</span>
-                                </div>
-                                <table className="w-full border-collapse text-[9.5px] text-center border-black">
-                                  <thead>
-                                    <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                      {child.columns.map((col) => (
-                                        <th key={col.id} className="py-0.5 px-1">{col.label}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-black">
-                                    {child.rows.map((row, rIdx) => (
-                                      <tr key={rIdx} className="divide-x divide-black">
-                                        {child.columns.map((col) => (
-                                          <td key={col.id} className="py-0.5 px-1 font-mono">
-                                            {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
-                                          </td>
+                            {child.type === "table_grid" && (() => {
+                              const childEff = getEffectiveTableOrientation(child);
+                              const childDisplayCols = (child.columns || []).filter(
+                                (c) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino" && c.id !== "slno"
+                              );
+                              return (
+                                <>
+                                  <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-0.5 flex items-center justify-between border-b border-black">
+                                    <span className="text-[10px] font-bold">{child.title}</span>
+                                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                                      <span>Dec: {child.decimal_places ?? decimalPlaces}</span>
+                                      <Badge variant="outline" className="text-[8px] py-0 px-1 font-mono uppercase">
+                                        {childEff}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  {childEff === "horizontal" ? (
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full border-collapse text-[9px] text-center border-black">
+                                        <thead>
+                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                                            <th className="py-0.5 px-1 text-left bg-slate-200/80 font-bold">Sl no</th>
+                                            {child.rows.map((r, rIdx) => (
+                                              <th key={rIdx} className="py-0.5 px-1 font-bold">{r.point_number ?? (rIdx + 1)}</th>
+                                            ))}
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-black font-mono">
+                                          {childDisplayCols.map((col) => (
+                                            <tr key={col.id} className="divide-x divide-black">
+                                              <td className="py-0.5 px-1 text-left font-bold bg-slate-50 font-sans">{col.label}</td>
+                                              {child.rows.map((row, rIdx) => (
+                                                <td key={rIdx} className="py-0.5 px-1">
+                                                  {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
+                                                </td>
+                                              ))}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  ) : (
+                                    <table className="w-full border-collapse text-[9.5px] text-center border-black">
+                                      <thead>
+                                        <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                                          {child.columns.map((col) => (
+                                            <th key={col.id} className="py-0.5 px-1">{col.label}</th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-black">
+                                        {child.rows.map((row, rIdx) => (
+                                          <tr key={rIdx} className="divide-x divide-black">
+                                            {child.columns.map((col) => (
+                                              <td key={col.id} className="py-0.5 px-1 font-mono">
+                                                {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
+                                              </td>
+                                            ))}
+                                          </tr>
                                         ))}
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </>
-                            )}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         ))}
                       </div>
@@ -1015,6 +1167,59 @@ export function CanvasTemplateEditor({
                     <SelectItem value="6">6 (0.000000)</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Table Print Orientation */}
+              <div className="space-y-1.5 p-2 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold flex items-center gap-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
+                    Table Print Orientation
+                  </Label>
+                  <Badge variant="outline" className="text-[9px] font-mono capitalize">
+                    {getEffectiveTableOrientation(activeTableBlock)}
+                  </Badge>
+                </div>
+                <Select
+                  value={activeTableBlock.orientation || "auto"}
+                  onValueChange={(val: any) => {
+                    updateActiveTable({ ...activeTableBlock!, orientation: val });
+                    toast.success(
+                      `Table orientation set to ${
+                        val === "auto"
+                          ? `Auto (${getEffectiveTableOrientation({ ...activeTableBlock!, orientation: "auto" })})`
+                          : val
+                      }`
+                    );
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs font-medium">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        <span>Auto (Smart Column/Row Optimized)</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="vertical">
+                      <div className="flex items-center gap-1.5">
+                        <ArrowUpDown className="w-3.5 h-3.5 text-blue-500" />
+                        <span>Vertical (Standard Columns at Top)</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="horizontal">
+                      <div className="flex items-center gap-1.5">
+                        <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>Horizontal (Transposed Matrix Across)</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  💡 {getTableOrientationRecommendation(activeTableBlock).reason}
+                </p>
               </div>
 
               {/* Columns Editor with Variable Chips & Snippets */}

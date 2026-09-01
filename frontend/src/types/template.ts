@@ -39,7 +39,7 @@ export interface TableGridBlock {
   type: "table_grid";
   title: string;
   width?: "100%" | "50%" | "33%" | "66%";
-  orientation?: "vertical" | "horizontal";
+  orientation?: "vertical" | "horizontal" | "auto";
   unit?: string;
   tolerance?: number;
   decimal_places?: number;
