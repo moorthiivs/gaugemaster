@@ -24,6 +24,7 @@ export function LoginForm() {
     // Auth configuration from backend
     const [authConfig, setAuthConfig] = useState<{
         googleEnabled: boolean;
+        googleClientId?: string | null;
         registrationEnabled: boolean;
     } | null>(null);
 
@@ -47,9 +48,9 @@ export function LoginForm() {
             });
     }, []);
 
-    // Also check if the frontend has Google client ID configured
-    const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const showGoogle = authConfig?.googleEnabled && !!googleClientId;
+    // Check if Google client ID is configured via backend or build env
+    const effectiveGoogleClientId = authConfig?.googleClientId || import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const showGoogle = !!(authConfig?.googleEnabled && effectiveGoogleClientId);
     const showRegistration = authConfig?.registrationEnabled;
 
     const handlePassword = async (e: React.FormEvent) => {

@@ -35,8 +35,10 @@ export class AuthService {
 
   /** Returns which auth features are enabled for this deployment */
   getAuthConfig() {
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
     return {
       googleEnabled: this.googleEnabled,
+      googleClientId: clientId || null,
       passwordEnabled: true,
       registrationEnabled: false, // Admin creates users; no public signup
     };

@@ -35,12 +35,30 @@ import GlobalAuditLogs from "./pages/admin/GlobalAuditLogs";
 
 const queryClient = new QueryClient();
 
-const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+import { useState, useEffect } from "react";
+import axios from "axios";
 
-/** Wrap children in GoogleOAuthProvider only when a client ID is configured */
+/** Wrap children in GoogleOAuthProvider dynamically from backend config or env */
 function OptionalGoogleProvider({ children }: { children: React.ReactNode }) {
-  if (googleClientId) {
-    return <GoogleOAuthProvider clientId={googleClientId}>{children}</GoogleOAuthProvider>;
+  const [clientId, setClientId] = useState<string | null>(
+    import.meta.env.VITE_GOOGLE_CLIENT_ID || null
+  );
+
+  useEffect(() => {
+    axios
+      .get("/api/auth/config")
+      .then((res) => {
+        if (res.data?.googleEnabled && res.data?.googleClientId) {
+          setClientId(res.data.googleClientId);
+        } else if (res.data?.googleEnabled === false) {
+          setClientId(null);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  if (clientId) {
+    return <GoogleOAuthProvider clientId={clientId}>{children}</GoogleOAuthProvider>;
   }
   return <>{children}</>;
 } 
