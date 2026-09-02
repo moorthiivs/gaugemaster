@@ -5,11 +5,6 @@ User-agent: *
 Allow: /
 Allow: /login
 Allow: /register
-Allow: /#features
-Allow: /#how-it-works
-Allow: /#pricing
-Allow: /#testimonials
-Allow: /#faq
 Allow: /og-image.png
 Allow: /favicon.ico
 
