@@ -63,7 +63,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signOut = useCallback(() => {
+  const signOut = useCallback(async () => {
+    try {
+      if (token) {
+        await axios.post(`${API_URL}/auth/logout`, {}, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+    } catch (err) {
+      console.error("Failed to call logout endpoint", err);
+    }
+    
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
@@ -74,7 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     setInspectedCompanyState(null);
     setIsNewCustomer(false);
-  }, []);
+  }, [token]);
 
   // Initialize auth state on mount
   useEffect(() => {

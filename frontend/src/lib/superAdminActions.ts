@@ -85,3 +85,54 @@ export async function getCompanyStats(id: string): Promise<any> {
   const res = await httpClient.get(`/super-admin/companies/${id}/stats`);
   return res.data;
 }
+
+export interface AuditLog {
+  id: string;
+  userId?: string | null;
+  companyId?: string | null;
+  action: string;
+  status: 'SUCCESS' | 'FAILED';
+  statusCode?: number;
+  description?: string;
+  resourceType?: string;
+  resource: string;
+  method?: string;
+  ipAddress?: string;
+  durationMs?: number;
+  details?: any;
+  createdAt: string;
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+    role?: string | { name: string };
+  };
+}
+
+export interface AuditLogQueryOptions {
+  limit?: number;
+  action?: string;
+  status?: string;
+  resourceType?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+}
+
+export async function getAuditLogs(
+  companyId: string,
+  options?: AuditLogQueryOptions,
+): Promise<AuditLog[]> {
+  const params = new URLSearchParams();
+  if (options?.limit) params.append("limit", options.limit.toString());
+  if (options?.action) params.append("action", options.action);
+  if (options?.status) params.append("status", options.status);
+  if (options?.resourceType) params.append("resourceType", options.resourceType);
+  if (options?.dateFrom) params.append("dateFrom", options.dateFrom);
+  if (options?.dateTo) params.append("dateTo", options.dateTo);
+  if (options?.search) params.append("search", options.search);
+
+  const queryString = params.toString() ? `?${params.toString()}` : "";
+  const res = await httpClient.get(`/audit-logs/company/${companyId}${queryString}`);
+  return res.data;
+}

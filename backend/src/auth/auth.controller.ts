@@ -48,6 +48,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: 'Logout and clear session' })
   @ApiResponse({ status: 200, description: 'Session terminated' })
   async logout() {
