@@ -48,9 +48,8 @@ export function LoginForm() {
             });
     }, []);
 
-    // Check if Google client ID is configured via backend or build env
-    const effectiveGoogleClientId = authConfig?.googleClientId || import.meta.env.VITE_GOOGLE_CLIENT_ID;
-    const showGoogle = !!(authConfig?.googleEnabled && effectiveGoogleClientId);
+    // Check if Google authentication is enabled on the server
+    const showGoogle = authConfig?.googleEnabled === true;
     const showRegistration = authConfig?.registrationEnabled;
 
     const handlePassword = async (e: React.FormEvent) => {

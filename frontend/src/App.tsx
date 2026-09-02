@@ -35,37 +35,13 @@ import GlobalAuditLogs from "./pages/admin/GlobalAuditLogs";
 
 const queryClient = new QueryClient();
 
-import { useState, useEffect } from "react";
-import axios from "axios";
-
-/** Wrap children in GoogleOAuthProvider dynamically from backend config or env */
-function OptionalGoogleProvider({ children }: { children: React.ReactNode }) {
-  const [clientId, setClientId] = useState<string | null>(
-    import.meta.env.VITE_GOOGLE_CLIENT_ID || null
-  );
-
-  useEffect(() => {
-    axios
-      .get("/api/auth/config")
-      .then((res) => {
-        if (res.data?.googleEnabled && res.data?.googleClientId) {
-          setClientId(res.data.googleClientId);
-        } else if (res.data?.googleEnabled === false) {
-          setClientId(null);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  if (clientId) {
-    return <GoogleOAuthProvider clientId={clientId}>{children}</GoogleOAuthProvider>;
-  }
-  return <>{children}</>;
-} 
+const googleClientId =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  "27326771006-tcipg9h80l5af7m59ibd9tp1llmieggk.apps.googleusercontent.com"; 
 
 const App = () => (
   <BrowserRouter>
-    <OptionalGoogleProvider>
+    <GoogleOAuthProvider clientId={googleClientId}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <NextThemeProvider attribute="class" defaultTheme="system" enableSystem>
@@ -129,7 +105,7 @@ const App = () => (
         </NextThemeProvider>
         </AuthProvider>
       </QueryClientProvider>
-    </OptionalGoogleProvider>
+    </GoogleOAuthProvider>
   </BrowserRouter>
 );
 
