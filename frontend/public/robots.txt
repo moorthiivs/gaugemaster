@@ -1,14 +1,34 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
+# Robots.txt for Gaugemaster (https://gaugemaster.in)
+# Directives for search engine web crawlers (Googlebot, Bingbot, Slurp, DuckDuckBot, etc.)
 
 User-agent: *
 Allow: /
+Allow: /login
+Allow: /register
+Allow: /#features
+Allow: /#how-it-works
+Allow: /#pricing
+Allow: /#testimonials
+Allow: /#faq
+Allow: /og-image.png
+Allow: /favicon.ico
+
+# Disallow authenticated & private app pages to avoid indexing auth walls & wasting crawl budget
+Disallow: /dashboard
+Disallow: /instruments
+Disallow: /instruments/*
+Disallow: /calibration
+Disallow: /calibration/*
+Disallow: /reports
+Disallow: /calendar
+Disallow: /users
+Disallow: /profile
+Disallow: /settings
+Disallow: /settings/*
+Disallow: /onboarding
+Disallow: /super-admin
+Disallow: /super-admin/*
+Disallow: /api/
+
+# Specify XML Sitemap location for fast search indexation
+Sitemap: https://gaugemaster.in/sitemap.xml

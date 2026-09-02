@@ -7,6 +7,12 @@ import { TestimonialCard } from "@/components/TestimonialCard";
 import { StatsCard } from "@/components/StatsCard";
 import { PricingCard } from "@/components/PricingCard";
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
   BellRing,
   Filter,
   FileText,
@@ -36,6 +42,7 @@ import {
   Award,
   Globe,
   TrendingUp,
+  HelpCircle,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -50,9 +57,81 @@ export default function Index() {
   const [plantCount, setPlantCount] = useState<number>(1);
   const [demoModalOpen, setDemoModalOpen] = useState(false);
 
+  const faqs = [
+    {
+      question: "What is Gaugemaster and what does it do?",
+      answer:
+        "Gaugemaster is an enterprise-grade cloud calibration management and asset tracking SaaS platform designed for manufacturing plants, automotive engineering teams, and quality crib managers. It centralizes instrument master lists, automates calibration schedule alerts, tracks tool locations, ensures ISO 9001 / IATF 16949 audit compliance, and enables instant mobile QR-code scanning right on the shop floor.",
+    },
+    {
+      question: "How does Gaugemaster ensure ISO 9001 and IATF 16949 compliance?",
+      answer:
+        "Gaugemaster maintains complete, immutable digital audit trails for every gauge calibration, tolerance approval, digital certificate generation, and user modification. It tracks calibration due dates proactively, automatically prevents the deployment of expired instruments on production lines, and exports one-click audit-ready compliance dossiers.",
+    },
+    {
+      question: "Can shop floor inspectors use mobile devices and QR code scanning?",
+      answer:
+        "Yes! Every instrument in Gaugemaster has a unique, high-resolution QR code. Shop-floor inspectors and machine operators can scan gauge QR codes using any mobile smartphone, tablet, or handheld terminal to instantly check validity status, log measurement readings, issue calibration requests, or review historical certificates.",
+    },
+    {
+      question: "How do automated calibration alerts and escalation matrices work?",
+      answer:
+        "Gaugemaster features an automated multi-tier alert engine. It dispatches proactive notifications at 30, 15, 7, and 1 day prior to calibration expiry via email, SMS, and in-app dashboard badges. If a gauge passes its due date, it is highlighted in red as overdue and escalated to plant quality heads to guarantee zero-defect manufacturing.",
+    },
+    {
+      question: "Can we import existing Excel catalogs or integrate with SAP & ERP?",
+      answer:
+        "Absolutely. Gaugemaster includes an intelligent bulk Excel/CSV importer with automatic column mapping to migrate thousands of tool records in minutes. Enterprise plans also offer robust REST APIs and webhook connectors to seamlessly sync inventory, statuses, and work orders with SAP, Oracle, or custom ERP systems.",
+    },
+    {
+      question: "How does multi-plant and multi-department licensing work?",
+      answer:
+        "Gaugemaster is built from the ground up for multi-plant enterprise hierarchies. Super-administrators can supervise multiple manufacturing facilities from a single global cockpit, assign granular department permissions (Quality, Tool Crib, Production, Maintenance), and generate consolidated cross-facility calibration KPI reports.",
+    },
+  ];
+
   useSEO({
-    title: "Gaugemaster — Advanced Asset & Gauge Management Platform",
-    description: "The premier asset tracking platform for enterprises. Monitor assets, automate calibration, prevent downtime, and maintain compliance.",
+    title: "Gaugemaster — #1 Gauge Management & Calibration Tracking Software",
+    description:
+      "Enterprise calibration management software for manufacturing quality teams. Automate calibration schedules, track gauge inventory, scan QR codes, and pass ISO 9001/IATF 16949 audits with 100% compliance.",
+    keywords:
+      "gauge management software, calibration management system, calibration tracking software, asset tracking software, calibration schedule software, ISO 9001 calibration tracking, IATF 16949 compliance, tool crib management, equipment calibration tracking, gauge calibration app",
+    canonical: "https://gaugemaster.in/",
+    ogImage: "https://gaugemaster.in/og-image.png",
+    jsonLd: [
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "@id": "https://gaugemaster.in/#webpage",
+        "url": "https://gaugemaster.in/",
+        "name": "Gaugemaster — #1 Gauge Management & Calibration Tracking Software",
+        "description":
+          "The leading calibration management SaaS platform. Automate instrument calibration schedules, QR code tracking, and ISO 9001/IATF 16949 audit compliance.",
+        "breadcrumb": {
+          "@type": "BreadcrumbList",
+          "itemListElement": [
+            {
+              "@type": "ListItem",
+              "position": 1,
+              "name": "Home",
+              "item": "https://gaugemaster.in/",
+            },
+          ],
+        },
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": faqs.map((faq) => ({
+          "@type": "Question",
+          "name": faq.question,
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": faq.answer,
+          },
+        })),
+      },
+    ],
   });
 
   const features = [
@@ -243,11 +322,12 @@ export default function Index() {
           </motion.div>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-8">
+          <nav className="hidden md:flex items-center gap-8" aria-label="Main Navigation">
             <a href="#features" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Features</a>
             <a href="#how-it-works" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">How It Works</a>
             <a href="#testimonials" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Testimonials</a>
             <a href="#pricing" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Pricing</a>
+            <a href="#faq" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">FAQ</a>
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
@@ -278,7 +358,7 @@ export default function Index() {
               exit={{ opacity: 0, height: 0 }}
               className="md:hidden border-t bg-background/95 backdrop-blur-lg"
             >
-              <nav className="px-6 py-5 space-y-4">
+              <nav className="px-6 py-5 space-y-4" aria-label="Mobile Navigation">
                 <a
                   href="#features"
                   className="block text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
@@ -306,6 +386,13 @@ export default function Index() {
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   Pricing
+                </a>
+                <a
+                  href="#faq"
+                  className="block text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  FAQ
                 </a>
                 <div className="pt-4 border-t space-y-2">
                   <Button variant="outline" size="sm" className="rounded-full w-full" asChild>
@@ -338,22 +425,22 @@ export default function Index() {
               {/* Shimmer Announcement Pill */}
               <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-primary/30 bg-primary/10 text-primary text-xs font-semibold mb-5 sm:mb-6 hover:bg-primary/15 transition-all shadow-sm cursor-pointer group">
                 <Sparkles className="h-3.5 w-3.5 text-primary animate-pulse" />
-                <span className="truncate max-w-[240px] sm:max-w-none">New: AI-Powered Calibration & GPS Engine</span>
+                <span className="truncate max-w-[240px] sm:max-w-none">#1 Enterprise Calibration &amp; Gauge Management Platform</span>
                 <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform shrink-0" />
               </div>
 
               <h1 className="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.15] sm:leading-[1.1] mb-5 sm:mb-6">
-                Asset Tracking & Calibration
+                Asset Tracking &amp; Calibration
                 <span className="block mt-1 bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600">
-                  made effortless & precise
+                  made effortless &amp; precise
                 </span>
               </h1>
 
               <p className="text-base sm:text-xl text-muted-foreground mb-6 sm:mb-8 leading-relaxed max-w-xl">
-                The all-in-one platform for manufacturing & quality engineering teams. Monitor location, automate calibration schedules, and ensure 100% ISO compliance.
+                The all-in-one software platform for manufacturing &amp; quality engineering teams. Monitor location, automate calibration schedules, scan QR codes, and ensure 100% ISO 9001 &amp; IATF 16949 audit compliance.
               </p>
 
-              {/* Action Buttons — Mobile Responsive Flex */}
+              {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4 w-full sm:w-auto mb-8 sm:mb-10">
                 <Button
                   size="lg"
@@ -406,12 +493,10 @@ export default function Index() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: 0.8, delay: 0.2 }}
             >
-              {/* Glowing Aura ring around dashboard frame */}
               <div className="absolute -inset-1 rounded-3xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 opacity-30 blur-2xl -z-10 animate-pulse" />
 
               {/* macOS Window Frame */}
               <div className="relative rounded-2xl overflow-hidden border border-border/60 bg-card shadow-2xl ring-1 ring-white/10">
-                {/* Simulated macOS Header Bar */}
                 <div className="h-9 sm:h-10 bg-muted/60 backdrop-blur-sm border-b border-border/50 px-3 sm:px-4 flex items-center justify-between">
                   <div className="flex items-center gap-1.5 sm:gap-2">
                     <div className="h-2.5 w-2.5 sm:h-3 sm:w-3 rounded-full bg-rose-500/80" />
@@ -420,17 +505,17 @@ export default function Index() {
                   </div>
                   <div className="text-[10px] sm:text-[11px] font-mono text-muted-foreground/80 bg-background/50 px-2.5 py-0.5 rounded-full border border-border/40 flex items-center gap-1.5 truncate max-w-[200px] sm:max-w-none">
                     <Shield className="h-3 w-3 text-emerald-500 shrink-0" />
-                    <span className="truncate">app.gaugemaster.com/live-dashboard</span>
+                    <span className="truncate">app.gaugemaster.in/live-dashboard</span>
                   </div>
                   <div className="w-8 sm:w-12" />
                 </div>
 
-                {/* Dashboard Image Container — Cropped aspect ratio to crop out bottom monitor stand and solid white background */}
-                <div className="relative ">
+                <div className="relative">
                   <img
                     src={dashboardPreview}
-                    alt="Gaugemaster Enterprise Calibration Dashboard"
+                    alt="Gaugemaster Enterprise Calibration Dashboard and Asset Tracking Portal"
                     className="w-full h-auto object-cover"
+                    loading="eager"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-background/30 via-transparent to-transparent pointer-events-none" />
                 </div>
@@ -459,7 +544,7 @@ export default function Index() {
                 </div>
                 <div>
                   <div className="text-xs font-bold">99.8% On-Time Calibration</div>
-                  <div className="text-[10px] text-emerald-600 font-semibold">ISO 9001 Compliant</div>
+                  <div className="text-[10px] text-emerald-600 font-semibold">ISO 9001 &amp; IATF Compliant</div>
                 </div>
               </motion.div>
             </motion.div>
@@ -470,7 +555,7 @@ export default function Index() {
         <section className="py-8 sm:py-10 border-y border-border/40 bg-muted/20">
           <div className="mx-auto max-w-7xl px-4 sm:px-6 text-center">
             <p className="text-[10px] sm:text-xs font-bold tracking-widest text-muted-foreground uppercase mb-5">
-              TRUSTED BY 700+ MANUFACTURING & QUALITY LEADERS WORLDWIDE
+              TRUSTED BY 700+ MANUFACTURING &amp; QUALITY LEADERS WORLDWIDE
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:flex flex-wrap justify-center items-center gap-6 sm:gap-12 opacity-80">
               {trustLogos.map((logo) => (
@@ -510,7 +595,7 @@ export default function Index() {
               <h2 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight mb-3.5">
                 Everything you need for
                 <span className="block bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600">
-                  zero-downtime asset management
+                  zero-downtime asset &amp; gauge management
                 </span>
               </h2>
               <p className="text-sm sm:text-lg text-muted-foreground max-w-2xl mx-auto">
@@ -542,7 +627,7 @@ export default function Index() {
                 transition={{ duration: 0.6 }}
               >
                 <Badge variant="outline" className="mb-3.5 px-3 py-1 text-xs border-primary/30 text-primary bg-primary/5">
-                  🛠️ FAST & EFFORTLESS SETUP
+                  🛠️ FAST &amp; EFFORTLESS SETUP
                 </Badge>
                 <h2 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight mb-4 sm:mb-6">
                   Get started in minutes,
@@ -599,8 +684,9 @@ export default function Index() {
                 <div className="relative rounded-2xl overflow-hidden border border-border/60 shadow-2xl group">
                   <img
                     src={heroInstruments}
-                    alt="Precision gauge instruments tracking"
+                    alt="Precision gauge instruments tracking and shop floor calibration management"
                     className="w-full h-auto object-cover group-hover:scale-105 transition-transform duration-700"
+                    loading="lazy"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-background via-background/20 to-transparent opacity-80" />
                   <div className="absolute bottom-4 left-4 right-4 sm:bottom-6 sm:left-6 sm:right-6 p-4 sm:p-6 rounded-xl bg-card/80 backdrop-blur-md border border-border/60">
@@ -772,6 +858,60 @@ export default function Index() {
           </div>
         </section>
 
+        {/* FAQ Section (Rich Snippets & Google Ranking Accelerator) */}
+        <section id="faq" className="py-16 sm:py-24 border-t border-border/40 bg-card/20">
+          <div className="mx-auto max-w-5xl px-4 sm:px-6">
+            <motion.div
+              className="text-center mb-12 sm:mb-16"
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6 }}
+            >
+              <Badge variant="outline" className="mb-3.5 px-3 py-1 text-xs border-primary/30 text-primary bg-primary/5">
+                ❓ FREQUENTLY ASKED QUESTIONS
+              </Badge>
+              <h2 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight mb-3.5">
+                Got questions?
+                <span className="block bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600">
+                  We've got clear answers
+                </span>
+              </h2>
+              <p className="text-sm sm:text-lg text-muted-foreground max-w-2xl mx-auto">
+                Everything you need to know about Gaugemaster calibration tracking, ISO compliance, and shop floor implementation.
+              </p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.1 }}
+              className="rounded-2xl border border-border/60 bg-card/60 backdrop-blur-sm p-4 sm:p-8 shadow-xl"
+            >
+              <Accordion type="single" collapsible className="w-full space-y-4">
+                {faqs.map((faq, index) => (
+                  <AccordionItem
+                    key={index}
+                    value={`item-${index}`}
+                    className="border border-border/40 rounded-xl px-4 sm:px-6 data-[state=open]:border-primary/40 data-[state=open]:bg-primary/5 transition-all"
+                  >
+                    <AccordionTrigger className="text-left font-bold text-sm sm:text-base hover:no-underline py-4">
+                      <div className="flex items-center gap-3">
+                        <HelpCircle className="h-4 w-4 text-primary shrink-0" />
+                        <span>{faq.question}</span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="text-xs sm:text-sm text-muted-foreground leading-relaxed pt-1 pb-4">
+                      {faq.answer}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </motion.div>
+          </div>
+        </section>
+
         {/* CTA Section */}
         <section className="py-16 sm:py-24 relative overflow-hidden">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/15 via-indigo-600/10 to-purple-600/15 -z-10" />
@@ -789,7 +929,7 @@ export default function Index() {
               <h2 className="text-2xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight mb-4 sm:mb-6">
                 Ready to transform your
                 <span className="block bg-clip-text text-transparent bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-600">
-                  asset management & calibration?
+                  asset management &amp; calibration?
                 </span>
               </h2>
 
@@ -797,7 +937,7 @@ export default function Index() {
                 Join 700+ manufacturing facilities that trust Gaugemaster for zero-downtime asset tracking. Start your 30-day free trial today.
               </p>
 
-              {/* Action Buttons — Pill Rounded Style matching Reference Image 3 */}
+              {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 w-full sm:w-auto">
                 <Button
                   size="lg"
@@ -858,14 +998,14 @@ export default function Index() {
               <div className="relative aspect-video bg-black flex items-center justify-center">
                 <img
                   src={dashboardPreview}
-                  alt="Gaugemaster Product Demo"
+                  alt="Gaugemaster Product Demo and Software Walkthrough"
                   className="w-full h-full object-cover opacity-80"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex flex-col items-center justify-center p-4 sm:p-6 text-center">
                   <div className="h-12 w-12 sm:h-16 sm:w-16 rounded-full bg-primary/90 text-primary-foreground flex items-center justify-center shadow-xl shadow-primary/30 mb-3 sm:mb-4 cursor-pointer hover:scale-110 transition-transform">
                     <Play className="h-5 w-5 sm:h-7 sm:w-7 fill-current ml-1" />
                   </div>
-                  <h3 className="text-base sm:text-xl font-bold text-white mb-1.5 sm:mb-2">Live Demo & Product Walkthrough</h3>
+                  <h3 className="text-base sm:text-xl font-bold text-white mb-1.5 sm:mb-2">Live Demo &amp; Product Walkthrough</h3>
                   <p className="text-xs sm:text-sm text-gray-300 max-w-md">
                     Explore real-time GPS asset tracking, automated calibration alerts, and QR code mobile scanning in action.
                   </p>
@@ -905,8 +1045,8 @@ export default function Index() {
                 <li><a href="#features" className="hover:text-primary transition-colors">Features</a></li>
                 <li><a href="#how-it-works" className="hover:text-primary transition-colors">How It Works</a></li>
                 <li><a href="#pricing" className="hover:text-primary transition-colors">Pricing</a></li>
+                <li><a href="#faq" className="hover:text-primary transition-colors">FAQ</a></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Mobile App</Link></li>
-                <li><Link to="/login" className="hover:text-primary transition-colors">API & Integrations</Link></li>
               </ul>
             </div>
 
@@ -914,7 +1054,7 @@ export default function Index() {
               <h3 className="font-bold text-xs sm:text-sm mb-3 sm:mb-4 tracking-tight">Solutions</h3>
               <ul className="space-y-2 sm:space-y-2.5 text-xs sm:text-sm text-muted-foreground">
                 <li><Link to="/login" className="hover:text-primary transition-colors">Calibration Tracking</Link></li>
-                <li><Link to="/login" className="hover:text-primary transition-colors">Tool & Gauge Cribs</Link></li>
+                <li><Link to="/login" className="hover:text-primary transition-colors">Tool &amp; Gauge Cribs</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">ISO Audit Readiness</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Preventive Maintenance</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Enterprise SLA</Link></li>
@@ -926,7 +1066,7 @@ export default function Index() {
               <ul className="space-y-2 sm:space-y-2.5 text-xs sm:text-sm text-muted-foreground">
                 <li><Link to="/login" className="hover:text-primary transition-colors">About Us</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Customer Stories</Link></li>
-                <li><Link to="/login" className="hover:text-primary transition-colors">Security & Trust</Link></li>
+                <li><Link to="/login" className="hover:text-primary transition-colors">Security &amp; Trust</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Contact Support</Link></li>
               </ul>
             </div>
@@ -934,7 +1074,7 @@ export default function Index() {
 
           <div className="border-t border-border/40 pt-6 sm:pt-8 flex flex-col sm:flex-row justify-between items-center gap-4">
             <p className="text-[11px] sm:text-xs text-muted-foreground text-center sm:text-left">
-              © {new Date().getFullYear()} Gaugemaster Platform Inc. All rights reserved.
+              &copy; {new Date().getFullYear()} Gaugemaster Platform Inc. All rights reserved.
             </p>
             <div className="flex flex-wrap justify-center gap-4 sm:gap-6 text-[11px] sm:text-xs text-muted-foreground">
               <Link to="/login" className="hover:text-primary transition-colors">Privacy Policy</Link>
