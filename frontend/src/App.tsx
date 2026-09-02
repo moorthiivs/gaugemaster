@@ -31,6 +31,7 @@ import UserManagement from "./pages/UserManagement";
 import SuperAdminRoute from "./components/SuperAdminRoute";
 import CustomerCompanies from "./pages/admin/CustomerCompanies";
 import CompanyDetail from "./pages/admin/CompanyDetail";
+import GlobalAuditLogs from "./pages/admin/GlobalAuditLogs";
 
 const queryClient = new QueryClient();
 
@@ -99,6 +100,7 @@ const App = () => (
                   {/* Super Admin Management Routes */}
                   <Route path="/super-admin/companies" element={<SuperAdminRoute><CustomerCompanies /></SuperAdminRoute>} />
                   <Route path="/super-admin/companies/:id" element={<SuperAdminRoute><CompanyDetail /></SuperAdminRoute>} />
+                  <Route path="/super-admin/audit-logs" element={<SuperAdminRoute><GlobalAuditLogs /></SuperAdminRoute>} />
                 </Route>
 
                 {/* Catch-all */}

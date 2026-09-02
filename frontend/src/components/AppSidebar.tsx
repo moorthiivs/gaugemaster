@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   ShieldCheck,
   Building2,
+  Activity,
   X,
 } from "lucide-react";
 import {
@@ -39,6 +40,7 @@ const superAdminGroup = {
   label: "Platform Management",
   items: [
     { title: "Customer Companies", url: "/super-admin/companies", icon: Building2, module: "superadmin", action: "view" },
+    { title: "Activity & Audit Logs", url: "/super-admin/audit-logs", icon: Activity, module: "superadmin", action: "view" },
   ],
 };
 

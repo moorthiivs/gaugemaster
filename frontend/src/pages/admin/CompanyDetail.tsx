@@ -33,6 +33,7 @@ import {
 } from "@/lib/superAdminActions";
 import CompanyAccessModal from "@/components/admin/CompanyAccessModal";
 import DeleteCompanyConfirmModal from "@/components/admin/DeleteCompanyConfirmModal";
+import { AuditLogsTable } from "@/components/admin/AuditLogsTable";
 
 export default function CompanyDetail() {
   const { id } = useParams<{ id: string }>();
@@ -346,6 +347,11 @@ export default function CompanyDetail() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      {/* Audit Logs Section */}
+      <div className="mt-8">
+        <AuditLogsTable companyId={company.id} />
       </div>
 
       {/* Access Modal */}
