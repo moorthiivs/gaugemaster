@@ -96,14 +96,14 @@ export default function Index() {
       "Enterprise calibration management software for manufacturing quality teams. Automate calibration schedules, track gauge inventory, scan QR codes, and pass ISO 9001/IATF 16949 audits with 100% compliance.",
     keywords:
       "gauge management software, calibration management system, calibration tracking software, asset tracking software, calibration schedule software, ISO 9001 calibration tracking, IATF 16949 compliance, tool crib management, equipment calibration tracking, gauge calibration app",
-    canonical: "https://gaugemaster.in/",
-    ogImage: "https://gaugemaster.in/og-image.png",
+    canonical: "https://gaugemaster.iviewsense.com/",
+    ogImage: "https://gaugemaster.iviewsense.com/og-image.png",
     jsonLd: [
       {
         "@context": "https://schema.org",
         "@type": "WebPage",
-        "@id": "https://gaugemaster.in/#webpage",
-        "url": "https://gaugemaster.in/",
+        "@id": "https://gaugemaster.iviewsense.com/#webpage",
+        "url": "https://gaugemaster.iviewsense.com/",
         "name": "Gaugemaster — #1 Gauge Management & Calibration Tracking Software",
         "description":
           "The leading calibration management SaaS platform. Automate instrument calibration schedules, QR code tracking, and ISO 9001/IATF 16949 audit compliance.",
@@ -114,7 +114,7 @@ export default function Index() {
               "@type": "ListItem",
               "position": 1,
               "name": "Home",
-              "item": "https://gaugemaster.in/",
+              "item": "https://gaugemaster.iviewsense.com/",
             },
           ],
         },
@@ -505,7 +505,7 @@ export default function Index() {
                   </div>
                   <div className="text-[10px] sm:text-[11px] font-mono text-muted-foreground/80 bg-background/50 px-2.5 py-0.5 rounded-full border border-border/40 flex items-center gap-1.5 truncate max-w-[200px] sm:max-w-none">
                     <Shield className="h-3 w-3 text-emerald-500 shrink-0" />
-                    <span className="truncate">app.gaugemaster.in/live-dashboard</span>
+                    <span className="truncate">app.gaugemaster.iviewsense.com/live-dashboard</span>
                   </div>
                   <div className="w-8 sm:w-12" />
                 </div>

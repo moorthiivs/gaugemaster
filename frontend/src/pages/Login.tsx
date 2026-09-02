@@ -11,7 +11,7 @@ export default function LoginPage() {
     title: "Sign In — Gaugemaster Calibration Management Portal",
     description:
       "Sign in to your Gaugemaster workspace to monitor gauge inventory, track calibration schedules, scan QR codes, and generate ISO compliance reports.",
-    canonical: "https://gaugemaster.in/login",
+    canonical: "https://gaugemaster.iviewsense.com/login",
   });
 
   return (

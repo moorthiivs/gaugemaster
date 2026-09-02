@@ -13,7 +13,7 @@ export default function Register() {
     title: "Start 30-Day Free Trial — Gaugemaster",
     description:
       "Create your Gaugemaster account to start automating gauge calibrations, tracking instrument due dates, scanning QR codes, and passing ISO audits.",
-    canonical: "https://gaugemaster.in/register",
+    canonical: "https://gaugemaster.iviewsense.com/register",
   });
 
   const { register } = useAuth();
