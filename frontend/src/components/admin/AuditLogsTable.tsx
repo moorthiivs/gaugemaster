@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { getAuditLogs, AuditLog } from "@/lib/superAdminActions";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc";
+import timezone from "dayjs/plugin/timezone";
 import { 
   Clock, 
   Eye, 
@@ -27,6 +28,9 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 
 dayjs.extend(utc);
+dayjs.extend(timezone);
+
+const IST_TZ = "Asia/Kolkata";
 
 interface AuditLogsTableProps {
   companyId: string;
@@ -40,7 +44,7 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
 
   // Filters
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [dateFilter, setDateFilter] = useState<string>(dayjs().format("YYYY-MM-DD"));
+  const [dateFilter, setDateFilter] = useState<string>(dayjs().tz(IST_TZ).format("YYYY-MM-DD"));
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
 
@@ -83,7 +87,7 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
     return logs.filter((log) => {
       // Date filter
       if (dateFilter) {
-        const logDate = dayjs.utc(log.createdAt).format("YYYY-MM-DD");
+        const logDate = dayjs(log.createdAt).tz(IST_TZ).format("YYYY-MM-DD");
         if (logDate !== dateFilter) return false;
       }
 
@@ -320,11 +324,11 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
                     {/* Timestamp */}
                     <td className="px-5 py-3.5 whitespace-nowrap">
                       <div className="text-xs font-semibold text-slate-900">
-                        {dayjs.utc(log.createdAt).format("DD MMM YYYY")}
+                        {dayjs(log.createdAt).tz(IST_TZ).format("DD MMM YYYY")}
                       </div>
                       <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5 font-mono">
                         <Clock className="h-3 w-3 text-slate-400" />
-                        {dayjs.utc(log.createdAt).format("hh:mm:ss A")}
+                        {dayjs(log.createdAt).tz(IST_TZ).format("hh:mm:ss A")}
                       </div>
                       {log.durationMs !== undefined && log.durationMs !== null && (
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -511,12 +515,12 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
 
                 <div className="bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
                   <div className="text-slate-500 flex items-center gap-1 mb-1">
-                    <Clock className="h-3 w-3" /> Recorded Time
+                    <Clock className="h-3 w-3" /> Recorded Time (IST)
                   </div>
                   <div className="font-mono text-slate-200 text-[11px]">
-                    {dayjs.utc(selectedLog.createdAt).format("DD MMM, HH:mm:ss")}
+                    {dayjs(selectedLog.createdAt).tz(IST_TZ).format("DD MMM YYYY, hh:mm:ss A")}
                   </div>
-                  <div className="text-[10px] text-slate-400 font-mono">UTC Standard</div>
+                  <div className="text-[10px] text-slate-400 font-mono">IST (Chennai / Kolkata)</div>
                 </div>
               </div>
 
