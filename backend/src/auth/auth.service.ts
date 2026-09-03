@@ -184,13 +184,36 @@ export class AuthService {
       throw new BadRequestException('Google authentication is not configured for this deployment');
     }
 
-    const ticket = await this.oauthClient.verifyIdToken({
-      idToken: token,
-      audience: this.configService.get('GOOGLE_CLIENT_ID'),
-    });
+    let googleId: string | undefined;
+    let email: string | undefined;
+    let name: string | undefined;
 
-    const payload = ticket.getPayload();
-    const { sub: googleId, email, name } = payload || {};
+    try {
+      const ticket = await this.oauthClient.verifyIdToken({
+        idToken: token,
+        audience: this.configService.get('GOOGLE_CLIENT_ID'),
+      });
+      const payload = ticket.getPayload();
+      googleId = payload?.sub;
+      email = payload?.email;
+      name = payload?.name;
+    } catch {
+      try {
+        const userInfoRes = await this.oauthClient.request<{
+          sub?: string;
+          email?: string;
+          name?: string;
+        }>({
+          url: 'https://www.googleapis.com/oauth2/v3/userinfo',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        googleId = userInfoRes.data?.sub;
+        email = userInfoRes.data?.email;
+        name = userInfoRes.data?.name;
+      } catch {
+        throw new UnauthorizedException('Invalid Google token');
+      }
+    }
 
     if (!googleId || !email || !name) {
       throw new UnauthorizedException('Invalid Google token');
