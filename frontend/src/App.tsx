@@ -37,7 +37,7 @@ const queryClient = new QueryClient();
 
 const googleClientId =
   import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-  "27326771006-tcipg9h80l5af7m59ibd9tp1llmieggk.apps.googleusercontent.com"; 
+  "10468977934-p15lgg6hnueup57t9eecqrdo3vumnsd9.apps.googleusercontent.com"; 
 
 const App = () => (
   <BrowserRouter>
