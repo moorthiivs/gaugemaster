@@ -76,7 +76,7 @@ export default function Calibration() {
   const [overdueInstruments, setOverdueInstruments] = useState<Instrument[]>([]);
   const [overdueModalOpen, setOverdueModalOpen] = useState(false);
   const [overdueSearchQuery, setOverdueSearchQuery] = useState("");
-  const [overdueScope, setOverdueScope] = useState<"current_month" | "all_time">("current_month");
+  const [overdueScope, setOverdueScope] = useState<"current_month" | "all_time">("all_time");
   const [viewMode, setViewMode] = useState<"latest" | "all">("latest");
   const [activeTab, setActiveTab] = useState<string>("recent");
 
