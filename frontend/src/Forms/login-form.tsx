@@ -83,6 +83,51 @@ export function LoginForm() {
     }
 
 
+    const handleGoogleSuccess = async (credentialResponse: CredentialResponse) => {
+        if (credentialResponse.credential) {
+            try {
+                await signInWithGoogleToken(credentialResponse.credential);
+                toast({ title: "Signed in", description: `Welcome back via Google!` });
+                // Check if user needs onboarding after login
+                const setupCompleted = localStorage.getItem('setupCompleted');
+                const redirectTo = !setupCompleted ? "/onboarding" : from;
+                navigate(redirectTo, { replace: true });
+            } catch (e: any) {
+                toast({
+                    title: "Sign in failed",
+                    description: e?.message || "Please try again.",
+                    variant: "destructive",
+                });
+                setGoogleReady(false);
+            }
+        }
+    };
+
+    const handleGoogleError = () => {
+        toast({
+            title: "Google Sign-In failed",
+            description: "Try again later.",
+            variant: "destructive",
+        });
+        setGoogleReady(false);
+    };
+
+    const renderGoogleButton = () => (
+        <div className="w-full flex justify-center [&>div]:w-full [&_iframe]:!w-full">
+            <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={handleGoogleError}
+                theme="outline"
+                size="large"
+                shape="rectangular"
+                text="continue_with"
+                width="384"
+                logo_alignment="left"
+                auto_select={false}
+            />
+        </div>
+    );
+
     return (
         <form className="flex flex-col gap-6" onSubmit={handlePassword} autoComplete="off">
             <div className="flex flex-col items-center gap-2 text-center">
@@ -128,84 +173,20 @@ export function LoginForm() {
                         {googleReady ? (
                             authConfig?.googleClientId ? (
                                 <GoogleOAuthProvider clientId={authConfig.googleClientId}>
-                                    <GoogleLogin
-                                        onSuccess={async (credentialResponse: CredentialResponse) => {
-                                            if (credentialResponse.credential) {
-                                                try {
-                                                    await signInWithGoogleToken(credentialResponse.credential);
-                                                    toast({ title: "Signed in", description: `Welcome back via Google!` });
-                                                    // Check if user needs onboarding after login
-                                                    const setupCompleted = localStorage.getItem('setupCompleted')
-                                                    const redirectTo = !setupCompleted ? "/onboarding" : from
-                                                    navigate(redirectTo, { replace: true });
-                                                } catch (e: any) {
-                                                    toast({
-                                                        title: "Sign in failed",
-                                                        description: e?.message || "Please try again.",
-                                                        variant: "destructive",
-                                                    });
-                                                    setGoogleReady(false); // Fallback if sign-in fails
-                                                }
-                                            }
-                                        }}
-                                        onError={() => {
-                                            toast({
-                                                title: "Google Sign-In failed",
-                                                description: "Try again later.",
-                                                variant: "destructive",
-                                            });
-                                            setGoogleReady(false); // Switch to fallback button
-                                        }}
-                                        theme="outline"
-                                        size="large"
-                                        shape="rectangular"
-                                        text="signin_with"
-                                        logo_alignment="left"
-                                    />
+                                    {renderGoogleButton()}
                                 </GoogleOAuthProvider>
                             ) : (
-                                <GoogleLogin
-                                    onSuccess={async (credentialResponse: CredentialResponse) => {
-                                        if (credentialResponse.credential) {
-                                            try {
-                                                await signInWithGoogleToken(credentialResponse.credential);
-                                                toast({ title: "Signed in", description: `Welcome back via Google!` });
-                                                // Check if user needs onboarding after login
-                                                const setupCompleted = localStorage.getItem('setupCompleted')
-                                                const redirectTo = !setupCompleted ? "/onboarding" : from
-                                                navigate(redirectTo, { replace: true });
-                                            } catch (e: any) {
-                                                toast({
-                                                    title: "Sign in failed",
-                                                    description: e?.message || "Please try again.",
-                                                    variant: "destructive",
-                                                });
-                                                setGoogleReady(false); // Fallback if sign-in fails
-                                            }
-                                        }
-                                    }}
-                                    onError={() => {
-                                        toast({
-                                            title: "Google Sign-In failed",
-                                            description: "Try again later.",
-                                            variant: "destructive",
-                                        });
-                                        setGoogleReady(false); // Switch to fallback button
-                                    }}
-                                    theme="outline"
-                                    size="large"
-                                    shape="rectangular"
-                                    text="signin_with"
-                                    logo_alignment="left"
-                                />
+                                renderGoogleButton()
                             )
                         ) : (
-                            <button
+                            <Button
+                                type="button"
+                                variant="outline"
                                 onClick={() => toast({ title: "Fallback Sign-In", description: "Use email/password login" })}
-                                className="bg-gray-200 px-4 py-2 rounded hover:bg-gray-300"
+                                className="w-full"
                             >
                                 Sign in with Email
-                            </button>
+                            </Button>
                         )}
                     </>
                 )}
