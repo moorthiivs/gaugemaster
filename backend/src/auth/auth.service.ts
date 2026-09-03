@@ -188,6 +188,7 @@ export class AuthService {
     let email: string | undefined;
     let name: string | undefined;
 
+    // 1. Try ID token verification first (if an ID token was passed)
     try {
       const ticket = await this.oauthClient.verifyIdToken({
         idToken: token,
@@ -198,20 +199,23 @@ export class AuthService {
       email = payload?.email;
       name = payload?.name;
     } catch {
+      // 2. If ID token verification fails, verify as OAuth2 access token via Google userinfo
       try {
-        const userInfoRes = await this.oauthClient.request<{
-          sub?: string;
-          email?: string;
-          name?: string;
-        }>({
-          url: 'https://www.googleapis.com/oauth2/v3/userinfo',
+        const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
           headers: { Authorization: `Bearer ${token}` },
         });
-        googleId = userInfoRes.data?.sub;
-        email = userInfoRes.data?.email;
-        name = userInfoRes.data?.name;
-      } catch {
-        throw new UnauthorizedException('Invalid Google token');
+
+        if (userInfoRes.ok) {
+          const data: any = await userInfoRes.json();
+          googleId = data.sub || data.id;
+          email = data.email;
+          name = data.name || (data.email ? data.email.split('@')[0] : 'User');
+        } else {
+          const errText = await userInfoRes.text();
+          console.error('[AuthService] Google userinfo fetch failed:', userInfoRes.status, errText);
+        }
+      } catch (fetchErr) {
+        console.error('[AuthService] Failed to fetch Google userinfo with access token:', fetchErr);
       }
     }
 
