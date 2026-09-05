@@ -41,7 +41,8 @@ import {
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
 } from "@/lib/geminiService";
-import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock } from "@/types/template";
+import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
+import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 
 interface AiTemplateGeneratorModalProps {
   open: boolean;
@@ -182,6 +183,165 @@ export function AiTemplateGeneratorModal({
     setExtractedResult(null);
   };
 
+  const handleLoadPreset = (preset: CanvasTemplatePreset) => {
+    setExtractedResult({
+      name: preset.name,
+      description: preset.description,
+      instrumentType: preset.instrumentType,
+      defaultUnit: preset.defaultUnit,
+      defaultTolerance: preset.defaultTolerance,
+      decimalPlaces: 3,
+      acceptanceCriteria: {
+        enabled: true,
+        type: "absolute",
+        value: preset.defaultTolerance,
+      },
+      blocks: preset.blocks,
+    });
+    toast.success(`Loaded "${preset.name}" preset into Preview!`);
+  };
+
+  // Helper to render Table Grid in sheet preview
+  const renderPreviewTableGrid = (tbl: TableGridBlock, keyPrefix: string) => {
+    const dec = tbl.decimal_places ?? extractedResult?.decimalPlaces ?? 3;
+    return (
+      <div key={keyPrefix} className="border border-black overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black text-[11px] font-bold">
+          <span>{tbl.title || "Calibration Table"}</span>
+          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground font-normal">
+            <span>Unit: {tbl.unit || extractedResult?.defaultUnit || "mm"}</span>
+            <span>• Tol: ±{tbl.tolerance ?? extractedResult?.defaultTolerance ?? 0.005}</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[10px] text-center border-black">
+            <thead>
+              <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                {tbl.columns.map((col) => (
+                  <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                    {col.label}
+                    {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black">
+              {tbl.rows.map((row, rIdx) => (
+                <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                  {tbl.columns.map((col) => {
+                    if (col.id === "point_number" || col.id === "sl_no") {
+                      return <td key={col.id} className="py-1 px-1.5 font-bold">{row.point_number ?? (rIdx + 1)}</td>;
+                    }
+                    if (col.type === "text" || col.id === "description") {
+                      return <td key={col.id} className="py-1 px-1.5 font-semibold text-slate-800 dark:text-slate-200">{row.description || "-"}</td>;
+                    }
+                    if (col.type === "nominal") {
+                      return <td key={col.id} className="py-1 px-1.5 font-bold">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                    }
+                    if (col.type === "formula") {
+                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{`+${(0).toFixed(dec)}`}</td>;
+                    }
+                    if (col.type === "status") {
+                      return (
+                        <td key={col.id} className="py-1 px-1.5">
+                          <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">PASS</span>
+                        </td>
+                      );
+                    }
+                    return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {tbl.footerNote && (
+          <div className="p-1 bg-slate-50 dark:bg-slate-800/40 text-[9px] text-muted-foreground italic border-t border-black">
+            * {tbl.footerNote}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Helper to render Matrix Table in sheet preview
+  const renderPreviewMatrixTable = (matrix: MatrixTableBlock, keyPrefix: string) => {
+    return (
+      <div key={keyPrefix} className="border border-black overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 text-[11px] font-bold border-b border-black flex items-center justify-between">
+          <span>{matrix.title || "Acceptance critiria"}</span>
+          <Badge variant="outline" className="text-[9px] border-black/30 font-mono">
+            Acceptance Limits
+          </Badge>
+        </div>
+        <table className="w-full border-collapse text-[10px] text-center border-black">
+          <thead>
+            {matrix.headers.map((hRow, hIdx) => (
+              <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                {hRow.map((cell, cIdx) => (
+                  <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5">
+                    {cell.text}
+                  </th>
+                ))}
+              </tr>
+            ))}
+          </thead>
+          <tbody className="divide-y divide-black">
+            {matrix.rows.map((r, rIdx) => (
+              <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                {r.map((val, cIdx) => (
+                  <td key={cIdx} className={`py-1 px-1.5 ${cIdx === 1 ? "font-semibold text-left pl-3" : "font-mono"}`}>
+                    {val}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // Helper to render Text Block in sheet preview
+  const renderPreviewTextBlock = (textBlock: TextBlock, keyPrefix: string) => {
+    return (
+      <div key={keyPrefix} className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center gap-2 shadow-xs">
+        <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+        <span>{textBlock.content}</span>
+      </div>
+    );
+  };
+
+  // Helper to render Split Row (Side-by-Side) in sheet preview
+  const renderPreviewSplitRow = (splitBlock: SplitRowBlock, keyPrefix: string) => {
+    const colCount = splitBlock.children?.length || 2;
+    return (
+      <div key={keyPrefix} className="space-y-1.5 p-2 bg-indigo-50/20 dark:bg-indigo-950/20 rounded border border-dashed border-indigo-400">
+        <div className="flex items-center justify-between text-[10px] text-indigo-700 dark:text-indigo-300 font-bold px-0.5">
+          <span className="flex items-center gap-1">
+            <LayoutGrid className="w-3.5 h-3.5 text-indigo-600" />
+            Side-by-Side Split Tables ({colCount} Columns)
+          </span>
+          <Badge variant="outline" className="text-[9px] border-indigo-300 text-indigo-700 dark:text-indigo-300">
+            {splitBlock.columnRatio || "50/50"} Layout
+          </Badge>
+        </div>
+
+        <div className={`grid grid-cols-1 ${colCount === 3 ? "md:grid-cols-3" : "md:grid-cols-2"} gap-2 items-start`}>
+          {splitBlock.children?.map((child, cIdx) => (
+            <div key={child.id || `${keyPrefix}_c${cIdx}`} className="min-w-0">
+              {child.type === "table_grid" && renderPreviewTableGrid(child as TableGridBlock, `${keyPrefix}_t${cIdx}`)}
+              {child.type === "matrix_table" && renderPreviewMatrixTable(child as MatrixTableBlock, `${keyPrefix}_m${cIdx}`)}
+              {child.type === "text_block" && renderPreviewTextBlock(child as TextBlock, `${keyPrefix}_txt${cIdx}`)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[92vh] flex flex-col p-0 overflow-hidden">
@@ -196,7 +356,7 @@ export function AiTemplateGeneratorModal({
                 <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-white">
                   AI Smart Template Generator
                   <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                    Gemini 1.5 Flash
+                    Gemini 2.0 / 1.5 Flash
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-300">
@@ -370,13 +530,40 @@ export function AiTemplateGeneratorModal({
                 </TabsContent>
               </Tabs>
 
+              {/* Quick Standard Presets Bar */}
+              <div className="p-3 bg-gradient-to-r from-indigo-50/80 via-blue-50/40 to-purple-50/80 dark:from-indigo-950/40 dark:via-blue-950/20 dark:to-purple-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    Instant Accredited Presets (ISO / IS Calibration Standards)
+                  </span>
+                  <Badge variant="outline" className="text-[10px] text-indigo-700 dark:text-indigo-300 border-indigo-300">
+                    Zero Setup
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {CANVAS_PRESETS.slice(0, 5).map((preset) => (
+                    <Button
+                      key={preset.id}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleLoadPreset(preset)}
+                      className="h-7 text-[11px] px-2.5 py-0 border-indigo-300/80 dark:border-indigo-700 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-950 dark:text-indigo-200 rounded-full font-medium"
+                    >
+                      {preset.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
               {/* Optional Custom Instructions */}
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">Optional AI Guidance / Special Requirements</Label>
                 <Textarea
                   value={customInstructions}
                   onChange={(e) => setCustomInstructions(e.target.value)}
-                  placeholder="e.g. Include 5 trials for external jaws, extract MPE limits from ISO 1502 standard, set tolerance to ±0.01 mm..."
+                  placeholder="e.g. Include 5 trials for measuring anvils, place Flatness and Parallelism side-by-side in a split row, extract Acceptance criteria table..."
                   className="text-xs resize-none h-16"
                 />
               </div>
@@ -447,107 +634,10 @@ export function AiTemplateGeneratorModal({
 
                   {extractedResult.blocks.map((block, idx) => (
                     <div key={block.id || idx} className="space-y-1.5">
-                      {/* 1. TABLE GRID */}
-                      {block.type === "table_grid" && (
-                        <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                          <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black text-[11px] font-bold">
-                            <span>{(block as TableGridBlock).title || `Calibration Section #${idx + 1}`}</span>
-                            <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground font-normal">
-                              <span>Unit: {(block as TableGridBlock).unit || extractedResult.defaultUnit}</span>
-                              <span>• Tol: ±{(block as TableGridBlock).tolerance ?? extractedResult.defaultTolerance}</span>
-                            </div>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <table className="w-full border-collapse text-[10px] text-center border-black">
-                              <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  {(block as TableGridBlock).columns.map((col) => (
-                                    <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
-                                      {col.label}
-                                      {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-black">
-                                {(block as TableGridBlock).rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                    {(block as TableGridBlock).columns.map((col) => {
-                                      const dec = (block as TableGridBlock).decimal_places ?? extractedResult.decimalPlaces ?? 3;
-                                      if (col.id === "point_number" || col.id === "sl_no") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-bold">{row.point_number ?? (rIdx + 1)}</td>;
-                                      }
-                                      if (col.type === "nominal") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-bold">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
-                                      }
-                                      if (col.type === "text") {
-                                        return <td key={col.id} className="py-1 px-1.5">{row.description || "-"}</td>;
-                                      }
-                                      if (col.type === "formula") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{`+${(0).toFixed(dec)}`}</td>;
-                                      }
-                                      if (col.type === "status") {
-                                        return (
-                                          <td key={col.id} className="py-1 px-1.5">
-                                            <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">PASS</span>
-                                          </td>
-                                        );
-                                      }
-                                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-
-                          {(block as TableGridBlock).footerNote && (
-                            <div className="p-1 bg-slate-50 dark:bg-slate-800/40 text-[9px] text-muted-foreground italic border-t border-black">
-                              * {(block as TableGridBlock).footerNote}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* 2. MATRIX TABLE */}
-                      {block.type === "matrix_table" && (
-                        <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                          <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 text-[11px] font-bold border-b border-black">
-                            {(block as MatrixTableBlock).title || "Acceptance Criteria Reference Matrix"}
-                          </div>
-                          <table className="w-full border-collapse text-[10px] text-center border-black">
-                            <thead>
-                              {(block as MatrixTableBlock).headers.map((hRow, hIdx) => (
-                                <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  {hRow.map((cell, cIdx) => (
-                                    <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5">
-                                      {cell.text}
-                                    </th>
-                                  ))}
-                                </tr>
-                              ))}
-                            </thead>
-                            <tbody className="divide-y divide-black">
-                              {(block as MatrixTableBlock).rows.map((r, rIdx) => (
-                                <tr key={rIdx} className="divide-x divide-black">
-                                  {r.map((val, cIdx) => (
-                                    <td key={cIdx} className="py-1 px-1.5 font-mono">{val}</td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* 3. NOTE / CALLOUT */}
-                      {block.type === "text_block" && (
-                        <div className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center gap-2">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{(block as TextBlock).content}</span>
-                        </div>
-                      )}
+                      {block.type === "table_grid" && renderPreviewTableGrid(block as TableGridBlock, `b_${idx}`)}
+                      {block.type === "split_row" && renderPreviewSplitRow(block as SplitRowBlock, `b_${idx}`)}
+                      {block.type === "matrix_table" && renderPreviewMatrixTable(block as MatrixTableBlock, `b_${idx}`)}
+                      {block.type === "text_block" && renderPreviewTextBlock(block as TextBlock, `b_${idx}`)}
                     </div>
                   ))}
                 </div>
@@ -583,6 +673,11 @@ export function AiTemplateGeneratorModal({
                               {(block as any).rows?.length || 0} Test Points | {(block as any).columns?.length || 0} Columns | Unit: {(block as any).unit || "mm"}
                             </div>
                           )}
+                          {block.type === "split_row" && (
+                            <div className="text-[11px] text-muted-foreground">
+                              Side-by-Side Split: {(block as SplitRowBlock).children?.map((c: any) => c.title || c.type).join(" + ")} ({(block as SplitRowBlock).children?.length || 0} sub-tables)
+                            </div>
+                          )}
                           {block.type === "matrix_table" && (
                             <div className="text-[11px] text-muted-foreground">
                               Reference Matrix ({(block as any).rows?.length || 0} rows)
@@ -615,7 +710,7 @@ export function AiTemplateGeneratorModal({
               {isProcessing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Extracting with Gemini 1.5 Flash...
+                  Extracting Layout with Gemini...
                 </>
               ) : (
                 <>

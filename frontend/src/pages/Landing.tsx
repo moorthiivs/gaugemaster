@@ -43,6 +43,7 @@ import {
   Globe,
   TrendingUp,
   HelpCircle,
+  Mail,
 } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -117,6 +118,18 @@ export default function Index() {
               "item": "https://gaugemaster.iviewsense.com/",
             },
           ],
+        },
+      },
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "@id": "https://gaugemaster.iviewsense.com/#organization",
+        "name": "Gaugemaster",
+        "url": "https://gaugemaster.iviewsense.com/",
+        "contactPoint": {
+          "@type": "ContactPoint",
+          "email": "kannan@iviewsense.com",
+          "contactType": "customer support",
         },
       },
       {
@@ -283,6 +296,7 @@ export default function Index() {
         "On-Premise or Private Cloud Deployment",
       ],
       buttonText: "Contact Sales",
+      buttonHref: "mailto:kannan@iviewsense.com?subject=Gaugemaster%20Corporate%20Plan%20Inquiry",
     },
   ];
 
@@ -328,6 +342,7 @@ export default function Index() {
             <a href="#testimonials" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Testimonials</a>
             <a href="#pricing" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Pricing</a>
             <a href="#faq" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">FAQ</a>
+            <a href="#contact" className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors">Contact</a>
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
@@ -393,6 +408,13 @@ export default function Index() {
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   FAQ
+                </a>
+                <a
+                  href="#contact"
+                  className="block text-sm font-medium text-muted-foreground hover:text-primary transition-colors"
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  Contact
                 </a>
                 <div className="pt-4 border-t space-y-2">
                   <Button variant="outline" size="sm" className="rounded-full w-full" asChild>
@@ -908,6 +930,17 @@ export default function Index() {
                   </AccordionItem>
                 ))}
               </Accordion>
+
+              <div className="mt-8 pt-6 border-t border-border/40 text-center text-xs sm:text-sm text-muted-foreground">
+                <span>Still have questions? Reach out to us directly at </span>
+                <a
+                  href="mailto:kannan@iviewsense.com?subject=Gaugemaster%20Inquiry"
+                  className="text-primary font-semibold hover:underline inline-flex items-center gap-1.5 ml-1"
+                >
+                  <Mail className="h-3.5 w-3.5" />
+                  kannan@iviewsense.com
+                </a>
+              </div>
             </motion.div>
           </div>
         </section>
@@ -956,8 +989,73 @@ export default function Index() {
                   className="rounded-full h-12 sm:h-13 px-8 text-base font-semibold border-primary/40 bg-card/80 hover:bg-card hover:border-primary text-foreground backdrop-blur-md shadow-md transition-all w-full sm:w-auto"
                   asChild
                 >
-                  <Link to="/login">Schedule Guided Demo</Link>
+                  <a href="mailto:kannan@iviewsense.com?subject=Schedule%20Guided%20Demo%20Request">Schedule Guided Demo</a>
                 </Button>
+              </div>
+            </motion.div>
+          </div>
+        </section>
+
+        {/* Contact Section */}
+        <section id="contact" className="py-16 sm:py-24 border-t border-border/40 bg-card/20 relative">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6">
+            <motion.div
+              className="max-w-4xl mx-auto rounded-3xl border border-primary/20 bg-gradient-to-b from-card via-card to-primary/5 p-6 sm:p-10 shadow-2xl relative overflow-hidden"
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6 }}
+            >
+              {/* Ambient Glow */}
+              <div className="absolute -top-24 -right-24 w-60 h-60 bg-primary/15 rounded-full blur-3xl pointer-events-none" />
+
+              <div className="flex flex-col md:flex-row items-center justify-between gap-8 relative z-10">
+                <div className="space-y-3 max-w-xl text-center md:text-left">
+                  <Badge variant="outline" className="px-3 py-1 text-xs border-primary/30 text-primary bg-primary/5">
+                    📬 GET IN TOUCH
+                  </Badge>
+                  <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
+                    Have questions or need enterprise assistance?
+                  </h2>
+                  <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
+                    Whether you're looking for a guided demo, custom plant rollout, or ERP integration, our team is here to help you every step of the way.
+                  </p>
+                  <div className="pt-2 flex flex-wrap items-center justify-center md:justify-start gap-4 text-xs sm:text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>Dedicated technical consultation</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <span>Fast response within 24 hours</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row md:flex-col gap-3 w-full sm:w-auto shrink-0">
+                  <Button
+                    size="lg"
+                    variant="hero"
+                    className="rounded-full h-12 px-6 text-sm sm:text-base font-semibold shadow-lg shadow-primary/20 gap-2.5 w-full sm:w-auto"
+                    asChild
+                  >
+                    <a href="mailto:kannan@iviewsense.com?subject=Gaugemaster%20Inquiry">
+                      <Mail className="h-4 w-4" />
+                      kannan@iviewsense.com
+                    </a>
+                  </Button>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="rounded-full h-12 px-6 text-sm sm:text-base font-semibold border-border/80 hover:border-primary/50 hover:bg-card w-full sm:w-auto"
+                    asChild
+                  >
+                    <a href="mailto:kannan@iviewsense.com?subject=Schedule%20Guided%20Demo%20Request">
+                      Schedule Guided Demo
+                      <ArrowRight className="h-4 w-4 ml-2" />
+                    </a>
+                  </Button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -1030,9 +1128,19 @@ export default function Index() {
                 </div>
                 <span>Gaugemaster</span>
               </div>
-              <p className="text-muted-foreground text-xs sm:text-sm max-w-sm mb-5 leading-relaxed">
+              <p className="text-muted-foreground text-xs sm:text-sm max-w-sm mb-4 leading-relaxed">
                 The premier enterprise platform for asset tracking, gauge calibration management, and ISO compliance automation.
               </p>
+              <div className="flex items-center gap-2 text-xs sm:text-sm text-muted-foreground mb-4">
+                <Mail className="h-4 w-4 text-primary shrink-0" />
+                <span>Contact:</span>
+                <a
+                  href="mailto:kannan@iviewsense.com"
+                  className="font-medium text-foreground hover:text-primary transition-colors underline-offset-4 hover:underline"
+                >
+                  kannan@iviewsense.com
+                </a>
+              </div>
               <div className="flex items-center gap-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 px-3 py-1 rounded-full w-fit border border-emerald-500/20">
                 <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                 All Systems Operational (99.98% Uptime)
@@ -1067,7 +1175,15 @@ export default function Index() {
                 <li><Link to="/login" className="hover:text-primary transition-colors">About Us</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Customer Stories</Link></li>
                 <li><Link to="/login" className="hover:text-primary transition-colors">Security &amp; Trust</Link></li>
-                <li><Link to="/login" className="hover:text-primary transition-colors">Contact Support</Link></li>
+                <li>
+                  <a
+                    href="mailto:kannan@iviewsense.com?subject=Gaugemaster%20Support%20Inquiry"
+                    className="hover:text-primary transition-colors flex items-center gap-1.5"
+                  >
+                    <Mail className="h-3.5 w-3.5 text-primary" />
+                    <span>kannan@iviewsense.com</span>
+                  </a>
+                </li>
               </ul>
             </div>
           </div>

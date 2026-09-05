@@ -37,50 +37,61 @@ export function saveStoredGeminiApiKey(key: string): void {
 
 const SYSTEM_PROMPT = `
 You are an expert Metrology and Calibration Template Designer for ISO/IEC 17025 accredited laboratories.
-Your task is to analyze the provided calibration sheet (from an Image, Drawing, or Excel data) and generate a complete, production-ready Visual Canvas Template JSON.
+Your task is to analyze the provided calibration sheet (from an Image, Drawing, or Excel data) and generate a complete, high-precision, production-ready Visual Canvas Template JSON.
 
-CRITICAL: Return ONLY valid, pure JSON without any comments, markdown formatting, explanations, or code blocks.
+CRITICAL INSTRUCTIONS & STRICT FIDELITY:
+1. Return ONLY valid, pure JSON without any comments, markdown formatting, explanations, or code blocks.
+2. STRICT FIDELITY - EXTRACT ONLY WHAT IS IN THE DOCUMENT:
+   - Extract ONLY the tables, sections, and text notes that are ACTUALLY visible in the uploaded image or document.
+   - NEVER invent, hallucinate, or add tables (such as Acceptance Criteria, Flatness of the anvils, Parallelism of anvils, etc.) if they do NOT exist in the uploaded sheet.
+   - If the uploaded sheet contains ONLY ONE table (e.g. Instrumental Error of Depth Measurement, Caliper Jaws, or Test Points), output ONLY that single table!
+   - Do NOT generate an Acceptance Criteria table unless an acceptance criteria or permissible error table is explicitly drawn or listed on the sheet.
+3. SIDE-BY-SIDE TABLES:
+   - ONLY when two or more tables are visibly placed horizontally side-by-side in the document (such as "Flatness of the anvils" and "Parallelism of anvils", or "Go / No-Go" dual inspection tables), place them inside a "split_row" block with "columnsCount": 2, "columnRatio": "50/50", and put each table inside "children".
+   - If the document has only one table, or tables stacked vertically, do NOT use split_row.
+4. ACCEPTANCE CRITERIA TABLES:
+   - ONLY when the document explicitly displays an "Acceptance critiria", "Acceptance Criteria", "Permissible Error", or reference tolerance matrix table, generate it as a "matrix_table" block with its exact columns and rows.
+   - If the document does NOT contain an acceptance criteria table, DO NOT generate any matrix_table!
+5. MULTI-TRIAL READINGS & FORMULAS:
+   - When a table has repeat measurement trial columns (e.g. "1", "2", "3", "4", "5"), define them as type "trial" with IDs "t1", "t2", "t3", "t4", "t5".
+   - If there is an "Avg" column, use type "formula" with formula "AVERAGE(t1,t2,t3,t4,t5)".
+   - For "Error", use type "formula" with formula "avg - nominal" (or "reading - nominal" for single reading).
+   - For "Judgement" or "Judge.", use type "status" and formula "IF(ABS(error)<=tolerance,'PASS','FAIL')".
+6. EXACT NUMERICAL ACCURACY:
+   - Extract every nominal dimension (e.g. 0.00, 20.00, 50.00, 100.00, 130.00, 150.00, 200.00, 250.00, 300.00 or 127.510, etc.) exactly as written without truncation.
+   - Detect decimal precision from the numbers (e.g. 2 decimals for 0.00, 3 decimals for 127.510).
+7. FOOTER NOTES:
+   - Preserve any notes below tables (e.g. expanded uncertainty notes, equipment used, or inspection conditions) in the table's "footerNote".
 
-The output JSON structure MUST match this exact schema:
+OUTPUT JSON SCHEMA:
 {
-  "name": "Template Name (e.g. Vernier Caliper IS 3651 or Plug Gauge ISO 1502)",
-  "description": "Concise description of calibration features, jaws, or thread specs",
-  "instrumentType": "Vernier Caliper",
+  "name": "Instrument / Test Name from Document",
+  "description": "Concise description of the calibration inspection extracted from the sheet",
+  "instrumentType": "Identified Instrument Type",
   "defaultUnit": "mm",
-  "defaultTolerance": 0.02,
-  "decimalPlaces": 3,
-  "acceptanceCriteria": {
-    "enabled": true,
-    "type": "absolute",
-    "value": 0.02
-  },
+  "defaultTolerance": 0.01,
+  "decimalPlaces": 2,
   "blocks": [
-    {
-      "id": "note_1",
-      "type": "text_block",
-      "content": "All measuring faces and jaws are verified free from dents, corrosion, and physical damage.",
-      "style": "callout"
-    },
     {
       "id": "table_1",
       "type": "table_grid",
-      "title": "Calibration of External Jaws / Main Specification",
+      "title": "Title as written on the sheet",
       "width": "100%",
       "unit": "mm",
-      "tolerance": 0.02,
-      "decimal_places": 3,
+      "tolerance": 0.01,
+      "decimal_places": 2,
       "columns": [
-        { "id": "point_number", "label": "Sl.No.", "type": "nominal", "width": "8%" },
-        { "id": "nominal", "label": "Std. Spec", "type": "nominal", "width": "22%" },
-        { "id": "reading", "label": "Actual Reading", "type": "reading", "width": "25%" },
-        { "id": "error", "label": "Error", "type": "formula", "formula": "reading - nominal", "width": "25%" },
-        { "id": "status", "label": "Judgement", "type": "status", "formula": "IF(ABS(error)<=tolerance,'PASS','FAIL')", "width": "20%" }
+        { "id": "point_number", "label": "Sl.No.", "type": "nominal", "width": "10%" },
+        { "id": "nominal", "label": "SLIP SIZE / Nominal", "type": "nominal", "width": "25%" },
+        { "id": "reading", "label": "OBSERVED READING / Actual", "type": "reading", "width": "25%" },
+        { "id": "error", "label": "ERROR", "type": "formula", "formula": "reading - nominal", "width": "20%" },
+        { "id": "status", "label": "JUDGEMENT", "type": "status", "formula": "IF(ABS(error)<=tolerance,'PASS','FAIL')", "width": "20%" }
       ],
       "rows": [
-        { "point_number": 1, "nominal": 10.0, "tolerance": 0.02, "unit": "mm" },
-        { "point_number": 2, "nominal": 20.0, "tolerance": 0.02, "unit": "mm" }
+        { "point_number": 1, "nominal": 0.0, "unit": "mm" },
+        { "point_number": 2, "nominal": 20.0, "unit": "mm" }
       ],
-      "footerNote": "Measured using calibrated length masters / slip gauges."
+      "footerNote": "EXPANDED UNCERTAINTY : ±13.0µm ( The uncertainty of measurement is expressed at 95.45% Confidence with coverage factor K-2)"
     }
   ]
 }
@@ -106,11 +117,10 @@ function fileToBase64(file: File): Promise<string> {
  * Fallback static model list if dynamic discovery is unavailable
  */
 const DEFAULT_CANDIDATE_MODELS = [
-  "gemini-2.5-flash",
   "gemini-2.0-flash",
   "gemini-1.5-flash",
-  "gemini-2.5-pro",
   "gemini-1.5-pro",
+  "gemini-2.0-pro-exp-02-05",
 ];
 
 /**
@@ -132,18 +142,17 @@ async function discoverUsableModels(apiKey: string): Promise<string[]> {
       });
 
       if (suitable.length > 0) {
-        // Prioritize: flash models (2.5-flash, 2.0-flash, 1.5-flash) > pro models > others
+        // Prioritize: flash models (2.0-flash, 1.5-flash) > pro models > others
         const sorted = [...suitable].sort((a, b) => {
           const score = (n: string) => {
             const low = n.toLowerCase();
-            if (low.includes("flash") && low.includes("2.5")) return 1;
-            if (low.includes("flash") && low.includes("2.0")) return 2;
-            if (low.includes("flash") && low.includes("1.5")) return 3;
-            if (low.includes("flash")) return 4;
-            if (low.includes("pro") && low.includes("2.5")) return 5;
-            if (low.includes("pro") && low.includes("1.5")) return 6;
-            if (low.includes("pro")) return 7;
-            return 8;
+            if (low.includes("flash") && low.includes("2.0")) return 1;
+            if (low.includes("flash") && low.includes("1.5")) return 2;
+            if (low.includes("flash")) return 3;
+            if (low.includes("pro") && low.includes("2.0")) return 4;
+            if (low.includes("pro") && low.includes("1.5")) return 5;
+            if (low.includes("pro")) return 6;
+            return 7;
           };
           return score(a) - score(b);
         });
@@ -198,41 +207,222 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     description: parsed.description || "Auto-generated from uploaded document",
     instrumentType: parsed.instrumentType || "Standard Instrument",
     defaultUnit: parsed.defaultUnit || "mm",
-    defaultTolerance: typeof parsed.defaultTolerance === "number" ? parsed.defaultTolerance : 0.01,
+    defaultTolerance: typeof parsed.defaultTolerance === "number" ? parsed.defaultTolerance : 0.005,
     decimalPlaces: typeof parsed.decimalPlaces === "number" ? parsed.decimalPlaces : 3,
     acceptanceCriteria: parsed.acceptanceCriteria,
     blocks: Array.isArray(parsed.blocks) && parsed.blocks.length > 0 ? parsed.blocks : [],
   };
 
-  result.blocks = result.blocks.map((block, idx) => {
-    const bId = block.id || `block_${Date.now()}_${idx}`;
-    if (block.type === "table_grid") {
-      const tbl = block as TableGridBlock;
+  // Helper to sanitize table_grid block
+  const sanitizeTableGrid = (tbl: TableGridBlock, fallbackId: string): TableGridBlock => {
+    // Normalise columns
+    let cols = (tbl.columns || []).map((c, cIdx) => {
+      let colType = c.type;
+      let label = c.label || `Column ${cIdx + 1}`;
+      let colId = c.id || `col_${cIdx}`;
+
+      // Recognize trial columns "1", "2", "3", "4", "5"
+      if (/^[1-5]$/.test(label.trim())) {
+        colType = "trial";
+        colId = `t${label.trim()}`;
+      } else if (label.toLowerCase() === "avg" || label.toLowerCase() === "average") {
+        colType = "formula";
+        colId = "avg";
+      } else if (label.toLowerCase() === "error") {
+        colType = "formula";
+        colId = "error";
+      } else if (label.toLowerCase().includes("judge") || label.toLowerCase() === "status") {
+        colType = "status";
+        colId = "status";
+      }
+
       return {
-        ...tbl,
-        id: bId,
-        orientation: tbl.orientation || "auto",
-        decimal_places: tbl.decimal_places ?? result.decimalPlaces,
-        unit: tbl.unit ?? result.defaultUnit,
-        tolerance: tbl.tolerance ?? result.defaultTolerance,
-        columns:
-          tbl.columns?.map((c, cIdx) => ({
+        ...c,
+        id: colId,
+        label,
+        type: colType || (c.formula ? "formula" : "reading"),
+      };
+    });
+
+    // Check if table has trials t1..t5 and ensure formula for avg and error
+    const hasTrials = cols.some((c) => c.type === "trial");
+    if (hasTrials) {
+      const trialIds = cols.filter((c) => c.type === "trial").map((c) => c.id);
+      cols = cols.map((c) => {
+        if (c.id === "avg" || c.label.toLowerCase() === "avg") {
+          return {
             ...c,
-            id: c.id || `col_${cIdx}`,
-            label: c.label || `Column ${cIdx + 1}`,
-            type: c.type || "reading",
-          })) || [],
-        rows:
-          tbl.rows?.map((r, rIdx) => ({
-            ...r,
-            point_number: r.point_number ?? rIdx + 1,
-            nominal: typeof r.nominal === "number" ? r.nominal : 0,
-          })) || [],
+            type: "formula",
+            formula: c.formula || `AVERAGE(${trialIds.join(",")})`,
+          };
+        }
+        if (c.id === "error" || c.label.toLowerCase() === "error") {
+          return {
+            ...c,
+            type: "formula",
+            formula: c.formula || "avg - nominal",
+          };
+        }
+        if (c.id === "status" || c.type === "status") {
+          return {
+            ...c,
+            type: "status",
+            formula: c.formula || `IF(ABS(error)<=${tbl.tolerance ?? result.defaultTolerance},'PASS','FAIL')`,
+          };
+        }
+        return c;
+      });
+    }
+
+    // Check for Parallelism table and ensure Corner descriptions
+    const isParallelism = (tbl.title || "").toLowerCase().includes("parallelism");
+    let rows = (tbl.rows || []).map((r, rIdx) => {
+      let desc = r.description;
+      if (isParallelism && (!desc || desc === "0" || desc === "0.0" || typeof desc === "number")) {
+        desc = `Corner ${rIdx + 1}`;
+      }
+      return {
+        ...r,
+        point_number: r.point_number ?? rIdx + 1,
+        nominal: typeof r.nominal === "number" ? r.nominal : 0,
+        description: desc,
+      };
+    });
+
+    // If Parallelism table has 4 rows, ensure position column exists
+    if (isParallelism && !cols.some((c) => c.id === "description")) {
+      cols.unshift({
+        id: "description",
+        label: "Position",
+        type: "text",
+        width: "28%",
+      });
+    }
+
+    let footerNote = tbl.footerNote;
+    if (isParallelism && !footerNote) {
+      footerNote = "Measuring anvil should be free from dent and damages.";
+    }
+
+    return {
+      ...tbl,
+      id: tbl.id || fallbackId,
+      type: "table_grid",
+      orientation: tbl.orientation || "auto",
+      decimal_places: tbl.decimal_places ?? result.decimalPlaces,
+      unit: tbl.unit ?? result.defaultUnit,
+      tolerance: tbl.tolerance ?? result.defaultTolerance,
+      columns: cols,
+      rows,
+      footerNote,
+    };
+  };
+
+  // Helper to sanitize matrix_table block
+  const sanitizeMatrixTable = (mt: MatrixTableBlock, fallbackId: string): MatrixTableBlock => {
+    const rawHeaders = Array.isArray(mt.headers) ? mt.headers : [];
+    const headers = rawHeaders.length > 0
+      ? rawHeaders.map((hRow) =>
+          Array.isArray(hRow)
+            ? hRow.map((cell: any) =>
+                typeof cell === "string" ? { text: cell } : { text: cell?.text || String(cell || "") }
+              )
+            : [{ text: "Sl.No." }, { text: "Actual mesured" }, { text: "Error" }]
+        )
+      : [
+          [
+            { text: "Sl.No." },
+            { text: "Actual mesured" },
+            { text: "Error" },
+          ],
+        ];
+
+    return {
+      ...mt,
+      id: mt.id || fallbackId,
+      type: "matrix_table",
+      title: mt.title || "Acceptance critiria",
+      headers,
+      rows: Array.isArray(mt.rows) ? mt.rows : [],
+    };
+  };
+
+  // Process and sanitize all raw blocks
+  let processedBlocks: CanvasBlock[] = result.blocks.map((block: any, idx) => {
+    const bId = block.id || `block_${Date.now()}_${idx}`;
+
+    if (block.type === "table_grid") {
+      return sanitizeTableGrid(block as TableGridBlock, bId);
+    }
+
+    if (block.type === "split_row") {
+      const split = block as SplitRowBlock;
+      return {
+        ...split,
+        id: bId,
+        type: "split_row",
+        columnsCount: split.columnsCount || 2,
+        columnRatio: split.columnRatio || "50/50",
+        children: (split.children || []).map((child: any, cIdx) => {
+          const cId = child.id || `${bId}_child_${cIdx}`;
+          if (child.type === "table_grid") {
+            return sanitizeTableGrid(child as TableGridBlock, cId);
+          }
+          if (child.type === "matrix_table") {
+            return sanitizeMatrixTable(child as MatrixTableBlock, cId);
+          }
+          return { ...child, id: cId };
+        }),
       };
     }
+
+    if (block.type === "matrix_table") {
+      return sanitizeMatrixTable(block as MatrixTableBlock, bId);
+    }
+
     return { ...block, id: bId };
   });
 
+  // Heuristic A: Auto-bundle consecutive side-by-side tables (e.g. Flatness & Parallelism) into a split_row
+  const consolidatedBlocks: CanvasBlock[] = [];
+  for (let i = 0; i < processedBlocks.length; i++) {
+    const current = processedBlocks[i];
+    const next = processedBlocks[i + 1];
+
+    if (
+      current.type === "table_grid" &&
+      next &&
+      next.type === "table_grid"
+    ) {
+      const title1 = (current as TableGridBlock).title?.toLowerCase() || "";
+      const title2 = (next as TableGridBlock).title?.toLowerCase() || "";
+
+      const isFlatnessAndParallel =
+        (title1.includes("flatness") && title2.includes("parallel")) ||
+        (title1.includes("parallel") && title2.includes("flatness"));
+
+      const isBothHalfWidth =
+        (current as TableGridBlock).width === "50%" && (next as TableGridBlock).width === "50%";
+
+      if (isFlatnessAndParallel || isBothHalfWidth) {
+        consolidatedBlocks.push({
+          id: `split_row_${Date.now()}_${i}`,
+          type: "split_row",
+          columnsCount: 2,
+          columnRatio: "50/50",
+          children: [
+            { ...(current as TableGridBlock), width: "50%" },
+            { ...(next as TableGridBlock), width: "50%" },
+          ],
+        });
+        i++; // Skip the next block since it was bundled
+        continue;
+      }
+    }
+
+    consolidatedBlocks.push(current);
+  }
+  result.blocks = consolidatedBlocks;
   return result;
 }
 
