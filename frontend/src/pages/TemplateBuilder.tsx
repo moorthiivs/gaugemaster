@@ -234,17 +234,18 @@ export default function TemplateBuilder() {
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-3 flex-1 min-w-[240px] max-w-xl">
-              <Button
-                variant="ghost"
-                size="sm"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={toggleSelectAll}
-                className="text-xs gap-1.5 shrink-0"
+                className="inline-flex items-center justify-center rounded-md text-xs font-medium transition-colors hover:bg-accent hover:text-accent-foreground h-8 px-3 gap-1.5 shrink-0 cursor-pointer select-none"
               >
                 <Checkbox
                   checked={selectedIds.length > 0 && selectedIds.length === filteredTemplates.length}
+                  onCheckedChange={toggleSelectAll}
                 />
-                Select All ({selectedIds.length}/{filteredTemplates.length})
-              </Button>
+                <span>Select All ({selectedIds.length}/{filteredTemplates.length})</span>
+              </div>
 
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

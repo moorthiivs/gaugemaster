@@ -941,26 +941,45 @@ export function CanvasTemplateEditor({
                       </div>
                       <table className="w-full border-collapse text-[10px] text-center border-black">
                         <thead>
-                          {block.headers.map((hRow, hIdx) => (
-                            <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
-                              {hRow.map((cell, cIdx) => (
-                                <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5 font-bold border border-black">
-                                  {cell.text}
-                                </th>
-                              ))}
-                            </tr>
-                          ))}
+                          {(block.headers || []).map((hRow, hIdx) => {
+                            const cells: any[] = Array.isArray(hRow)
+                              ? hRow
+                              : (hRow && typeof hRow === "object")
+                                ? [hRow]
+                                : [{ text: String(hRow || "") }];
+                            return (
+                              <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
+                                {cells.map((cell: any, cIdx: number) => {
+                                  const cellText = typeof cell === "object" && cell !== null ? (cell.text ?? "") : String(cell ?? "");
+                                  const colSpan = typeof cell === "object" && cell !== null ? cell.colSpan : undefined;
+                                  const rowSpan = typeof cell === "object" && cell !== null ? cell.rowSpan : undefined;
+                                  return (
+                                    <th key={cIdx} colSpan={colSpan} rowSpan={rowSpan} className="py-1 px-1.5 font-bold border border-black">
+                                      {cellText}
+                                    </th>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
                         </thead>
                         <tbody>
-                          {block.rows.map((r, rIdx) => (
-                            <tr key={rIdx} className="hover:bg-slate-50/50">
-                              {r.map((val, cIdx) => (
-                                <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
-                                  {val}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
+                          {(block.rows || []).map((r: any, rIdx: number) => {
+                            const cells: any[] = Array.isArray(r)
+                              ? r
+                              : (r && typeof r === "object")
+                                ? Object.values(r)
+                                : [r];
+                            return (
+                              <tr key={rIdx} className="hover:bg-slate-50/50">
+                                {cells.map((val: any, cIdx: number) => (
+                                  <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
+                                    {typeof val === "object" && val !== null ? (val.text ?? JSON.stringify(val)) : String(val ?? "")}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

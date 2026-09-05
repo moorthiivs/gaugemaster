@@ -142,17 +142,19 @@ async function discoverUsableModels(apiKey: string): Promise<string[]> {
       });
 
       if (suitable.length > 0) {
-        // Prioritize: flash models (2.0-flash, 1.5-flash) > pro models > others
+        // Prioritize: verified production multimodal models first, avoid unreleased 404s (e.g. 2.5)
         const sorted = [...suitable].sort((a, b) => {
           const score = (n: string) => {
             const low = n.toLowerCase();
-            if (low.includes("flash") && low.includes("2.0")) return 1;
-            if (low.includes("flash") && low.includes("1.5")) return 2;
-            if (low.includes("flash")) return 3;
-            if (low.includes("pro") && low.includes("2.0")) return 4;
-            if (low.includes("pro") && low.includes("1.5")) return 5;
-            if (low.includes("pro")) return 6;
-            return 7;
+            if (low === "gemini-2.0-flash") return 1;
+            if (low === "gemini-1.5-flash") return 2;
+            if (low === "gemini-1.5-pro") return 3;
+            if (low === "gemini-2.0-flash-lite") return 4;
+            if (low.includes("flash") && low.includes("2.0")) return 5;
+            if (low.includes("flash") && low.includes("1.5")) return 6;
+            if (low.includes("flash") && !low.includes("2.5")) return 7;
+            if (low.includes("pro") && !low.includes("2.5")) return 8;
+            return 99; // Demote experimental / unreleased models like 2.5
           };
           return score(a) - score(b);
         });
@@ -337,13 +339,28 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
           ],
         ];
 
+    const rawRows = Array.isArray(mt.rows) ? mt.rows : [];
+    const rows: string[][] = rawRows.map((r: any) => {
+      if (Array.isArray(r)) {
+        return r.map((cell: any) =>
+          cell !== null && typeof cell === "object" ? cell.text || JSON.stringify(cell) : String(cell ?? "")
+        );
+      } else if (r && typeof r === "object") {
+        return Object.values(r).map((cell: any) =>
+          cell !== null && typeof cell === "object" ? cell.text || JSON.stringify(cell) : String(cell ?? "")
+        );
+      } else {
+        return [String(r ?? "")];
+      }
+    });
+
     return {
       ...mt,
       id: mt.id || fallbackId,
       type: "matrix_table",
       title: mt.title || "Acceptance critiria",
       headers,
-      rows: Array.isArray(mt.rows) ? mt.rows : [],
+      rows,
     };
   };
 

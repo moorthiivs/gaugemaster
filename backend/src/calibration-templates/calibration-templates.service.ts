@@ -74,6 +74,9 @@ export class CalibrationTemplatesService {
   }
 
   async findOne(id: string): Promise<CalibrationTemplate> {
+    if (!id || id === 'undefined' || id === 'null' || !/^[0-9a-fA-F-]{36}$/.test(id)) {
+      throw new NotFoundException(`Calibration template with ID ${id} not found`);
+    }
     const template = await this.repository.findOne({ where: { id } });
     if (!template) {
       throw new NotFoundException(`Calibration template with ID ${id} not found`);
