@@ -425,9 +425,10 @@ export function TrialRunModal({
                                     {tbl.rows.map((row, rIdx) => {
                                       const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
                                       if (col.type === "nominal") {
+                                        const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
                                         return (
                                           <td key={rIdx} className="py-1 px-1.5 font-bold font-mono text-foreground">
-                                            {Number(row.nominal ?? 0).toFixed(dec)}
+                                            {typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}
                                           </td>
                                         );
                                       }
@@ -498,7 +499,8 @@ export function TrialRunModal({
                                         return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
                                       }
                                       if (col.type === "nominal") {
-                                        return <td key={col.id} className="py-1 px-2 font-bold font-mono">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                                        const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
+                                        return <td key={col.id} className="py-1 px-2 font-bold font-mono">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
                                       }
                                       if (col.type === "reading" || col.type === "trial") {
                                         return (

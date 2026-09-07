@@ -42,6 +42,7 @@ import { CalibrationTemplate } from "@/types/template";
 import { getTemplates, createTemplate, deleteTemplate } from "@/lib/templateActions";
 import { TemplateExportModal } from "@/components/calibration/template-management/TemplateExportModal";
 import { TemplateImportModal } from "@/components/calibration/template-management/TemplateImportModal";
+import { TemplateBulkDeleteModal } from "@/components/calibration/template-management/TemplateBulkDeleteModal";
 
 const TYPE_ICONS: Record<string, any> = {
   dimensional: Ruler,
@@ -71,6 +72,7 @@ export default function TemplateBuilder() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [bulkDeleteModalOpen, setBulkDeleteModalOpen] = useState(false);
 
   // Delete Dialog State
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -192,6 +194,18 @@ export default function TemplateBuilder() {
             Export Packages {selectedIds.length > 0 && `(${selectedIds.length})`}
           </Button>
 
+          {canAccess("templates", "delete") && selectedIds.length > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setBulkDeleteModalOpen(true)}
+              className="gap-1.5 text-xs shadow-sm animate-in fade-in"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected ({selectedIds.length})
+            </Button>
+          )}
+
           {canAccess("templates", "create") && (
             <Button onClick={handleOpenNewModal} size="sm" className="gap-2 shadow-sm text-xs">
               <PlusCircle className="w-4 h-4" />
@@ -246,6 +260,31 @@ export default function TemplateBuilder() {
                 />
                 <span>Select All ({selectedIds.length}/{filteredTemplates.length})</span>
               </div>
+
+              {selectedIds.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-muted/60 px-2 py-1 rounded-md border text-xs shrink-0 animate-in fade-in">
+                  <span className="font-semibold text-primary">{selectedIds.length} selected</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedIds([])}
+                    className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    Clear
+                  </Button>
+                  {canAccess("templates", "delete") && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setBulkDeleteModalOpen(true)}
+                      className="h-6 px-2 text-[11px] gap-1 shadow-none"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Bulk Delete
+                    </Button>
+                  )}
+                </div>
+              )}
 
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -440,6 +479,18 @@ export default function TemplateBuilder() {
         userId={user?.id}
         userName={user?.name}
         onSuccess={fetchTemplates}
+      />
+
+      {/* Bulk Delete Modal */}
+      <TemplateBulkDeleteModal
+        open={bulkDeleteModalOpen}
+        onOpenChange={setBulkDeleteModalOpen}
+        selectedTemplates={selectedTemplatesList}
+        isSuperAdmin={user?.isSuperAdmin}
+        onSuccess={() => {
+          setSelectedIds([]);
+          fetchTemplates();
+        }}
       />
     </div>
   );

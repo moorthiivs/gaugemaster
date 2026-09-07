@@ -37,61 +37,85 @@ export function saveStoredGeminiApiKey(key: string): void {
 
 const SYSTEM_PROMPT = `
 You are an expert Metrology and Calibration Template Designer for ISO/IEC 17025 accredited laboratories.
-Your task is to analyze the provided calibration sheet (from an Image, Drawing, or Excel data) and generate a complete, high-precision, production-ready Visual Canvas Template JSON.
+Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and generate a complete, high-precision, production-ready Visual Canvas Template JSON according to the schema.
 
-CRITICAL INSTRUCTIONS & STRICT FIDELITY:
-1. Return ONLY valid, pure JSON without any comments, markdown formatting, explanations, or code blocks.
-2. STRICT FIDELITY - EXTRACT ONLY WHAT IS IN THE DOCUMENT:
-   - Extract ONLY the tables, sections, and text notes that are ACTUALLY visible in the uploaded image or document.
-   - NEVER invent, hallucinate, or add tables (such as Acceptance Criteria, Flatness of the anvils, Parallelism of anvils, etc.) if they do NOT exist in the uploaded sheet.
-   - If the uploaded sheet contains ONLY ONE table (e.g. Instrumental Error of Depth Measurement, Caliper Jaws, or Test Points), output ONLY that single table!
-   - Do NOT generate an Acceptance Criteria table unless an acceptance criteria or permissible error table is explicitly drawn or listed on the sheet.
-3. SIDE-BY-SIDE TABLES:
-   - ONLY when two or more tables are visibly placed horizontally side-by-side in the document (such as "Flatness of the anvils" and "Parallelism of anvils", or "Go / No-Go" dual inspection tables), place them inside a "split_row" block with "columnsCount": 2, "columnRatio": "50/50", and put each table inside "children".
-   - If the document has only one table, or tables stacked vertically, do NOT use split_row.
-4. ACCEPTANCE CRITERIA TABLES:
-   - ONLY when the document explicitly displays an "Acceptance critiria", "Acceptance Criteria", "Permissible Error", or reference tolerance matrix table, generate it as a "matrix_table" block with its exact columns and rows.
-   - If the document does NOT contain an acceptance criteria table, DO NOT generate any matrix_table!
-5. MULTI-TRIAL READINGS & FORMULAS:
-   - When a table has repeat measurement trial columns (e.g. "1", "2", "3", "4", "5"), define them as type "trial" with IDs "t1", "t2", "t3", "t4", "t5".
-   - If there is an "Avg" column, use type "formula" with formula "AVERAGE(t1,t2,t3,t4,t5)".
-   - For "Error", use type "formula" with formula "avg - nominal" (or "reading - nominal" for single reading).
-   - For "Judgement" or "Judge.", use type "status" and formula "IF(ABS(error)<=tolerance,'PASS','FAIL')".
-6. EXACT NUMERICAL ACCURACY:
-   - Extract every nominal dimension (e.g. 0.00, 20.00, 50.00, 100.00, 130.00, 150.00, 200.00, 250.00, 300.00 or 127.510, etc.) exactly as written without truncation.
-   - Detect decimal precision from the numbers (e.g. 2 decimals for 0.00, 3 decimals for 127.510).
-7. FOOTER NOTES:
-   - Preserve any notes below tables (e.g. expanded uncertainty notes, equipment used, or inspection conditions) in the table's "footerNote".
+CRITICAL EXTRACTION & FIDELITY RULES:
+1. PURE JSON OUTPUT:
+   - Return ONLY valid, pure JSON without any comments, markdown fences, explanations, or extraneous text.
+2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM:
+   - Accurately identify the core calibration results tables (e.g. Section 10 "Results" or error test tables).
+   - In accredited certificates, test results may cover multiple serial numbers / units (for example, 3 Current Transformers tested in one report: OC-3271/1/11/11, OC-3271/1/17/11, OC-3271/1/16/11). In this case, create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
+   - If the certificate tests a single instrument, extract its test table(s).
+3. MULTI-DOMAIN SUPPORT (ELECTRICAL, PRESSURE, TEMPERATURE, METROLOGY, DIMENSIONAL):
+   - Do NOT assume every template is a micrometer or caliper!
+   - For electrical instruments (Current Transformers, Voltage Transformers, Energy Meters, Multimeters): Extract columns such as Set Burden, Load %, Ratio Error %, Allowed Limits %, Expanded Uncertainty %, Coverage Factor (k), Phase Error (Min), Allowed Limits (Min), etc.
+   - For pressure/temperature/torque/dimensional: Extract test points, ascending/descending readings, hysteresis, error, and permissible limits.
+4. EXACT COLUMN DEFINITIONS & DESCRIPTIVE IDs:
+   - Extract ALL table columns verbatim from the document header.
+   - Assign a clean, unique snake_case "id" to each column (e.g. "point_number", "set_burden", "load_percent", "ratio_error", "allowed_limits_ratio", "uncertainty_ratio", "coverage_factor_ratio", "phase_error", "allowed_limits_phase", "uncertainty_phase", "coverage_factor_phase").
+   - Column types:
+     * "nominal": for nominal test points, load %, target values, slip sizes, set points.
+     * "reading": for observed readings, measured errors (ratio error, phase error), actual values.
+     * "tolerance": for allowed limits, permissible tolerances, specification limits.
+     * "text": for burden ratings ("100 % 10VA", "25 % 2.5VA"), reference standards, coverage factor labels, or non-numeric strings.
+     * "trial": for repeat measurement trials ("t1", "t2", etc.).
+     * "formula": for calculated error ("reading - nominal", "avg - nominal") or average ("AVERAGE(t1,t2,t3)").
+     * "status": for Pass/Fail judgements.
+5. STRICT ROW-TO-COLUMN BINDING (CRITICAL):
+   - For EVERY row in "rows", create an object containing:
+     * "point_number": 1, 2, 3...
+     * A key matching EACH column's "id" with the EXACT numeric or string value from that row in the document!
+     * DO NOT use placeholder zeroes or collapse rows into empty objects.
+     * If the table has 10 rows, output all 10 rows with their complete data!
+6. REFERENCE STANDARDS & METADATA:
+   - If reference standards used (equipment, validity, traceability) are shown, extract them into a "table_grid" block with all rows containing the actual standard name, valid date, traceability, and parameter.
+   - If environmental conditions (Temp, Humidity, Frequency) or general notes exist, include them in "footerNote" or as a "text_block".
 
 OUTPUT JSON SCHEMA:
 {
-  "name": "Instrument / Test Name from Document",
-  "description": "Concise description of the calibration inspection extracted from the sheet",
-  "instrumentType": "Identified Instrument Type",
-  "defaultUnit": "mm",
-  "defaultTolerance": 0.01,
-  "decimalPlaces": 2,
+  "name": "Instrument / Test Name (e.g. 132kV Current Transformer Calibration)",
+  "description": "Concise description of calibration procedure, standard (e.g. IS -2705 Part-II), and accuracy class",
+  "instrumentType": "Identified Instrument Type (e.g. Current Transformer)",
+  "defaultUnit": "Unit of measurement (e.g. %, mm, bar, °C, V, A)",
+  "defaultTolerance": 0.2,
+  "decimalPlaces": 3,
   "blocks": [
     {
       "id": "table_1",
       "type": "table_grid",
-      "title": "Title as written on the sheet",
+      "title": "Title from Document (e.g. Results: CT Sr. No. OC-3271/1/11/11)",
       "width": "100%",
-      "unit": "mm",
-      "tolerance": 0.01,
-      "decimal_places": 2,
+      "unit": "%",
+      "tolerance": 0.2,
+      "decimal_places": 3,
       "columns": [
-        { "id": "point_number", "label": "Sl.No.", "type": "nominal", "width": "10%" },
-        { "id": "nominal", "label": "SLIP SIZE / Nominal", "type": "nominal", "width": "25%" },
-        { "id": "reading", "label": "OBSERVED READING / Actual", "type": "reading", "width": "25%" },
-        { "id": "error", "label": "ERROR", "type": "formula", "formula": "reading - nominal", "width": "20%" },
-        { "id": "status", "label": "JUDGEMENT", "type": "status", "formula": "IF(ABS(error)<=tolerance,'PASS','FAIL')", "width": "20%" }
+        { "id": "point_number", "label": "Sl.No.", "type": "nominal", "width": "6%" },
+        { "id": "set_burden", "label": "Set Burden VA / %", "type": "text", "width": "12%" },
+        { "id": "load_pct", "label": "Load %", "type": "nominal", "width": "9%" },
+        { "id": "ratio_error", "label": "Ratio Error %", "type": "reading", "width": "10%" },
+        { "id": "allowed_limits_ratio", "label": "Allowed Limits ± %", "type": "tolerance", "width": "10%" },
+        { "id": "uncertainty_ratio", "label": "± Expanded Uncertainty %", "type": "text", "width": "11%" },
+        { "id": "coverage_factor_ratio", "label": "Coverage Factor (k)", "type": "text", "width": "9%" },
+        { "id": "phase_error", "label": "Phase Error (Min)", "type": "reading", "width": "10%" },
+        { "id": "allowed_limits_phase", "label": "Allowed Limits ± (Min)", "type": "tolerance", "width": "11%" },
+        { "id": "uncertainty_phase", "label": "± Expanded Uncertainty (Min)", "type": "text", "width": "12%" }
       ],
       "rows": [
-        { "point_number": 1, "nominal": 0.0, "unit": "mm" },
-        { "point_number": 2, "nominal": 20.0, "unit": "mm" }
+        {
+          "point_number": 1,
+          "set_burden": "100 % 10VA",
+          "load_pct": 120,
+          "nominal": 120,
+          "ratio_error": -0.05,
+          "allowed_limits_ratio": 0.20,
+          "uncertainty_ratio": "0.061",
+          "coverage_factor_ratio": "2.00",
+          "phase_error": 3.32,
+          "allowed_limits_phase": 10.00,
+          "uncertainty_phase": "2.63"
+        }
       ],
-      "footerNote": "EXPANDED UNCERTAINTY : ±13.0µm ( The uncertainty of measurement is expressed at 95.45% Confidence with coverage factor K-2)"
+      "footerNote": "Expanded uncertainty is based on combined uncertainty with coverage factor k=2 at 95% confidence level."
     }
   ]
 }
@@ -142,18 +166,22 @@ async function discoverUsableModels(apiKey: string): Promise<string[]> {
       });
 
       if (suitable.length > 0) {
-        // Prioritize: verified production multimodal models first, avoid unreleased 404s (e.g. 2.5)
+        // Prioritize: verified production multimodal models first, avoid unreleased 404s (e.g. 2.5) or overloaded alias endpoints
         const sorted = [...suitable].sort((a, b) => {
           const score = (n: string) => {
             const low = n.toLowerCase();
             if (low === "gemini-2.0-flash") return 1;
             if (low === "gemini-1.5-flash") return 2;
-            if (low === "gemini-1.5-pro") return 3;
-            if (low === "gemini-2.0-flash-lite") return 4;
-            if (low.includes("flash") && low.includes("2.0")) return 5;
-            if (low.includes("flash") && low.includes("1.5")) return 6;
-            if (low.includes("flash") && !low.includes("2.5")) return 7;
-            if (low.includes("pro") && !low.includes("2.5")) return 8;
+            if (low === "gemini-2.0-flash-001") return 3;
+            if (low === "gemini-1.5-flash-002") return 4;
+            if (low === "gemini-1.5-flash-001") return 5;
+            if (low === "gemini-1.5-pro") return 6;
+            if (low === "gemini-2.0-flash-lite") return 7;
+            if (low.includes("flash") && low.includes("2.0") && !low.includes("latest")) return 8;
+            if (low.includes("flash") && low.includes("1.5") && !low.includes("latest")) return 9;
+            if (low.includes("flash") && !low.includes("latest") && !low.includes("2.5")) return 10;
+            if (low.includes("latest")) return 30; // Deprioritize alias endpoints that frequently return 503
+            if (low.includes("pro") && !low.includes("2.5")) return 40;
             return 99; // Demote experimental / unreleased models like 2.5
           };
           return score(a) - score(b);
@@ -278,17 +306,69 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
 
     // Check for Parallelism table and ensure Corner descriptions
     const isParallelism = (tbl.title || "").toLowerCase().includes("parallelism");
-    let rows = (tbl.rows || []).map((r, rIdx) => {
-      let desc = r.description;
-      if (isParallelism && (!desc || desc === "0" || desc === "0.0" || typeof desc === "number")) {
-        desc = `Corner ${rIdx + 1}`;
-      }
-      return {
-        ...r,
-        point_number: r.point_number ?? rIdx + 1,
-        nominal: typeof r.nominal === "number" ? r.nominal : 0,
-        description: desc,
+    let rows = (tbl.rows || []).map((r: any, rIdx: number) => {
+      const rowObj: any = {
+        point_number: rIdx + 1,
       };
+
+      if (Array.isArray(r)) {
+        // Array representation: map by column index
+        cols.forEach((col, cIdx) => {
+          if (r[cIdx] !== undefined) rowObj[col.id] = r[cIdx];
+        });
+        rowObj.point_number = typeof r[0] === "number" && cols[0]?.id === "point_number" ? r[0] : rIdx + 1;
+      } else if (typeof r === "object" && r !== null) {
+        // Object representation: preserve all keys
+        Object.assign(rowObj, r);
+        rowObj.point_number = r.point_number ?? r.sl_no ?? r.sino ?? rIdx + 1;
+
+        // Build lowercase alphanumeric key map for flexible matching
+        const rawKeys = Object.keys(r);
+        const lowerKeyMap = new Map<string, string>();
+        rawKeys.forEach((k) => lowerKeyMap.set(k.toLowerCase().replace(/[^a-z0-9]/g, ""), k));
+
+        cols.forEach((col, cIdx) => {
+          if (rowObj[col.id] !== undefined) return;
+
+          // 1. Normalized label match (e.g. "Load %" -> "load")
+          const normLabel = col.label.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const matchedKey = lowerKeyMap.get(normLabel);
+          if (matchedKey && r[matchedKey] !== undefined) {
+            rowObj[col.id] = r[matchedKey];
+            return;
+          }
+
+          // 2. Index match ("col_0", "col_1")
+          const idxKey = `col_${cIdx}`;
+          if (r[idxKey] !== undefined) {
+            rowObj[col.id] = r[idxKey];
+            return;
+          }
+
+          // 3. Common property fallbacks
+          if (col.id === "nominal" && r.nominal !== undefined) rowObj[col.id] = r.nominal;
+          if (col.id === "description" && r.description !== undefined) rowObj[col.id] = r.description;
+          if (col.id === "reading" && r.reading !== undefined) rowObj[col.id] = r.reading;
+          if (col.id === "tolerance" && r.tolerance !== undefined) rowObj[col.id] = r.tolerance;
+        });
+      }
+
+      if (isParallelism && (!rowObj.description || rowObj.description === "0" || typeof rowObj.description === "number")) {
+        rowObj.description = `Corner ${rIdx + 1}`;
+      }
+
+      // Ensure nominal has a sensible numeric value if nominal column exists or any numeric column exists
+      if (rowObj.nominal === undefined) {
+        if (typeof rowObj.load_pct === "number") rowObj.nominal = rowObj.load_pct;
+        else if (typeof rowObj.load === "number") rowObj.nominal = rowObj.load;
+        else if (typeof rowObj.load_percent === "number") rowObj.nominal = rowObj.load_percent;
+        else {
+          const numEntry = Object.entries(rowObj).find(([k, v]) => k !== "point_number" && typeof v === "number");
+          rowObj.nominal = numEntry ? (numEntry[1] as number) : 0;
+        }
+      }
+
+      return rowObj;
     });
 
     // If Parallelism table has 4 rows, ensure position column exists
@@ -597,3 +677,137 @@ Analyze the table columns, nominal test points, tolerances, units, formulas, and
   const textOutput = await executeGeminiRequest(apiKey, requestBody);
   return cleanAndParseJson(textOutput);
 }
+
+/**
+ * Generate Template from PDF Calibration Certificate / Document
+ */
+export async function generateTemplateFromPdf(
+  pdfFile: File,
+  userInstructions?: string,
+  apiKeyOverride?: string
+): Promise<GeneratedTemplateResult> {
+  const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "Google Gemini API Key is missing.\n\n" +
+      "Get a free key from https://aistudio.google.com/apikey\n" +
+      "Then enter it in the API Key field above."
+    );
+  }
+
+  const base64Data = await fileToBase64(pdfFile);
+
+  const promptText = `
+CRITICAL MULTI-PAGE CALIBRATION CERTIFICATE EXTRACTION TASK:
+Please inspect this calibration certificate / test report PDF document and extract the complete, production-ready Visual Canvas Template JSON according to the schema.
+
+STRICT ACCURACY RULES FOR THIS PDF CERTIFICATE:
+1. FOCUS ON THE CORE CALIBRATION RESULTS TABLES:
+   - Accurately identify the main calibration measurement test tables (e.g. Section 10 "Results" or error test tables).
+   - In accredited certificates, test results may cover multiple serial numbers / units (for example, 3 Current Transformers tested in one report: OC-3271/1/11/11, OC-3271/1/17/11, OC-3271/1/16/11). In this case, create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
+   - If the certificate tests a single instrument, extract its test table(s).
+2. VERBATIM COLUMN HEADERS & TYPE MAPPING:
+   - Extract every column header from the table (e.g. "Set Burden VA / %", "Load %", "Ratio Error %", "Allowed Limits ± %", "± Expanded Uncertainty %", "Coverage Factor (k)", "Phase Error (Min)", "Allowed Limits ± (Min)", "± Expanded Uncertainty (Min)", "Coverage Factor (k)").
+   - Give each column a clean, unique snake_case id (e.g. "set_burden", "load_pct", "ratio_error", "allowed_limits_ratio", "uncert_ratio", "coverage_factor_ratio", "phase_error", "allowed_limits_phase", "uncert_phase", "coverage_factor_phase").
+   - Set column types:
+     * "nominal" for test loads, nominal test points, set points.
+     * "reading" for measured errors (ratio error, phase error), observed readings, actual values.
+     * "tolerance" for allowed limits, permissible tolerances.
+     * "text" for burden ratings ("100 % 10VA", "25 % 2.5VA"), reference standards, coverage factor labels, or non-numeric strings.
+3. PRESERVE ALL ORIGINAL TABLE ROW DATA (DO NOT USE ZEROES OR PLACEHOLDERS):
+   - For every single row in the calibration table, populate the row object with the real values from the document using the column IDs as keys!
+   - Example row object:
+     {
+       "point_number": 1,
+       "set_burden": "100 % 10VA",
+       "load_pct": 120,
+       "nominal": 120,
+       "ratio_error": -0.05,
+       "allowed_limits_ratio": 0.20,
+       "uncert_ratio": "0.061",
+       "coverage_factor_ratio": "2.00",
+       "phase_error": 3.32,
+       "allowed_limits_phase": 10.00,
+       "uncert_phase": "2.63",
+       "coverage_factor_phase": "2.00"
+     }
+   - Extract ALL rows across all test conditions (e.g. 100% VA and 25% VA). Do NOT truncate rows!
+4. REFERENCE STANDARDS:
+   - If reference standards used are included, extract them into a table_grid block with their exact names, serial numbers, calibration validity dates, and traceability.
+5. INSTRUMENT DETAILS:
+   - Set "name" to the instrument name (e.g. "132kV Current Transformer Calibration"), "instrumentType" (e.g. "Current Transformer"), "defaultUnit" ("%"), "defaultTolerance" (e.g. 0.2), and decimal places (e.g. 3).
+
+${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
+`;
+
+  const requestBody = {
+    contents: [
+      {
+        parts: [
+          { text: SYSTEM_PROMPT },
+          { text: promptText },
+          {
+            inline_data: {
+              mime_type: "application/pdf",
+              data: base64Data,
+            },
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      response_mime_type: "application/json",
+      temperature: 0.1,
+    },
+  };
+
+  const textOutput = await executeGeminiRequest(apiKey, requestBody);
+  return cleanAndParseJson(textOutput);
+}
+
+/**
+ * Generate Template from Word Document (.docx / .doc extracted text and tables)
+ */
+export async function generateTemplateFromWord(
+  wordContent: string,
+  fileName: string,
+  userInstructions?: string,
+  apiKeyOverride?: string
+): Promise<GeneratedTemplateResult> {
+  const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
+  if (!apiKey) {
+    throw new Error(
+      "Google Gemini API Key is missing.\n\n" +
+      "Get a free key from https://aistudio.google.com/apikey\n" +
+      "Then enter it in the API Key field above."
+    );
+  }
+
+  const promptText = `
+Here is the text and table structure extracted from an uploaded calibration Word document (${fileName}):
+
+--- WORD DOCUMENT CONTENT START ---
+${wordContent}
+--- WORD DOCUMENT CONTENT END ---
+
+${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
+
+Analyze the calibration document, tables, measurement trials, nominal values, tolerances, units, and criteria, and convert them into the structured Visual Canvas Template JSON schema.
+`;
+
+  const requestBody = {
+    contents: [
+      {
+        parts: [{ text: SYSTEM_PROMPT }, { text: promptText }],
+      },
+    ],
+    generationConfig: {
+      response_mime_type: "application/json",
+      temperature: 0.1,
+    },
+  };
+
+  const textOutput = await executeGeminiRequest(apiKey, requestBody);
+  return cleanAndParseJson(textOutput);
+}
+

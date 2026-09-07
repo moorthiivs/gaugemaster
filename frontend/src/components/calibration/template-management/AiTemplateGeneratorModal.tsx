@@ -30,17 +30,22 @@ import {
   RotateCcw,
   Check,
   FileText,
+  FileCode,
   LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import {
   generateTemplateFromImage,
   generateTemplateFromExcel,
+  generateTemplateFromPdf,
+  generateTemplateFromWord,
   getStoredGeminiApiKey,
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
 } from "@/lib/geminiService";
+import { extractDocxTextAndTables } from "@/lib/docxExtractor";
 import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 
@@ -58,8 +63,17 @@ export function AiTemplateGeneratorModal({
   const [apiKey, setApiKey] = useState<string>(() => getStoredGeminiApiKey());
   const [showKeyInput, setShowKeyInput] = useState<boolean>(!getStoredGeminiApiKey());
   const [customInstructions, setCustomInstructions] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"image" | "excel">("image");
+  const [activeTab, setActiveTab] = useState<"pdf" | "word" | "excel" | "image">("pdf");
   const [previewMode, setPreviewMode] = useState<"sheet" | "summary">("sheet");
+
+  // PDF Upload State
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+
+  // Word Upload State
+  const [wordFile, setWordFile] = useState<File | null>(null);
+  const [wordSummary, setWordSummary] = useState<string | null>(null);
+  const wordInputRef = useRef<HTMLInputElement>(null);
 
   // Image Upload State
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -95,9 +109,45 @@ export function AiTemplateGeneratorModal({
     reader.readAsDataURL(file);
   };
 
-  // Process selected Excel file
+  // Process selected PDF file
+  const handlePdfSelect = (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please select a valid PDF file (.pdf)");
+      return;
+    }
+    setPdfFile(file);
+    toast.success(`Loaded PDF document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+  };
+
+  // Process selected Word file (.docx, .doc)
+  const handleWordSelect = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".docx") && !lowerName.endsWith(".doc")) {
+      toast.error("Please select a valid Word document (.docx, .doc)");
+      return;
+    }
+    setWordFile(file);
+
+    try {
+      if (lowerName.endsWith(".docx")) {
+        const extracted = await extractDocxTextAndTables(file);
+        setWordSummary(extracted);
+        toast.success(`Extracted content from Word document: ${file.name}`);
+      } else {
+        setWordSummary(`File name: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+        toast.success(`Loaded Word document: ${file.name}`);
+      }
+    } catch (err: any) {
+      console.warn("Word parse error", err);
+      setWordSummary(`File: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`);
+      toast.warning("Loaded Word document. AI will attempt to generate from available file metadata.");
+    }
+  };
+
+  // Process selected Excel file (.xlsx, .xls, .csv)
   const handleExcelSelect = async (file: File) => {
-    if (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls") && !file.name.endsWith(".csv")) {
+    const fileNameLower = file.name.toLowerCase();
+    if (!fileNameLower.endsWith(".xlsx") && !fileNameLower.endsWith(".xls") && !fileNameLower.endsWith(".csv")) {
       toast.error("Please select a valid Excel or CSV file (.xlsx, .xls, .csv)");
       return;
     }
@@ -105,26 +155,66 @@ export function AiTemplateGeneratorModal({
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(buffer);
-
       let textOutput = "";
-      workbook.eachSheet((worksheet) => {
-        textOutput += `Sheet: ${worksheet.name}\n`;
-        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-          const rowValues = Array.isArray(row.values)
-            ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
-            : "";
-          textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+      let sheetCount = 0;
+
+      if (fileNameLower.endsWith(".csv")) {
+        const text = await file.text();
+        textOutput = `Sheet: CSV\n${text}\n`;
+        sheetCount = 1;
+      } else {
+        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx
+        const workbook = XLSX.read(buffer, { type: "array" });
+        sheetCount = workbook.SheetNames.length;
+
+        workbook.SheetNames.forEach((sheetName) => {
+          const worksheet = workbook.Sheets[sheetName];
+          if (!worksheet) return;
+          textOutput += `Sheet: ${sheetName}\n`;
+          const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+          rows.forEach((row, rowIdx) => {
+            if (row && row.some((cell) => cell !== "" && cell !== null && cell !== undefined)) {
+              textOutput += `Row ${rowIdx + 1}: ${row.map((c) => String(c)).join(" | ")}\n`;
+            }
+          });
+          textOutput += "\n";
         });
-        textOutput += "\n";
-      });
+      }
+
+      if (!textOutput.trim()) {
+        textOutput = `File: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`;
+      }
 
       setExcelSummary(textOutput);
-      toast.success(`Loaded Excel file (${workbook.worksheets.length} sheets)`);
+      toast.success(`Loaded Excel file (${sheetCount} sheet${sheetCount > 1 ? "s" : ""})`);
     } catch (err: any) {
-      console.error("Excel parse error", err);
-      toast.error("Could not parse Excel workbook. You can still proceed with AI extraction.");
+      console.warn("XLSX parsing failed, trying ExcelJS fallback", err);
+      try {
+        const buffer = await file.arrayBuffer();
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+
+        let textOutput = "";
+        workbook.eachSheet((worksheet) => {
+          textOutput += `Sheet: ${worksheet.name}\n`;
+          worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            const rowValues = Array.isArray(row.values)
+              ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
+              : "";
+            textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+          });
+          textOutput += "\n";
+        });
+
+        const finalOutput = textOutput.trim() || `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        setExcelSummary(finalOutput);
+        toast.success(`Loaded Excel file (${workbook.worksheets.length} sheets)`);
+      } catch (fallbackErr: any) {
+        console.error("Excel fallback error", fallbackErr);
+        // Guarantee excelSummary is populated with file metadata so AI generation is not blocked
+        setExcelSummary(`File name: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`);
+        toast.warning("Loaded file. AI will attempt to generate from available file metadata.");
+      }
     }
   };
 
@@ -137,12 +227,22 @@ export function AiTemplateGeneratorModal({
       return;
     }
 
+    if (activeTab === "pdf" && !pdfFile) {
+      toast.error("Please upload a PDF calibration certificate first.");
+      return;
+    }
+
+    if (activeTab === "word" && !wordFile) {
+      toast.error("Please upload a Word document (.docx / .doc) first.");
+      return;
+    }
+
     if (activeTab === "image" && !imageFile) {
       toast.error("Please upload or paste an image of the calibration sheet first.");
       return;
     }
 
-    if (activeTab === "excel" && (!excelFile || !excelSummary)) {
+    if (activeTab === "excel" && !excelFile) {
       toast.error("Please upload an Excel file first.");
       return;
     }
@@ -152,10 +252,16 @@ export function AiTemplateGeneratorModal({
 
     try {
       let result: GeneratedTemplateResult;
-      if (activeTab === "image" && imageFile) {
+      if (activeTab === "pdf" && pdfFile) {
+        result = await generateTemplateFromPdf(pdfFile, customInstructions, keyToUse);
+      } else if (activeTab === "word" && wordFile) {
+        const content = wordSummary || `File: ${wordFile.name}`;
+        result = await generateTemplateFromWord(content, wordFile.name, customInstructions, keyToUse);
+      } else if (activeTab === "image" && imageFile) {
         result = await generateTemplateFromImage(imageFile, customInstructions, keyToUse);
       } else {
-        result = await generateTemplateFromExcel(excelSummary || "", customInstructions, keyToUse);
+        const summaryToSend = excelSummary || `File name: ${excelFile?.name || "Uploaded workbook"}`;
+        result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
       }
 
       setExtractedResult(result);
@@ -178,6 +284,9 @@ export function AiTemplateGeneratorModal({
   const handleReset = () => {
     setImageFile(null);
     setImagePreview(null);
+    setPdfFile(null);
+    setWordFile(null);
+    setWordSummary(null);
     setExcelFile(null);
     setExcelSummary(null);
     setExtractedResult(null);
@@ -233,23 +342,38 @@ export function AiTemplateGeneratorModal({
                     if (col.id === "point_number" || col.id === "sl_no") {
                       return <td key={col.id} className="py-1 px-1.5 font-bold">{row.point_number ?? (rIdx + 1)}</td>;
                     }
-                    if (col.type === "text" || col.id === "description") {
-                      return <td key={col.id} className="py-1 px-1.5 font-semibold text-slate-800 dark:text-slate-200">{row.description || "-"}</td>;
+
+                    const cellVal = row[col.id] !== undefined
+                      ? row[col.id]
+                      : col.type === "nominal"
+                      ? row.nominal
+                      : col.type === "text"
+                      ? row.description
+                      : col.type === "tolerance"
+                      ? row.tolerance
+                      : row.reading;
+
+                    if (col.type === "text") {
+                      return <td key={col.id} className="py-1 px-1.5 font-semibold text-slate-800 dark:text-slate-200">{cellVal !== undefined && cellVal !== null ? String(cellVal) : "-"}</td>;
                     }
                     if (col.type === "nominal") {
-                      return <td key={col.id} className="py-1 px-1.5 font-bold">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                      return <td key={col.id} className="py-1 px-1.5 font-bold">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
+                    }
+                    if (col.type === "tolerance") {
+                      return <td key={col.id} className="py-1 px-1.5 font-mono text-slate-700 dark:text-slate-300">{typeof cellVal === "number" ? (cellVal >= 0 ? `±${cellVal.toFixed(dec)}` : cellVal.toFixed(dec)) : String(cellVal ?? "-")}</td>;
                     }
                     if (col.type === "formula") {
-                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{`+${(0).toFixed(dec)}`}</td>;
+                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{cellVal !== undefined && cellVal !== null ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal)) : `+${(0).toFixed(dec)}`}</td>;
                     }
                     if (col.type === "status") {
+                      const isPass = cellVal === "PASS" || cellVal === undefined;
                       return (
                         <td key={col.id} className="py-1 px-1.5">
-                          <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">PASS</span>
+                          <span className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold ${isPass ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{cellVal || "PASS"}</span>
                         </td>
                       );
                     }
-                    return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
+                    return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
                   })}
                 </tr>
               ))}
@@ -379,7 +503,7 @@ export function AiTemplateGeneratorModal({
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-300">
-                  Upload an Excel sheet or calibration drawing/certificate image to auto-generate a complete Canvas Template.
+                  Upload a PDF certificate, Word document, Excel sheet, or drawing/certificate image to auto-generate a complete Canvas Template.
                 </DialogDescription>
               </div>
             </div>
@@ -434,69 +558,130 @@ export function AiTemplateGeneratorModal({
             <>
               {/* Tabs for Upload Method */}
               <Tabs value={activeTab} onValueChange={(val: any) => setActiveTab(val)}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="image" className="text-xs gap-2">
-                    <ImageIcon className="w-4 h-4 text-purple-500" />
-                    Image / Drawing / Scanned Certificate
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 gap-1">
+                  <TabsTrigger value="pdf" className="text-xs gap-1.5 py-2">
+                    <FileText className="w-4 h-4 text-rose-500" />
+                    PDF Certificate
                   </TabsTrigger>
-                  <TabsTrigger value="excel" className="text-xs gap-2">
+                  <TabsTrigger value="word" className="text-xs gap-1.5 py-2">
+                    <FileCode className="w-4 h-4 text-blue-500" />
+                    Word (.docx / .doc)
+                  </TabsTrigger>
+                  <TabsTrigger value="excel" className="text-xs gap-1.5 py-2">
                     <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-                    Excel Workbook (.xlsx / .csv)
+                    Excel (.xlsx / .xls)
+                  </TabsTrigger>
+                  <TabsTrigger value="image" className="text-xs gap-1.5 py-2">
+                    <ImageIcon className="w-4 h-4 text-purple-500" />
+                    Image / Drawing
                   </TabsTrigger>
                 </TabsList>
 
-                {/* Tab 1: Image Upload */}
-                <TabsContent value="image" className="space-y-3 pt-2">
+                {/* Tab 1: PDF Certificate Upload */}
+                <TabsContent value="pdf" className="space-y-3 pt-2">
                   <div
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => pdfInputRef.current?.click()}
                     onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onDrop={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       if (e.dataTransfer.files?.[0]) {
-                        handleImageSelect(e.dataTransfer.files[0]);
+                        handlePdfSelect(e.dataTransfer.files[0]);
                       }
                     }}
-                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-primary/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-slate-50/50 dark:bg-slate-900/30 flex flex-col items-center justify-center min-h-[160px]"
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-rose-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-rose-50/20 dark:bg-rose-950/10 flex flex-col items-center justify-center min-h-[160px]"
                   >
                     <input
-                      ref={fileInputRef}
+                      ref={pdfInputRef}
                       type="file"
-                      accept="image/*"
+                      accept=".pdf,application/pdf"
                       className="hidden"
                       onChange={(e) => {
-                        if (e.target.files?.[0]) handleImageSelect(e.target.files[0]);
+                        if (e.target.files?.[0]) handlePdfSelect(e.target.files[0]);
                       }}
                     />
 
-                    {imagePreview ? (
+                    {pdfFile ? (
                       <div className="space-y-2">
-                        <img
-                          src={imagePreview}
-                          alt="Uploaded Calibration Standard"
-                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
-                        />
-                        <div className="text-xs text-muted-foreground font-medium">
-                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                        <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto">
+                          <FileText className="w-6 h-6" />
                         </div>
+                        <div className="text-xs font-bold text-rose-700 dark:text-rose-400">
+                          {pdfFile.name} ({(pdfFile.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          PDF Certificate ready for multi-page AI reading & conversion - Click to change file
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                        <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto">
                           <Upload className="w-6 h-6" />
                         </div>
                         <div className="text-xs font-semibold">
-                          Click to upload or Drag & Drop calibration image / standard drawing
+                          Click to upload or Drag & Drop PDF Calibration Certificate
                         </div>
                         <p className="text-[11px] text-muted-foreground">
-                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
+                          Supports official accredited calibration certificates, test reports, and scan PDFs (Max 20MB)
                         </p>
                       </div>
                     )}
                   </div>
                 </TabsContent>
 
-                {/* Tab 2: Excel Upload */}
+                {/* Tab 2: Word Document Upload */}
+                <TabsContent value="word" className="space-y-3 pt-2">
+                  <div
+                    onClick={() => wordInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleWordSelect(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-blue-50/20 dark:bg-blue-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                  >
+                    <input
+                      ref={wordInputRef}
+                      type="file"
+                      accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleWordSelect(e.target.files[0]);
+                      }}
+                    />
+
+                    {wordFile ? (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center mx-auto">
+                          <FileCode className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-bold text-blue-700 dark:text-blue-400">
+                          {wordFile.name} ({(wordFile.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Word document ready for AI table & specification extraction - Click to change file
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center mx-auto">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-semibold">
+                          Click to upload or Drag & Drop Word Calibration Document
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Supports calibration procedures, inspection formats, and templates (.docx, .doc)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Tab 3: Excel Upload */}
                 <TabsContent value="excel" className="space-y-3 pt-2">
                   <div
                     onClick={() => excelInputRef.current?.click()}
@@ -542,6 +727,57 @@ export function AiTemplateGeneratorModal({
                         </div>
                         <p className="text-[11px] text-muted-foreground">
                           Supports .xlsx, .xls, and .csv files
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Tab 4: Image Upload */}
+                <TabsContent value="image" className="space-y-3 pt-2">
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleImageSelect(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleImageSelect(e.target.files[0]);
+                      }}
+                    />
+
+                    {imagePreview ? (
+                      <div className="space-y-2">
+                        <img
+                          src={imagePreview}
+                          alt="Uploaded Calibration Standard"
+                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
+                        />
+                        <div className="text-xs text-muted-foreground font-medium">
+                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-purple-500/10 text-purple-600 flex items-center justify-center mx-auto">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-semibold">
+                          Click to upload or Drag & Drop calibration image / standard drawing
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
                         </p>
                       </div>
                     )}
@@ -723,7 +959,16 @@ export function AiTemplateGeneratorModal({
             <Button
               size="sm"
               onClick={handleGenerate}
-              disabled={isProcessing || (activeTab === "image" ? !imageFile : !excelFile)}
+              disabled={
+                isProcessing ||
+                (activeTab === "pdf"
+                  ? !pdfFile
+                  : activeTab === "word"
+                  ? !wordFile
+                  : activeTab === "image"
+                  ? !imageFile
+                  : !excelFile)
+              }
               className="gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-sm"
             >
               {isProcessing ? (

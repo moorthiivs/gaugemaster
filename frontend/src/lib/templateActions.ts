@@ -37,3 +37,20 @@ export async function updateTemplate(
 export async function deleteTemplate(id: string): Promise<void> {
   await httpClient.delete(`/calibration-templates/${id}`);
 }
+
+export async function bulkDeleteTemplates(
+  ids: string[],
+  force?: boolean,
+): Promise<{
+  success: boolean;
+  deletedCount: number;
+  notFoundCount: number;
+  message: string;
+}> {
+  const res = await httpClient.post("/calibration-templates/bulk-delete", {
+    ids,
+    force,
+  });
+  return res.data;
+}
+

@@ -12,6 +12,7 @@ import {
   UploadedFile,
   BadRequestException,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -19,6 +20,7 @@ import type { Response } from 'express';
 import { CalibrationTemplatesService } from './calibration-templates.service';
 import { CreateCalibrationTemplateDto } from './dto/create-calibration-template.dto';
 import { UpdateCalibrationTemplateDto } from './dto/update-calibration-template.dto';
+import { BulkDeleteCalibrationTemplatesDto } from './dto/bulk-delete-calibration-templates.dto';
 import { TemplateExportService } from './services/template-export.service';
 import { TemplateImportService } from './services/template-import.service';
 import { TemplateAuditLogService } from './services/template-audit-log.service';
@@ -121,6 +123,15 @@ export class CalibrationTemplatesController {
     return this.auditLogService.findAll(companyId);
   }
 
+  @Post('bulk-delete')
+  @RequirePermission('templates', 'delete')
+  async bulkRemove(
+    @Body() dto: BulkDeleteCalibrationTemplatesDto,
+    @Req() req: any,
+  ) {
+    return this.templatesService.bulkRemove(dto, req.user);
+  }
+
   @Get(':id')
   async findOne(@Param('id') id: string) {
     return this.templatesService.findOne(id);
@@ -137,8 +148,9 @@ export class CalibrationTemplatesController {
 
   @Delete(':id')
   @RequirePermission('templates', 'delete')
-  async remove(@Param('id') id: string) {
-    await this.templatesService.remove(id);
+  async remove(@Param('id') id: string, @Req() req: any) {
+    await this.templatesService.remove(id, req.user);
     return { message: 'Template deleted successfully' };
   }
 }
+
