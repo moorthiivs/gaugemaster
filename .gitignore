@@ -9,4 +9,6 @@ frontend/.env
 .env_production
 *.zip
 backend/backups/
+backend/uploads/
+*.png
 

@@ -23,6 +23,7 @@ import { CalibrationTemplatesModule } from './calibration-templates/calibration-
 import { RolesModule } from './roles/roles.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
+import { LabelPrintHistoryModule } from './label-print-history/label-print-history.module';
 
 @Module({
   imports: [
@@ -65,6 +66,7 @@ import { AuditLogsModule } from './audit-logs/audit-logs.module';
     CalibrationTemplatesModule,
     SuperAdminModule,
     AuditLogsModule,
+    LabelPrintHistoryModule,
 
     // ⭐ PgBoss correct async config (NO ERRORS)
     PGBossModule.forRootAsync({

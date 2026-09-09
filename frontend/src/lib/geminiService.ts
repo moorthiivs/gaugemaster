@@ -138,19 +138,85 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 /**
+ * Downscales and converts an Image File to compressed base64 JPEG in <40ms.
+ * Prevents 10MB+ certificate scans from causing slow network transfers.
+ */
+async function compressImageFileToBase64(
+  file: File,
+  maxDim = 1400,
+  quality = 0.82
+): Promise<{ base64: string; mimeType: string }> {
+  if (!file.type.startsWith("image/") || file.type.includes("svg") || file.type.includes("gif")) {
+    const raw = await fileToBase64(file);
+    return { base64: raw, mimeType: file.type || "image/jpeg" };
+  }
+
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          const rawBase64 = (e.target?.result as string).split(",")[1];
+          return resolve({ base64: rawBase64, mimeType: file.type });
+        }
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+      };
+      img.onerror = () => {
+        const rawBase64 = (e.target?.result as string).split(",")[1];
+        resolve({ base64: rawBase64, mimeType: file.type });
+      };
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => {
+      fileToBase64(file).then((raw) => resolve({ base64: raw, mimeType: file.type }));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let discoveredModelsCache: { apiKey: string; models: string[]; timestamp: number } | null = null;
+
+/**
  * Fallback static model list if dynamic discovery is unavailable
  */
 const DEFAULT_CANDIDATE_MODELS = [
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-  "gemini-2.0-pro-exp-02-05",
+  "gemini-3.1-flash-lite-preview",
+  "gemini-3-flash-preview",
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.6-flash",
 ];
 
 /**
- * Dynamically queries available models from Gemini API and sorts multimodal models first.
+ * Dynamically queries available models from Gemini API and caches results in-memory.
  */
 async function discoverUsableModels(apiKey: string): Promise<string[]> {
+  const now = Date.now();
+  if (
+    discoveredModelsCache &&
+    discoveredModelsCache.apiKey === apiKey &&
+    now - discoveredModelsCache.timestamp < 1000 * 60 * 30 // 30 min cache
+  ) {
+    return discoveredModelsCache.models;
+  }
   try {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
     if (res.ok) {
@@ -181,17 +247,18 @@ async function discoverUsableModels(apiKey: string): Promise<string[]> {
             if (low.includes("flash") && low.includes("1.5") && !low.includes("latest")) return 9;
             if (low.includes("flash") && !low.includes("latest") && !low.includes("2.5")) return 10;
             if (low.includes("latest")) return 30; // Deprioritize alias endpoints that frequently return 503
-            if (low.includes("pro") && !low.includes("2.5")) return 40;
             return 99; // Demote experimental / unreleased models like 2.5
           };
           return score(a) - score(b);
         });
+        discoveredModelsCache = { apiKey, models: sorted, timestamp: Date.now() };
         return sorted;
       }
     }
   } catch (err) {
     console.warn("Dynamic model discovery failed, using fallback list", err);
   }
+  discoveredModelsCache = { apiKey, models: DEFAULT_CANDIDATE_MODELS, timestamp: Date.now() };
   return DEFAULT_CANDIDATE_MODELS;
 }
 
@@ -600,8 +667,7 @@ export async function generateTemplateFromImage(
     );
   }
 
-  const base64Data = await fileToBase64(imageFile);
-  const mimeType = imageFile.type || "image/png";
+  const { base64: base64Data, mimeType } = await compressImageFileToBase64(imageFile, 1400, 0.82);
 
   const promptText = `
 Please inspect this calibration standard / drawing / test sheet image and generate a structured Visual Canvas Template.

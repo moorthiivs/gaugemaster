@@ -6,9 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Printer, LayoutGrid, ScrollText, Search, X, Ruler, Maximize2, Minimize2, Check, FileSpreadsheet, Eye, Sliders } from "lucide-react";
+import { Printer, LayoutGrid, ScrollText, Search, X, Ruler, Maximize2, Minimize2, Check, FileSpreadsheet, Eye, Sliders, History } from "lucide-react";
 import { Instrument } from "@/types/instrument";
 import { createPortal } from "react-dom";
+import httpClient from "@/lib/httpClient";
+import { useAuth } from "@/lib/auth";
+import { useToast } from "@/hooks/use-toast";
+import { LabelPrintHistoryModal } from "@/components/LabelPrintHistoryModal";
 
 interface PrintLabelModalProps {
   open: boolean;
@@ -31,6 +35,10 @@ const AVAILABLE_FIELDS = [
   { id: "least_count", label: "Least Count" },
   { id: "calibration_source", label: "Cal. Source" },
   { id: "cert_no", label: "Cert. No." },
+  { id: "module", label: "Module" },
+  { id: "agency", label: "Agency" },
+  { id: "part_no", label: "Part No." },
+  { id: "part_name", label: "Part Name" },
 ];
 
 export interface LabelSizePreset {
@@ -52,6 +60,10 @@ const LABEL_PRESETS: LabelSizePreset[] = [
 ];
 
 export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx }: PrintLabelModalProps) {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
   const [selectedFields, setSelectedFields] = useState<string[]>([
     "id_code", "name", "last_calibration_date", "due_date"
   ]);
@@ -109,8 +121,59 @@ export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx 
     setItemsToPrint((prev) => prev.filter((i) => i.id !== id));
   };
 
-  const handlePrint = () => {
+  // Effective dimensions
+  const activeWidth = customWidth || 50;
+  const activeHeight = customHeight || 25;
+
+  const recordPrintHistory = async (action: "PRINT_LABEL" | "DOWNLOAD_XLSX", statusText: string) => {
+    try {
+      const payload = {
+        action,
+        status: statusText,
+        itemsCount: itemsToPrint.length,
+        selectedFields,
+        labelConfig: {
+          presetId: selectedPresetId,
+          presetName: LABEL_PRESETS.find((p) => p.id === selectedPresetId)?.name || "Custom Dimensions",
+          width: activeWidth,
+          height: activeHeight,
+          columns: gridColumns,
+          layoutMode,
+          fontSize,
+          showBorder,
+        },
+        items: itemsToPrint.map((item) => ({ ...item })),
+      };
+
+      await httpClient.post("/label-print-history", payload, {
+        params: {
+          companyId: user?.companyId,
+          userId: user?.id,
+        },
+      });
+    } catch (err) {
+      console.error("Failed to record label print history:", err);
+    }
+  };
+
+  const handlePrint = async () => {
+    recordPrintHistory("PRINT_LABEL", "Print Label");
+    toast({
+      title: "Print Job Started",
+      description: `Recorded ${itemsToPrint.length} item(s) in Label Print History.`,
+    });
     window.print();
+  };
+
+  const handleDownloadXlsx = async () => {
+    recordPrintHistory("DOWNLOAD_XLSX", "Download XLSX");
+    toast({
+      title: "Export Started",
+      description: `Recorded ${itemsToPrint.length} item(s) in Label History.`,
+    });
+    if (onExportXlsx) {
+      onExportXlsx(itemsToPrint, selectedFields);
+    }
   };
 
   const renderValue = (inst: any, fieldId: string) => {
@@ -127,10 +190,6 @@ export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx 
 
     return String(val);
   };
-
-  // Effective dimensions
-  const activeWidth = customWidth || 50;
-  const activeHeight = customHeight || 25;
 
   // Determine effective print layout mode
   const isRollMode = layoutMode === "roll" && gridColumns === 1;
@@ -250,9 +309,20 @@ export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx 
                 <Printer className="h-5 w-5 text-primary" />
                 Print & Custom Label Studio ({itemsToPrint.length} items)
               </span>
-              <Badge variant="outline" className="text-xs font-mono px-2.5 py-1 bg-primary/10 text-primary border-primary/30">
-                {activeWidth}mm × {activeHeight}mm
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsHistoryOpen(true)}
+                  className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                >
+                  <History className="h-3.5 w-3.5 text-primary" />
+                  <span>History</span>
+                </Button>
+                <Badge variant="outline" className="text-xs font-mono px-2.5 py-1 bg-primary/10 text-primary border-primary/30">
+                  {activeWidth}mm × {activeHeight}mm
+                </Badge>
+              </div>
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
               Filter bulk items, customize paper & label sizes, choose printable fields, and generate labels.
@@ -602,7 +672,7 @@ export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx 
                   variant="outline"
                   size="sm"
                   disabled={itemsToPrint.length === 0}
-                  onClick={() => onExportXlsx(itemsToPrint, selectedFields)}
+                  onClick={handleDownloadXlsx}
                   className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-600/30 hover:bg-emerald-50 text-xs"
                 >
                   <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
@@ -629,6 +699,11 @@ export function PrintLabelModal({ open, onOpenChange, instruments, onExportXlsx 
       </Dialog>
 
       {printableArea}
+
+      <LabelPrintHistoryModal
+        open={isHistoryOpen}
+        onOpenChange={setIsHistoryOpen}
+      />
     </>
   );
 }

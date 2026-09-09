@@ -22,6 +22,7 @@ import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers } from "lucide-react";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
+import { LabelPrintHistoryModal } from "@/components/LabelPrintHistoryModal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
 
@@ -48,6 +49,7 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
   { id: "status", label: "Status", visible: true },
   { id: "item_status", label: "Item Status", visible: true },
   { id: "device_type", label: "Device Type", visible: true },
+  { id: "agency", label: "Agency", visible: false },
   { id: "range", label: "Range", visible: false },
   { id: "serial_no", label: "Serial No", visible: false },
   { id: "least_count", label: "Least Count", visible: false },
@@ -55,12 +57,15 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
   { id: "item_type", label: "Item Type", visible: false },
   { id: "part_no", label: "Part No", visible: false },
   { id: "part_name", label: "Part Name", visible: false },
+  { id: "module", label: "Module", visible: false },
   { id: "calibration_source", label: "Calibration Source", visible: false },
   { id: "customer", label: "Customer", visible: false },
   { id: "sector", label: "Sector", visible: false },
   { id: "criticality_level", label: "Criticality Level", visible: false },
   { id: "cert_no", label: "Cert. No.", visible: false },
+  { id: "notes", label: "Notes", visible: false },
   { id: "remarks", label: "Remarks", visible: false },
+  { id: "is_reference_standard", label: "Reference Standard", visible: false },
   { id: "gauge_issue_date", label: "Gauge Issue Date", visible: false },
   { id: "gauges_received_by", label: "Gauges Received By", visible: false },
   { id: "gauges_issued_by", label: "Gauges Issued By", visible: false },
@@ -252,6 +257,7 @@ export default function Instruments() {
 
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [instrumentsToPrint, setInstrumentsToPrint] = useState<Instrument[]>([]);
+  const [labelHistoryModalOpen, setLabelHistoryModalOpen] = useState(false);
 
   const [columnConfigs, setColumnConfigs] = useState<ColumnConfig[]>(() => {
     try {
@@ -775,6 +781,7 @@ export default function Instruments() {
           frequency: "Frequency",
           status: "Status",
           item_status: "Item Status",
+          agency: "Agency",
           make: "Make",
           range: "Range",
           serial_no: "Serial No.",
@@ -785,10 +792,18 @@ export default function Instruments() {
           device_type: "Device Type",
           part_no: "Part No",
           part_name: "Part Name",
+          module: "Module",
           customer: "Customer",
           sector: "Sector",
           criticality_level: "Criticality Level",
+          notes: "Notes",
           remarks: "Remarks",
+          is_reference_standard: "Reference Standard",
+          gauge_issue_date: "Gauge Issue Date",
+          gauges_received_by: "Gauges Received By",
+          gauges_issued_by: "Gauges Issued By",
+          calibration_procedure: "Calibration Procedure",
+          traceable: "Traceable",
         };
 
         exportCols = [
@@ -1115,6 +1130,7 @@ export default function Instruments() {
         );
       },
     },
+    agency: { accessorKey: "agency", header: "Agency" },
     range: { accessorKey: "range", header: "Range" },
     serial_no: { accessorKey: "serial_no", header: "Serial No" },
     least_count: { accessorKey: "least_count", header: "Least Count" },
@@ -1123,12 +1139,19 @@ export default function Instruments() {
     device_type: { accessorKey: "device_type", header: "Device Type" },
     part_no: { accessorKey: "part_no", header: "Part No" },
     part_name: { accessorKey: "part_name", header: "Part Name" },
+    module: { accessorKey: "module", header: "Module" },
     calibration_source: { accessorKey: "calibration_source", header: "Calibration Source" },
     customer: { accessorKey: "customer", header: "Customer" },
     sector: { accessorKey: "sector", header: "Sector" },
     criticality_level: { accessorKey: "criticality_level", header: "Criticality Level" },
     cert_no: { accessorKey: "cert_no", header: "Cert. No." },
+    notes: { accessorKey: "notes", header: "Notes" },
     remarks: { accessorKey: "remarks", header: "Remarks" },
+    is_reference_standard: {
+      accessorKey: "is_reference_standard",
+      header: "Reference Standard",
+      cell: ({ row }) => (row.original.is_reference_standard ? "Yes" : "No"),
+    },
     gauge_issue_date: {
       accessorKey: "gauge_issue_date",
       header: "Gauge Issue Date",
@@ -1863,6 +1886,17 @@ export default function Instruments() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs font-semibold gap-1.5"
+                  onClick={() => setLabelHistoryModalOpen(true)}
+                  title="View Label Print & Download History"
+                >
+                  <History className="h-3.5 w-3.5 text-primary" />
+                  <span>Label History</span>
+                </Button>
+
                 {selectedIds.length > 0 && (
                   <>
                     <Button
@@ -1987,12 +2021,14 @@ export default function Instruments() {
                 })(),
                 part_no: getVal(["Part No", "PART NO", "Part Number"]),
                 part_name: getVal(["Part Name"]),
+                agency: getVal(["Calibration Agency", "Agency", "CALIBRATION AGENCY AND TC No", "CALIBRATION AGENCY", "Agency Name"]),
                 module: getVal(["Module", "Moudle"]),
                 calibration_source: getVal(["Calibration Source", "Source"]),
                 customer: getVal(["Customer"]),
                 sector: getVal(["Sector"]),
                 criticality_level: getVal(["Criticality Level", "Criticality"]),
                 cert_no: getVal(["Cert. No.", "Cert No", "Certificate No"]),
+                notes: getVal(["Notes", "Note"]),
                 remarks: getVal(["Remarks", "Remark"]),
                 gauge_issue_date: getVal(["Gauge Issue Date", "Issue Date"]),
                 gauges_received_by: getVal(["Gauges Received By", "Received By"]),
@@ -2510,6 +2546,11 @@ export default function Instruments() {
         onOpenChange={setPrintModalOpen}
         instruments={instrumentsToPrint}
         onExportXlsx={(items, selectedFields) => handleExportData("selected", items, selectedFields)}
+      />
+
+      <LabelPrintHistoryModal
+        open={labelHistoryModalOpen}
+        onOpenChange={setLabelHistoryModalOpen}
       />
 
       <Dialog open={columnModalOpen} onOpenChange={setColumnModalOpen}>
