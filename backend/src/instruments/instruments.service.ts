@@ -459,7 +459,20 @@ export class InstrumentsService {
                 gauge_issue_date: this.parseDateSafe(instrumentDto.gauge_issue_date),
             });
 
-            return await this.instrumentRepository.save(newInstrument);
+            const savedInstrument = await this.instrumentRepository.save(newInstrument);
+
+            if (savedInstrument.last_calibration_date || savedInstrument.due_date) {
+                const initialHistory = this.calibrationHistoryRepository.create({
+                    instrument: { id: savedInstrument.id },
+                    last_calibration_date: savedInstrument.last_calibration_date,
+                    due_date: savedInstrument.due_date,
+                    certificate_file: savedInstrument.certificate_file,
+                    calibration_source: savedInstrument.calibration_source || 'Initial Master',
+                });
+                await this.calibrationHistoryRepository.save(initialHistory).catch((e) => console.warn('Failed to save initial calibration history:', e));
+            }
+
+            return savedInstrument;
         } catch (error) {
             console.log(error);
             if (error instanceof ConflictException) throw error;
@@ -558,6 +571,88 @@ export class InstrumentsService {
             where: { instrument: { id: instrumentId } },
             order: { created_at: 'DESC' },
         });
+    }
+
+    /**
+     * Called when a calibration is deleted to revert the instrument's
+     * last_calibration_date, due_date, status, and certificate back to previous state.
+     */
+    async syncInstrumentAfterCalibrationDeleted(
+        instrumentId: string,
+        deletedCalDate?: Date,
+        deletedDueDate?: Date,
+    ) {
+        const instrument = await this.instrumentRepository.findOne({ where: { id: instrumentId } });
+        if (!instrument) return;
+
+        // 1. Remove the calibration_history entry corresponding to the deleted calibration
+        if (deletedCalDate) {
+            const historyEntry = await this.calibrationHistoryRepository.findOne({
+                where: {
+                    instrument: { id: instrumentId },
+                    last_calibration_date: deletedCalDate,
+                },
+                order: { created_at: 'DESC' },
+            });
+            if (historyEntry) {
+                await this.calibrationHistoryRepository.remove(historyEntry);
+            }
+        }
+
+        // 2. Look for remaining history entries in calibration_history
+        const remainingHistories = await this.calibrationHistoryRepository.find({
+            where: { instrument: { id: instrumentId } },
+            order: { created_at: 'DESC' },
+        });
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        if (remainingHistories.length > 0) {
+            const latestHistory = remainingHistories[0];
+            const newDueDate = latestHistory.due_date;
+            const isOverdue = newDueDate ? new Date(newDueDate) <= today : false;
+
+            instrument.last_calibration_date = latestHistory.last_calibration_date;
+            instrument.due_date = latestHistory.due_date;
+            instrument.certificate_file = latestHistory.certificate_file;
+            instrument.calibration_source = latestHistory.calibration_source;
+            instrument.status = isOverdue ? 'Overdue' : 'OK';
+            await this.instrumentRepository.save(instrument);
+        } else {
+            // 3. No remaining history entries: calculate original baseline dates from the deleted calibration date and frequency
+            if (deletedCalDate) {
+                const months = this.parseFrequencyMonths(instrument.frequency);
+                const prevCalDate = new Date(deletedCalDate);
+                prevCalDate.setMonth(prevCalDate.getMonth() - months);
+
+                const prevDueDate = new Date(deletedCalDate);
+                const isOverdue = prevDueDate <= today;
+
+                instrument.last_calibration_date = prevCalDate;
+                instrument.due_date = prevDueDate;
+                instrument.certificate_file = null as any;
+                instrument.calibration_source = 'In-House';
+                instrument.status = isOverdue ? 'Overdue' : 'OK';
+                await this.instrumentRepository.save(instrument);
+            }
+        }
+    }
+
+    private parseFrequencyMonths(frequencyStr?: string): number {
+        if (!frequencyStr) return 6;
+        const match = frequencyStr.match(/\d+/);
+        if (!match) return 6;
+        let val = parseInt(match[0], 10);
+        const normalized = frequencyStr.toLowerCase();
+        if (normalized.includes('year') || normalized.includes('yr')) {
+            val *= 12;
+        } else if (normalized.includes('day')) {
+            val = Math.max(1, Math.round(val / 30));
+        } else if (normalized.includes('week')) {
+            val = Math.max(1, Math.round((val * 7) / 30));
+        }
+        return val > 0 ? val : 6;
     }
 
 

@@ -733,21 +733,39 @@ export class CalibrationService {
   async remove(id: string): Promise<void> {
     const calibration = await this.findOne(id);
     if (calibration) {
-      const instrumentId = calibration.instrument?.id;
+      const instrumentId = calibration.instrument_id || calibration.instrument?.id;
+      const calDate = calibration.calibration_date;
+      const nextDate = calibration.next_calibration_date;
+
       await this.auditLogRepository.delete({ calibration_id: id });
       await this.calibrationRepository.remove(calibration);
 
       if (instrumentId) {
-        const latestCal = await this.calibrationRepository.findOne({
-          where: { instrument: { id: instrumentId } },
+        const latestRemainingCal = await this.calibrationRepository.findOne({
+          where: { instrument_id: instrumentId },
           order: { calibration_date: 'DESC' },
         });
 
-        if (latestCal) {
+        if (latestRemainingCal) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const isOverdue = latestRemainingCal.next_calibration_date
+            ? new Date(latestRemainingCal.next_calibration_date) <= today
+            : false;
+
           await this.instrumentsService.update(instrumentId, {
-            last_calibration_date: latestCal.calibration_date ? new Date(latestCal.calibration_date).toISOString() : undefined,
-            due_date: latestCal.next_calibration_date ? new Date(latestCal.next_calibration_date).toISOString() : undefined,
+            last_calibration_date: latestRemainingCal.calibration_date ? new Date(latestRemainingCal.calibration_date).toISOString() : undefined,
+            due_date: latestRemainingCal.next_calibration_date ? new Date(latestRemainingCal.next_calibration_date).toISOString() : undefined,
+            status: latestRemainingCal.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
+            calibration_source: 'In-House',
           } as any);
+        } else {
+          // If no other calibration exists in calibrations table, revert instrument dates & clean up history
+          await this.instrumentsService.syncInstrumentAfterCalibrationDeleted(
+            instrumentId,
+            calDate,
+            nextDate,
+          );
         }
       }
     }

@@ -162,8 +162,8 @@ export class CertificateService {
     const inst = calibration.instrument;
     const points = calibration.calibration_points || [];
     const numPoints = points.length;
-    const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
-    const sheetNoText = `1 of ${totalPages}`;
+    let totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
+    let sheetNoText = `1 of ${totalPages}`;
     const env = calibration.environmental_conditions || {
       temperature: '-',
       humidity: '-',
@@ -932,6 +932,35 @@ export class CertificateService {
       (latestTemplate as any)?.layout_blocks ||
       [];
 
+    if (isCanvasTemplate && canvasBlocks.length > 0) {
+      const explicitBreaks = canvasBlocks.filter((b: any) => b.type === 'page_break').length;
+      if (explicitBreaks > 0) {
+        totalPages = 1 + explicitBreaks;
+      } else {
+        let estH = 0;
+        if (hasDiagram) estH += 180;
+        canvasBlocks.forEach((b: any) => {
+          if (b.type === 'table_grid') {
+            estH += 32 + (b.rows?.length || 0) * 16;
+          } else if (b.type === 'split_row') {
+            const maxR = Math.max(
+              b.children?.[0]?.rows?.length || 0,
+              b.children?.[1]?.rows?.length || 0
+            );
+            estH += 32 + maxR * 16;
+          } else if (b.type === 'matrix_table') {
+            estH += 40 + ((b.headers?.length || 1) + (b.rows?.length || 0)) * 16;
+          } else if (b.type === 'text_block') {
+            estH += 25;
+          }
+        });
+        estH += 85; // signature block
+        const page1Usable = hasDiagram ? 340 : 480;
+        totalPages = estH > page1Usable ? Math.max(2, 1 + Math.ceil((estH - page1Usable) / 600)) : 1;
+      }
+      sheetNoText = `1 of ${totalPages}`;
+    }
+
     const buildPdfCanvasBlocks = (blocks: any[], dense: boolean): any[] => {
       const resultElements: any[] = [];
 
@@ -1174,8 +1203,10 @@ export class CertificateService {
         }
 
         return {
+          unbreakable: (tbl.rows || []).length <= 12,
           table: {
             dontBreakRows: true,
+            headerRows: 2,
             widths: colWidths,
             body: tblBody,
           },
@@ -1241,6 +1272,7 @@ export class CertificateService {
           };
 
           resultElements.push({
+            unbreakable: true,
             columns: [
               {
                 width: '49%',
@@ -1351,8 +1383,10 @@ export class CertificateService {
           });
 
           resultElements.push({
+            unbreakable: true,
             table: {
               dontBreakRows: true,
+              headerRows: 1 + numHeaderRows,
               widths: colWidths,
               body: matrixBody,
             },
@@ -1366,6 +1400,7 @@ export class CertificateService {
           });
         } else if (block.type === 'text_block') {
           resultElements.push({
+            unbreakable: true,
             table: {
               widths: ['*'],
               body: [
@@ -1392,6 +1427,7 @@ export class CertificateService {
           const dImg = block.imageUrl || block.image;
           if (dImg) {
             resultElements.push({
+              unbreakable: true,
               table: {
                 widths: ['*'],
                 body: [
@@ -1532,9 +1568,22 @@ export class CertificateService {
                       noWrap: true,
                       margin: [0, 2, 0, 0],
                     },
+                    ...(pageCount > 1
+                      ? [
+                          {
+                            text: `Sheet ${currentPage} of ${pageCount}`,
+                            fontSize: 6.8,
+                            bold: true,
+                            alignment: 'right',
+                            color: '#000000',
+                            noWrap: true,
+                            margin: [0, 2, 0, 0],
+                          },
+                        ]
+                      : []),
                   ],
                   fillColor: headerBgColor,
-                  margin: [0, 8, 18, 5],
+                  margin: [0, pageCount > 1 ? 5 : 8, 18, 5],
                 },
               ],
             ],

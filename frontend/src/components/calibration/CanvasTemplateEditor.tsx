@@ -301,17 +301,43 @@ export function CanvasTemplateEditor({
     tableDec: number = 3
   ): React.ReactNode => {
     const dec = col.decimal_places ?? tableDec ?? decimalPlaces ?? 3;
+    const cellVal = row[col.id] !== undefined
+      ? row[col.id]
+      : col.type === "nominal"
+      ? row.nominal
+      : col.type === "text"
+      ? row.description
+      : col.type === "tolerance"
+      ? row.tolerance
+      : (col.type === "trial" || col.type === "reading")
+      ? row.reading
+      : undefined;
+
     if (col.type === "nominal") {
-      return row.nominal !== undefined && row.nominal !== null
-        ? Number(row.nominal).toFixed(dec)
+      return cellVal !== undefined && cellVal !== null && cellVal !== ""
+        ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal))
         : "-";
     }
-    if (col.type === "text") return row.description || "-";
+    if (col.type === "text") {
+      return cellVal !== undefined && cellVal !== null ? String(cellVal) : "-";
+    }
+    if (col.type === "tolerance") {
+      if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
+        return typeof cellVal === "number"
+          ? (cellVal >= 0 ? `±${cellVal.toFixed(dec)}` : cellVal.toFixed(dec))
+          : String(cellVal);
+      }
+      return row.tolerance ? `±${row.tolerance.toFixed(dec)}` : "-";
+    }
     if (col.type === "trial" || col.type === "reading") {
-      const val = row[col.id] ?? row.reading ?? row.nominal;
-      return val !== undefined && val !== null ? Number(val).toFixed(dec) : "-";
+      return cellVal !== undefined && cellVal !== null && cellVal !== ""
+        ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal))
+        : "-";
     }
     if (col.type === "formula") {
+      if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
+        return typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal);
+      }
       const formula = (col.formula || "").toLowerCase();
       const nom = Number(row.nominal ?? 0);
       if (formula.includes("average")) {
@@ -323,11 +349,20 @@ export function CanvasTemplateEditor({
       return `+${(0).toFixed(dec)}`;
     }
     if (col.type === "status") {
+      const statusVal = cellVal || row.status || "PASS";
+      const isPass = statusVal === "PASS";
       return (
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
-          PASS
+        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+          isPass
+            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+            : "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+        }`}>
+          {statusVal}
         </span>
       );
+    }
+    if (cellVal !== undefined && cellVal !== null) {
+      return typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal);
     }
     return "-";
   };
@@ -670,34 +705,92 @@ export function CanvasTemplateEditor({
                                     </td>
                                     {block.rows.map((row, rIdx) => {
                                       if (col.type === "nominal") {
+                                        const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "");
                                         return (
                                           <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
                                             <Input
-                                              type="number"
-                                              step="any"
-                                              value={row.nominal ?? ""}
+                                              type="text"
+                                              value={cellVal ?? ""}
                                               onChange={(e) => {
                                                 const newRows = [...block.rows];
-                                                newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "nominal" ? { nominal: typeof val === "number" ? val : 0 } : {}),
+                                                };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
                                               className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                              placeholder="0"
                                             />
                                           </td>
                                         );
                                       }
                                       if (col.type === "text") {
+                                        const cellVal = row[col.id] ?? (col.id === "description" ? row.description : "") ?? "";
                                         return (
                                           <td key={rIdx} className="py-0.5 px-1 min-w-[50px]">
                                             <Input
-                                              value={row.description || ""}
+                                              value={cellVal}
                                               onChange={(e) => {
                                                 const newRows = [...block.rows];
-                                                newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: e.target.value,
+                                                  ...(col.id === "description" ? { description: e.target.value } : {}),
+                                                };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
                                               className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
-                                              placeholder="Desc"
+                                              placeholder={col.label || "Desc"}
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "reading" || col.type === "trial") {
+                                        const cellVal = row[col.id] ?? (col.id === "reading" ? row.reading : "") ?? "";
+                                        return (
+                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                            <Input
+                                              value={cellVal}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "reading" ? { reading: typeof val === "number" ? val : undefined } : {}),
+                                                };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono font-medium"
+                                              placeholder="0.00"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "tolerance") {
+                                        const cellVal = row[col.id] ?? (col.id === "tolerance" ? row.tolerance : "") ?? "";
+                                        return (
+                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                            <Input
+                                              value={cellVal}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "tolerance" ? { tolerance: typeof val === "number" ? val : undefined } : {}),
+                                                };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono"
+                                              placeholder="±Tol"
                                             />
                                           </td>
                                         );
@@ -742,34 +835,92 @@ export function CanvasTemplateEditor({
                                         );
                                       }
                                       if (col.type === "nominal") {
+                                        const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "");
                                         return (
                                           <td key={col.id} className="py-0.5 px-1">
                                             <Input
-                                              type="number"
-                                              step="any"
-                                              value={row.nominal ?? ""}
+                                              type="text"
+                                              value={cellVal ?? ""}
                                               onChange={(e) => {
                                                 const newRows = [...block.rows];
-                                                newRows[rIdx] = { ...newRows[rIdx], nominal: parseFloat(e.target.value) || 0 };
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "nominal" ? { nominal: typeof val === "number" ? val : 0 } : {}),
+                                                };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
                                               className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                              placeholder="0"
                                             />
                                           </td>
                                         );
                                       }
                                       if (col.type === "text") {
+                                        const cellVal = row[col.id] ?? (col.id === "description" ? row.description : "") ?? "";
                                         return (
                                           <td key={col.id} className="py-0.5 px-1">
                                             <Input
-                                              value={row.description || ""}
+                                              value={cellVal}
                                               onChange={(e) => {
                                                 const newRows = [...block.rows];
-                                                newRows[rIdx] = { ...newRows[rIdx], description: e.target.value };
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: e.target.value,
+                                                  ...(col.id === "description" ? { description: e.target.value } : {}),
+                                                };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
                                               className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
-                                              placeholder="Description"
+                                              placeholder={col.label || "Value"}
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "reading" || col.type === "trial") {
+                                        const cellVal = row[col.id] ?? (col.id === "reading" ? row.reading : "") ?? "";
+                                        return (
+                                          <td key={col.id} className="py-0.5 px-1">
+                                            <Input
+                                              value={cellVal}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "reading" ? { reading: typeof val === "number" ? val : undefined } : {}),
+                                                };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono font-medium text-slate-800 dark:text-slate-200"
+                                              placeholder="0.00"
+                                            />
+                                          </td>
+                                        );
+                                      }
+                                      if (col.type === "tolerance") {
+                                        const cellVal = row[col.id] ?? (col.id === "tolerance" ? row.tolerance : "") ?? "";
+                                        return (
+                                          <td key={col.id} className="py-0.5 px-1">
+                                            <Input
+                                              value={cellVal}
+                                              onChange={(e) => {
+                                                const newRows = [...block.rows];
+                                                const raw = e.target.value;
+                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
+                                                newRows[rIdx] = {
+                                                  ...newRows[rIdx],
+                                                  [col.id]: val,
+                                                  ...(col.id === "tolerance" ? { tolerance: typeof val === "number" ? val : undefined } : {}),
+                                                };
+                                                updateBlock(index, { ...block, rows: newRows });
+                                              }}
+                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono text-slate-700 dark:text-slate-300"
+                                              placeholder="±Tol"
                                             />
                                           </td>
                                         );
@@ -941,26 +1092,45 @@ export function CanvasTemplateEditor({
                       </div>
                       <table className="w-full border-collapse text-[10px] text-center border-black">
                         <thead>
-                          {block.headers.map((hRow, hIdx) => (
-                            <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
-                              {hRow.map((cell, cIdx) => (
-                                <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5 font-bold border border-black">
-                                  {cell.text}
-                                </th>
-                              ))}
-                            </tr>
-                          ))}
+                          {(block.headers || []).map((hRow, hIdx) => {
+                            const cells: any[] = Array.isArray(hRow)
+                              ? hRow
+                              : (hRow && typeof hRow === "object")
+                                ? [hRow]
+                                : [{ text: String(hRow || "") }];
+                            return (
+                              <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
+                                {cells.map((cell: any, cIdx: number) => {
+                                  const cellText = typeof cell === "object" && cell !== null ? (cell.text ?? "") : String(cell ?? "");
+                                  const colSpan = typeof cell === "object" && cell !== null ? cell.colSpan : undefined;
+                                  const rowSpan = typeof cell === "object" && cell !== null ? cell.rowSpan : undefined;
+                                  return (
+                                    <th key={cIdx} colSpan={colSpan} rowSpan={rowSpan} className="py-1 px-1.5 font-bold border border-black">
+                                      {cellText}
+                                    </th>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })}
                         </thead>
                         <tbody>
-                          {block.rows.map((r, rIdx) => (
-                            <tr key={rIdx} className="hover:bg-slate-50/50">
-                              {r.map((val, cIdx) => (
-                                <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
-                                  {val}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
+                          {(block.rows || []).map((r: any, rIdx: number) => {
+                            const cells: any[] = Array.isArray(r)
+                              ? r
+                              : (r && typeof r === "object")
+                                ? Object.values(r)
+                                : [r];
+                            return (
+                              <tr key={rIdx} className="hover:bg-slate-50/50">
+                                {cells.map((val: any, cIdx: number) => (
+                                  <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
+                                    {typeof val === "object" && val !== null ? (val.text ?? JSON.stringify(val)) : String(val ?? "")}
+                                  </td>
+                                ))}
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -1296,6 +1466,7 @@ export function CanvasTemplateEditor({
                           <SelectItem value="reading">Actual / Reading</SelectItem>
                           <SelectItem value="trial">Trial (t1, t2..)</SelectItem>
                           <SelectItem value="formula">Formula (fx)</SelectItem>
+                          <SelectItem value="tolerance">Tolerance / Limit (±)</SelectItem>
                           <SelectItem value="status">Status (PASS/FAIL)</SelectItem>
                           <SelectItem value="text">Text / Desc</SelectItem>
                         </SelectContent>

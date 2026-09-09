@@ -32,40 +32,15 @@ import SuperAdminRoute from "./components/SuperAdminRoute";
 import CustomerCompanies from "./pages/admin/CustomerCompanies";
 import CompanyDetail from "./pages/admin/CompanyDetail";
 import GlobalAuditLogs from "./pages/admin/GlobalAuditLogs";
-
-import { useState, useEffect } from "react";
-import axios from "axios";
-
 const queryClient = new QueryClient();
 
-const buildTimeGoogleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "27326771006-tcipg9h80l5af7m59ibd9tp1llmieggk.apps.googleusercontent.com";
-
-/** Wrap children in GoogleOAuthProvider dynamically from backend config or build-time env */
-function OptionalGoogleProvider({ children }: { children: React.ReactNode }) {
-  const [clientId, setClientId] = useState<string | null>(buildTimeGoogleClientId);
-
-  useEffect(() => {
-    axios
-      .get("/api/auth/config")
-      .then((res) => {
-        if (res.data?.googleEnabled && res.data?.googleClientId) {
-          setClientId(res.data.googleClientId);
-        } else if (res.data?.googleEnabled === false) {
-          setClientId(null);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  if (clientId) {
-    return <GoogleOAuthProvider clientId={clientId}>{children}</GoogleOAuthProvider>;
-  }
-  return <>{children}</>;
-} 
+const googleClientId =
+  import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+  "27326771006-tcipg9h80l5af7m59ibd9tp1llmieggk.apps.googleusercontent.com";
 
 const App = () => (
   <BrowserRouter>
-    <OptionalGoogleProvider>
+    <GoogleOAuthProvider clientId={googleClientId}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <NextThemeProvider attribute="class" defaultTheme="system" enableSystem>
@@ -129,7 +104,7 @@ const App = () => (
         </NextThemeProvider>
         </AuthProvider>
       </QueryClientProvider>
-    </OptionalGoogleProvider>
+    </GoogleOAuthProvider>
   </BrowserRouter>
 );
 

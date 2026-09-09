@@ -30,18 +30,24 @@ import {
   RotateCcw,
   Check,
   FileText,
+  FileCode,
   LayoutGrid,
 } from "lucide-react";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
 import {
   generateTemplateFromImage,
   generateTemplateFromExcel,
+  generateTemplateFromPdf,
+  generateTemplateFromWord,
   getStoredGeminiApiKey,
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
 } from "@/lib/geminiService";
-import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock } from "@/types/template";
+import { extractDocxTextAndTables } from "@/lib/docxExtractor";
+import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
+import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 
 interface AiTemplateGeneratorModalProps {
   open: boolean;
@@ -57,8 +63,17 @@ export function AiTemplateGeneratorModal({
   const [apiKey, setApiKey] = useState<string>(() => getStoredGeminiApiKey());
   const [showKeyInput, setShowKeyInput] = useState<boolean>(!getStoredGeminiApiKey());
   const [customInstructions, setCustomInstructions] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"image" | "excel">("image");
+  const [activeTab, setActiveTab] = useState<"pdf" | "word" | "excel" | "image">("pdf");
   const [previewMode, setPreviewMode] = useState<"sheet" | "summary">("sheet");
+
+  // PDF Upload State
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+
+  // Word Upload State
+  const [wordFile, setWordFile] = useState<File | null>(null);
+  const [wordSummary, setWordSummary] = useState<string | null>(null);
+  const wordInputRef = useRef<HTMLInputElement>(null);
 
   // Image Upload State
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -94,9 +109,45 @@ export function AiTemplateGeneratorModal({
     reader.readAsDataURL(file);
   };
 
-  // Process selected Excel file
+  // Process selected PDF file
+  const handlePdfSelect = (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Please select a valid PDF file (.pdf)");
+      return;
+    }
+    setPdfFile(file);
+    toast.success(`Loaded PDF document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+  };
+
+  // Process selected Word file (.docx, .doc)
+  const handleWordSelect = async (file: File) => {
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".docx") && !lowerName.endsWith(".doc")) {
+      toast.error("Please select a valid Word document (.docx, .doc)");
+      return;
+    }
+    setWordFile(file);
+
+    try {
+      if (lowerName.endsWith(".docx")) {
+        const extracted = await extractDocxTextAndTables(file);
+        setWordSummary(extracted);
+        toast.success(`Extracted content from Word document: ${file.name}`);
+      } else {
+        setWordSummary(`File name: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+        toast.success(`Loaded Word document: ${file.name}`);
+      }
+    } catch (err: any) {
+      console.warn("Word parse error", err);
+      setWordSummary(`File: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`);
+      toast.warning("Loaded Word document. AI will attempt to generate from available file metadata.");
+    }
+  };
+
+  // Process selected Excel file (.xlsx, .xls, .csv)
   const handleExcelSelect = async (file: File) => {
-    if (!file.name.endsWith(".xlsx") && !file.name.endsWith(".xls") && !file.name.endsWith(".csv")) {
+    const fileNameLower = file.name.toLowerCase();
+    if (!fileNameLower.endsWith(".xlsx") && !fileNameLower.endsWith(".xls") && !fileNameLower.endsWith(".csv")) {
       toast.error("Please select a valid Excel or CSV file (.xlsx, .xls, .csv)");
       return;
     }
@@ -104,26 +155,66 @@ export function AiTemplateGeneratorModal({
 
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(buffer);
-
       let textOutput = "";
-      workbook.eachSheet((worksheet) => {
-        textOutput += `Sheet: ${worksheet.name}\n`;
-        worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-          const rowValues = Array.isArray(row.values)
-            ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
-            : "";
-          textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+      let sheetCount = 0;
+
+      if (fileNameLower.endsWith(".csv")) {
+        const text = await file.text();
+        textOutput = `Sheet: CSV\n${text}\n`;
+        sheetCount = 1;
+      } else {
+        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx
+        const workbook = XLSX.read(buffer, { type: "array" });
+        sheetCount = workbook.SheetNames.length;
+
+        workbook.SheetNames.forEach((sheetName) => {
+          const worksheet = workbook.Sheets[sheetName];
+          if (!worksheet) return;
+          textOutput += `Sheet: ${sheetName}\n`;
+          const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+          rows.forEach((row, rowIdx) => {
+            if (row && row.some((cell) => cell !== "" && cell !== null && cell !== undefined)) {
+              textOutput += `Row ${rowIdx + 1}: ${row.map((c) => String(c)).join(" | ")}\n`;
+            }
+          });
+          textOutput += "\n";
         });
-        textOutput += "\n";
-      });
+      }
+
+      if (!textOutput.trim()) {
+        textOutput = `File: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`;
+      }
 
       setExcelSummary(textOutput);
-      toast.success(`Loaded Excel file (${workbook.worksheets.length} sheets)`);
+      toast.success(`Loaded Excel file (${sheetCount} sheet${sheetCount > 1 ? "s" : ""})`);
     } catch (err: any) {
-      console.error("Excel parse error", err);
-      toast.error("Could not parse Excel workbook. You can still proceed with AI extraction.");
+      console.warn("XLSX parsing failed, trying ExcelJS fallback", err);
+      try {
+        const buffer = await file.arrayBuffer();
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(buffer);
+
+        let textOutput = "";
+        workbook.eachSheet((worksheet) => {
+          textOutput += `Sheet: ${worksheet.name}\n`;
+          worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+            const rowValues = Array.isArray(row.values)
+              ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
+              : "";
+            textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+          });
+          textOutput += "\n";
+        });
+
+        const finalOutput = textOutput.trim() || `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        setExcelSummary(finalOutput);
+        toast.success(`Loaded Excel file (${workbook.worksheets.length} sheets)`);
+      } catch (fallbackErr: any) {
+        console.error("Excel fallback error", fallbackErr);
+        // Guarantee excelSummary is populated with file metadata so AI generation is not blocked
+        setExcelSummary(`File name: ${file.name}, Size: ${(file.size / 1024).toFixed(1)} KB`);
+        toast.warning("Loaded file. AI will attempt to generate from available file metadata.");
+      }
     }
   };
 
@@ -136,12 +227,22 @@ export function AiTemplateGeneratorModal({
       return;
     }
 
+    if (activeTab === "pdf" && !pdfFile) {
+      toast.error("Please upload a PDF calibration certificate first.");
+      return;
+    }
+
+    if (activeTab === "word" && !wordFile) {
+      toast.error("Please upload a Word document (.docx / .doc) first.");
+      return;
+    }
+
     if (activeTab === "image" && !imageFile) {
       toast.error("Please upload or paste an image of the calibration sheet first.");
       return;
     }
 
-    if (activeTab === "excel" && (!excelFile || !excelSummary)) {
+    if (activeTab === "excel" && !excelFile) {
       toast.error("Please upload an Excel file first.");
       return;
     }
@@ -151,10 +252,16 @@ export function AiTemplateGeneratorModal({
 
     try {
       let result: GeneratedTemplateResult;
-      if (activeTab === "image" && imageFile) {
+      if (activeTab === "pdf" && pdfFile) {
+        result = await generateTemplateFromPdf(pdfFile, customInstructions, keyToUse);
+      } else if (activeTab === "word" && wordFile) {
+        const content = wordSummary || `File: ${wordFile.name}`;
+        result = await generateTemplateFromWord(content, wordFile.name, customInstructions, keyToUse);
+      } else if (activeTab === "image" && imageFile) {
         result = await generateTemplateFromImage(imageFile, customInstructions, keyToUse);
       } else {
-        result = await generateTemplateFromExcel(excelSummary || "", customInstructions, keyToUse);
+        const summaryToSend = excelSummary || `File name: ${excelFile?.name || "Uploaded workbook"}`;
+        result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
       }
 
       setExtractedResult(result);
@@ -177,9 +284,205 @@ export function AiTemplateGeneratorModal({
   const handleReset = () => {
     setImageFile(null);
     setImagePreview(null);
+    setPdfFile(null);
+    setWordFile(null);
+    setWordSummary(null);
     setExcelFile(null);
     setExcelSummary(null);
     setExtractedResult(null);
+  };
+
+  const handleLoadPreset = (preset: CanvasTemplatePreset) => {
+    setExtractedResult({
+      name: preset.name,
+      description: preset.description,
+      instrumentType: preset.instrumentType,
+      defaultUnit: preset.defaultUnit,
+      defaultTolerance: preset.defaultTolerance,
+      decimalPlaces: 3,
+      acceptanceCriteria: {
+        enabled: true,
+        type: "absolute",
+        value: preset.defaultTolerance,
+      },
+      blocks: preset.blocks,
+    });
+    toast.success(`Loaded "${preset.name}" preset into Preview!`);
+  };
+
+  // Helper to render Table Grid in sheet preview
+  const renderPreviewTableGrid = (tbl: TableGridBlock, keyPrefix: string) => {
+    const dec = tbl.decimal_places ?? extractedResult?.decimalPlaces ?? 3;
+    return (
+      <div key={keyPrefix} className="border border-black overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black text-[11px] font-bold">
+          <span>{tbl.title || "Calibration Table"}</span>
+          <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground font-normal">
+            <span>Unit: {tbl.unit || extractedResult?.defaultUnit || "mm"}</span>
+            <span>• Tol: ±{tbl.tolerance ?? extractedResult?.defaultTolerance ?? 0.005}</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[10px] text-center border-black">
+            <thead>
+              <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                {tbl.columns.map((col) => (
+                  <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                    {col.label}
+                    {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-black">
+              {tbl.rows.map((row, rIdx) => (
+                <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                  {tbl.columns.map((col) => {
+                    if (col.id === "point_number" || col.id === "sl_no") {
+                      return <td key={col.id} className="py-1 px-1.5 font-bold">{row.point_number ?? (rIdx + 1)}</td>;
+                    }
+
+                    const cellVal = row[col.id] !== undefined
+                      ? row[col.id]
+                      : col.type === "nominal"
+                      ? row.nominal
+                      : col.type === "text"
+                      ? row.description
+                      : col.type === "tolerance"
+                      ? row.tolerance
+                      : row.reading;
+
+                    if (col.type === "text") {
+                      return <td key={col.id} className="py-1 px-1.5 font-semibold text-slate-800 dark:text-slate-200">{cellVal !== undefined && cellVal !== null ? String(cellVal) : "-"}</td>;
+                    }
+                    if (col.type === "nominal") {
+                      return <td key={col.id} className="py-1 px-1.5 font-bold">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
+                    }
+                    if (col.type === "tolerance") {
+                      return <td key={col.id} className="py-1 px-1.5 font-mono text-slate-700 dark:text-slate-300">{typeof cellVal === "number" ? (cellVal >= 0 ? `±${cellVal.toFixed(dec)}` : cellVal.toFixed(dec)) : String(cellVal ?? "-")}</td>;
+                    }
+                    if (col.type === "formula") {
+                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{cellVal !== undefined && cellVal !== null ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal)) : `+${(0).toFixed(dec)}`}</td>;
+                    }
+                    if (col.type === "status") {
+                      const isPass = cellVal === "PASS" || cellVal === undefined;
+                      return (
+                        <td key={col.id} className="py-1 px-1.5">
+                          <span className={`inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold ${isPass ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"}`}>{cellVal || "PASS"}</span>
+                        </td>
+                      );
+                    }
+                    return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {tbl.footerNote && (
+          <div className="p-1 bg-slate-50 dark:bg-slate-800/40 text-[9px] text-muted-foreground italic border-t border-black">
+            * {tbl.footerNote}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Helper to render Matrix Table in sheet preview
+  const renderPreviewMatrixTable = (matrix: MatrixTableBlock, keyPrefix: string) => {
+    return (
+      <div key={keyPrefix} className="border border-black overflow-hidden bg-white dark:bg-slate-900 shadow-xs">
+        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 text-[11px] font-bold border-b border-black flex items-center justify-between">
+          <span>{matrix.title || "Acceptance critiria"}</span>
+          <Badge variant="outline" className="text-[9px] border-black/30 font-mono">
+            Acceptance Limits
+          </Badge>
+        </div>
+        <table className="w-full border-collapse text-[10px] text-center border-black">
+          <thead>
+            {(matrix.headers || []).map((hRow, hIdx) => {
+              const cells: any[] = Array.isArray(hRow)
+                ? hRow
+                : (hRow && typeof hRow === "object")
+                  ? [hRow]
+                  : [{ text: String(hRow || "") }];
+              return (
+                <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
+                  {cells.map((cell: any, cIdx: number) => {
+                    const cellText = typeof cell === "object" && cell !== null ? (cell.text ?? "") : String(cell ?? "");
+                    const colSpan = typeof cell === "object" && cell !== null ? cell.colSpan : undefined;
+                    const rowSpan = typeof cell === "object" && cell !== null ? cell.rowSpan : undefined;
+                    return (
+                      <th key={cIdx} colSpan={colSpan} rowSpan={rowSpan} className="py-1 px-1.5">
+                        {cellText}
+                      </th>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </thead>
+          <tbody className="divide-y divide-black">
+            {(matrix.rows || []).map((r: any, rIdx: number) => {
+              const cells: any[] = Array.isArray(r)
+                ? r
+                : (r && typeof r === "object")
+                  ? Object.values(r)
+                  : [r];
+              return (
+                <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                  {cells.map((val: any, cIdx: number) => (
+                    <td key={cIdx} className={`py-1 px-1.5 ${cIdx === 1 ? "font-semibold text-left pl-3" : "font-mono"}`}>
+                      {typeof val === "object" && val !== null ? (val.text ?? JSON.stringify(val)) : String(val ?? "")}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  // Helper to render Text Block in sheet preview
+  const renderPreviewTextBlock = (textBlock: TextBlock, keyPrefix: string) => {
+    return (
+      <div key={keyPrefix} className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center gap-2 shadow-xs">
+        <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+        <span>{textBlock.content}</span>
+      </div>
+    );
+  };
+
+  // Helper to render Split Row (Side-by-Side) in sheet preview
+  const renderPreviewSplitRow = (splitBlock: SplitRowBlock, keyPrefix: string) => {
+    const colCount = splitBlock.children?.length || 2;
+    return (
+      <div key={keyPrefix} className="space-y-1.5 p-2 bg-indigo-50/20 dark:bg-indigo-950/20 rounded border border-dashed border-indigo-400">
+        <div className="flex items-center justify-between text-[10px] text-indigo-700 dark:text-indigo-300 font-bold px-0.5">
+          <span className="flex items-center gap-1">
+            <LayoutGrid className="w-3.5 h-3.5 text-indigo-600" />
+            Side-by-Side Split Tables ({colCount} Columns)
+          </span>
+          <Badge variant="outline" className="text-[9px] border-indigo-300 text-indigo-700 dark:text-indigo-300">
+            {splitBlock.columnRatio || "50/50"} Layout
+          </Badge>
+        </div>
+
+        <div className={`grid grid-cols-1 ${colCount === 3 ? "md:grid-cols-3" : "md:grid-cols-2"} gap-2 items-start`}>
+          {splitBlock.children?.map((child, cIdx) => (
+            <div key={child.id || `${keyPrefix}_c${cIdx}`} className="min-w-0">
+              {child.type === "table_grid" && renderPreviewTableGrid(child as TableGridBlock, `${keyPrefix}_t${cIdx}`)}
+              {child.type === "matrix_table" && renderPreviewMatrixTable(child as MatrixTableBlock, `${keyPrefix}_m${cIdx}`)}
+              {child.type === "text_block" && renderPreviewTextBlock(child as TextBlock, `${keyPrefix}_txt${cIdx}`)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -196,11 +499,11 @@ export function AiTemplateGeneratorModal({
                 <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-white">
                   AI Smart Template Generator
                   <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                    Gemini 1.5 Flash
+                    Gemini 2.0 / 1.5 Flash
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-300">
-                  Upload an Excel sheet or calibration drawing/certificate image to auto-generate a complete Canvas Template.
+                  Upload a PDF certificate, Word document, Excel sheet, or drawing/certificate image to auto-generate a complete Canvas Template.
                 </DialogDescription>
               </div>
             </div>
@@ -255,69 +558,130 @@ export function AiTemplateGeneratorModal({
             <>
               {/* Tabs for Upload Method */}
               <Tabs value={activeTab} onValueChange={(val: any) => setActiveTab(val)}>
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="image" className="text-xs gap-2">
-                    <ImageIcon className="w-4 h-4 text-purple-500" />
-                    Image / Drawing / Scanned Certificate
+                <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 gap-1">
+                  <TabsTrigger value="pdf" className="text-xs gap-1.5 py-2">
+                    <FileText className="w-4 h-4 text-rose-500" />
+                    PDF Certificate
                   </TabsTrigger>
-                  <TabsTrigger value="excel" className="text-xs gap-2">
+                  <TabsTrigger value="word" className="text-xs gap-1.5 py-2">
+                    <FileCode className="w-4 h-4 text-blue-500" />
+                    Word (.docx / .doc)
+                  </TabsTrigger>
+                  <TabsTrigger value="excel" className="text-xs gap-1.5 py-2">
                     <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-                    Excel Workbook (.xlsx / .csv)
+                    Excel (.xlsx / .xls)
+                  </TabsTrigger>
+                  <TabsTrigger value="image" className="text-xs gap-1.5 py-2">
+                    <ImageIcon className="w-4 h-4 text-purple-500" />
+                    Image / Drawing
                   </TabsTrigger>
                 </TabsList>
 
-                {/* Tab 1: Image Upload */}
-                <TabsContent value="image" className="space-y-3 pt-2">
+                {/* Tab 1: PDF Certificate Upload */}
+                <TabsContent value="pdf" className="space-y-3 pt-2">
                   <div
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => pdfInputRef.current?.click()}
                     onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onDrop={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       if (e.dataTransfer.files?.[0]) {
-                        handleImageSelect(e.dataTransfer.files[0]);
+                        handlePdfSelect(e.dataTransfer.files[0]);
                       }
                     }}
-                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-primary/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-slate-50/50 dark:bg-slate-900/30 flex flex-col items-center justify-center min-h-[160px]"
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-rose-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-rose-50/20 dark:bg-rose-950/10 flex flex-col items-center justify-center min-h-[160px]"
                   >
                     <input
-                      ref={fileInputRef}
+                      ref={pdfInputRef}
                       type="file"
-                      accept="image/*"
+                      accept=".pdf,application/pdf"
                       className="hidden"
                       onChange={(e) => {
-                        if (e.target.files?.[0]) handleImageSelect(e.target.files[0]);
+                        if (e.target.files?.[0]) handlePdfSelect(e.target.files[0]);
                       }}
                     />
 
-                    {imagePreview ? (
+                    {pdfFile ? (
                       <div className="space-y-2">
-                        <img
-                          src={imagePreview}
-                          alt="Uploaded Calibration Standard"
-                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
-                        />
-                        <div className="text-xs text-muted-foreground font-medium">
-                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                        <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto">
+                          <FileText className="w-6 h-6" />
                         </div>
+                        <div className="text-xs font-bold text-rose-700 dark:text-rose-400">
+                          {pdfFile.name} ({(pdfFile.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          PDF Certificate ready for multi-page AI reading & conversion - Click to change file
+                        </p>
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto">
+                        <div className="w-12 h-12 rounded-full bg-rose-500/10 text-rose-600 flex items-center justify-center mx-auto">
                           <Upload className="w-6 h-6" />
                         </div>
                         <div className="text-xs font-semibold">
-                          Click to upload or Drag & Drop calibration image / standard drawing
+                          Click to upload or Drag & Drop PDF Calibration Certificate
                         </div>
                         <p className="text-[11px] text-muted-foreground">
-                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
+                          Supports official accredited calibration certificates, test reports, and scan PDFs (Max 20MB)
                         </p>
                       </div>
                     )}
                   </div>
                 </TabsContent>
 
-                {/* Tab 2: Excel Upload */}
+                {/* Tab 2: Word Document Upload */}
+                <TabsContent value="word" className="space-y-3 pt-2">
+                  <div
+                    onClick={() => wordInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleWordSelect(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-blue-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-blue-50/20 dark:bg-blue-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                  >
+                    <input
+                      ref={wordInputRef}
+                      type="file"
+                      accept=".docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/msword"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleWordSelect(e.target.files[0]);
+                      }}
+                    />
+
+                    {wordFile ? (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center mx-auto">
+                          <FileCode className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-bold text-blue-700 dark:text-blue-400">
+                          {wordFile.name} ({(wordFile.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Word document ready for AI table & specification extraction - Click to change file
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-blue-500/10 text-blue-600 flex items-center justify-center mx-auto">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-semibold">
+                          Click to upload or Drag & Drop Word Calibration Document
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Supports calibration procedures, inspection formats, and templates (.docx, .doc)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+
+                {/* Tab 3: Excel Upload */}
                 <TabsContent value="excel" className="space-y-3 pt-2">
                   <div
                     onClick={() => excelInputRef.current?.click()}
@@ -368,7 +732,85 @@ export function AiTemplateGeneratorModal({
                     )}
                   </div>
                 </TabsContent>
+
+                {/* Tab 4: Image Upload */}
+                <TabsContent value="image" className="space-y-3 pt-2">
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (e.dataTransfer.files?.[0]) {
+                        handleImageSelect(e.dataTransfer.files[0]);
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleImageSelect(e.target.files[0]);
+                      }}
+                    />
+
+                    {imagePreview ? (
+                      <div className="space-y-2">
+                        <img
+                          src={imagePreview}
+                          alt="Uploaded Calibration Standard"
+                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
+                        />
+                        <div className="text-xs text-muted-foreground font-medium">
+                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="w-12 h-12 rounded-full bg-purple-500/10 text-purple-600 flex items-center justify-center mx-auto">
+                          <Upload className="w-6 h-6" />
+                        </div>
+                        <div className="text-xs font-semibold">
+                          Click to upload or Drag & Drop calibration image / standard drawing
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
               </Tabs>
+
+              {/* Quick Standard Presets Bar */}
+              <div className="p-3 bg-gradient-to-r from-indigo-50/80 via-blue-50/40 to-purple-50/80 dark:from-indigo-950/40 dark:via-blue-950/20 dark:to-purple-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                    Instant Accredited Presets (ISO / IS Calibration Standards)
+                  </span>
+                  <Badge variant="outline" className="text-[10px] text-indigo-700 dark:text-indigo-300 border-indigo-300">
+                    Zero Setup
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {CANVAS_PRESETS.slice(0, 5).map((preset) => (
+                    <Button
+                      key={preset.id}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleLoadPreset(preset)}
+                      className="h-7 text-[11px] px-2.5 py-0 border-indigo-300/80 dark:border-indigo-700 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-950 dark:text-indigo-200 rounded-full font-medium"
+                    >
+                      {preset.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
 
               {/* Optional Custom Instructions */}
               <div className="space-y-1.5">
@@ -376,7 +818,7 @@ export function AiTemplateGeneratorModal({
                 <Textarea
                   value={customInstructions}
                   onChange={(e) => setCustomInstructions(e.target.value)}
-                  placeholder="e.g. Include 5 trials for external jaws, extract MPE limits from ISO 1502 standard, set tolerance to ±0.01 mm..."
+                  placeholder="e.g. Include 5 trials for measuring anvils, place Flatness and Parallelism side-by-side in a split row, extract Acceptance criteria table..."
                   className="text-xs resize-none h-16"
                 />
               </div>
@@ -447,107 +889,10 @@ export function AiTemplateGeneratorModal({
 
                   {extractedResult.blocks.map((block, idx) => (
                     <div key={block.id || idx} className="space-y-1.5">
-                      {/* 1. TABLE GRID */}
-                      {block.type === "table_grid" && (
-                        <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                          <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black text-[11px] font-bold">
-                            <span>{(block as TableGridBlock).title || `Calibration Section #${idx + 1}`}</span>
-                            <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground font-normal">
-                              <span>Unit: {(block as TableGridBlock).unit || extractedResult.defaultUnit}</span>
-                              <span>• Tol: ±{(block as TableGridBlock).tolerance ?? extractedResult.defaultTolerance}</span>
-                            </div>
-                          </div>
-
-                          <div className="overflow-x-auto">
-                            <table className="w-full border-collapse text-[10px] text-center border-black">
-                              <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  {(block as TableGridBlock).columns.map((col) => (
-                                    <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
-                                      {col.label}
-                                      {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
-                                    </th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-black">
-                                {(block as TableGridBlock).rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                    {(block as TableGridBlock).columns.map((col) => {
-                                      const dec = (block as TableGridBlock).decimal_places ?? extractedResult.decimalPlaces ?? 3;
-                                      if (col.id === "point_number" || col.id === "sl_no") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-bold">{row.point_number ?? (rIdx + 1)}</td>;
-                                      }
-                                      if (col.type === "nominal") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-bold">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
-                                      }
-                                      if (col.type === "text") {
-                                        return <td key={col.id} className="py-1 px-1.5">{row.description || "-"}</td>;
-                                      }
-                                      if (col.type === "formula") {
-                                        return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{`+${(0).toFixed(dec)}`}</td>;
-                                      }
-                                      if (col.type === "status") {
-                                        return (
-                                          <td key={col.id} className="py-1 px-1.5">
-                                            <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">PASS</span>
-                                          </td>
-                                        );
-                                      }
-                                      return <td key={col.id} className="py-1 px-1.5 font-mono text-muted-foreground">{Number(row.nominal ?? 0).toFixed(dec)}</td>;
-                                    })}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-
-                          {(block as TableGridBlock).footerNote && (
-                            <div className="p-1 bg-slate-50 dark:bg-slate-800/40 text-[9px] text-muted-foreground italic border-t border-black">
-                              * {(block as TableGridBlock).footerNote}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* 2. MATRIX TABLE */}
-                      {block.type === "matrix_table" && (
-                        <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                          <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 text-[11px] font-bold border-b border-black">
-                            {(block as MatrixTableBlock).title || "Acceptance Criteria Reference Matrix"}
-                          </div>
-                          <table className="w-full border-collapse text-[10px] text-center border-black">
-                            <thead>
-                              {(block as MatrixTableBlock).headers.map((hRow, hIdx) => (
-                                <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  {hRow.map((cell, cIdx) => (
-                                    <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="py-1 px-1.5">
-                                      {cell.text}
-                                    </th>
-                                  ))}
-                                </tr>
-                              ))}
-                            </thead>
-                            <tbody className="divide-y divide-black">
-                              {(block as MatrixTableBlock).rows.map((r, rIdx) => (
-                                <tr key={rIdx} className="divide-x divide-black">
-                                  {r.map((val, cIdx) => (
-                                    <td key={cIdx} className="py-1 px-1.5 font-mono">{val}</td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-
-                      {/* 3. NOTE / CALLOUT */}
-                      {block.type === "text_block" && (
-                        <div className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 text-xs flex items-center gap-2">
-                          <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>{(block as TextBlock).content}</span>
-                        </div>
-                      )}
+                      {block.type === "table_grid" && renderPreviewTableGrid(block as TableGridBlock, `b_${idx}`)}
+                      {block.type === "split_row" && renderPreviewSplitRow(block as SplitRowBlock, `b_${idx}`)}
+                      {block.type === "matrix_table" && renderPreviewMatrixTable(block as MatrixTableBlock, `b_${idx}`)}
+                      {block.type === "text_block" && renderPreviewTextBlock(block as TextBlock, `b_${idx}`)}
                     </div>
                   ))}
                 </div>
@@ -583,6 +928,11 @@ export function AiTemplateGeneratorModal({
                               {(block as any).rows?.length || 0} Test Points | {(block as any).columns?.length || 0} Columns | Unit: {(block as any).unit || "mm"}
                             </div>
                           )}
+                          {block.type === "split_row" && (
+                            <div className="text-[11px] text-muted-foreground">
+                              Side-by-Side Split: {(block as SplitRowBlock).children?.map((c: any) => c.title || c.type).join(" + ")} ({(block as SplitRowBlock).children?.length || 0} sub-tables)
+                            </div>
+                          )}
                           {block.type === "matrix_table" && (
                             <div className="text-[11px] text-muted-foreground">
                               Reference Matrix ({(block as any).rows?.length || 0} rows)
@@ -609,13 +959,22 @@ export function AiTemplateGeneratorModal({
             <Button
               size="sm"
               onClick={handleGenerate}
-              disabled={isProcessing || (activeTab === "image" ? !imageFile : !excelFile)}
+              disabled={
+                isProcessing ||
+                (activeTab === "pdf"
+                  ? !pdfFile
+                  : activeTab === "word"
+                  ? !wordFile
+                  : activeTab === "image"
+                  ? !imageFile
+                  : !excelFile)
+              }
               className="gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-sm"
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Extracting with Gemini 1.5 Flash...
+                  Extracting Layout with Gemini...
                 </>
               ) : (
                 <>

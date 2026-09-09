@@ -184,13 +184,40 @@ export class AuthService {
       throw new BadRequestException('Google authentication is not configured for this deployment');
     }
 
-    const ticket = await this.oauthClient.verifyIdToken({
-      idToken: token,
-      audience: this.configService.get('GOOGLE_CLIENT_ID'),
-    });
+    let googleId: string | undefined;
+    let email: string | undefined;
+    let name: string | undefined;
 
-    const payload = ticket.getPayload();
-    const { sub: googleId, email, name } = payload || {};
+    // 1. Try ID token verification first (if an ID token was passed)
+    try {
+      const ticket = await this.oauthClient.verifyIdToken({
+        idToken: token,
+        audience: this.configService.get('GOOGLE_CLIENT_ID'),
+      });
+      const payload = ticket.getPayload();
+      googleId = payload?.sub;
+      email = payload?.email;
+      name = payload?.name;
+    } catch {
+      // 2. If ID token verification fails, verify as OAuth2 access token via Google userinfo
+      try {
+        const userInfoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (userInfoRes.ok) {
+          const data: any = await userInfoRes.json();
+          googleId = data.sub || data.id;
+          email = data.email;
+          name = data.name || (data.email ? data.email.split('@')[0] : 'User');
+        } else {
+          const errText = await userInfoRes.text();
+          console.error('[AuthService] Google userinfo fetch failed:', userInfoRes.status, errText);
+        }
+      } catch (fetchErr) {
+        console.error('[AuthService] Failed to fetch Google userinfo with access token:', fetchErr);
+      }
+    }
 
     if (!googleId || !email || !name) {
       throw new UnauthorizedException('Invalid Google token');

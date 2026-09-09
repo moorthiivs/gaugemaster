@@ -15,6 +15,7 @@ export interface PricingCardProps {
   popular?: boolean;
   badgeText?: string;
   buttonText: string;
+  buttonHref?: string;
   delay?: number;
   icon?: React.ReactNode;
 }
@@ -30,6 +31,7 @@ export function PricingCard({
   popular,
   badgeText,
   buttonText,
+  buttonHref,
   delay = 0,
   icon,
 }: PricingCardProps) {
@@ -93,17 +95,31 @@ export function PricingCard({
         </ul>
       </div>
 
-      <Button
-        className="w-full rounded-full font-semibold group h-11 sm:h-12 text-sm sm:text-base"
-        variant={popular ? "hero" : "outline"}
-        size="lg"
-        asChild
-      >
-        <Link to="/login">
-          {buttonText}
-          <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
-        </Link>
-      </Button>
+      {buttonHref?.startsWith("mailto:") || buttonHref?.startsWith("http") ? (
+        <Button
+          className="w-full rounded-full font-semibold group h-11 sm:h-12 text-sm sm:text-base"
+          variant={popular ? "hero" : "outline"}
+          size="lg"
+          asChild
+        >
+          <a href={buttonHref}>
+            {buttonText}
+            <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
+          </a>
+        </Button>
+      ) : (
+        <Button
+          className="w-full rounded-full font-semibold group h-11 sm:h-12 text-sm sm:text-base"
+          variant={popular ? "hero" : "outline"}
+          size="lg"
+          asChild
+        >
+          <Link to={buttonHref || "/login"}>
+            {buttonText}
+            <ArrowRight className="h-4 w-4 ml-2 group-hover:translate-x-1 transition-transform" />
+          </Link>
+        </Button>
+      )}
     </motion.div>
   );
 }
