@@ -15,6 +15,9 @@ import {
   Building2,
   Activity,
   X,
+  FileText,
+  BookOpen,
+  Compass,
 } from "lucide-react";
 import {
   Sidebar,
@@ -60,6 +63,9 @@ const navigationGroups = [
       { title: "Instrument Master", url: "/instruments", icon: Gauge, module: "instruments", action: "view" },
       { title: "Register Instrument", url: "/instruments/new", icon: PlusCircle, module: "instruments", action: "create" },
       { title: "Calibration Templates", url: "/calibration/templates", icon: Layers, module: "templates", action: "view" },
+      { title: "Calibration Procedure", url: "/calibration-procedures", icon: FileText, module: "instruments", action: "view" },
+      { title: "Work Instructions", url: "/work-instructions", icon: BookOpen, module: "instruments", action: "view" },
+      { title: "Gauge Diagram", url: "/gauge-diagrams", icon: Compass, module: "instruments", action: "view" },
     ],
   },
   {

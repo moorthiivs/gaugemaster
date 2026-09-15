@@ -32,6 +32,9 @@ import SuperAdminRoute from "./components/SuperAdminRoute";
 import CustomerCompanies from "./pages/admin/CustomerCompanies";
 import CompanyDetail from "./pages/admin/CompanyDetail";
 import GlobalAuditLogs from "./pages/admin/GlobalAuditLogs";
+import CalibrationProcedures from "./pages/CalibrationProcedures";
+import GaugeDiagrams from "./pages/GaugeDiagrams";
+import WorkInstructions from "./pages/WorkInstructions";
 
 const queryClient = new QueryClient();
 
@@ -78,6 +81,9 @@ const App = () => (
                   <Route path="/instruments" element={<ProtectedRoute module="instruments" action="view"><Instruments /></ProtectedRoute>} />
                   <Route path="/instruments/new" element={<ProtectedRoute module="instruments" action="create"><InstrumentForm /></ProtectedRoute>} />
                   <Route path="/instruments/:id/edit" element={<ProtectedRoute module="instruments" action="edit"><InstrumentForm /></ProtectedRoute>} />
+                  <Route path="/calibration-procedures" element={<ProtectedRoute module="instruments" action="view"><CalibrationProcedures /></ProtectedRoute>} />
+                  <Route path="/work-instructions" element={<ProtectedRoute module="instruments" action="view"><WorkInstructions /></ProtectedRoute>} />
+                  <Route path="/gauge-diagrams" element={<ProtectedRoute module="instruments" action="view"><GaugeDiagrams /></ProtectedRoute>} />
                   <Route path="/reports" element={<ProtectedRoute module="reports" action="view"><Reports /></ProtectedRoute>} />
                   <Route path="/calibration/approval" element={<ProtectedRoute module="calibrations" action="view"><CalibrationApprovalList /></ProtectedRoute>} />
                   <Route path="/calibration/templates" element={<ProtectedRoute module="templates" action="view"><TemplateBuilder /></ProtectedRoute>} />

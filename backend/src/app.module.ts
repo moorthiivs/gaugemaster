@@ -24,6 +24,9 @@ import { RolesModule } from './roles/roles.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { LabelPrintHistoryModule } from './label-print-history/label-print-history.module';
+import { CalibrationProceduresModule } from './calibration-procedures/calibration-procedures.module';
+import { GaugeDiagramsModule } from './gauge-diagrams/gauge-diagrams.module';
+import { WorkInstructionsModule } from './work-instructions/work-instructions.module';
 
 @Module({
   imports: [
@@ -67,6 +70,9 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
     SuperAdminModule,
     AuditLogsModule,
     LabelPrintHistoryModule,
+    CalibrationProceduresModule,
+    GaugeDiagramsModule,
+    WorkInstructionsModule,
 
     // ⭐ PgBoss correct async config (NO ERRORS)
     PGBossModule.forRootAsync({
