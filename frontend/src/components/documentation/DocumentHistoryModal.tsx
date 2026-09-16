@@ -24,6 +24,9 @@ interface HistoryItem {
   process?: string;
   gauge_name?: string;
   title?: string;
+  id_code?: string;
+  part_name?: string;
+  instrument_id?: string;
   procedure_id?: string;
   diagram_id?: string;
   instruction_id?: string;
@@ -135,7 +138,21 @@ export function DocumentHistoryModal({
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[240px]">
-                        {entry.action_details || "Record updated"}
+                        <div>{entry.action_details || "Record updated"}</div>
+                        {(entry.id_code || entry.part_name) && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            {entry.id_code && (
+                              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-muted text-foreground font-semibold">
+                                ID: {entry.id_code}
+                              </span>
+                            )}
+                            {entry.part_name && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                                Part: {entry.part_name}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs">
                         <div className="flex items-center gap-1.5 text-muted-foreground">

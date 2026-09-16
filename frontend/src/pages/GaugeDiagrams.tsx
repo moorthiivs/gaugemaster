@@ -1,9 +1,9 @@
-import { useState, useEffect, useId } from "react";
+import { useState, useEffect } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { useSEO } from "@/hooks/useSEO";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,8 @@ import {
   CheckCircle2,
   RefreshCw,
   Compass,
+  Hash,
+  Cog,
 } from "lucide-react";
 import {
   GaugeDiagram,
@@ -57,23 +59,8 @@ import {
 } from "@/lib/documentationActions";
 import { DocumentViewerModal } from "@/components/documentation/DocumentViewerModal";
 import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
-
-const COMMON_GAUGES = [
-  "Vernier Caliper",
-  "Outside Micrometer",
-  "Inside Micrometer",
-  "Height Gauge",
-  "Depth Micrometer",
-  "Dial Indicator",
-  "Bore Gauge",
-  "Snap Gauge",
-  "Plug Gauge",
-  "Thread Ring Gauge",
-  "Thread Plug Gauge",
-  "Feeler Gauge",
-  "Pin Gauge",
-  "Radius Gauge",
-];
+import { InstrumentSearchSelector } from "@/components/documentation/InstrumentSearchSelector";
+import { Instrument } from "@/types/instrument";
 
 export default function GaugeDiagrams() {
   useSEO({
@@ -89,6 +76,9 @@ export default function GaugeDiagrams() {
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createGaugeName, setCreateGaugeName] = useState("");
+  const [createIdCode, setCreateIdCode] = useState("");
+  const [createPartName, setCreatePartName] = useState("");
+  const [createInstrumentId, setCreateInstrumentId] = useState("");
   const [createDescription, setCreateDescription] = useState("");
   const [createFile, setCreateFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,6 +91,9 @@ export default function GaugeDiagrams() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<GaugeDiagram | null>(null);
   const [editGaugeName, setEditGaugeName] = useState("");
+  const [editIdCode, setEditIdCode] = useState("");
+  const [editPartName, setEditPartName] = useState("");
+  const [editInstrumentId, setEditInstrumentId] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editFile, setEditFile] = useState<File | null>(null);
   const [editActionDetails, setEditActionDetails] = useState("");
@@ -113,6 +106,8 @@ export default function GaugeDiagrams() {
     isOpen: boolean;
     title: string;
     documentName?: string;
+    idCode?: string;
+    partName?: string;
     filePath?: string;
     fileType?: string;
     version?: number;
@@ -132,8 +127,6 @@ export default function GaugeDiagrams() {
     list: [],
     isLoading: false,
   });
-
-  const gaugeDataListId = useId();
 
   const fetchDiagrams = async () => {
     setLoading(true);
@@ -159,11 +152,11 @@ export default function GaugeDiagrams() {
     fetchDiagrams();
   };
 
-  // Handle Create
+  // Handle Create Submit
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createGaugeName.trim()) {
-      toast.error("Please enter or select a Gauge Name");
+      toast.error("Please select a gauge from the Instruments Master list");
       return;
     }
 
@@ -171,20 +164,20 @@ export default function GaugeDiagrams() {
     try {
       const formData = new FormData();
       formData.append("gauge_name", createGaugeName.trim());
-      if (createDescription.trim()) {
-        formData.append("description", createDescription.trim());
-      }
-      if (user?.companyId) {
-        formData.append("companyId", user.companyId);
-      }
-      if (createFile) {
-        formData.append("file", createFile);
-      }
+      if (createIdCode.trim()) formData.append("id_code", createIdCode.trim());
+      if (createPartName.trim()) formData.append("part_name", createPartName.trim());
+      if (createInstrumentId) formData.append("instrument_id", createInstrumentId);
+      if (createDescription.trim()) formData.append("description", createDescription.trim());
+      if (user?.companyId) formData.append("companyId", user.companyId);
+      if (createFile) formData.append("file", createFile);
 
       const created = await createGaugeDiagram(formData);
       toast.success("Gauge diagram saved successfully");
       setIsCreateOpen(false);
       setCreateGaugeName("");
+      setCreateIdCode("");
+      setCreatePartName("");
+      setCreateInstrumentId("");
       setCreateDescription("");
       setCreateFile(null);
 
@@ -205,6 +198,9 @@ export default function GaugeDiagrams() {
   const handleOpenEdit = (item: GaugeDiagram) => {
     setEditingItem(item);
     setEditGaugeName(item.gauge_name);
+    setEditIdCode(item.id_code || "");
+    setEditPartName(item.part_name || "");
+    setEditInstrumentId(item.instrument_id || "");
     setEditDescription(item.description || "");
     setEditFile(null);
     setEditActionDetails("");
@@ -224,15 +220,12 @@ export default function GaugeDiagrams() {
     try {
       const formData = new FormData();
       formData.append("gauge_name", editGaugeName.trim());
-      if (editDescription !== undefined) {
-        formData.append("description", editDescription.trim());
-      }
-      if (editActionDetails.trim()) {
-        formData.append("actionDetails", editActionDetails.trim());
-      }
-      if (editFile) {
-        formData.append("file", editFile);
-      }
+      formData.append("id_code", editIdCode.trim());
+      formData.append("part_name", editPartName.trim());
+      if (editInstrumentId) formData.append("instrument_id", editInstrumentId);
+      if (editDescription !== undefined) formData.append("description", editDescription.trim());
+      if (editActionDetails.trim()) formData.append("actionDetails", editActionDetails.trim());
+      if (editFile) formData.append("file", editFile);
 
       await updateGaugeDiagram(editingItem.id, formData);
       toast.success("Gauge diagram updated successfully");
@@ -269,6 +262,8 @@ export default function GaugeDiagrams() {
       isOpen: true,
       title: item.gauge_name,
       documentName: item.document_name,
+      idCode: item.id_code,
+      partName: item.part_name,
       filePath: item.file_path,
       fileType: item.file_type,
       version: item.version,
@@ -310,7 +305,15 @@ export default function GaugeDiagrams() {
         </div>
         <div className="flex items-center gap-2">
           <Button
-            onClick={() => setIsCreateOpen(true)}
+            onClick={() => {
+              setCreateGaugeName("");
+              setCreateIdCode("");
+              setCreatePartName("");
+              setCreateInstrumentId("");
+              setCreateDescription("");
+              setCreateFile(null);
+              setIsCreateOpen(true);
+            }}
             className="gap-2 shadow-xs bg-primary text-primary-foreground hover:bg-primary/90"
           >
             <PlusCircle className="h-4 w-4" />
@@ -326,7 +329,7 @@ export default function GaugeDiagrams() {
             <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search gauge name or drawing..."
+                placeholder="Search gauge name, ID code / IMTE, or part..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9 h-9 text-sm bg-background"
@@ -349,8 +352,10 @@ export default function GaugeDiagrams() {
           <Table>
             <TableHeader className="bg-muted/30">
               <TableRow>
-                <TableHead className="w-16 text-center font-semibold">S.No</TableHead>
-                <TableHead className="font-semibold min-w-[220px]">Gauge</TableHead>
+                <TableHead className="w-14 text-center font-semibold">S.No</TableHead>
+                <TableHead className="font-semibold min-w-[200px]">Gauge Name</TableHead>
+                <TableHead className="font-semibold w-40">ID Code / IMTE</TableHead>
+                <TableHead className="font-semibold min-w-[150px]">Part Name</TableHead>
                 <TableHead className="font-semibold">Diagram File</TableHead>
                 <TableHead className="font-semibold w-24 text-center">Version</TableHead>
                 <TableHead className="font-semibold">Last Updated</TableHead>
@@ -360,7 +365,7 @@ export default function GaugeDiagrams() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-40 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
                     <div className="flex items-center justify-center gap-2">
                       <RefreshCw className="h-4 w-4 animate-spin text-primary" />
                       <span>Loading gauge diagrams...</span>
@@ -369,12 +374,12 @@ export default function GaugeDiagrams() {
                 </TableRow>
               ) : diagrams.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="h-40 text-center text-muted-foreground text-sm">
+                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Compass className="h-8 w-8 text-muted-foreground/50" />
                       <p className="font-medium text-foreground">No gauge diagrams found</p>
                       <p className="text-xs text-muted-foreground">
-                        Click "Create Gauge Diagram" to upload drawings or diagrams for your instruments.
+                        Click "Create Gauge Diagram" to select gauges from the master list and link engineering schematics.
                       </p>
                     </div>
                   </TableCell>
@@ -401,6 +406,26 @@ export default function GaugeDiagrams() {
                             </span>
                           )}
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        {diag.id_code ? (
+                          <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
+                            <Hash className="h-3 w-3 text-muted-foreground" />
+                            <span>{diag.id_code}</span>
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">-</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {diag.part_name ? (
+                          <div className="flex items-center gap-1 text-xs font-medium text-foreground">
+                            <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                            <span>{diag.part_name}</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground italic">-</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {diag.document_name ? (
@@ -489,37 +514,38 @@ export default function GaugeDiagrams() {
 
       {/* CREATE GAUGE DIAGRAM DIALOG */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create Gauge Diagram</DialogTitle>
             <DialogDescription>
-              Select or enter the Gauge Name and upload the related schematic image or PDF.
+              Select a gauge from the Instruments Master (filtered by device type: gauge) and attach the diagram schematic.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleCreateSubmit} className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="gauge-name" className="text-xs font-semibold">
-                Gauge Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="gauge-name"
-                list={gaugeDataListId}
-                placeholder="e.g. Vernier Caliper or Outside Micrometer"
-                value={createGaugeName}
-                onChange={(e) => setCreateGaugeName(e.target.value)}
-                required
-                className="h-9 text-sm"
-              />
-              <datalist id={gaugeDataListId}>
-                {COMMON_GAUGES.map((gauge) => (
-                  <option key={gauge} value={gauge} />
-                ))}
-              </datalist>
-              <p className="text-[11px] text-muted-foreground">
-                Type a custom gauge name or pick from common gauge types.
-              </p>
-            </div>
+            {/* High performance 2,000+ Gauge Selector with on-screen filter */}
+            <InstrumentSearchSelector
+              label="Select Gauge from Master"
+              required
+              companyId={user?.companyId}
+              defaultDeviceType="gauge"
+              selectedInstrumentId={createInstrumentId}
+              selectedName={createGaugeName}
+              selectedIdCode={createIdCode}
+              selectedPartName={createPartName}
+              onSelect={(inst: Instrument) => {
+                setCreateGaugeName(inst.name || "");
+                setCreateIdCode(inst.id_code || "");
+                setCreatePartName(inst.part_name || "");
+                setCreateInstrumentId(inst.id || "");
+              }}
+              onClear={() => {
+                setCreateGaugeName("");
+                setCreateIdCode("");
+                setCreatePartName("");
+                setCreateInstrumentId("");
+              }}
+            />
 
             <div className="space-y-1.5">
               <Label htmlFor="create-diag-desc" className="text-xs font-semibold">
@@ -527,7 +553,7 @@ export default function GaugeDiagrams() {
               </Label>
               <Textarea
                 id="create-diag-desc"
-                placeholder="Brief notes on parts, zero check, drawing number, or tolerance points..."
+                placeholder="Notes on zero check points, drawing number, or tolerance dimensions..."
                 value={createDescription}
                 onChange={(e) => setCreateDescription(e.target.value)}
                 rows={2}
@@ -586,7 +612,7 @@ export default function GaugeDiagrams() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting} className="gap-2">
+              <Button type="submit" disabled={isSubmitting || !createGaugeName} className="gap-2">
                 {isSubmitting ? "Saving..." : "Save Gauge Diagram"}
               </Button>
             </DialogFooter>
@@ -631,23 +657,55 @@ export default function GaugeDiagrams() {
 
       {/* EDIT DIAGRAM DIALOG */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Edit Gauge Diagram</DialogTitle>
             <DialogDescription>
-              Update gauge details or upload a new diagram revision (increments version).
+              Update gauge details, change linked instrument, or upload a new revision.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleEditSubmit} className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Gauge Name</Label>
-              <Input
-                value={editGaugeName}
-                onChange={(e) => setEditGaugeName(e.target.value)}
-                required
-                className="h-9 text-sm"
-              />
+            {/* Re-select or change from master list */}
+            <InstrumentSearchSelector
+              label="Linked Gauge in Master List"
+              required
+              companyId={user?.companyId}
+              defaultDeviceType="gauge"
+              selectedInstrumentId={editInstrumentId}
+              selectedName={editGaugeName}
+              selectedIdCode={editIdCode}
+              selectedPartName={editPartName}
+              onSelect={(inst: Instrument) => {
+                setEditGaugeName(inst.name || "");
+                setEditIdCode(inst.id_code || "");
+                setEditPartName(inst.part_name || "");
+                setEditInstrumentId(inst.id || "");
+              }}
+              onClear={() => {
+                setEditInstrumentId("");
+              }}
+            />
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">ID Code / IMTE</Label>
+                <Input
+                  value={editIdCode}
+                  onChange={(e) => setEditIdCode(e.target.value)}
+                  placeholder="e.g. PG-01"
+                  className="h-9 text-sm font-mono"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Part Name</Label>
+                <Input
+                  value={editPartName}
+                  onChange={(e) => setEditPartName(e.target.value)}
+                  placeholder="e.g. Flange Adapter"
+                  className="h-9 text-sm"
+                />
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -744,6 +802,8 @@ export default function GaugeDiagrams() {
         onClose={() => setViewerDoc((prev) => ({ ...prev, isOpen: false }))}
         title={viewerDoc.title}
         documentName={viewerDoc.documentName}
+        idCode={viewerDoc.idCode}
+        partName={viewerDoc.partName}
         filePath={viewerDoc.filePath}
         fileType={viewerDoc.fileType}
         version={viewerDoc.version}
@@ -763,6 +823,8 @@ export default function GaugeDiagrams() {
             isOpen: true,
             title: `${histItem.gauge_name || historyModal.itemName} (v${histItem.version})`,
             documentName: histItem.document_name,
+            idCode: histItem.id_code,
+            partName: histItem.part_name,
             filePath: histItem.file_path,
             fileType: histItem.file_type,
             version: histItem.version,

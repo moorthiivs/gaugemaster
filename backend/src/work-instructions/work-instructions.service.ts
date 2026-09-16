@@ -16,12 +16,16 @@ export class WorkInstructionsService {
   ) {}
 
   async findAll(companyId?: string, search?: string) {
-    const where: any = {};
-    if (companyId) {
-      where.companyId = companyId;
-    }
+    let where: any = {};
     if (search && search.trim()) {
-      where.title = ILike(`%${search.trim()}%`);
+      const pattern = ILike(`%${search.trim()}%`);
+      where = [
+        { ...(companyId ? { companyId } : {}), title: pattern },
+        { ...(companyId ? { companyId } : {}), id_code: pattern },
+        { ...(companyId ? { companyId } : {}), part_name: pattern },
+      ];
+    } else if (companyId) {
+      where.companyId = companyId;
     }
 
     return this.instructionRepo.find({
@@ -51,6 +55,9 @@ export class WorkInstructionsService {
 
     const instruction = this.instructionRepo.create({
       title: dto.title,
+      id_code: dto.id_code,
+      part_name: dto.part_name,
+      instrument_id: dto.instrument_id,
       description: dto.description,
       companyId: targetCompanyId,
       version: 1,
@@ -68,6 +75,9 @@ export class WorkInstructionsService {
     const history = this.historyRepo.create({
       instruction_id: saved.id,
       title: saved.title,
+      id_code: saved.id_code,
+      part_name: saved.part_name,
+      instrument_id: saved.instrument_id,
       document_name: saved.document_name,
       file_type: saved.file_type,
       file_path: saved.file_path,
@@ -101,6 +111,15 @@ export class WorkInstructionsService {
     if (dto.title !== undefined) {
       instruction.title = dto.title;
     }
+    if (dto.id_code !== undefined) {
+      instruction.id_code = dto.id_code;
+    }
+    if (dto.part_name !== undefined) {
+      instruction.part_name = dto.part_name;
+    }
+    if (dto.instrument_id !== undefined) {
+      instruction.instrument_id = dto.instrument_id;
+    }
     if (dto.description !== undefined) {
       instruction.description = dto.description;
     }
@@ -122,6 +141,9 @@ export class WorkInstructionsService {
     const history = this.historyRepo.create({
       instruction_id: updated.id,
       title: updated.title,
+      id_code: updated.id_code,
+      part_name: updated.part_name,
+      instrument_id: updated.instrument_id,
       document_name: updated.document_name,
       file_type: updated.file_type,
       file_path: updated.file_path,

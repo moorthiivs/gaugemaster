@@ -18,6 +18,15 @@ export class GaugeDiagram {
   gauge_name: string;
 
   @Column({ nullable: true })
+  id_code?: string;
+
+  @Column({ nullable: true })
+  part_name?: string;
+
+  @Column({ nullable: true })
+  instrument_id?: string;
+
+  @Column({ nullable: true })
   document_name: string;
 
   @Column({ nullable: true })

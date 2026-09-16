@@ -15,6 +15,8 @@ interface DocumentViewerModalProps {
   onClose: () => void;
   title: string;
   documentName?: string;
+  idCode?: string;
+  partName?: string;
   filePath?: string;
   fileType?: string;
   version?: number;
@@ -25,6 +27,8 @@ export function DocumentViewerModal({
   onClose,
   title,
   documentName,
+  idCode,
+  partName,
   filePath,
   fileType,
   version,
@@ -55,8 +59,8 @@ export function DocumentViewerModal({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[92vh] flex flex-col p-4 sm:p-6 overflow-hidden bg-background">
         <DialogHeader className="flex flex-row items-center justify-between gap-2 border-b pb-3 pr-6">
-          <div className="flex flex-col gap-1 overflow-hidden">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-1.5 overflow-hidden">
+            <div className="flex items-center gap-2 flex-wrap">
               {isPdf ? (
                 <FileText className="h-5 w-5 text-red-500 shrink-0" />
               ) : (
@@ -68,6 +72,16 @@ export function DocumentViewerModal({
               {version !== undefined && (
                 <Badge variant="secondary" className="text-xs font-semibold shrink-0">
                   v{version}
+                </Badge>
+              )}
+              {idCode && (
+                <Badge variant="outline" className="text-[11px] font-mono shrink-0">
+                  ID: {idCode}
+                </Badge>
+              )}
+              {partName && (
+                <Badge variant="secondary" className="text-[11px] shrink-0 bg-primary/10 text-primary">
+                  Part: {partName}
                 </Badge>
               )}
             </div>

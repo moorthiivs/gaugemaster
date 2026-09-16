@@ -33,6 +33,9 @@ export interface CalibrationProcedureHistory {
 export interface GaugeDiagram {
   id: string;
   gauge_name: string;
+  id_code?: string;
+  part_name?: string;
+  instrument_id?: string;
   document_name?: string;
   file_type?: string;
   file_path?: string;
@@ -51,6 +54,9 @@ export interface GaugeDiagramHistory {
   id: string;
   diagram_id: string;
   gauge_name: string;
+  id_code?: string;
+  part_name?: string;
+  instrument_id?: string;
   document_name?: string;
   file_type?: string;
   file_path?: string;
@@ -65,6 +71,9 @@ export interface GaugeDiagramHistory {
 export interface WorkInstruction {
   id: string;
   title: string;
+  id_code?: string;
+  part_name?: string;
+  instrument_id?: string;
   document_name?: string;
   file_type?: string;
   file_path?: string;
@@ -83,6 +92,9 @@ export interface WorkInstructionHistory {
   id: string;
   instruction_id: string;
   title: string;
+  id_code?: string;
+  part_name?: string;
+  instrument_id?: string;
   document_name?: string;
   file_type?: string;
   file_path?: string;
