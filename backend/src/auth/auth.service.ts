@@ -321,4 +321,50 @@ export class AuthService {
 
     return this.generateTokens(newPayload);
   }
+
+  /**
+   * Fetches current authenticated user profile and verifies access token validity.
+   */
+  async getMe(userId: string) {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found or account no longer active');
+    }
+
+    if (user.companyId && !user.isSuperAdmin && user.company) {
+      if (user.company.accessStatus === 'disabled') {
+        throw new ForbiddenException('Your company access has been disabled. Contact administrator.');
+      }
+      if (user.company.accessStatus === 'time_limited') {
+        const now = new Date();
+        if (user.company.accessStartDate && now < user.company.accessStartDate) {
+          throw new ForbiddenException('Your company access has not started yet. Contact administrator.');
+        }
+        if (user.company.accessExpiryDate && now > user.company.accessExpiryDate) {
+          throw new ForbiddenException('Your company access has expired. Contact administrator.');
+        }
+      }
+    }
+
+    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    return {
+      sub: user.id,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.isSuperAdmin ? 'SuperAdmin' : roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId || null,
+      isSuperAdmin: user.isSuperAdmin || false,
+      designation: user.designation,
+      signature: user.signature,
+      avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+      companyAccess: user.company ? {
+        status: user.company.accessStatus,
+        startDate: user.company.accessStartDate,
+        expiryDate: user.company.accessExpiryDate,
+      } : null,
+    };
+  }
 }

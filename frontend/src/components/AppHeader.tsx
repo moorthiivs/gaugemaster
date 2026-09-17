@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck, Zap, ChevronDown, Layers, FileCheck2, Gauge, ChevronRight, X, Building2 } from "lucide-react";
 import { useNavigate, NavLink } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -136,6 +137,7 @@ const quickActionsConfig: QuickActionConfig[] = [
 export function AppHeader() {
   const { user, inspectedCompany, setInspectedCompany, signOut } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { theme, setTheme } = useTheme();
   const { themeSettings, saveTheme } = useThemeSettings();
   const { toast } = useToast();
@@ -836,8 +838,9 @@ export function AppHeader() {
                 </>
               )}
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => {
-                signOut();
+              <DropdownMenuItem onClick={async () => {
+                await signOut();
+                queryClient.clear();
                 navigate("/login", { replace: true });
               }}>
                 <LogOut className="mr-2 h-4 w-4" />

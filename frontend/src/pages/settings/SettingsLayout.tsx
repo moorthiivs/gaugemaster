@@ -33,7 +33,9 @@ export default function SettingsLayout({ defaultTab = "mail", tabs }: SettingsLa
       const next = !prev;
       try {
         localStorage.setItem("gaugemaster_settings_sidebar_collapsed", String(next));
-      } catch {}
+      } catch (_err) {
+        // Storage quota exceeded or disabled in privacy mode
+      }
       return next;
     });
   };

@@ -1,4 +1,5 @@
 import { NavLink, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Gauge,
@@ -82,6 +83,7 @@ export function AppSidebar() {
   const { canAccess } = usePermissions();
   const { user, inspectedCompany, setInspectedCompany, signOut } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const activeGroups = user?.isSuperAdmin
     ? (inspectedCompany ? [superAdminGroup, ...navigationGroups] : [superAdminGroup])
@@ -196,9 +198,10 @@ export function AppSidebar() {
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8"
             title="Sign out"
-            onClick={() => {
-              signOut();
-              navigate("/login");
+            onClick={async () => {
+              await signOut();
+              queryClient.clear();
+              navigate("/login", { replace: true });
             }}
           >
             <LogOut className="h-4 w-4" />

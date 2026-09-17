@@ -39,15 +39,16 @@ export const handleSessionExpired = () => {
   localStorage.removeItem(SETUP_KEY);
   localStorage.removeItem(INSPECTED_COMPANY_KEY);
   localStorage.removeItem("setupData");
+  sessionStorage.clear();
 
   // Broadcast session expired event for React components (AuthProvider)
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("auth:session-expired"));
 
-    // If not already on login or public landing page, redirect to login
+    // If not already on login or public landing page, redirect to login using replace to avoid history loops
     const currentPath = window.location.pathname;
     if (currentPath !== "/login" && currentPath !== "/" && currentPath !== "/register") {
-      window.location.href = `/login?session_expired=true&redirect=${encodeURIComponent(currentPath)}`;
+      window.location.replace(`/login?session_expired=true&redirect=${encodeURIComponent(currentPath)}`);
     }
   }
 };

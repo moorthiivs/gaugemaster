@@ -106,22 +106,24 @@ const MiniSparkline = ({
   }
 
   if (type === "radial" || type === "arc") {
-    const strokePercent =
-      progressPercent !== undefined ? Math.max(8, progressPercent) : 80;
-    const strokeDash = 100 - strokePercent;
+    const validPercent =
+      typeof progressPercent === "number" && !isNaN(progressPercent)
+        ? Math.min(100, Math.max(0, progressPercent))
+        : 0;
+    const strokeDash = 100 - validPercent;
 
     return (
-      <div className="relative w-7 h-7 flex items-center justify-center shrink-0">
-        <svg className="w-7 h-7 transform -rotate-90" viewBox="0 0 36 36">
+      <div className="relative w-8 h-8 flex items-center justify-center shrink-0" title={`${validPercent}%`}>
+        <svg className="w-8 h-8 transform -rotate-90" viewBox="0 0 36 36">
           <path
-            className="text-muted/30"
-            strokeWidth="4"
+            className="text-muted/20"
+            strokeWidth="3.5"
             stroke="currentColor"
             fill="none"
             d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
           />
           <motion.path
-            strokeWidth="4"
+            strokeWidth="3.5"
             strokeDasharray="100, 100"
             stroke={color}
             strokeLinecap="round"
@@ -132,6 +134,9 @@ const MiniSparkline = ({
             transition={{ duration: 1, ease: "easeOut" }}
           />
         </svg>
+        <span className="absolute text-[8px] font-extrabold text-muted-foreground select-none">
+          {validPercent > 0 ? `${Math.round(validPercent)}%` : "0%"}
+        </span>
       </div>
     );
   }
@@ -210,6 +215,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-rose-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(244, 63, 94, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-rose-600 to-red-500 text-white shadow-lg shadow-rose-500/25",
+      progressBar: "bg-gradient-to-r from-rose-500 to-red-500",
       valueTxt: (val: number) =>
         val > 0
           ? "text-rose-600 dark:text-rose-400 font-black"
@@ -223,6 +229,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-blue-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(59, 130, 246, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-blue-600 to-indigo-500 text-white shadow-lg shadow-blue-500/25",
+      progressBar: "bg-gradient-to-r from-blue-500 to-indigo-500",
       valueTxt: (val: number) =>
         val > 0
           ? "text-blue-600 dark:text-blue-400 font-black"
@@ -236,6 +243,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-purple-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(168, 85, 247, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-purple-600 to-violet-500 text-white shadow-lg shadow-purple-500/25",
+      progressBar: "bg-gradient-to-r from-purple-500 to-violet-500",
       valueTxt: () => "text-purple-600 dark:text-purple-400 font-black",
       footerHover: "group-hover:text-purple-600 dark:group-hover:text-purple-400",
     },
@@ -246,6 +254,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-amber-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(245, 158, 11, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25",
+      progressBar: "bg-gradient-to-r from-amber-500 to-orange-500",
       valueTxt: (val: number) =>
         val > 0
           ? "text-amber-600 dark:text-amber-400 font-black"
@@ -259,6 +268,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-emerald-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(16, 185, 129, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/25",
+      progressBar: "bg-gradient-to-r from-emerald-500 to-teal-500",
       valueTxt: () => "text-emerald-600 dark:text-emerald-400 font-black",
       footerHover: "group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
     },
@@ -269,6 +279,7 @@ const KPICard = ({
       cardBg: "bg-card/90 hover:bg-cyan-500/[0.04]",
       glow: "radial-gradient(130px circle at top right, rgba(6, 182, 212, 0.15), transparent 70%)",
       badge: "bg-gradient-to-tr from-cyan-600 to-blue-500 text-white shadow-lg shadow-cyan-500/25",
+      progressBar: "bg-gradient-to-r from-cyan-500 to-blue-500",
       valueTxt: () => "text-foreground font-bold",
       footerHover: "group-hover:text-cyan-600 dark:group-hover:text-cyan-400",
     },
@@ -325,13 +336,19 @@ const KPICard = ({
         </div>
 
         {/* Main Content Area with Mini Sparkline Chart */}
-        <div className="my-auto z-10">
-          <div className="flex items-center justify-between gap-1">
+        <div className="my-auto z-10 w-full">
+          <div className="flex items-center justify-between gap-1.5">
             <div
               className={cn(
-                "text-2xl tracking-tight tabular-nums",
+                "tracking-tight tabular-nums truncate font-black",
+                typeof value === "string" && value.length > 9
+                  ? "text-lg sm:text-xl"
+                  : typeof value === "string" && value.length > 6
+                    ? "text-xl sm:text-2xl"
+                    : "text-2xl",
                 valueColorClass,
               )}
+              title={String(value)}
             >
               {value}
             </div>
@@ -343,17 +360,17 @@ const KPICard = ({
           </div>
 
           {subtitle ? (
-            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 font-medium">
+            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 font-medium" title={subtitle}>
               {subtitle}
             </p>
           ) : null}
 
-          {progressPercent !== undefined ? (
+          {progressPercent !== undefined && !isNaN(progressPercent) ? (
             <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1.5">
               <motion.div
-                className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 rounded-full"
+                className={cn("h-full rounded-full", styles.progressBar)}
                 initial={{ width: 0 }}
-                animate={{ width: `${progressPercent}%` }}
+                animate={{ width: `${Math.min(100, Math.max(0, Number(progressPercent)))}%` }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
               />
             </div>
@@ -1111,7 +1128,7 @@ const Index = () => {
                 ? "Total Completed Ratio"
                 : `${data?.overallProgress?.percentage ?? 0}% Completed`
             }
-            progressPercent={data?.overallProgress?.percentage ?? 0}
+            progressPercent={Number(data?.overallProgress?.percentage ?? 0)}
             actionLabel="Click to view list"
             onClick={() => handleCardClick("calibrated")}
             loading={loading}
@@ -1169,9 +1186,9 @@ const Index = () => {
             subtitle={
               loading
                 ? "Completed / Planned"
-                : `${completedCount} Done · ${Math.max(0, plannedCount - completedCount)} Pending`
+                : `${completedCount} Done · ${Math.max(0, plannedCount - completedCount)} Pending (${targetProgressPercent}%)`
             }
-            progressPercent={targetProgressPercent}
+            progressPercent={Number(targetProgressPercent)}
             actionLabel="Click to view list"
             onClick={() => handleCardClick("pending")}
             loading={loading}
@@ -1214,6 +1231,7 @@ const Index = () => {
                 ? "Compliant"
                 : `${(data?.total || 0) - (data?.overdue || 0)} of ${data?.total || 0} compliant`
             }
+            progressPercent={Number(complianceRate)}
             actionLabel="Click to inspect"
             onClick={() => navigate("/instruments")}
             loading={loading}

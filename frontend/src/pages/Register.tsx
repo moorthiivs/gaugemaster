@@ -23,7 +23,16 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const from = (location.state as any)?.from?.pathname || "/dashboard";
+  
+  const searchParams = new URLSearchParams(location.search);
+  const redirectParam = searchParams.get("redirect");
+  const stateFrom = (location.state as any)?.from?.pathname;
+  let from = "/dashboard";
+  if (redirectParam && redirectParam !== "/login" && redirectParam !== "/register" && redirectParam !== "/") {
+    from = redirectParam;
+  } else if (stateFrom && stateFrom !== "/login" && stateFrom !== "/register" && stateFrom !== "/") {
+    from = stateFrom;
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
