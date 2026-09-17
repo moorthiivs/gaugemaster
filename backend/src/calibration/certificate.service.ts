@@ -236,6 +236,73 @@ export class CertificateService {
       (latestTemplate as any)?.docNo ||
       (calibration as any).template?.doc_no ||
       (calibration as any).template?.docNo;
+    const docDate =
+      calibration.doc_date ||
+      (calibration as any).docDate ||
+      latestTemplate?.doc_date ||
+      (latestTemplate as any)?.docDate ||
+      (calibration as any).template?.doc_date;
+    const docRev =
+      calibration.doc_rev ||
+      (calibration as any).docRev ||
+      latestTemplate?.doc_rev ||
+      (latestTemplate as any)?.docRev ||
+      (calibration as any).template?.doc_rev;
+
+    const procedureReference =
+      calibration.procedure_reference ||
+      (calibration as any).procedureReference ||
+      latestTemplate?.procedure_reference ||
+      (latestTemplate as any)?.procedureReference ||
+      'AE/CAL-SOP/01';
+    const procedureName =
+      calibration.procedure_name ||
+      (calibration as any).procedureName ||
+      latestTemplate?.procedure_name ||
+      (latestTemplate as any)?.procedureName;
+    const procedureDate =
+      calibration.procedure_date ||
+      (calibration as any).procedureDate ||
+      latestTemplate?.procedure_date ||
+      (latestTemplate as any)?.procedureDate;
+    const procedureRev =
+      calibration.procedure_rev ||
+      (calibration as any).procedureRev ||
+      latestTemplate?.procedure_rev ||
+      (latestTemplate as any)?.procedureRev;
+
+    const acceptanceCriteriaDocNo =
+      calibration.acceptance_criteria_doc_no ||
+      (calibration as any).acceptanceCriteriaDocNo ||
+      latestTemplate?.acceptance_criteria_doc_no ||
+      (latestTemplate as any)?.acceptanceCriteriaDocNo;
+    const acceptanceCriteriaDate =
+      calibration.acceptance_criteria_date ||
+      (calibration as any).acceptanceCriteriaDate ||
+      latestTemplate?.acceptance_criteria_date ||
+      (latestTemplate as any)?.acceptanceCriteriaDate;
+    const acceptanceCriteriaRev =
+      calibration.acceptance_criteria_rev ||
+      (calibration as any).acceptanceCriteriaRev ||
+      latestTemplate?.acceptance_criteria_rev ||
+      (latestTemplate as any)?.acceptanceCriteriaRev;
+    const acceptanceCriteriaReference =
+      calibration.acceptance_criteria_reference ||
+      (calibration as any).acceptanceCriteriaReference ||
+      latestTemplate?.acceptance_criteria_reference ||
+      (latestTemplate as any)?.acceptanceCriteriaReference;
+
+    let acceptanceCriteriaText = '';
+    if (acceptanceCriteriaReference) {
+      acceptanceCriteriaText = acceptanceCriteriaReference;
+    } else if (acceptanceCriteriaDocNo) {
+      const revPart = acceptanceCriteriaRev
+        ? ` Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, '')}`
+        : '';
+      const datePart = acceptanceCriteriaDate ? ` dated ${acceptanceCriteriaDate}` : '';
+      acceptanceCriteriaText = `AS Per ${acceptanceCriteriaDocNo}${revPart}${datePart}`;
+    }
+
     const headerRightBoxText1 = docNo ? 'Doc. No.' : (certConfig?.headerRightBoxText1 || 'NABL / LAB');
     const headerRightBoxText2 = docNo || certConfig?.headerRightBoxText2 || 'CC - 2632';
     const footerLine1 = certConfig?.footerLine1 || 'CALIBRATION CENTER :';
@@ -249,8 +316,6 @@ export class CertificateService {
     const headerDisplayMode = certConfig?.headerDisplayMode || 'name'; // 'name' | 'logo' | 'both'
     const companyLogoPath = certConfig?.companyLogoPath || null;
 
-    const procedureReference =
-      calibration.procedure_reference || 'AE/CAL-SOP/01';
     const standardReference =
       (calibration as any).standard_reference || calibration.remarks || 'Standard calibration per ISO/IEC 17025';
 
@@ -964,51 +1029,99 @@ export class CertificateService {
     const buildPdfCanvasBlocks = (blocks: any[], dense: boolean): any[] => {
       const resultElements: any[] = [];
 
-      const evalRowFormula = (formula: string, row: any, tolerance: number = 0.02): string => {
+      const evalRowFormula = (formula: string, row: any, tolerance: number = 0.02, dec: number = 3): string => {
         if (!formula) return '-';
         try {
-          const t1 = parseFloat(row.t1 ?? row.col_1) || 0;
-          const t2 = parseFloat(row.t2 ?? row.col_2) || 0;
-          const t3 = parseFloat(row.t3 ?? row.col_3) || 0;
-          const t4 = parseFloat(row.t4 ?? row.col_4) || 0;
-          const t5 = parseFloat(row.t5 ?? row.col_5) || 0;
-          const nominal = parseFloat(row.nominal) || 0;
-          const reading = parseFloat(row.reading ?? row.ascending_reading ?? row.t1) || 0;
-          const tol = parseFloat(row.tolerance ?? tolerance) || 0.02;
+          let expr = formula.trim();
+          const nominal = parseFloat(String(row.nominal)) || 0;
+          const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.02;
 
-          if (/AVERAGE/i.test(formula)) {
-            const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
-              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-              .map((v) => parseFloat(v))
-              .filter((v) => !isNaN(v));
-            if (trials.length > 0) {
-              const sum = trials.reduce((a, b) => a + b, 0);
-              return (sum / trials.length).toFixed(3);
+          // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
+          const isSubtraction = expr.includes('-') || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
+          const avgMatch = !isSubtraction && expr.match(/^=?AVERAGE\(([^)]+)\)/i);
+          if (avgMatch || (!isSubtraction && (expr.toLowerCase() === 'avg' || expr.toLowerCase() === 'average'))) {
+            let trials: number[] = [];
+            if (avgMatch) {
+              const varNames = avgMatch[1].split(',').map((s: string) => s.trim());
+              varNames.forEach((v: string) => {
+                const rawVal = row[v] ?? row[`col_${v}`] ?? row[`t${v}`];
+                if (rawVal !== undefined && String(rawVal).trim() !== '') {
+                  const val = parseFloat(String(rawVal));
+                  if (!isNaN(val)) trials.push(val);
+                }
+              });
             }
-            return '-';
+            if (trials.length === 0) {
+              const candidateKeys = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5];
+              trials = candidateKeys
+                .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
+                .map((v) => parseFloat(String(v)))
+                .filter((v) => !isNaN(v));
+            }
+            if (trials.length === 0) return '-';
+            const avg = trials.reduce((a, b) => a + b, 0) / trials.length;
+            return avg.toFixed(dec);
           }
-          if (/avg\s*-\s*nominal/i.test(formula)) {
-            if (row.avg === undefined && (row.t1 === undefined || String(row.t1).trim() === "")) return '-';
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (isNaN(avgVal)) return '-';
-            const err = avgVal - nominal;
-            return (err >= 0 ? '+' : '') + err.toFixed(3);
+
+          // 2. ERROR (measured - nominal or nominal - measured)
+          const isError =
+            /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr) ||
+            /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr) ||
+            (/error/i.test(expr) && !/PASS.*FAIL/i.test(expr));
+
+          if (isError) {
+            const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr);
+            let measuredVal: number | undefined = undefined;
+
+            if (row.avg !== undefined && row.avg !== '-' && String(row.avg).trim() !== '') {
+              measuredVal = parseFloat(String(row.avg));
+            } else if (row.average !== undefined && row.average !== '-' && String(row.average).trim() !== '') {
+              measuredVal = parseFloat(String(row.average));
+            } else {
+              const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
+                .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
+                .map((v) => parseFloat(String(v)))
+                .filter((v) => !isNaN(v));
+              if (trials.length > 0) {
+                measuredVal = trials.reduce((a, b) => a + b, 0) / trials.length;
+              } else if (row.reading !== undefined && String(row.reading).trim() !== '') {
+                measuredVal = parseFloat(String(row.reading));
+              } else if (row.ascending_reading !== undefined && String(row.ascending_reading).trim() !== '') {
+                measuredVal = parseFloat(String(row.ascending_reading));
+              } else if (row.t1 !== undefined && String(row.t1).trim() !== '') {
+                measuredVal = parseFloat(String(row.t1));
+              }
+            }
+
+            if (measuredVal === undefined || isNaN(measuredVal)) return '-';
+            const err = isInverted ? nominal - measuredVal : measuredVal - nominal;
+            return (err >= 0 ? '+' : '') + err.toFixed(dec);
           }
-          if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-            const readStr = row.reading ?? row.ascending_reading ?? row.t1;
-            if (readStr === undefined || String(readStr).trim() === "") return '-';
-            const readVal = parseFloat(readStr);
-            if (isNaN(readVal)) return '-';
-            const err = readVal - nominal;
-            return (err >= 0 ? '+' : '') + err.toFixed(3);
-          }
-          if (/PASS.*FAIL/i.test(formula)) {
-            const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
+
+          // 3. STATUS / JUDGEMENT
+          if (/IF\(.*PASS.*FAIL.*\)/i.test(expr) || /PASS.*FAIL/i.test(expr)) {
+            const limitMatch = expr.match(/<=\s*([0-9.]+)/i) || expr.match(/<\s*([0-9.]+)/i);
+            const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
+
+            const hasReading =
+              row.error !== undefined ||
+              row.avg !== undefined ||
+              row.average !== undefined ||
+              (row.reading !== undefined && String(row.reading).trim() !== '') ||
+              (row.t1 !== undefined && String(row.t1).trim() !== '');
             if (!hasReading) return '-';
-            const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
-            return errVal <= tol ? 'PASS' : 'FAIL';
+
+            let errVal: number;
+            if (row.error !== undefined && row.error !== '-') {
+              errVal = Math.abs(typeof row.error === 'number' ? row.error : parseFloat(String(row.error).replace('+', '')) || 0);
+            } else {
+              const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal));
+              errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
+            }
+            return errVal <= tolLimit + 1e-9 ? 'PASS' : 'FAIL';
           }
-          return row[formula] || '-';
+
+          return row[expr] ?? row[formula] ?? '-';
         } catch {
           return '-';
         }
@@ -1073,7 +1186,7 @@ export class CertificateService {
               } else if (col.type === 'text') {
                 val = row.description || row[col.id] || '-';
               } else if (col.type === 'formula' || col.type === 'status') {
-                val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
+                val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance, dec);
               } else if (val === undefined || val === null || val === '') {
                 val = '-';
               }
@@ -1168,7 +1281,7 @@ export class CertificateService {
             } else if (col.type === 'text') {
               val = row.description || row[col.id] || '-';
             } else if (col.type === 'formula' || col.type === 'status') {
-              val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
+              val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
             } else if (val === undefined || val === null || val === '') {
               val = '-';
             }
@@ -1551,23 +1664,66 @@ export class CertificateService {
                 },
                 {
                   stack: [
-                    {
-                      text: headerRightBoxText1,
-                      fontSize: 7.5,
-                      bold: true,
-                      alignment: 'right',
-                      color: '#000000',
-                      noWrap: true,
-                    },
-                    {
-                      text: headerRightBoxText2,
-                      fontSize: rightTextSize,
-                      bold: true,
-                      alignment: 'right',
-                      color: '#000000',
-                      noWrap: true,
-                      margin: [0, 2, 0, 0],
-                    },
+                    ...(docNo
+                      ? [
+                          {
+                            table: {
+                              widths: ['*'],
+                              body: [
+                                [
+                                  {
+                                    stack: [
+                                      {
+                                        text: `Doc.No : ${docNo}`,
+                                        fontSize: 7,
+                                        bold: true,
+                                        alignment: 'left',
+                                        color: '#000000',
+                                        noWrap: true,
+                                      },
+                                      {
+                                        text: `Date & Rev : ${docDate || '-'} & ${docRev || '-'}`,
+                                        fontSize: 7,
+                                        bold: true,
+                                        alignment: 'left',
+                                        color: '#000000',
+                                        noWrap: true,
+                                        margin: [0, 1.5, 0, 0],
+                                      },
+                                    ],
+                                    fillColor: '#ffffff',
+                                    margin: [3, 2, 3, 2],
+                                  },
+                                ],
+                              ],
+                            },
+                            layout: {
+                              hLineWidth: () => 0.5,
+                              vLineWidth: () => 0.5,
+                              hLineColor: () => '#000000',
+                              vLineColor: () => '#000000',
+                            },
+                          },
+                        ]
+                      : [
+                          {
+                            text: headerRightBoxText1,
+                            fontSize: 7.5,
+                            bold: true,
+                            alignment: 'right',
+                            color: '#000000',
+                            noWrap: true,
+                          },
+                          {
+                            text: headerRightBoxText2,
+                            fontSize: rightTextSize,
+                            bold: true,
+                            alignment: 'right',
+                            color: '#000000',
+                            noWrap: true,
+                            margin: [0, 2, 0, 0],
+                          },
+                        ]),
                     ...(pageCount > 1
                       ? [
                           {
@@ -1858,6 +2014,46 @@ export class CertificateService {
           margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
         },
 
+        // Acceptance Criteria Row (Placed in between Description & Identification and Procedure Table)
+        ...(acceptanceCriteriaText
+          ? [
+              {
+                table: {
+                  widths: ['*'],
+                  body: [
+                    [
+                      {
+                        text: [
+                          {
+                            text: 'Acceptance Criteria : ',
+                            bold: true,
+                            fontSize: isDense ? 7 : 7.8,
+                            color: '#000000',
+                          },
+                          {
+                            text: acceptanceCriteriaText,
+                            fontSize: isDense ? 7 : 7.8,
+                            bold: false,
+                            color: '#000000',
+                          },
+                        ],
+                        fillColor: '#f8fafc',
+                        margin: [4, 2, 4, 2],
+                      },
+                    ],
+                  ],
+                },
+                layout: {
+                  hLineWidth: () => 0.5,
+                  vLineWidth: () => 0.5,
+                  hLineColor: () => '#000000',
+                  vLineColor: () => '#000000',
+                },
+                margin: [0, 0, 0, isDense ? 2 : 3] as [number, number, number, number],
+              },
+            ]
+          : []),
+
         // Procedure & Environmental Conditions Table (Compact 2-row table)
         {
           table: {
@@ -1868,7 +2064,25 @@ export class CertificateService {
                 {
                   stack: [
                     { text: 'Procedure No', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: procedureReference || 'AE/CAL-SOP/01', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
+                    ...(procedureName
+                      ? [{ text: procedureName, bold: true, fontSize: isDense ? 6.8 : 7.5, color: '#000000', margin: [0, 1, 0, 0] }]
+                      : []),
+                    { text: `Doc.No.: ${procedureReference || 'AE/CAL-SOP/01'}`, fontSize: isDense ? 6.8 : 7.5, margin: [0, 1, 0, 0] },
+                    ...(procedureRev || procedureDate
+                      ? [
+                          {
+                            text: [
+                              procedureRev ? `Rev-${procedureRev.replace(/^rev-?/i, '')}` : '',
+                              procedureDate ? `dated ${procedureDate}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' '),
+                            fontSize: isDense ? 6.5 : 7.2,
+                            color: '#334155',
+                            margin: [0, 0.5, 0, 0],
+                          },
+                        ]
+                      : []),
                   ],
                   margin: [2, 1, 2, 1],
                 },

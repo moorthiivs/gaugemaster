@@ -39,7 +39,13 @@ export class CalibrationTemplatesController {
 
   @Post()
   @RequirePermission('templates', 'create')
-  async create(@Body() dto: CreateCalibrationTemplateDto) {
+  async create(@Body() dto: CreateCalibrationTemplateDto, @Req() req: any) {
+    if (!dto.companyId && req.user?.companyId) {
+      dto.companyId = req.user.companyId;
+    }
+    if (!dto.userId && (req.user?.userId || req.user?.id)) {
+      dto.userId = req.user?.userId || req.user?.id;
+    }
     return this.templatesService.create(dto);
   }
 
@@ -142,7 +148,11 @@ export class CalibrationTemplatesController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCalibrationTemplateDto,
+    @Req() req: any,
   ) {
+    if (!dto.companyId && req.user?.companyId) {
+      dto.companyId = req.user.companyId;
+    }
     return this.templatesService.update(id, dto);
   }
 

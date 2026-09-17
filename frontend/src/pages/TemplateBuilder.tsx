@@ -116,12 +116,14 @@ export default function TemplateBuilder() {
         updatedAt: undefined,
         user: undefined,
         userId: user?.id,
+        companyId: (user as any)?.companyId || (user as any)?.company?.id || tpl.companyId,
       };
       await createTemplate(duplicateData);
       toast.success("Template duplicated successfully!");
       fetchTemplates();
-    } catch {
-      toast.error("Failed to duplicate template");
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || "Failed to duplicate template";
+      toast.error(msg);
     }
   };
 
@@ -129,11 +131,12 @@ export default function TemplateBuilder() {
     if (!deleteId) return;
     try {
       await deleteTemplate(deleteId);
-      toast.success("Template deleted");
+      toast.success("Template deleted successfully");
       setTemplates((prev) => prev.filter((t) => t.id !== deleteId));
       setSelectedIds((prev) => prev.filter((id) => id !== deleteId));
-    } catch {
-      toast.error("Failed to delete template");
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || "Failed to delete template";
+      toast.error(msg);
     } finally {
       setDeleteId(null);
     }

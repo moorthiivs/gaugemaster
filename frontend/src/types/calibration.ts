@@ -44,8 +44,18 @@ export interface CalibrationRecord {
     soaking_start_time?: string;
     soaking_end_time?: string;
   };
+
   procedure_reference?: string;
+  procedure_name?: string;
+  procedure_date?: string;
+  procedure_rev?: string;
   doc_no?: string;
+  doc_date?: string;
+  doc_rev?: string;
+  acceptance_criteria_doc_no?: string;
+  acceptance_criteria_date?: string;
+  acceptance_criteria_rev?: string;
+  acceptance_criteria_reference?: string;
 
   // Data
   is_canvas_template?: boolean;

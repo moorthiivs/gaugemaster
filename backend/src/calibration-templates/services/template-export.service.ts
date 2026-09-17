@@ -24,6 +24,16 @@ export interface TemplatePackageSpec {
   remarks?: string;
   standard_reference?: string;
   procedure_reference?: string;
+  procedure_name?: string;
+  procedure_date?: string;
+  procedure_rev?: string;
+  doc_no?: string;
+  doc_date?: string;
+  doc_rev?: string;
+  acceptance_criteria_doc_no?: string;
+  acceptance_criteria_date?: string;
+  acceptance_criteria_rev?: string;
+  acceptance_criteria_reference?: string;
   status_rule_type?: string;
   status_formula?: string;
   decimal_places?: number;
@@ -110,6 +120,16 @@ export class TemplateExportService {
         remarks: tpl.remarks,
         standard_reference: tpl.standard_reference,
         procedure_reference: tpl.procedure_reference,
+        procedure_name: tpl.procedure_name,
+        procedure_date: tpl.procedure_date,
+        procedure_rev: tpl.procedure_rev,
+        doc_no: tpl.doc_no,
+        doc_date: tpl.doc_date,
+        doc_rev: tpl.doc_rev,
+        acceptance_criteria_doc_no: tpl.acceptance_criteria_doc_no,
+        acceptance_criteria_date: tpl.acceptance_criteria_date,
+        acceptance_criteria_rev: tpl.acceptance_criteria_rev,
+        acceptance_criteria_reference: tpl.acceptance_criteria_reference,
         status_rule_type: tpl.status_rule_type,
         status_formula: tpl.status_formula,
         decimal_places: tpl.decimal_places,

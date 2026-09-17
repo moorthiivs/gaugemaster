@@ -129,18 +129,50 @@ export class CalibrationTemplatesService {
     const template = await this.findOne(id);
 
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
+    const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
 
     if (!isSuperAdmin) {
-      if (!template.companyId) {
+      const isOwner = !!(currentUserId && template.userId === currentUserId);
+      const isSameCompany = !!(userCompanyId && template.companyId === userCompanyId);
+
+      // Only true system templates (no creator user AND no company) cannot be deleted by non-superadmins
+      if (!template.companyId && !template.userId) {
         throw new BadRequestException(
           `System default template "${template.name}" cannot be deleted.`,
         );
       }
-      if (userCompanyId && template.companyId !== userCompanyId) {
+
+      // If template is assigned to an organization, check tenant isolation
+      if (template.companyId && userCompanyId && template.companyId !== userCompanyId && !isOwner) {
         throw new ForbiddenException(
           'You do not have permission to delete this template.',
         );
+      }
+
+      // If template has a specific owner and is not in user's company and user is not the owner
+      if (!isOwner && !isSameCompany && template.userId && currentUserId && currentUserId !== template.userId) {
+        throw new ForbiddenException(
+          'You do not have permission to delete this template.',
+        );
+      }
+    }
+
+    // Referential integrity check against calibrations
+    try {
+      const usageCount = await this.repository.manager.query(
+        `SELECT COUNT(*)::text as count FROM calibrations WHERE template_id = $1`,
+        [template.id],
+      );
+      const count = parseInt(usageCount?.[0]?.count, 10) || 0;
+      if (count > 0) {
+        throw new BadRequestException(
+          `Template "${template.name}" is currently referenced by ${count} calibration record(s) and cannot be deleted.`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        throw err;
       }
     }
 
@@ -171,11 +203,12 @@ export class CalibrationTemplatesService {
     }
 
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
+    const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
 
     if (!isSuperAdmin) {
-      // 1. System templates protection (companyId IS NULL)
-      const systemTemplates = templates.filter((t) => !t.companyId);
+      // 1. System templates protection (true system default: neither companyId nor userId)
+      const systemTemplates = templates.filter((t) => !t.companyId && !t.userId);
       if (systemTemplates.length > 0) {
         const names = systemTemplates.map((t) => `"${t.name}"`).join(', ');
         throw new BadRequestException(
@@ -186,13 +219,30 @@ export class CalibrationTemplatesService {
       // 2. Multi-tenant isolation check
       if (userCompanyId) {
         const foreignTemplates = templates.filter(
-          (t) => t.companyId && t.companyId !== userCompanyId,
+          (t) =>
+            t.companyId &&
+            t.companyId !== userCompanyId &&
+            (!currentUserId || t.userId !== currentUserId),
         );
         if (foreignTemplates.length > 0) {
           throw new ForbiddenException(
             'You do not have permission to delete calibration templates belonging to another organization.',
           );
         }
+      }
+
+      // 3. User ownership check for templates without companyId
+      const notOwnedTemplates = templates.filter(
+        (t) =>
+          !t.companyId &&
+          t.userId &&
+          currentUserId &&
+          t.userId !== currentUserId,
+      );
+      if (notOwnedTemplates.length > 0) {
+        throw new ForbiddenException(
+          'You do not have permission to delete templates created by another user.',
+        );
       }
     }
 

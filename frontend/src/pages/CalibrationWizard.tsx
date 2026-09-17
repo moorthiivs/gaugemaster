@@ -21,6 +21,7 @@ import { getTemplates, getTemplate } from "@/lib/templateActions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
 import { getInstrument } from "@/lib/instrumentActions";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
@@ -118,6 +119,8 @@ export default function CalibrationWizard() {
   const [envSoakingStartTime, setEnvSoakingStartTime] = useState("");
   const [envSoakingEndTime, setEnvSoakingEndTime] = useState("");
   const [docNo, setDocNo] = useState("");
+  const [docDate, setDocDate] = useState("");
+  const [docRev, setDocRev] = useState("");
 
   // Helper to calculate soaking duration from Start and End times
   const calculateSoakingDuration = (startTimeStr: string, endTimeStr: string): string => {
@@ -158,6 +161,13 @@ export default function CalibrationWizard() {
     }
   };
   const [procedureReference, setProcedureReference] = useState("");
+  const [procedureName, setProcedureName] = useState("");
+  const [procedureDate, setProcedureDate] = useState("");
+  const [procedureRev, setProcedureRev] = useState("");
+  const [acceptanceCriteriaDocNo, setAcceptanceCriteriaDocNo] = useState("");
+  const [acceptanceCriteriaDate, setAcceptanceCriteriaDate] = useState("");
+  const [acceptanceCriteriaRev, setAcceptanceCriteriaRev] = useState("");
+  const [acceptanceCriteriaReference, setAcceptanceCriteriaReference] = useState("");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
   const [calUnit, setCalUnit] = useState("");
@@ -368,9 +378,18 @@ export default function CalibrationWizard() {
       if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
     }
     if (cal.doc_no) setDocNo(cal.doc_no);
+    if (cal.doc_date) setDocDate(cal.doc_date);
+    if (cal.doc_rev) setDocRev(cal.doc_rev);
 
     // 3. SOP & Standard Reference
     if (cal.procedure_reference) setProcedureReference(cal.procedure_reference);
+    if (cal.procedure_name) setProcedureName(cal.procedure_name);
+    if (cal.procedure_date) setProcedureDate(cal.procedure_date);
+    if (cal.procedure_rev) setProcedureRev(cal.procedure_rev);
+    if (cal.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(cal.acceptance_criteria_doc_no);
+    if (cal.acceptance_criteria_date) setAcceptanceCriteriaDate(cal.acceptance_criteria_date);
+    if (cal.acceptance_criteria_rev) setAcceptanceCriteriaRev(cal.acceptance_criteria_rev);
+    if (cal.acceptance_criteria_reference) setAcceptanceCriteriaReference(cal.acceptance_criteria_reference);
     if (cal.standard_reference) setStandardReference(cal.standard_reference);
     else if (cal.remarks) setStandardReference(cal.remarks);
 
@@ -457,6 +476,16 @@ export default function CalibrationWizard() {
     setWizardAcceptanceCriteria({});
     setWizardDiagramImage(null);
     setDocNo("");
+    setDocDate("");
+    setDocRev("");
+    setProcedureReference("");
+    setProcedureName("");
+    setProcedureDate("");
+    setProcedureRev("");
+    setAcceptanceCriteriaDocNo("");
+    setAcceptanceCriteriaDate("");
+    setAcceptanceCriteriaRev("");
+    setAcceptanceCriteriaReference("");
     toast.info("Cleared template selection (Custom Grid)");
   };
 
@@ -475,9 +504,18 @@ export default function CalibrationWizard() {
       if (tpl.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(tpl.environmental_defaults.soaking_end_time);
     }
     setDocNo((tpl as any).doc_no || (tpl as any).docNo || "");
+    setDocDate(tpl.doc_date || "");
+    setDocRev(tpl.doc_rev || "");
     if (tpl.remarks) setRemarks(tpl.remarks);
     if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
     if (tpl.procedure_reference) setProcedureReference(tpl.procedure_reference);
+    if (tpl.procedure_name) setProcedureName(tpl.procedure_name);
+    if (tpl.procedure_date) setProcedureDate(tpl.procedure_date);
+    if (tpl.procedure_rev) setProcedureRev(tpl.procedure_rev);
+    if (tpl.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(tpl.acceptance_criteria_doc_no);
+    if (tpl.acceptance_criteria_date) setAcceptanceCriteriaDate(tpl.acceptance_criteria_date);
+    if (tpl.acceptance_criteria_rev) setAcceptanceCriteriaRev(tpl.acceptance_criteria_rev);
+    if (tpl.acceptance_criteria_reference) setAcceptanceCriteriaReference(tpl.acceptance_criteria_reference);
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
@@ -998,7 +1036,16 @@ export default function CalibrationWizard() {
           soaking_end_time: envSoakingEndTime || undefined,
         },
         doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+        doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+        doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
         procedure_reference: procedureReference || undefined,
+        procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+        procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+        procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
         standard_reference: standardReference || remarks || undefined,
         is_canvas_template: wizardIsCanvas,
         layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
@@ -1127,73 +1174,11 @@ export default function CalibrationWizard() {
     if (!targetTbl || !targetTbl.rows) return;
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
-    const tol = parseFloat(row.tolerance ?? targetTbl.tolerance ?? 0.02);
-    const nominal = parseFloat(row.nominal) || 0;
+    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
-    // Recalculate formulas for all columns in this table
-    targetTbl.columns.forEach((col: any) => {
-      if (col.type === "formula" || col.type === "status") {
-        const formula = col.formula || "";
-        
-        // 1. AVERAGE
-        if (/AVERAGE/i.test(formula)) {
-          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
-            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-            .map((v) => parseFloat(v))
-            .filter((v) => !isNaN(v));
-          if (trials.length > 0) {
-            const sum = trials.reduce((a, b) => a + b, 0);
-            const avgVal = parseFloat((sum / trials.length).toFixed(dec));
-            row[col.id] = avgVal.toFixed(dec);
-            row.avg = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.avg = undefined;
-          }
-        }
-        // 2. Error (avg - nominal or reading - nominal)
-        else if (/avg\s*-\s*nominal/i.test(formula)) {
-          if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (!isNaN(avgVal)) {
-              const err = parseFloat((avgVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          } else {
-            row[col.id] = "-";
-            row.error = undefined;
-          }
-        } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-          const readStr = row.reading ?? row.ascending_reading ?? row.t1;
-          if (readStr !== undefined && String(readStr).trim() !== "") {
-            const readVal = parseFloat(readStr);
-            if (!isNaN(readVal)) {
-              const err = parseFloat((readVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          } else {
-            row[col.id] = "-";
-            row.error = undefined;
-          }
-        }
-        // 3. Status
-        else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
-          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
-          if (hasReading) {
-            const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
-            const errVal = Math.abs(parseFloat(row.error !== undefined ? Number(row.error).toFixed(dec) : (readVal - nominal).toFixed(dec)) || 0);
-            row[col.id] = errVal <= tol ? "PASS" : "FAIL";
-            row.status = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.status = "-";
-          }
-        }
-      }
-    });
+    // Deterministic multi-pass formula evaluation: Average -> Error -> Status
+    evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
     targetTbl.rows[rowIndex] = row;
     setWizardLayoutBlocks(updatedBlocks);
@@ -2134,17 +2119,21 @@ export default function CalibrationWizard() {
 
               <div className="space-y-3 mb-6 p-3 bg-card border rounded-xl shadow-xs">
                 <div className="flex flex-wrap items-end gap-3">
-                  <div className="space-y-1.5 flex-1 min-w-[240px]">
+                  <div className="space-y-1.5 flex-1 min-w-[220px]">
                     <Label className="text-xs font-semibold">Standard Reference</Label>
                     <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
                   </div>
-                  <div className="space-y-1.5 w-36 sm:w-44">
-                    <Label className="text-xs font-semibold">Doc. No.</Label>
+                  <div className="space-y-1.5 w-32 sm:w-36">
+                    <Label className="text-xs font-semibold">Template Doc No</Label>
                     <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
                   </div>
-                  <div className="space-y-1.5 w-44 sm:w-52">
-                    <Label className="text-xs font-semibold">Procedure Reference</Label>
-                    <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" className="text-xs font-medium" />
+                  <div className="space-y-1.5 w-24 sm:w-28">
+                    <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
+                    <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD/MM/YYYY" className="text-xs font-medium" />
+                  </div>
+                  <div className="space-y-1.5 w-16 sm:w-20">
+                    <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
+                    <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium" />
                   </div>
                   <div className="space-y-1.5 w-20 sm:w-24">
                     <Label className="text-xs font-medium">Temp (°C)</Label>
@@ -2153,6 +2142,34 @@ export default function CalibrationWizard() {
                   <div className="space-y-1.5 w-20 sm:w-24">
                     <Label className="text-xs font-medium">Humidity (%)</Label>
                     <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
+                  </div>
+                </div>
+
+                {/* Procedure & Acceptance Criteria Details */}
+                <div className="pt-2.5 border-t border-border/70 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-foreground">Procedure Name</Label>
+                    <Input value={procedureName} onChange={(e) => setProcedureName(e.target.value)} placeholder="e.g. Gauges & Instruments Calibration Procedure" className="text-xs h-7.5" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-foreground">Procedure Doc &amp; Rev/Date</Label>
+                    <div className="flex gap-1.5">
+                      <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="Doc No (e.g. D/QCM/GI/006/01)" className="text-xs h-7.5 flex-1" />
+                      <Input value={procedureRev} onChange={(e) => setProcedureRev(e.target.value)} placeholder="Rev" className="text-xs h-7.5 w-14" />
+                      <Input value={procedureDate} onChange={(e) => setProcedureDate(e.target.value)} placeholder="Date" className="text-xs h-7.5 w-20" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-foreground">Acceptance Criteria Doc No</Label>
+                    <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/006/03" className="text-xs h-7.5" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
+                    <div className="flex gap-1.5">
+                      <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-7.5 w-14" />
+                      <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-7.5 w-20" />
+                      <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-7.5 flex-1" />
+                    </div>
                   </div>
                 </div>
 
@@ -2516,6 +2533,17 @@ export default function CalibrationWizard() {
                         soaking_end_time: envSoakingEndTime || undefined,
                       },
                       doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+                      doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+                      doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
+                      procedure_reference: procedureReference,
+                      procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+                      procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+                      procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+                      acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+                      acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+                      acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+                      acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
+                      standard_reference: standardReference || remarks,
                       is_canvas_template: wizardIsCanvas,
                       layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
                       calibration_points: calPoints,
@@ -2531,8 +2559,6 @@ export default function CalibrationWizard() {
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
                       approved_by_signature: approvedBySignature,
-                      procedure_reference: procedureReference,
-                      standard_reference: standardReference || remarks,
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
                       custom_columns: wizardCustomColumns as any,

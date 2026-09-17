@@ -81,7 +81,34 @@ export class CalibrationTemplate {
   procedure_reference?: string;
 
   @Column({ nullable: true })
+  procedure_name?: string;
+
+  @Column({ nullable: true })
+  procedure_date?: string;
+
+  @Column({ nullable: true })
+  procedure_rev?: string;
+
+  @Column({ nullable: true })
   doc_no?: string;
+
+  @Column({ nullable: true })
+  doc_date?: string;
+
+  @Column({ nullable: true })
+  doc_rev?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_doc_no?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_date?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_rev?: string;
+
+  @Column({ type: 'text', nullable: true })
+  acceptance_criteria_reference?: string;
 
   @Column({ nullable: true })
   status_rule_type?: string;

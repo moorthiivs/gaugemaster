@@ -93,6 +93,63 @@ export function CertificatePreview({
     (calibration as any).docNo ||
     ((calibration as any).template as any)?.doc_no ||
     ((calibration as any).template as any)?.docNo;
+  const docDate =
+    calibration.doc_date ||
+    (calibration as any).docDate ||
+    ((calibration as any).template as any)?.doc_date ||
+    ((calibration as any).template as any)?.docDate;
+  const docRev =
+    calibration.doc_rev ||
+    (calibration as any).docRev ||
+    ((calibration as any).template as any)?.doc_rev ||
+    ((calibration as any).template as any)?.docRev;
+
+  const procedureReference =
+    calibration.procedure_reference ||
+    (calibration as any).procedureReference ||
+    ((calibration as any).template as any)?.procedure_reference ||
+    "AE/CAL-SOP/01";
+  const procedureName =
+    calibration.procedure_name ||
+    (calibration as any).procedureName ||
+    ((calibration as any).template as any)?.procedure_name;
+  const procedureDate =
+    calibration.procedure_date ||
+    (calibration as any).procedureDate ||
+    ((calibration as any).template as any)?.procedure_date;
+  const procedureRev =
+    calibration.procedure_rev ||
+    (calibration as any).procedureRev ||
+    ((calibration as any).template as any)?.procedure_rev;
+
+  const acceptanceCriteriaDocNo =
+    calibration.acceptance_criteria_doc_no ||
+    (calibration as any).acceptanceCriteriaDocNo ||
+    ((calibration as any).template as any)?.acceptance_criteria_doc_no;
+  const acceptanceCriteriaDate =
+    calibration.acceptance_criteria_date ||
+    (calibration as any).acceptanceCriteriaDate ||
+    ((calibration as any).template as any)?.acceptance_criteria_date;
+  const acceptanceCriteriaRev =
+    calibration.acceptance_criteria_rev ||
+    (calibration as any).acceptanceCriteriaRev ||
+    ((calibration as any).template as any)?.acceptance_criteria_rev;
+  const acceptanceCriteriaReference =
+    calibration.acceptance_criteria_reference ||
+    (calibration as any).acceptanceCriteriaReference ||
+    ((calibration as any).template as any)?.acceptance_criteria_reference;
+
+  let acceptanceCriteriaText = "";
+  if (acceptanceCriteriaReference) {
+    acceptanceCriteriaText = acceptanceCriteriaReference;
+  } else if (acceptanceCriteriaDocNo) {
+    const revPart = acceptanceCriteriaRev
+      ? ` Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, "")}`
+      : "";
+    const datePart = acceptanceCriteriaDate ? ` dated ${acceptanceCriteriaDate}` : "";
+    acceptanceCriteriaText = `AS Per ${acceptanceCriteriaDocNo}${revPart}${datePart}`;
+  }
+
   const headerRightBoxText1 = docNo ? "Doc. No." : (certConfig?.headerRightBoxText1 || "NABL / LAB");
   const headerRightBoxText2 = docNo || certConfig?.headerRightBoxText2 || "CC - 2632";
   const isGauge =
@@ -108,9 +165,6 @@ export function CertificatePreview({
     certConfig?.footerLine3 ||
     "Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948";
 
-  const procedureReference =
-    (calibration as any).procedure_reference || "AE/CAL-SOP/01";
-
   const companyLogoPath = certConfig?.companyLogoPath || "";
   const headerDisplayMode = certConfig?.headerDisplayMode || "name";
   const headerBgColor = certConfig?.headerBgColor || "#54c6f3";
@@ -123,63 +177,99 @@ export function CertificatePreview({
   const renderCanvasLayoutBlocks = (blocks: any[]) => {
     if (!blocks || blocks.length === 0) return null;
 
-    const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01): any => {
+    const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01, dec: number = 3): any => {
       if (!formula) return "";
       try {
-        let expr = formula;
-        const t1 = parseFloat(row.t1 ?? row.col_1) || 0;
-        const t2 = parseFloat(row.t2 ?? row.col_2) || 0;
-        const t3 = parseFloat(row.t3 ?? row.col_3) || 0;
-        const t4 = parseFloat(row.t4 ?? row.col_4) || 0;
-        const t5 = parseFloat(row.t5 ?? row.col_5) || 0;
-        const nominal = parseFloat(row.nominal) || 0;
-        const reading = parseFloat(row.reading ?? row.ascending_reading ?? row.t1) || 0;
-        const tol = parseFloat(row.tolerance ?? tolerance) || 0.01;
+        let expr = formula.trim();
+        const nominal = parseFloat(String(row.nominal)) || 0;
+        const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.01;
 
-        const avgMatch = expr.match(/AVERAGE\(([^)]+)\)/i);
-        if (avgMatch) {
-          const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
-          let sum = 0;
-          let count = 0;
-          varNames.forEach((v: string) => {
-            const rawVal = row[v] ?? row[`col_${v}`];
-            if (rawVal !== undefined && String(rawVal).trim() !== "") {
-              const val = parseFloat(rawVal);
-              if (!isNaN(val)) {
-                sum += val;
-                count++;
+        // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
+        const isSubtraction = expr.includes("-") || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
+        const avgMatch = !isSubtraction && expr.match(/^=?AVERAGE\(([^)]+)\)/i);
+        if (avgMatch || (!isSubtraction && (expr.toLowerCase() === "avg" || expr.toLowerCase() === "average"))) {
+          let trials: number[] = [];
+          if (avgMatch) {
+            const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
+            varNames.forEach((v: string) => {
+              const rawVal = row[v] ?? row[`col_${v}`] ?? row[`t${v}`];
+              if (rawVal !== undefined && String(rawVal).trim() !== "") {
+                const val = parseFloat(String(rawVal));
+                if (!isNaN(val)) trials.push(val);
               }
+            });
+          }
+          if (trials.length === 0) {
+            const candidateKeys = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5];
+            trials = candidateKeys
+              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+              .map((v) => parseFloat(String(v)))
+              .filter((v) => !isNaN(v));
+          }
+          if (trials.length === 0) return "-";
+          const avg = trials.reduce((a, b) => a + b, 0) / trials.length;
+          return avg.toFixed(dec);
+        }
+
+        // 2. ERROR (measured - nominal or nominal - measured)
+        const isError =
+          /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr) ||
+          /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr) ||
+          (/error/i.test(expr) && !/PASS.*FAIL/i.test(expr));
+
+        if (isError) {
+          const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr);
+          let measuredVal: number | undefined = undefined;
+
+          if (row.avg !== undefined && row.avg !== "-" && String(row.avg).trim() !== "") {
+            measuredVal = parseFloat(String(row.avg));
+          } else if (row.average !== undefined && row.average !== "-" && String(row.average).trim() !== "") {
+            measuredVal = parseFloat(String(row.average));
+          } else {
+            const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
+              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+              .map((v) => parseFloat(String(v)))
+              .filter((v) => !isNaN(v));
+            if (trials.length > 0) {
+              measuredVal = trials.reduce((a, b) => a + b, 0) / trials.length;
+            } else if (row.reading !== undefined && String(row.reading).trim() !== "") {
+              measuredVal = parseFloat(String(row.reading));
+            } else if (row.ascending_reading !== undefined && String(row.ascending_reading).trim() !== "") {
+              measuredVal = parseFloat(String(row.ascending_reading));
+            } else if (row.t1 !== undefined && String(row.t1).trim() !== "") {
+              measuredVal = parseFloat(String(row.t1));
             }
-          });
-          if (count === 0) return "-";
-          const avg = sum / count;
-          return avg.toFixed(3);
+          }
+
+          if (measuredVal === undefined || isNaN(measuredVal)) return "-";
+          const err = isInverted ? nominal - measuredVal : measuredVal - nominal;
+          return (err >= 0 ? "+" : "") + err.toFixed(dec);
         }
 
-        if (/avg\s*-\s*nominal/i.test(expr)) {
-          if (row.avg === undefined && (row.t1 === undefined || String(row.t1).trim() === "")) return "-";
-          const avgVal = parseFloat(row.avg ?? row.t1);
-          if (isNaN(avgVal)) return "-";
-          const err = avgVal - nominal;
-          return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
-        }
-        if (/reading\s*-\s*nominal/i.test(expr) || /actual\s*-\s*nominal/i.test(expr)) {
-          const readStr = row.reading ?? row.ascending_reading ?? row.t1;
-          if (readStr === undefined || String(readStr).trim() === "") return "-";
-          const readVal = parseFloat(readStr);
-          if (isNaN(readVal)) return "-";
-          const err = readVal - nominal;
-          return err >= 0 ? `+${err.toFixed(3)}` : err.toFixed(3);
-        }
+        // 3. STATUS / JUDGEMENT
+        if (/IF\(.*PASS.*FAIL.*\)/i.test(expr) || /PASS.*FAIL/i.test(expr)) {
+          const limitMatch = expr.match(/<=\s*([0-9.]+)/i) || expr.match(/<\s*([0-9.]+)/i);
+          const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
 
-        if (/IF\(.*PASS.*FAIL.*\)/i.test(expr)) {
-          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
+          const hasReading =
+            row.error !== undefined ||
+            row.avg !== undefined ||
+            row.average !== undefined ||
+            (row.reading !== undefined && String(row.reading).trim() !== "") ||
+            (row.t1 !== undefined && String(row.t1).trim() !== "");
           if (!hasReading) return "-";
-          const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
-          return errVal <= tol ? "PASS" : "FAIL";
+
+          let errVal: number;
+          if (row.error !== undefined && row.error !== "-") {
+            errVal = Math.abs(typeof row.error === "number" ? row.error : parseFloat(String(row.error).replace("+", "")) || 0);
+          } else {
+            const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal));
+            errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
+          }
+          return errVal <= tolLimit + 1e-9 ? "PASS" : "FAIL";
         }
 
-        return row[formula] || "-";
+        return row[expr] ?? row[formula] ?? "-";
       } catch {
         return "-";
       }
@@ -225,7 +315,7 @@ export function CertificatePreview({
                         } else if (col.type === "text") {
                           val = row.description || row[col.id] || "-";
                         } else if (col.type === "formula" || col.type === "status") {
-                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
+                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places ?? 3);
                         } else if (val === undefined || val === null || val === "") {
                           val = "-";
                         }
@@ -292,7 +382,7 @@ export function CertificatePreview({
                       } else if (col.type === "text") {
                         val = row.description || row[col.id] || "-";
                       } else if (col.type === "formula" || col.type === "status") {
-                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance);
+                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places ?? 3);
                       } else if (val === undefined || val === null || val === "") {
                         val = "-";
                       }
@@ -922,9 +1012,22 @@ export function CertificatePreview({
               CALIBRATION CERTIFICATE
             </h2>
           </div>
-          <div className="text-right text-black min-w-[120px] shrink-0">
-            <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">{headerRightBoxText1}</div>
-            <div className="text-[9px] font-black tracking-tight whitespace-nowrap">{headerRightBoxText2}</div>
+          <div className="shrink-0 min-w-[140px] flex justify-end">
+            {docNo ? (
+              <div className="border border-black bg-white px-2 py-0.5 text-left text-black shadow-xs">
+                <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                  Doc.No : <span className="font-extrabold">{docNo}</span>
+                </div>
+                <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                  Date &amp; Rev : <span className="font-semibold">{docDate || "-"} &amp; {docRev || "-"}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-right text-black min-w-[120px]">
+                <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">{headerRightBoxText1}</div>
+                <div className="text-[9px] font-black tracking-tight whitespace-nowrap">{headerRightBoxText2}</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1030,6 +1133,14 @@ export function CertificatePreview({
             </table>
           </div>
 
+          {/* Acceptance Criteria Row (Directly above Procedure No, Standard Reference, Discipline) */}
+          {Boolean(acceptanceCriteriaText) && (
+            <div className={`border border-black bg-slate-50 ${isCompact ? "px-1.5 py-0.5 text-[7.5px]" : "px-2 py-1 text-[8.5px]"} flex items-center gap-1.5`}>
+              <span className="font-bold uppercase tracking-wider text-black">Acceptance Criteria :</span>
+              <span className="font-semibold text-black">{acceptanceCriteriaText}</span>
+            </div>
+          )}
+
           {/* Procedure & Environmental Conditions Table */}
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
             <thead>
@@ -1041,7 +1152,21 @@ export function CertificatePreview({
             </thead>
             <tbody>
               <tr className="border-b border-black">
-                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>{procedureReference}</td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+                  {procedureName && (
+                    <div className="font-bold text-black leading-tight text-[8px] mb-0.5">
+                      {procedureName}
+                    </div>
+                  )}
+                  <div className="font-semibold leading-tight text-[7.5px]">
+                    Doc.No.: {procedureReference}
+                  </div>
+                  {(procedureRev || procedureDate) && (
+                    <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                      {[procedureRev ? `Rev-${procedureRev.replace(/^rev-?/i, "")}` : "", procedureDate ? `dated ${procedureDate}` : ""].filter(Boolean).join(" ")}
+                    </div>
+                  )}
+                </td>
                 <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
                   {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
                 </td>

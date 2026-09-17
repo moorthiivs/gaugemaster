@@ -53,7 +53,7 @@ export function TemplateBulkDeleteModal({
     const del: CalibrationTemplate[] = [];
 
     selectedTemplates.forEach((tpl) => {
-      if (!tpl.companyId && !isSuperAdmin) {
+      if (!tpl.companyId && !tpl.userId && !isSuperAdmin) {
         sys.push(tpl);
       } else {
         del.push(tpl);

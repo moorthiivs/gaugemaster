@@ -71,6 +71,17 @@ interface CanvasTemplateEditorProps {
   defaultTolerance?: number;
   decimalPlaces?: number;
   onDecimalPlacesChange?: (dp: number) => void;
+  docNo?: string;
+  docDate?: string;
+  docRev?: string;
+  procedureReference?: string;
+  procedureName?: string;
+  procedureDate?: string;
+  procedureRev?: string;
+  acceptanceCriteriaDocNo?: string;
+  acceptanceCriteriaDate?: string;
+  acceptanceCriteriaRev?: string;
+  acceptanceCriteriaReference?: string;
 }
 
 export function CanvasTemplateEditor({
@@ -87,6 +98,17 @@ export function CanvasTemplateEditor({
   defaultTolerance = 0.01,
   decimalPlaces = 3,
   onDecimalPlacesChange,
+  docNo,
+  docDate,
+  docRev,
+  procedureReference,
+  procedureName,
+  procedureDate,
+  procedureRev,
+  acceptanceCriteriaDocNo,
+  acceptanceCriteriaDate,
+  acceptanceCriteriaRev,
+  acceptanceCriteriaReference,
 }: CanvasTemplateEditorProps) {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(() => blocks[0]?.id || null);
   const [selectedChildTableId, setSelectedChildTableId] = useState<string | null>(null);
@@ -340,11 +362,11 @@ export function CanvasTemplateEditor({
       }
       const formula = (col.formula || "").toLowerCase();
       const nom = Number(row.nominal ?? 0);
-      if (formula.includes("average")) {
-        return nom.toFixed(dec);
-      }
-      if (formula.includes("reading - nominal") || formula.includes("avg - nominal") || formula.includes("error")) {
+      if (formula.includes("-") || formula.includes("error")) {
         return `+${(0).toFixed(dec)}`;
+      }
+      if (formula.includes("average") || formula.includes("avg")) {
+        return nom.toFixed(dec);
       }
       return `+${(0).toFixed(dec)}`;
     }
@@ -1487,7 +1509,7 @@ export function CanvasTemplateEditor({
 
                           {/* Variable Chips */}
                           <div className="flex flex-wrap gap-1 pt-0.5">
-                            {["nominal", "reading", "error", "tolerance", "MPE", "t1", "t2", "avg"].map((tok) => (
+                            {["nominal", "reading", "error", "tolerance", "MPE", "t1", "t2", "t3", "t4", "t5", "avg", "average"].map((tok) => (
                               <button
                                 key={tok}
                                 type="button"
@@ -1685,6 +1707,17 @@ export function CanvasTemplateEditor({
         defaultUnit={defaultUnit}
         defaultTolerance={defaultTolerance}
         decimalPlaces={decimalPlaces}
+        docNo={docNo}
+        docDate={docDate}
+        docRev={docRev}
+        procedureReference={procedureReference}
+        procedureName={procedureName}
+        procedureDate={procedureDate}
+        procedureRev={procedureRev}
+        acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
+        acceptanceCriteriaDate={acceptanceCriteriaDate}
+        acceptanceCriteriaRev={acceptanceCriteriaRev}
+        acceptanceCriteriaReference={acceptanceCriteriaReference}
       />
     </div>
   );

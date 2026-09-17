@@ -155,7 +155,16 @@ export interface CalibrationTemplate {
   remarks?: string;
   standard_reference?: string;
   procedure_reference?: string;
+  procedure_name?: string;
+  procedure_date?: string;
+  procedure_rev?: string;
   doc_no?: string;
+  doc_date?: string;
+  doc_rev?: string;
+  acceptance_criteria_doc_no?: string;
+  acceptance_criteria_date?: string;
+  acceptance_criteria_rev?: string;
+  acceptance_criteria_reference?: string;
   status_rule_type?: string;
   status_formula?: string;
   decimal_places?: number;

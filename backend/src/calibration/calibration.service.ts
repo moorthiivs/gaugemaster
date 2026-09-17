@@ -670,6 +670,16 @@ export class CalibrationService {
     if (dto.is_canvas_template !== undefined) existing.is_canvas_template = dto.is_canvas_template;
     if (dto.layout_blocks !== undefined) existing.layout_blocks = dto.layout_blocks;
     if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
+    if ((dto as any).procedure_name !== undefined) (existing as any).procedure_name = (dto as any).procedure_name;
+    if ((dto as any).procedure_date !== undefined) (existing as any).procedure_date = (dto as any).procedure_date;
+    if ((dto as any).procedure_rev !== undefined) (existing as any).procedure_rev = (dto as any).procedure_rev;
+    if ((dto as any).doc_no !== undefined) (existing as any).doc_no = (dto as any).doc_no;
+    if ((dto as any).doc_date !== undefined) (existing as any).doc_date = (dto as any).doc_date;
+    if ((dto as any).doc_rev !== undefined) (existing as any).doc_rev = (dto as any).doc_rev;
+    if ((dto as any).acceptance_criteria_doc_no !== undefined) (existing as any).acceptance_criteria_doc_no = (dto as any).acceptance_criteria_doc_no;
+    if ((dto as any).acceptance_criteria_date !== undefined) (existing as any).acceptance_criteria_date = (dto as any).acceptance_criteria_date;
+    if ((dto as any).acceptance_criteria_rev !== undefined) (existing as any).acceptance_criteria_rev = (dto as any).acceptance_criteria_rev;
+    if ((dto as any).acceptance_criteria_reference !== undefined) (existing as any).acceptance_criteria_reference = (dto as any).acceptance_criteria_reference;
     if ((dto as any).standard_reference !== undefined) (existing as any).standard_reference = (dto as any).standard_reference;
     if (dto.decimal_places !== undefined) existing.decimal_places = dto.decimal_places;
     if (dto.diagram_image !== undefined) existing.diagram_image = dto.diagram_image ? dto.diagram_image : (null as any);

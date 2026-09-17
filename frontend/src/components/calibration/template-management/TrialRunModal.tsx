@@ -25,6 +25,7 @@ import { CanvasBlock, TableGridBlock, SplitRowBlock, MatrixTableBlock, TextBlock
 import { CalibrationRecord } from "@/types/calibration";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
 interface TrialRunModalProps {
@@ -39,6 +40,17 @@ interface TrialRunModalProps {
   defaultUnit?: string;
   defaultTolerance?: number;
   decimalPlaces?: number;
+  docNo?: string;
+  docDate?: string;
+  docRev?: string;
+  procedureReference?: string;
+  procedureName?: string;
+  procedureDate?: string;
+  procedureRev?: string;
+  acceptanceCriteriaDocNo?: string;
+  acceptanceCriteriaDate?: string;
+  acceptanceCriteriaRev?: string;
+  acceptanceCriteriaReference?: string;
 }
 
 export function TrialRunModal({
@@ -53,41 +65,69 @@ export function TrialRunModal({
   defaultUnit = "mm",
   defaultTolerance = 0.02,
   decimalPlaces = 3,
+  docNo,
+  docDate,
+  docRev,
+  procedureReference,
+  procedureName,
+  procedureDate,
+  procedureRev,
+  acceptanceCriteriaDocNo,
+  acceptanceCriteriaDate,
+  acceptanceCriteriaRev,
+  acceptanceCriteriaReference,
 }: TrialRunModalProps) {
   const [activeTab, setActiveTab] = useState<"test" | "certificate">("test");
   const [testBlocks, setTestBlocks] = useState<CanvasBlock[]>([]);
+
+  // Pre-fill and evaluate table rows for all trial columns (t1..t5, 1..5)
+  const prefillTableRows = (tbl: TableGridBlock) => {
+    if (!tbl.rows || !tbl.columns) return;
+    const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+    const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
+
+    tbl.rows.forEach((r: any) => {
+      const nom = parseFloat(String(r.nominal ?? 0)) || 0;
+      const nomFormatted = nom.toFixed(dec);
+
+      // Pre-fill nominal
+      r.nominal = nom;
+
+      // Identify and pre-fill all trial and reading columns
+      tbl.columns.forEach((col) => {
+        if (col.type === "trial" || /^t[1-9]$/i.test(col.id) || /^[1-9]$/.test(col.id) || /^col_[1-9]$/i.test(col.id)) {
+          r[col.id] = nomFormatted;
+        }
+        if (col.type === "reading" || col.id === "reading") {
+          r[col.id] = nomFormatted;
+        }
+      });
+
+      // Populate standard trial attributes t1..t5 and reading
+      r.reading = nomFormatted;
+      r.t1 = nomFormatted;
+      r.t2 = nomFormatted;
+      r.t3 = nomFormatted;
+      r.t4 = nomFormatted;
+      r.t5 = nomFormatted;
+
+      // Evaluate row formulas (Avg, Error, Status) using deterministic multi-pass
+      evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
+    });
+  };
 
   // Deep clone blocks when modal opens
   useEffect(() => {
     if (open) {
       const cloned = JSON.parse(JSON.stringify(blocks));
-      // Pre-fill sample reading equal to nominal for instant clean state
       cloned.forEach((block: any) => {
         if (block.type === "table_grid" && block.rows) {
-          block.rows.forEach((r: any) => {
-            const nom = r.nominal ?? 0;
-            const dec = block.decimal_places ?? decimalPlaces ?? 3;
-            r.reading = Number(nom).toFixed(dec);
-            r.t1 = Number(nom).toFixed(dec);
-            r.t2 = Number(nom).toFixed(dec);
-            r.t3 = Number(nom).toFixed(dec);
-            r.avg = Number(nom).toFixed(dec);
-            r.error = `+${(0).toFixed(dec)}`;
-            r.status = "PASS";
-          });
+          prefillTableRows(block);
         }
         if (block.type === "split_row" && block.children) {
           block.children.forEach((child: any) => {
             if (child.type === "table_grid" && child.rows) {
-              child.rows.forEach((r: any) => {
-                const nom = r.nominal ?? 0;
-                const dec = child.decimal_places ?? decimalPlaces ?? 3;
-                r.reading = Number(nom).toFixed(dec);
-                r.t1 = Number(nom).toFixed(dec);
-                r.avg = Number(nom).toFixed(dec);
-                r.error = `+${(0).toFixed(dec)}`;
-                r.status = "PASS";
-              });
+              prefillTableRows(child);
             }
           });
         }
@@ -117,103 +157,68 @@ export function TrialRunModal({
     if (!targetTbl || !targetTbl.rows) return;
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
-    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? defaultTolerance));
-    const nominal = parseFloat(String(row.nominal)) || 0;
+    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? defaultTolerance)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (decimalPlaces || 3);
 
-    // Recalculate all formulas in this table
-    targetTbl.columns.forEach((col: any) => {
-      if (col.type === "formula" || col.type === "status") {
-        const formula = col.formula || "";
-
-        // 1. AVERAGE
-        if (/AVERAGE/i.test(formula)) {
-          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3]
-            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-            .map((v) => parseFloat(v))
-            .filter((v) => !isNaN(v));
-          if (trials.length > 0) {
-            const sum = trials.reduce((a, b) => a + b, 0);
-            const avgVal = parseFloat((sum / trials.length).toFixed(dec));
-            row[col.id] = avgVal.toFixed(dec);
-            row.avg = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.avg = undefined;
-          }
-        }
-        // 2. ERROR (avg - nominal or reading - nominal)
-        else if (/avg\s*-\s*nominal/i.test(formula)) {
-          if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (!isNaN(avgVal)) {
-              const err = parseFloat((avgVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          }
-        } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-          const readStr = row.reading ?? row.t1;
-          if (readStr !== undefined && String(readStr).trim() !== "") {
-            const readVal = parseFloat(readStr);
-            if (!isNaN(readVal)) {
-              const err = parseFloat((readVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          }
-        }
-        // 3. STATUS / JUDGEMENT
-        else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
-          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "");
-          if (hasReading) {
-            const readVal = parseFloat(row.avg ?? row.reading ?? row.t1 ?? nominal);
-            const errVal = Math.abs(parseFloat(row.error !== undefined ? Number(row.error).toFixed(dec) : (readVal - nominal).toFixed(dec)) || 0);
-            row[col.id] = errVal <= tol ? "PASS" : "FAIL";
-            row.status = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.status = undefined;
-          }
-        }
-      }
-    });
+    // Multi-pass formula evaluation: Pass 1 (Average) -> Pass 2 (Error) -> Pass 3 (Status)
+    evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
     targetTbl.rows[rowIndex] = row;
     setTestBlocks(updated);
   };
 
-  // Quick fill sample data
+  // Quick fill sample data across all trials
   const handleQuickFill = (type: "pass" | "fail") => {
     const updated = JSON.parse(JSON.stringify(testBlocks));
     updated.forEach((block: any) => {
-      if (block.type === "table_grid" && block.rows) {
-        block.rows.forEach((r: any) => {
-          const nom = parseFloat(r.nominal) || 0;
-          const tol = parseFloat(r.tolerance ?? block.tolerance ?? defaultTolerance);
-          const dec = block.decimal_places ?? decimalPlaces ?? 3;
+      const applyToTable = (tbl: TableGridBlock) => {
+        if (!tbl || !tbl.rows || !tbl.columns) return;
+        const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+        const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
+
+        tbl.rows.forEach((r: any) => {
+          const nom = parseFloat(String(r.nominal ?? 0)) || 0;
           const delta = type === "pass" ? tol * 0.5 : tol * 1.8;
           const readVal = parseFloat((nom + delta).toFixed(dec));
-          const err = parseFloat((readVal - nom).toFixed(dec));
+          const readStr = readVal.toFixed(dec);
 
-          r.reading = readVal.toFixed(dec);
-          r.t1 = readVal.toFixed(dec);
-          r.t2 = readVal.toFixed(dec);
-          r.avg = readVal.toFixed(dec);
-          r.error = (err >= 0 ? "+" : "") + err.toFixed(dec);
-          r.status = type === "pass" ? "PASS" : "FAIL";
-
-          block.columns.forEach((c: any) => {
-            if (c.id === "reading" || c.id === "t1") r[c.id] = readVal.toFixed(dec);
-            if (c.id === "error") r[c.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-            if (c.id === "status") r[c.id] = type === "pass" ? "PASS" : "FAIL";
+          // Populate all trial and reading columns
+          tbl.columns.forEach((c) => {
+            if (c.type === "trial" || /^t[1-9]$/i.test(c.id) || /^[1-9]$/.test(c.id) || /^col_[1-9]$/i.test(c.id)) {
+              r[c.id] = readStr;
+            }
+            if (c.type === "reading" || c.id === "reading") {
+              r[c.id] = readStr;
+            }
           });
+
+          r.reading = readStr;
+          r.t1 = readStr;
+          r.t2 = readStr;
+          r.t3 = readStr;
+          r.t4 = readStr;
+          r.t5 = readStr;
+
+          // Re-evaluate with new readings
+          evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
+        });
+      };
+
+      if (block.type === "table_grid") {
+        applyToTable(block);
+      }
+      if (block.type === "split_row" && block.children) {
+        block.children.forEach((child: any) => {
+          if (child.type === "table_grid") {
+            applyToTable(child);
+          }
         });
       }
     });
     setTestBlocks(updated);
-    toast.success(`Populated sample ${type.toUpperCase()} test readings!`);
+    toast.success(`Populated sample ${type.toUpperCase()} test readings across all trial columns!`);
   };
+
 
   // Calculate pass/fail summary
   let totalPoints = 0;
@@ -243,7 +248,9 @@ export function TrialRunModal({
     certificate_number: `CC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
     ulr_number: `ULR-TC8492${new Date().getFullYear().toString().slice(-2)}0000001F`,
     ulr_enabled: true,
-    doc_no: "CC-2632",
+    doc_no: docNo || undefined,
+    doc_date: docDate || undefined,
+    doc_rev: docRev || undefined,
     calibration_date: new Date().toISOString(),
     next_calibration_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
     certificate_issue_date: new Date().toISOString(),
@@ -262,7 +269,14 @@ export function TrialRunModal({
       pressure: "1013.2 hPa",
       soaking_time: "4 Hours",
     },
-    procedure_reference: "WI/CAL/01 (Accredited Calibration Procedure)",
+    procedure_reference: procedureReference || "WI/CAL/01 (Accredited Calibration Procedure)",
+    procedure_name: procedureName || undefined,
+    procedure_date: procedureDate || undefined,
+    procedure_rev: procedureRev || undefined,
+    acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+    acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+    acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+    acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
     reference_standard_name: "Length Master / Caliper Checker / Slip Gauge Set",
     reference_standard_id: "REF-STD-01",
     reference_standard_traceable_to: "NPL (National Physical Laboratory)",

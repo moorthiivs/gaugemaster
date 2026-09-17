@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy } from "lucide-react";
+import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy, FileText, Sliders, FileCheck2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { CALIBRATION_TYPES, CalibrationPoint } from "@/types/calibration";
 import { CalibrationTemplate, CanvasBlock } from "@/types/template";
@@ -128,7 +128,16 @@ export default function TemplateBuilderForm() {
   const [remarks, setRemarks] = useState("Standard calibration per ISO/IEC 17025");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
   const [procedureReference, setProcedureReference] = useState("AE/CAL-SOP/01");
+  const [procedureName, setProcedureName] = useState("");
+  const [procedureDate, setProcedureDate] = useState("");
+  const [procedureRev, setProcedureRev] = useState("");
   const [docNo, setDocNo] = useState("");
+  const [docDate, setDocDate] = useState("");
+  const [docRev, setDocRev] = useState("");
+  const [acceptanceCriteriaDocNo, setAcceptanceCriteriaDocNo] = useState("");
+  const [acceptanceCriteriaDate, setAcceptanceCriteriaDate] = useState("");
+  const [acceptanceCriteriaRev, setAcceptanceCriteriaRev] = useState("");
+  const [acceptanceCriteriaReference, setAcceptanceCriteriaReference] = useState("");
   
   // Status Formula
   const [statusRuleType, setStatusRuleType] = useState<"default" | "custom_formula">("default");
@@ -311,7 +320,16 @@ export default function TemplateBuilderForm() {
         setRemarks(tpl.remarks || "");
         setStandardReference((tpl as any).standard_reference || tpl.remarks || "Standard calibration per ISO/IEC 17025");
         setProcedureReference(tpl.procedure_reference || "AE/CAL-SOP/01");
+        setProcedureName(tpl.procedure_name || "");
+        setProcedureDate(tpl.procedure_date || "");
+        setProcedureRev(tpl.procedure_rev || "");
         setDocNo((tpl as any).doc_no || (tpl as any).docNo || "");
+        setDocDate(tpl.doc_date || "");
+        setDocRev(tpl.doc_rev || "");
+        setAcceptanceCriteriaDocNo(tpl.acceptance_criteria_doc_no || "");
+        setAcceptanceCriteriaDate(tpl.acceptance_criteria_date || "");
+        setAcceptanceCriteriaRev(tpl.acceptance_criteria_rev || "");
+        setAcceptanceCriteriaReference(tpl.acceptance_criteria_reference || "");
         setStatusRuleType((tpl.status_rule_type as "default" | "custom_formula") || "default");
         setStatusFormula(tpl.status_formula || "");
 
@@ -427,10 +445,20 @@ export default function TemplateBuilderForm() {
         remarks,
         standard_reference: standardReference,
         procedure_reference: procedureReference,
+        procedure_name: procedureName ? procedureName.trim() : null,
+        procedure_date: procedureDate ? procedureDate.trim() : null,
+        procedure_rev: procedureRev ? procedureRev.trim() : null,
         doc_no: docNo ? docNo.trim() : null,
+        doc_date: docDate ? docDate.trim() : null,
+        doc_rev: docRev ? docRev.trim() : null,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo ? acceptanceCriteriaDocNo.trim() : null,
+        acceptance_criteria_date: acceptanceCriteriaDate ? acceptanceCriteriaDate.trim() : null,
+        acceptance_criteria_rev: acceptanceCriteriaRev ? acceptanceCriteriaRev.trim() : null,
+        acceptance_criteria_reference: acceptanceCriteriaReference ? acceptanceCriteriaReference.trim() : null,
         status_rule_type: statusRuleType,
         status_formula: statusFormula,
         userId: user?.id,
+        companyId: (user as any)?.companyId || (user as any)?.company?.id || null,
       };
 
       if (templateId) {
@@ -1051,29 +1079,148 @@ export default function TemplateBuilderForm() {
               )}
             </div>
 
-            {/* Document Number */}
-            <div className="space-y-1.5">
+            {/* ── 1. Calibration Template Format No (Certificate Top Right) ── */}
+            <div className="p-2.5 rounded-md border border-border/80 bg-muted/20 space-y-2">
               <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold">Doc. No.</Label>
-                <span className="text-[10px] text-muted-foreground">Printed on top right of certificate</span>
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-primary" />
+                  Template Document Control
+                </Label>
+                <span className="text-[10px] text-muted-foreground">Top-right header box</span>
               </div>
-              <Input
-                placeholder="e.g., DOC/CAL/01"
-                value={docNo}
-                onChange={(e) => { setDocNo(e.target.value); markDirty(); }}
-                className="text-xs font-medium"
-              />
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">Doc. No.</Label>
+                <Input
+                  placeholder="e.g., R/QCM/GI/001/03"
+                  value={docNo}
+                  onChange={(e) => { setDocNo(e.target.value); markDirty(); }}
+                  className="text-xs font-medium h-7.5"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Date</Label>
+                  <Input
+                    placeholder="DD/MM/YYYY"
+                    value={docDate}
+                    onChange={(e) => { setDocDate(e.target.value); markDirty(); }}
+                    className="text-xs font-medium h-7.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                  <Input
+                    placeholder="e.g., 3"
+                    value={docRev}
+                    onChange={(e) => { setDocRev(e.target.value); markDirty(); }}
+                    className="text-xs font-medium h-7.5"
+                  />
+                </div>
+              </div>
+              {docNo && (
+                <div className="border border-black/20 bg-background/90 rounded px-2 py-1 text-[10px] font-mono shadow-2xs">
+                  <div className="font-bold text-foreground">Doc.No : {docNo}</div>
+                  <div className="text-muted-foreground">Date &amp; Rev : {docDate || "-"} &amp; {docRev || "-"}</div>
+                </div>
+              )}
             </div>
 
-            {/* Procedure Reference Template */}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Procedure Reference (SOP)</Label>
-              <Input
-                placeholder="e.g., AE/CAL-SOP/01"
-                value={procedureReference}
-                onChange={(e) => { setProcedureReference(e.target.value); markDirty(); }}
-                className="text-xs"
-              />
+            {/* ── 2. Calibration Procedure Control ── */}
+            <div className="p-2.5 rounded-md border border-border/80 bg-muted/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Sliders className="w-3.5 h-3.5 text-primary" />
+                  Calibration Procedure
+                </Label>
+                <span className="text-[10px] text-muted-foreground">Procedure No cell</span>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">Procedure Name</Label>
+                <Input
+                  placeholder="e.g., Gauges and Instruments Calibration Procedure"
+                  value={procedureName}
+                  onChange={(e) => { setProcedureName(e.target.value); markDirty(); }}
+                  className="text-xs h-7.5"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">Procedure Doc. No. / SOP</Label>
+                <Input
+                  placeholder="e.g., D/QCM/GI/006/01"
+                  value={procedureReference}
+                  onChange={(e) => { setProcedureReference(e.target.value); markDirty(); }}
+                  className="text-xs h-7.5"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Date</Label>
+                  <Input
+                    placeholder="DD-MM-YYYY"
+                    value={procedureDate}
+                    onChange={(e) => { setProcedureDate(e.target.value); markDirty(); }}
+                    className="text-xs h-7.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                  <Input
+                    placeholder="e.g., 2"
+                    value={procedureRev}
+                    onChange={(e) => { setProcedureRev(e.target.value); markDirty(); }}
+                    className="text-xs h-7.5"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* ── 3. Acceptance Criteria Document Control ── */}
+            <div className="p-2.5 rounded-md border border-border/80 bg-muted/20 space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <FileCheck2 className="w-3.5 h-3.5 text-primary" />
+                  Acceptance Criteria Reference
+                </Label>
+                <span className="text-[10px] text-muted-foreground">Above Procedure table</span>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">Criteria Doc. No.</Label>
+                <Input
+                  placeholder="e.g., D/QCM/GI/006/03"
+                  value={acceptanceCriteriaDocNo}
+                  onChange={(e) => { setAcceptanceCriteriaDocNo(e.target.value); markDirty(); }}
+                  className="text-xs h-7.5"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Date</Label>
+                  <Input
+                    placeholder="DD-MM-YYYY"
+                    value={acceptanceCriteriaDate}
+                    onChange={(e) => { setAcceptanceCriteriaDate(e.target.value); markDirty(); }}
+                    className="text-xs h-7.5"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                  <Input
+                    placeholder="e.g., 01"
+                    value={acceptanceCriteriaRev}
+                    onChange={(e) => { setAcceptanceCriteriaRev(e.target.value); markDirty(); }}
+                    className="text-xs h-7.5"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] text-muted-foreground">Custom Reference Text (Optional)</Label>
+                <Input
+                  placeholder="AS Per D/QCM/GI/006/03 Rev-01 dated 12-05-2026"
+                  value={acceptanceCriteriaReference}
+                  onChange={(e) => { setAcceptanceCriteriaReference(e.target.value); markDirty(); }}
+                  className="text-xs h-7.5"
+                />
+              </div>
             </div>
 
             {/* Standard Reference Template */}
@@ -1227,6 +1374,17 @@ export default function TemplateBuilderForm() {
                 defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
                 decimalPlaces={decimalPlaces}
                 templateName={name}
+                docNo={docNo}
+                docDate={docDate}
+                docRev={docRev}
+                procedureReference={procedureReference}
+                procedureName={procedureName}
+                procedureDate={procedureDate}
+                procedureRev={procedureRev}
+                acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
+                acceptanceCriteriaDate={acceptanceCriteriaDate}
+                acceptanceCriteriaRev={acceptanceCriteriaRev}
+                acceptanceCriteriaReference={acceptanceCriteriaReference}
                 diagramImage={diagramImage}
                 diagramImageWidth={diagramWidth}
                 diagramImageHeight={diagramHeight}
@@ -1373,7 +1531,16 @@ export default function TemplateBuilderForm() {
                   soaking_end_time: envSoakingEndTime || undefined,
                 },
                 doc_no: docNo || undefined,
+                doc_date: docDate || undefined,
+                doc_rev: docRev || undefined,
                 procedure_reference: procedureReference || "AE/CAL-SOP/01",
+                procedure_name: procedureName || undefined,
+                procedure_date: procedureDate || undefined,
+                procedure_rev: procedureRev || undefined,
+                acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+                acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+                acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+                acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
                 standard_reference: standardReference || remarks || "Standard calibration per ISO/IEC 17025",
                 is_canvas_template: isCanvasMode,
                 layout_blocks: isCanvasMode ? layoutBlocks : undefined,

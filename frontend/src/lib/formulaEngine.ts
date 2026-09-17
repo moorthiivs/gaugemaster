@@ -464,3 +464,209 @@ export function evaluateFormulaValue(
     return "Err";
   }
 }
+
+/**
+ * Evaluates Canvas Table Grid row formulas (Average, Error, Judgement/Status)
+ * in deterministic order with multi-pass evaluation, preventing formula keyword collisions.
+ */
+export function evaluateCanvasRowFormulas(
+  row: any,
+  columns: any[],
+  tableTol: number = 0.02,
+  tableDec: number = 3
+): any {
+  const dec = tableDec;
+  const nominal = parseFloat(String(row.nominal)) || 0;
+  const tol = parseFloat(String(row.tolerance ?? tableTol)) || 0.02;
+
+  // Sync aliases for trial values across row:
+  // e.g. if user edited '1', map to 't1' and 'col_1'; if user edited 't4', map to '4' and 'col_4'
+  for (let i = 1; i <= 10; i++) {
+    const val = row[`t${i}`] ?? row[String(i)] ?? row[`col_${i}`];
+    if (val !== undefined && val !== null && String(val).trim() !== "") {
+      row[`t${i}`] = val;
+      row[String(i)] = val;
+      row[`col_${i}`] = val;
+    }
+  }
+  if (row.reading !== undefined && row.reading !== null && String(row.reading).trim() !== "") {
+    if (row.t1 === undefined) row.t1 = row.reading;
+  }
+
+  // PASS 1: Calculate AVERAGE columns
+  columns.forEach((col) => {
+    if (col.type === "formula" || col.type === "reading" || col.id === "avg") {
+      const formula = (col.formula || "").trim();
+
+      // Ensure it's NOT an error subtraction expression like "average - nominal"
+      const isSubtraction =
+        formula.includes("-") ||
+        /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(formula) ||
+        /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(formula);
+
+      const isAvg =
+        !isSubtraction &&
+        (col.id === "avg" ||
+          col.label?.toLowerCase() === "avg" ||
+          col.label?.toLowerCase() === "average" ||
+          /^=?AVERAGE\b/i.test(formula));
+
+      if (isAvg) {
+        let trials: number[] = [];
+
+        // Check if formula has explicit arguments e.g. AVERAGE(t1,t2,t3,t4,t5) or AVERAGE(1,2,3,4,5)
+        const avgMatch = formula.match(/^=?AVERAGE\(([^)]+)\)/i);
+        if (avgMatch) {
+          const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
+          varNames.forEach((v: string) => {
+            const raw = row[v] ?? row[`t${v}`] ?? row[`col_${v}`];
+            if (raw !== undefined && raw !== null && String(raw).trim() !== "") {
+              const num = parseFloat(String(raw));
+              if (!isNaN(num)) trials.push(num);
+            }
+          });
+        }
+
+        // If no explicit arguments found, collect all trial values available in the row
+        if (trials.length === 0) {
+          const candidateKeys = [
+            row.t1, row.t2, row.t3, row.t4, row.t5, row.t6, row.t7, row.t8, row.t9, row.t10,
+            row.col_1, row.col_2, row.col_3, row.col_4, row.col_5
+          ];
+          trials = candidateKeys
+            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+            .map((v) => parseFloat(String(v)))
+            .filter((v) => !isNaN(v));
+        }
+
+        // Also check columns with type === "trial"
+        if (trials.length === 0) {
+          columns.filter((c: any) => c.type === "trial").forEach((c: any) => {
+            const val = row[c.id];
+            if (val !== undefined && val !== null && String(val).trim() !== "") {
+              const num = parseFloat(String(val));
+              if (!isNaN(num)) trials.push(num);
+            }
+          });
+        }
+
+        if (trials.length > 0) {
+          const sum = trials.reduce((a, b) => a + b, 0);
+          const avgVal = parseFloat((sum / trials.length).toFixed(dec));
+          row[col.id] = avgVal.toFixed(dec);
+          row.avg = row[col.id];
+          row.average = row[col.id];
+        } else if (row.reading !== undefined && String(row.reading).trim() !== "") {
+          const rNum = parseFloat(String(row.reading));
+          if (!isNaN(rNum)) {
+            row[col.id] = rNum.toFixed(dec);
+            row.avg = row[col.id];
+            row.average = row[col.id];
+          }
+        } else {
+          row[col.id] = "-";
+          row.avg = undefined;
+          row.average = undefined;
+        }
+      }
+    }
+  });
+
+  // PASS 2: Calculate ERROR columns (measured - nominal or nominal - measured)
+  columns.forEach((col) => {
+    if (col.type === "formula" || col.id === "error") {
+      const formula = (col.formula || "").trim();
+
+      const isError =
+        col.id === "error" ||
+        col.label?.toLowerCase() === "error" ||
+        /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(formula) ||
+        /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(formula) ||
+        (/error/i.test(formula) && !/PASS.*FAIL/i.test(formula));
+
+      if (isError) {
+        const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(formula);
+
+        // Find measured value: prefer avg, then trials mean, then reading, then t1
+        let measuredVal: number | undefined = undefined;
+        if (row.avg !== undefined && row.avg !== "-" && String(row.avg).trim() !== "") {
+          measuredVal = parseFloat(String(row.avg));
+        } else if (row.average !== undefined && row.average !== "-" && String(row.average).trim() !== "") {
+          measuredVal = parseFloat(String(row.average));
+        } else {
+          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
+            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+            .map((v) => parseFloat(String(v)))
+            .filter((v) => !isNaN(v));
+          if (trials.length > 0) {
+            measuredVal = parseFloat((trials.reduce((a, b) => a + b, 0) / trials.length).toFixed(dec));
+          } else if (row.reading !== undefined && String(row.reading).trim() !== "") {
+            measuredVal = parseFloat(String(row.reading));
+          } else if (row.actual !== undefined && String(row.actual).trim() !== "") {
+            measuredVal = parseFloat(String(row.actual));
+          } else if (row.t1 !== undefined && String(row.t1).trim() !== "") {
+            measuredVal = parseFloat(String(row.t1));
+          }
+        }
+
+        if (measuredVal !== undefined && !isNaN(measuredVal)) {
+          const err = parseFloat((isInverted ? nominal - measuredVal : measuredVal - nominal).toFixed(dec));
+          const formattedErr = (err >= 0 ? "+" : "") + err.toFixed(dec);
+          row[col.id] = formattedErr;
+          if (col.id !== "error") {
+            row.error = err;
+          }
+        } else {
+          row[col.id] = "-";
+          if (col.id !== "error") {
+            row.error = undefined;
+          }
+        }
+      }
+    }
+  });
+
+  // PASS 3: Calculate STATUS / JUDGEMENT columns
+  columns.forEach((col) => {
+    const formula = (col.formula || "").trim();
+    const isStatus =
+      col.type === "status" ||
+      col.id === "status" ||
+      col.id === "judgement" ||
+      col.label?.toLowerCase().includes("judge") ||
+      col.label?.toLowerCase().includes("status") ||
+      /PASS.*FAIL/i.test(formula);
+
+    if (isStatus) {
+      // Check if tolerance limit is explicitly defined in formula (e.g. <=0.02)
+      const limitMatch = formula.match(/<=\s*([0-9.]+)/i) || formula.match(/<\s*([0-9.]+)/i);
+      const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
+
+      const hasMeasurement =
+        row.error !== undefined ||
+        row.avg !== undefined ||
+        row.average !== undefined ||
+        (row.reading !== undefined && String(row.reading).trim() !== "") ||
+        (row.t1 !== undefined && String(row.t1).trim() !== "");
+
+      if (hasMeasurement) {
+        let errVal: number;
+        if (row.error !== undefined && row.error !== "-") {
+          errVal = Math.abs(typeof row.error === "number" ? row.error : parseFloat(String(row.error).replace("+", "")) || 0);
+        } else {
+          const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.t1 ?? nominal));
+          errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
+        }
+
+        const isPass = errVal <= tolLimit + 1e-9;
+        row[col.id] = isPass ? "PASS" : "FAIL";
+        row.status = row[col.id];
+      } else {
+        row[col.id] = "-";
+        row.status = undefined;
+      }
+    }
+  });
+
+  return row;
+}
