@@ -297,10 +297,15 @@ export function DataTable<TData, TValue>({
                   {headerGroup.headers.map((header, index) => {
                     const isFirst = index === 0;
                     const isLast = index === headerGroup.headers.length - 1;
+                    const colMeta = (header.column.columnDef.meta as any)?.align;
+                    const colId = (header.id || "").toLowerCase();
+                    const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
+                    const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
+                    const justifyClass = align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start";
                     return (
-                      <TableHead key={header.id} className={`font-bold text-foreground/80 py-3 px-6 h-auto ${isFirst ? 'text-left' : isLast ? 'text-right' : 'text-center'}`}>
+                      <TableHead key={header.id} className={`font-bold text-foreground/80 py-3 px-4 h-auto ${textAlignClass}`}>
                         <div className="flex flex-col gap-2">
-                          <div className={`flex items-center gap-2 group ${isFirst ? 'justify-start' : isLast ? 'justify-end' : 'justify-center'}`}>
+                          <div className={`flex items-center gap-2 group ${justifyClass}`}>
                             {header.isPlaceholder
                               ? null
                               : flexRender(
@@ -398,8 +403,12 @@ export function DataTable<TData, TValue>({
                     {row.getVisibleCells().map((cell, index) => {
                       const isFirst = index === 0;
                       const isLast = index === row.getVisibleCells().length - 1;
+                      const colMeta = (cell.column.columnDef.meta as any)?.align;
+                      const colId = (cell.column.id || "").toLowerCase();
+                      const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
+                      const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
                       return (
-                        <TableCell key={cell.id} className={`py-4 px-6 text-sm font-medium ${isFirst ? 'text-left' : isLast ? 'text-right' : 'text-center'}`}>
+                        <TableCell key={cell.id} className={`py-3.5 px-4 text-sm font-medium ${textAlignClass}`}>
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </TableCell>
                       );
@@ -519,7 +528,7 @@ export function DataTable<TData, TValue>({
                   <SelectValue placeholder={pageSize} />
                 </SelectTrigger>
                 <SelectContent side="top">
-                  {[10, 20, 30, 40, 50].map((size) => (
+                  {[10, 20, 30, 40, 50, 100, 250].map((size) => (
                     <SelectItem key={size} value={String(size)}>
                       {size}
                     </SelectItem>

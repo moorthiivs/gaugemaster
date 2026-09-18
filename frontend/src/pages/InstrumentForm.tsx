@@ -320,49 +320,51 @@ export default function InstrumentForm() {
   const isFormLoading = !instrumentData || validationRules.length === 0;
 
   return (
-    <Card className="border-primary/10 shadow-2xl bg-card/50 backdrop-blur-sm animate-in fade-in duration-500">
-      <div className="flex items-center gap-2 p-6 border-b bg-gradient-to-r from-primary/5 to-transparent">
-        {isEdit && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate("/instruments")}
-            className="rounded-full hover:bg-primary/10"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        )}
-        <div>
-          <CardTitle className="text-2xl font-bold">
-            {isEdit ? "Edit Instrument" : "Add New Instrument"}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Complete the fields below to track your calibration data.
-          </p>
-        </div>
-      </div>
-      <CardContent className="p-8">
-        {isFormLoading ? (
-          <div className="grid gap-6 md:grid-cols-12 animate-pulse">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} className="md:col-span-4 space-y-2">
-                <Skeleton className="h-4 w-24 rounded" />
-                <Skeleton className="h-11 w-full rounded-md" />
-              </div>
-            ))}
+    <div className="space-y-6">
+      <Card className="border-primary/10 shadow-2xl bg-card/50 backdrop-blur-sm animate-in fade-in duration-500">
+        <div className="flex items-center gap-2 p-6 border-b bg-gradient-to-r from-primary/5 to-transparent">
+          {isEdit && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate("/instruments")}
+              className="rounded-full hover:bg-primary/10"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          )}
+          <div>
+            <CardTitle className="text-2xl font-bold">
+              {isEdit ? "Edit Instrument" : "Add New Instrument"}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Complete the fields below to track your calibration data.
+            </p>
           </div>
-        ) : (
-          <DynamicForm
-            fields={dynamicFormFields}
-            validationRules={validationRules}
-            defaultValues={instrumentData}
-            onSubmit={onSubmit}
-            onCancel={() => navigate("/instruments")}
-            isSubmitting={isSaving}
-            onChangeEffects={onChangeEffects}
-          />
-        )}
-      </CardContent>
-    </Card>
+        </div>
+        <CardContent className="p-8">
+          {isFormLoading ? (
+            <div className="grid gap-6 md:grid-cols-12 animate-pulse">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i} className="md:col-span-4 space-y-2">
+                  <Skeleton className="h-4 w-24 rounded" />
+                  <Skeleton className="h-11 w-full rounded-md" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <DynamicForm
+              fields={dynamicFormFields}
+              validationRules={validationRules}
+              defaultValues={instrumentData}
+              onSubmit={onSubmit}
+              onCancel={() => navigate("/instruments")}
+              isSubmitting={isSaving}
+              onChangeEffects={onChangeEffects}
+            />
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }

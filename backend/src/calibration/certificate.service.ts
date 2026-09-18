@@ -255,6 +255,11 @@ export class CertificateService {
       latestTemplate?.procedure_reference ||
       (latestTemplate as any)?.procedureReference ||
       'AE/CAL-SOP/01';
+    const procedureNo =
+      calibration.procedure_no ||
+      (calibration as any).procedureNo ||
+      latestTemplate?.procedure_no ||
+      (latestTemplate as any)?.procedureNo;
     const procedureName =
       calibration.procedure_name ||
       (calibration as any).procedureName ||
@@ -919,12 +924,11 @@ export class CertificateService {
       logoDataUrl &&
       (headerDisplayMode === 'logo' || headerDisplayMode === 'both')
     ) {
-      const logoBadge = {
-        image: logoDataUrl,
-        fit: [36, 32],
-      };
-
       if (headerDisplayMode === 'both') {
+        const logoBadge = {
+          image: logoDataUrl,
+          fit: [65, 36] as [number, number],
+        };
         leftHeaderContent = {
           columns: [
             {
@@ -953,11 +957,15 @@ export class CertificateService {
                     ]
                   : []),
               ],
-              margin: [0, 7, 0, 0],
+              margin: [0, 5, 0, 0],
             },
           ],
         };
       } else {
+        const logoBadge = {
+          image: logoDataUrl,
+          fit: [130, 38] as [number, number],
+        };
         leftHeaderContent = { stack: [logoBadge] };
       }
     } else {
@@ -1575,7 +1583,7 @@ export class CertificateService {
     const docDefinition = {
       pageSize: 'A4' as const,
       pageOrientation: (useLandscape ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
-      pageMargins: [20, 48, 20, 48] as [number, number, number, number],
+      pageMargins: [18, 52, 18, 46] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
@@ -1592,9 +1600,10 @@ export class CertificateService {
       background: (currentPage: number, pageCount: number) => {
         const pageWidth = useLandscape ? 841.89 : 595.28;
         const pageHeight = useLandscape ? 595.28 : 841.89;
+        const headerHeight = 52;
         const footerHeight = 46;
         const footerY = pageHeight - footerHeight;
-        const rectHeight = footerY - 46;
+        const rectHeight = footerY - headerHeight;
 
         return [
           {
@@ -1605,14 +1614,14 @@ export class CertificateService {
                 x: 0,
                 y: 0,
                 w: pageWidth,
-                h: 46,
+                h: headerHeight,
                 color: headerBgColor,
               },
               // Outer border rect surrounding certificate body
               {
                 type: 'rect',
                 x: 18,
-                y: 46,
+                y: headerHeight,
                 w: pageWidth - 36,
                 h: rectHeight,
                 lineWidth: 1,
@@ -1651,58 +1660,43 @@ export class CertificateService {
                 {
                   ...leftHeaderContent,
                   fillColor: headerBgColor,
-                  margin: [10, 6, 0, 5],
+                  margin: [10, 7, 0, 0],
                 },
                 {
                   text: 'CALIBRATION CERTIFICATE',
                   bold: true,
-                  fontSize: 19,
-                  color: '#000',
+                  fontSize: 17,
+                  color: '#000000',
                   alignment: 'center',
                   fillColor: headerBgColor,
-                  margin: [0, 7, 0, 5],
+                  margin: [0, 14, 0, 0],
                 },
                 {
                   stack: [
                     ...(docNo
                       ? [
                           {
-                            table: {
-                              widths: ['*'],
-                              body: [
-                                [
-                                  {
-                                    stack: [
-                                      {
-                                        text: `Doc.No : ${docNo}`,
-                                        fontSize: 7,
-                                        bold: true,
-                                        alignment: 'left',
-                                        color: '#000000',
-                                        noWrap: true,
-                                      },
-                                      {
-                                        text: `Date & Rev : ${docDate || '-'} & ${docRev || '-'}`,
-                                        fontSize: 7,
-                                        bold: true,
-                                        alignment: 'left',
-                                        color: '#000000',
-                                        noWrap: true,
-                                        margin: [0, 1.5, 0, 0],
-                                      },
-                                    ],
-                                    fillColor: '#ffffff',
-                                    margin: [3, 2, 3, 2],
-                                  },
-                                ],
-                              ],
-                            },
-                            layout: {
-                              hLineWidth: () => 0.5,
-                              vLineWidth: () => 0.5,
-                              hLineColor: () => '#000000',
-                              vLineColor: () => '#000000',
-                            },
+                            stack: [
+                              {
+                                text: `Doc.No : ${docNo}`,
+                                fontSize: 8,
+                                bold: true,
+                                alignment: 'right',
+                                color: '#000000',
+                                noWrap: true,
+                              },
+                              {
+                                text: `Date & Rev : ${docDate || '-'} & ${docRev || '-'}`,
+                                fontSize: 8,
+                                bold: true,
+                                alignment: 'right',
+                                color: '#000000',
+                                noWrap: true,
+                                margin: [0, 2, 0, 0],
+                              },
+                            ],
+                            fillColor: headerBgColor,
+                            margin: [0, 0, 0, 0],
                           },
                         ]
                       : [
@@ -1739,7 +1733,7 @@ export class CertificateService {
                       : []),
                   ],
                   fillColor: headerBgColor,
-                  margin: [0, pageCount > 1 ? 5 : 8, 18, 5],
+                  margin: [0, 13, 8, 0],
                 },
               ],
             ],
@@ -2054,20 +2048,32 @@ export class CertificateService {
             ]
           : []),
 
-        // Procedure & Environmental Conditions Table (Compact 2-row table)
+        // Procedure & Environmental Conditions Table (3-row table: Header Row, Data Row, Environmental Conditions Row)
         {
           table: {
-            widths: ['24%', '38%', '38%'],
+            widths: ['24%', '26%', '25%', '25%'],
             body: [
-              // Row 1: Headers & Values
+              // Row 1: Header Row
+              [
+                { text: 'Procedure Name & No', style: 'gridTh', alignment: 'left', fillColor: '#f1f5f9' },
+                { text: 'Doc.No & Rev-Date', style: 'gridTh', alignment: 'left', fillColor: '#f1f5f9' },
+                { text: 'Standard Reference', style: 'gridTh', alignment: 'left', fillColor: '#f1f5f9' },
+                { text: 'Discipline', style: 'gridTh', alignment: 'left', fillColor: '#f1f5f9' },
+              ],
+              // Row 2: Data Row
               [
                 {
                   stack: [
-                    { text: 'Procedure No', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    ...(procedureName
-                      ? [{ text: procedureName, bold: true, fontSize: isDense ? 6.8 : 7.5, color: '#000000', margin: [0, 1, 0, 0] }]
+                    { text: procedureName || '-', bold: true, fontSize: isDense ? 6.8 : 7.5, color: '#000000' },
+                    ...(procedureNo
+                      ? [{ text: `Proc No: ${procedureNo}`, fontSize: isDense ? 6.5 : 7.2, color: '#334155', margin: [0, 1, 0, 0] }]
                       : []),
-                    { text: `Doc.No.: ${procedureReference || 'AE/CAL-SOP/01'}`, fontSize: isDense ? 6.8 : 7.5, margin: [0, 1, 0, 0] },
+                  ],
+                  margin: [2, 1.5, 2, 1.5],
+                },
+                {
+                  stack: [
+                    { text: procedureReference || 'AE/CAL-SOP/01', bold: true, fontSize: isDense ? 6.8 : 7.5, color: '#000000' },
                     ...(procedureRev || procedureDate
                       ? [
                           {
@@ -2079,32 +2085,28 @@ export class CertificateService {
                               .join(' '),
                             fontSize: isDense ? 6.5 : 7.2,
                             color: '#334155',
-                            margin: [0, 0.5, 0, 0],
+                            margin: [0, 1, 0, 0],
                           },
                         ]
                       : []),
                   ],
-                  margin: [2, 1, 2, 1],
+                  margin: [2, 1.5, 2, 1.5],
                 },
                 {
-                  stack: [
-                    { text: 'Standard Reference', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: standardReference || 'Standard calibration per ISO/IEC 17025', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
-                  ],
-                  margin: [2, 1, 2, 1],
+                  text: standardReference || 'Standard calibration per ISO/IEC 17025',
+                  fontSize: isDense ? 7 : 8,
+                  margin: [2, 1.5, 2, 1.5],
                 },
                 {
-                  stack: [
-                    { text: 'Discipline', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
-                  ],
-                  margin: [2, 1, 2, 1],
+                  text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)',
+                  fontSize: isDense ? 7 : 8,
+                  margin: [2, 1.5, 2, 1.5],
                 },
               ],
               // Row 2: Environmental Conditions (Full Colspan)
               [
                 {
-                  colSpan: 3,
+                  colSpan: 4,
                   text: [
                     { text: 'Environmental Conditions : ', bold: true },
                     { text: `Temperature at ${env.temperature || '-'}° C  RH ${env.humidity || '-'} %` },
@@ -2127,6 +2129,7 @@ export class CertificateService {
                   fontSize: isDense ? 7 : 8,
                   margin: [2, 1, 2, 1],
                 },
+                {},
                 {},
                 {},
               ],

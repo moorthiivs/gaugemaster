@@ -145,6 +145,9 @@ export class Calibration {
   procedure_reference?: string;
 
   @Column({ nullable: true })
+  procedure_no?: string;
+
+  @Column({ nullable: true })
   procedure_name?: string;
 
   @Column({ nullable: true })

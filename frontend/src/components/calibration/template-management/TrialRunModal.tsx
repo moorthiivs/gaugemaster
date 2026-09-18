@@ -44,6 +44,7 @@ interface TrialRunModalProps {
   docDate?: string;
   docRev?: string;
   procedureReference?: string;
+  procedureNo?: string;
   procedureName?: string;
   procedureDate?: string;
   procedureRev?: string;
@@ -69,6 +70,7 @@ export function TrialRunModal({
   docDate,
   docRev,
   procedureReference,
+  procedureNo,
   procedureName,
   procedureDate,
   procedureRev,
@@ -270,6 +272,7 @@ export function TrialRunModal({
       soaking_time: "4 Hours",
     },
     procedure_reference: procedureReference || "WI/CAL/01 (Accredited Calibration Procedure)",
+    procedure_no: procedureNo || undefined,
     procedure_name: procedureName || undefined,
     procedure_date: procedureDate || undefined,
     procedure_rev: procedureRev || undefined,

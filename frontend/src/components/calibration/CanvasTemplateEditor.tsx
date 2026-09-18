@@ -23,6 +23,8 @@ import {
   Copy,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Columns,
   Sparkles,
   LayoutGrid,
@@ -75,6 +77,7 @@ interface CanvasTemplateEditorProps {
   docDate?: string;
   docRev?: string;
   procedureReference?: string;
+  procedureNo?: string;
   procedureName?: string;
   procedureDate?: string;
   procedureRev?: string;
@@ -102,6 +105,7 @@ export function CanvasTemplateEditor({
   docDate,
   docRev,
   procedureReference,
+  procedureNo,
   procedureName,
   procedureDate,
   procedureRev,
@@ -115,6 +119,8 @@ export function CanvasTemplateEditor({
   const [showAiModal, setShowAiModal] = useState(false);
   const [showTrialRun, setShowTrialRun] = useState(false);
   const [showInspector, setShowInspector] = useState(false);
+  const [isBannerCollapsed, setIsBannerCollapsed] = useState(false);
+  const [isToolboxCollapsed, setIsToolboxCollapsed] = useState(false);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     onChange(newBlocks);
@@ -403,168 +409,326 @@ export function CanvasTemplateEditor({
   return (
     <div className="space-y-4">
       {/* Top Banner & Quick Presets Header */}
-      <div className="bg-slate-900 text-white p-3 rounded-xl shadow-md border border-slate-800 flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
-            <Layers className="w-5 h-5" />
+      {isBannerCollapsed ? (
+        <div className="bg-slate-900 text-white px-3 py-1.5 rounded-lg shadow-xs border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-amber-400" />
+              WYSIWYG Visual Canvas Designer
+            </span>
+            <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10 py-0">
+              {blocks.length} Blocks
+            </Badge>
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              WYSIWYG Visual Canvas Designer 2.0
-              <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                {blocks.length} Modular Blocks
-              </Badge>
-            </h3>
-            <p className="text-[11px] text-slate-400">
-              Click any block on the central certificate to edit its properties, formulas & tolerances in the Right Inspector Panel.
-            </p>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              variant={showInspector ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowInspector(!showInspector)}
+              className="text-[11px] h-6 px-2 gap-1 font-bold shadow-xs bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+            >
+              <Settings2 className="w-3 h-3" />
+              Block Props
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowTrialRun(true)}
+              disabled={blocks.length === 0}
+              className="text-[11px] h-6 px-2 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 text-white gap-1 font-bold shadow-xs"
+            >
+              <FlaskConical className="w-3 h-3" />
+              Trial Run
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowAiModal(true)}
+              className="text-[11px] h-6 px-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 text-white gap-1 font-bold shadow-xs"
+            >
+              <Sparkles className="w-3 h-3" />
+              AI Generate
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsBannerCollapsed(false)}
+              className="h-6 w-6 text-slate-400 hover:text-white"
+              title="Expand Banner"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </Button>
           </div>
         </div>
+      ) : (
+        <div className="bg-slate-900 text-white p-2.5 sm:p-3 rounded-xl shadow-md border border-slate-800 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
+              <Layers className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs sm:text-sm font-bold text-slate-100 flex items-center gap-2">
+                WYSIWYG Visual Canvas Designer 2.0
+                <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
+                  {blocks.length} Modular Blocks
+                </Badge>
+              </h3>
+              <p className="text-[10px] sm:text-[11px] text-slate-400">
+                Click any block on the central certificate to edit properties, formulas & tolerances in the Right Inspector Panel.
+              </p>
+            </div>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant={showInspector ? "default" : "outline"}
-            size="sm"
-            onClick={() => setShowInspector(!showInspector)}
-            className={`text-xs gap-1.5 h-8 font-bold shadow-sm ${
-              showInspector ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
-            }`}
-          >
-            <Settings2 className="w-3.5 h-3.5" />
-            {showInspector ? "Hide Properties" : "⚙️ Block Properties"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant={isToolboxCollapsed ? "default" : "outline"}
+              size="sm"
+              onClick={() => setIsToolboxCollapsed(!isToolboxCollapsed)}
+              className={`text-xs gap-1.5 h-8 px-3 rounded-lg font-semibold shadow-xs transition-all ${
+                isToolboxCollapsed ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+              }`}
+              title={isToolboxCollapsed ? "Show Modular Blocks toolbox" : "Hide Modular Blocks toolbox"}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {isToolboxCollapsed ? "Show Blocks" : "Hide Blocks"}
+            </Button>
 
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setShowTrialRun(true)}
-            disabled={blocks.length === 0}
-            className="text-xs bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 hover:to-cyan-800 text-white gap-1.5 h-8 font-bold shadow-sm"
-          >
-            <FlaskConical className="w-3.5 h-3.5" />
-            🧪 Trial Run & Certificate Preview
-          </Button>
+            <Button
+              type="button"
+              variant={showInspector ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowInspector(!showInspector)}
+              className={`text-xs gap-1.5 h-8 px-3 rounded-lg font-semibold shadow-xs transition-all ${
+                showInspector ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
+              }`}
+            >
+              <Settings2 className="w-3.5 h-3.5" />
+              {showInspector ? "Hide Properties" : "Block Properties"}
+            </Button>
 
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setShowAiModal(true)}
-            className="text-xs bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white gap-1.5 h-8 font-bold shadow-sm"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            AI Smart Generate (Excel / Image)
-          </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowTrialRun(true)}
+              disabled={blocks.length === 0}
+              className="text-xs h-8 px-3 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 hover:to-cyan-800 text-white gap-1.5 font-semibold shadow-xs transition-all"
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              Trial Run
+            </Button>
+
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowAiModal(true)}
+              className="text-xs h-8 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white gap-1.5 font-semibold shadow-xs transition-all"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              AI Smart Generate
+            </Button>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsBannerCollapsed(true)}
+              className="h-8 w-8 text-slate-400 hover:text-white rounded-lg"
+              title="Compact Banner"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 3-COLUMN WYSIWYG WORKSPACE */}
       <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
         
         {/* ========================================================================= */}
-        {/* COLUMN 1: LEFT TOOLBOX & PRESETS (240px) */}
+        {/* COLUMN 1: LEFT TOOLBOX & PRESETS (240px COLLAPSIBLE) */}
         {/* ========================================================================= */}
-        <div className="w-full lg:w-[240px] shrink-0 space-y-4">
-          {/* Add Blocks Toolbox */}
-          <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
-            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5 text-primary" />
-              Add Modular Blocks
-            </h4>
-            <div className="grid grid-cols-1 gap-1.5">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addTableBlock}
-                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
-              >
-                <Table className="w-3.5 h-3.5 text-blue-500" />
-                + Data Table Grid
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addSplitRowBlock}
-                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
-              >
-                <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
-                + Side-by-Side (50/50)
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addMatrixBlock}
-                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
-              >
-                <LayoutGrid className="w-3.5 h-3.5 text-purple-500" />
-                + Reference Matrix
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addTextBlock}
-                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
-              >
-                <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                + Note / Statement
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addPageBreak}
-                className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
-              >
-                <Columns className="w-3.5 h-3.5 text-amber-500" />
-                + Page Break
-              </Button>
-            </div>
+        {isToolboxCollapsed ? (
+          <div className="w-10 shrink-0 bg-card border rounded-xl p-1.5 flex flex-col items-center gap-2 shadow-xs py-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsToolboxCollapsed(false)}
+              className="h-7 w-7 text-primary hover:bg-primary/10 rounded-lg"
+              title="Expand Modular Blocks & Presets Panel"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            <div className="h-px w-6 bg-border my-1" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={addTableBlock}
+              className="h-7 w-7 text-blue-500 hover:bg-blue-500/10 rounded-lg"
+              title="Add Data Table Grid"
+            >
+              <Table className="w-4 h-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={addSplitRowBlock}
+              className="h-7 w-7 text-indigo-500 hover:bg-indigo-500/10 rounded-lg"
+              title="Add Side-by-Side Split Row"
+            >
+              <SplitSquareVertical className="w-4 h-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={addMatrixBlock}
+              className="h-7 w-7 text-purple-500 hover:bg-purple-500/10 rounded-lg"
+              title="Add Reference Matrix Table"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={addTextBlock}
+              className="h-7 w-7 text-emerald-500 hover:bg-emerald-500/10 rounded-lg"
+              title="Add Note / Statement"
+            >
+              <FileText className="w-4 h-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={addPageBreak}
+              className="h-7 w-7 text-amber-500 hover:bg-amber-500/10 rounded-lg"
+              title="Add Page Break"
+            >
+              <Columns className="w-4 h-4" />
+            </Button>
           </div>
-
-          {/* Standard Presets List */}
-          <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
-            <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5 text-amber-500" />
-              1-Click Standard Presets
-            </h4>
-            <div className="space-y-1.5">
-              {CANVAS_PRESETS.map((preset) => (
-                <button
-                  key={preset.id}
+        ) : (
+          <div className="w-full lg:w-[240px] shrink-0 space-y-4">
+            {/* Add Blocks Toolbox */}
+            <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-primary" />
+                  Add Modular Blocks
+                </h4>
+                <Button
                   type="button"
-                  onClick={() => {
-                    if (onSelectPreset) {
-                      onSelectPreset(preset);
-                    } else {
-                      markChanged(JSON.parse(JSON.stringify(preset.blocks)));
-                    }
-                    setSelectedBlockId(preset.blocks[0]?.id || null);
-                    toast.success(`Loaded "${preset.name}" preset!`);
-                  }}
-                  className="w-full text-left p-2 rounded-lg border bg-slate-50/60 dark:bg-slate-900/40 hover:bg-primary/5 hover:border-primary/40 transition-all group space-y-0.5"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsToolboxCollapsed(true)}
+                  className="h-6 w-6 text-muted-foreground hover:text-foreground rounded-md"
+                  title="Hide Modular Blocks Panel"
                 >
-                  <div className="text-xs font-bold text-slate-800 dark:text-slate-200 group-hover:text-primary flex items-center justify-between">
-                    {preset.name}
-                    <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
-                      {preset.instrumentType}
-                    </Badge>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground line-clamp-2">
-                    {preset.description}
-                  </p>
-                </button>
-              ))}
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              <div className="grid grid-cols-1 gap-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTableBlock}
+                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                >
+                  <Table className="w-3.5 h-3.5 text-blue-500" />
+                  + Data Table Grid
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addSplitRowBlock}
+                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                >
+                  <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
+                  + Side-by-Side (50/50)
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addMatrixBlock}
+                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5 text-purple-500" />
+                  + Reference Matrix
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTextBlock}
+                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                  + Note / Statement
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addPageBreak}
+                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                >
+                  <Columns className="w-3.5 h-3.5 text-amber-500" />
+                  + Page Break
+                </Button>
+              </div>
+            </div>
+
+            {/* Standard Presets List */}
+            <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
+              <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <BookOpen className="w-3.5 h-3.5 text-amber-500" />
+                1-Click Standard Presets
+              </h4>
+              <div className="space-y-1.5">
+                {CANVAS_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      if (onSelectPreset) {
+                        onSelectPreset(preset);
+                      } else {
+                        markChanged(JSON.parse(JSON.stringify(preset.blocks)));
+                      }
+                      setSelectedBlockId(preset.blocks[0]?.id || null);
+                      toast.success(`Loaded "${preset.name}" preset!`);
+                    }}
+                    className="w-full text-left p-2 rounded-lg border bg-slate-50/60 dark:bg-slate-900/40 hover:bg-primary/5 hover:border-primary/40 transition-all group space-y-0.5"
+                  >
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 group-hover:text-primary flex items-center justify-between">
+                      {preset.name}
+                      <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
+                        {preset.instrumentType}
+                      </Badge>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground line-clamp-2">
+                      {preset.description}
+                    </p>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* ========================================================================= */}
         {/* COLUMN 2: CENTRAL CANVAS WORKSPACE (LIVE A4 CERTIFICATE SHEET) */}
@@ -665,7 +829,7 @@ export function CanvasTemplateEditor({
                               const updated = { ...block, title: e.target.value };
                               updateBlock(index, updated);
                             }}
-                            className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 focus-visible:ring-primary w-56 p-0"
+                            className="h-7 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[280px]"
                             placeholder="Table Section Title"
                           />
                           <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
@@ -744,7 +908,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="0"
                                             />
                                           </td>
@@ -765,7 +929,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder={col.label || "Desc"}
                                             />
                                           </td>
@@ -788,7 +952,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono font-medium"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -811,7 +975,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="±Tol"
                                             />
                                           </td>
@@ -874,7 +1038,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-bold"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="0"
                                             />
                                           </td>
@@ -895,7 +1059,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder={col.label || "Value"}
                                             />
                                           </td>
@@ -918,7 +1082,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono font-medium text-slate-800 dark:text-slate-200"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -941,7 +1105,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-5 text-[10px] text-center border-none p-0 bg-transparent focus-visible:ring-1 font-mono text-slate-700 dark:text-slate-300"
+                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
                                               placeholder="±Tol"
                                             />
                                           </td>
@@ -1106,9 +1270,10 @@ export function CanvasTemplateEditor({
                             const updated = { ...block, title: e.target.value };
                             updateBlock(index, updated);
                           }}
-                          className="h-5 text-xs font-bold bg-transparent border-none focus-visible:ring-1 w-80 p-0"
+                          className="h-7 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[320px]"
+                          placeholder="Matrix Table Title"
                         />
-                        <Badge variant="outline" className="text-[9px] uppercase">
+                        <Badge variant="outline" className="text-[9px] uppercase font-mono">
                           Matrix Table
                         </Badge>
                       </div>
@@ -1165,7 +1330,7 @@ export function CanvasTemplateEditor({
                       <Input
                         value={block.content}
                         onChange={(e) => updateBlock(index, { ...block, content: e.target.value })}
-                        className="text-xs bg-transparent border-none p-0 focus-visible:ring-1 font-medium"
+                        className="h-7 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary font-medium"
                         placeholder="Enter statement or observation notes..."
                       />
                     </div>
@@ -1711,6 +1876,7 @@ export function CanvasTemplateEditor({
         docDate={docDate}
         docRev={docRev}
         procedureReference={procedureReference}
+        procedureNo={procedureNo}
         procedureName={procedureName}
         procedureDate={procedureDate}
         procedureRev={procedureRev}

@@ -161,6 +161,7 @@ export default function CalibrationWizard() {
     }
   };
   const [procedureReference, setProcedureReference] = useState("");
+  const [procedureNo, setProcedureNo] = useState("");
   const [procedureName, setProcedureName] = useState("");
   const [procedureDate, setProcedureDate] = useState("");
   const [procedureRev, setProcedureRev] = useState("");
@@ -383,6 +384,7 @@ export default function CalibrationWizard() {
 
     // 3. SOP & Standard Reference
     if (cal.procedure_reference) setProcedureReference(cal.procedure_reference);
+    if ((cal as any).procedure_no) setProcedureNo((cal as any).procedure_no);
     if (cal.procedure_name) setProcedureName(cal.procedure_name);
     if (cal.procedure_date) setProcedureDate(cal.procedure_date);
     if (cal.procedure_rev) setProcedureRev(cal.procedure_rev);
@@ -509,6 +511,7 @@ export default function CalibrationWizard() {
     if (tpl.remarks) setRemarks(tpl.remarks);
     if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
     if (tpl.procedure_reference) setProcedureReference(tpl.procedure_reference);
+    if ((tpl as any).procedure_no) setProcedureNo((tpl as any).procedure_no);
     if (tpl.procedure_name) setProcedureName(tpl.procedure_name);
     if (tpl.procedure_date) setProcedureDate(tpl.procedure_date);
     if (tpl.procedure_rev) setProcedureRev(tpl.procedure_rev);
@@ -1039,6 +1042,7 @@ export default function CalibrationWizard() {
         doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
         doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
         procedure_reference: procedureReference || undefined,
+        procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
         procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
         procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
         procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
@@ -1439,7 +1443,7 @@ export default function CalibrationWizard() {
 
   if (isInitializing || editLoading) {
     return (
-      <div className="flex-1 space-y-6 p-4 md:p-8 pt-6 overflow-y-auto animate-in fade-in-50 duration-200">
+      <div className="space-y-6 animate-in fade-in duration-200">
         {/* Header Skeleton */}
         <div className="flex items-center gap-4">
           <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
@@ -1532,7 +1536,7 @@ export default function CalibrationWizard() {
   }
 
   return (
-    <div className="flex-1 space-y-6 p-4 md:p-8 pt-6 overflow-y-auto">
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate("/calibration")} className="shrink-0">
           <ArrowLeft className="w-4 h-4" />
@@ -1544,25 +1548,50 @@ export default function CalibrationWizard() {
       </div>
 
       {/* Progress Steps */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-2 min-w-full">
-        {STEPS.map((s, i) => (
-          <div key={i} className="flex items-center flex-1">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all w-full ${
-              i === step
-                ? "bg-primary text-primary-foreground shadow-md"
-                : i < step
-                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                : "bg-muted text-muted-foreground"
-            }`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                i < step ? "bg-emerald-500 text-white" : i === step ? "bg-white/20" : "bg-muted-foreground/20"
-              }`}>
-                {i < step ? <Check className="w-3 h-3" /> : i + 1}
-              </span>
-              <span className="hidden sm:inline truncate">{s}</span>
-            </div>
-          </div>
-        ))}
+      <div className="w-full bg-card/80 backdrop-blur-md border border-border/80 p-2 rounded-2xl shadow-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {STEPS.map((s, i) => {
+            const isActive = i === step;
+            const isCompleted = i < step;
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={!isCompleted && i > step}
+                onClick={() => {
+                  if (isCompleted || i <= step) {
+                    setStep(i);
+                  }
+                }}
+                className={cn(
+                  "group relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 text-left border shadow-2xs",
+                  isActive
+                    ? "bg-primary text-primary-foreground border-primary shadow-md ring-2 ring-primary/20 scale-[1.01]"
+                    : isCompleted
+                    ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/15 cursor-pointer"
+                    : "bg-muted/30 border-border/60 text-muted-foreground opacity-75 cursor-not-allowed"
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-transform duration-200 shadow-2xs",
+                    isCompleted
+                      ? "bg-emerald-500 text-white"
+                      : isActive
+                      ? "bg-white text-primary font-black"
+                      : "bg-background border border-border text-muted-foreground"
+                  )}
+                >
+                  {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-mono tracking-wider uppercase block opacity-70">Step {i + 1}</span>
+                  <span className="font-bold truncate text-xs block leading-snug">{s}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Step Content */}
@@ -1845,6 +1874,7 @@ export default function CalibrationWizard() {
                   <h4 className="font-semibold text-sm mb-4">Reference Standard {index + 1}</h4>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Choose from Master Instrument */}
                     <div className="space-y-1.5 md:col-span-2">
                       <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
                       <Select 
@@ -1852,7 +1882,7 @@ export default function CalibrationWizard() {
                         onValueChange={(val) => {
                           const master = masterStandards.find(m => m.id === val);
                           if (master) {
-                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || (master as any).calibration_source || master.id_code || master.id || "";
+                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || master.id_code || master.id || "";
                             const newRefs = [...referenceStandards];
                             newRefs[index] = {
                               ...newRefs[index],
@@ -1864,27 +1894,8 @@ export default function CalibrationWizard() {
                               validity: master.due_date ? toLocalYyyyMmDd(master.due_date) : "",
                               traceable_to: initialCertNo,
                               cert_no: initialCertNo,
-                              agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
                             };
                             setReferenceStandards(newRefs);
-
-                            // Asynchronously fetch latest calibration certificate for this master instrument
-                            httpClient.get(`/calibrations/latest/${master.id}`).then((res) => {
-                              if (res.data && res.data.certificate_number) {
-                                const fetchedCert = res.data.certificate_number;
-                                setReferenceStandards((prevRefs) => {
-                                  const updated = [...prevRefs];
-                                  if (updated[index]) {
-                                    updated[index] = {
-                                      ...updated[index],
-                                      traceable_to: fetchedCert,
-                                      cert_no: fetchedCert,
-                                    };
-                                  }
-                                  return updated;
-                                });
-                              }
-                            }).catch(() => {});
                           }
                         }}
                       >
@@ -1900,7 +1911,7 @@ export default function CalibrationWizard() {
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Reference Standard Name</Label>
+                      <Label className="text-xs font-semibold">Reference Standard Name</Label>
                       <Input 
                         value={ref.name} 
                         onChange={(e) => {
@@ -1912,7 +1923,7 @@ export default function CalibrationWizard() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">ID / Serial Number</Label>
+                      <Label className="text-xs font-semibold">ID / Serial Number</Label>
                       <Input 
                         value={ref.id} 
                         onChange={(e) => {
@@ -1924,7 +1935,7 @@ export default function CalibrationWizard() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Traceable To (Cert No)</Label>
+                      <Label className="text-xs font-semibold">Traceable To (NABL Lab / Cert No)</Label>
                       <Input 
                         value={ref.traceable_to || ref.cert_no || ""} 
                         onChange={(e) => {
@@ -1937,7 +1948,7 @@ export default function CalibrationWizard() {
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-xs">Validity / Due Date</Label>
+                      <Label className="text-xs font-semibold">Validity / Due Date</Label>
                       <Input 
                         type="date" 
                         value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""} 
@@ -1948,79 +1959,60 @@ export default function CalibrationWizard() {
                         }} 
                       />
                     </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Range</Label>
-                      <Input 
-                        value={ref.range} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].range = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., 0-100 Bar" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Least Count</Label>
-                      <Input 
-                        value={ref.least_count} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].least_count = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., 0.01 Bar" 
-                      />
-                    </div>
                   </div>
                 </div>
               ))}
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="w-full border-dashed"
-                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }])}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", traceable_to: "", cert_no: "", validity: "" }])}
+                className="w-full text-xs font-semibold border-dashed"
               >
-                <PlusCircle className="w-4 h-4 mr-2" /> Add Another Reference Standard
+                + Add Another Reference Standard
               </Button>
             </div>
           )}
 
-          {/* ═══ Step 3: Environmental + Data Entry ═══ */}
+          {/* ═══ Step 3: Calibration Data ═══ */}
           {step === 2 && selectedType && (
             <>
               {/* Calibration Template Selector */}
-              <div className="p-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2 mb-4">
+              <div className="space-y-2 bg-primary/5 p-3.5 rounded-xl border border-primary/20 mb-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-primary" />
-                    <span className="text-xs font-semibold">Calibration Template</span>
-                    <Badge variant="secondary" className="text-[10px] capitalize">
+                  <Label className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5" />
+                    Calibration Template
+                  </Label>
+                  {selectedType && (
+                    <span className="text-[10px] font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border">
                       {selectedType.label}
-                    </Badge>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Search and select a template to auto-fill test points & tolerances
-                  </span>
+                    </span>
+                  )}
                 </div>
 
-                {/* Searchable Combobox Dropdown */}
                 <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
                       role="combobox"
                       aria-expanded={templatePopoverOpen}
-                      className="w-full justify-between bg-background text-xs h-9 font-normal border-input"
+                      className="w-full justify-between h-9 text-xs bg-background hover:bg-muted/50 border-border/70 shadow-2xs font-medium"
                     >
                       {selectedTemplateId && selectedTemplateId !== "none" ? (
-                        <span className="truncate font-semibold text-foreground">
-                          {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
-                          {" "}
-                          <span className="text-muted-foreground font-normal">
-                            ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type}) — {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="font-semibold text-foreground truncate">
+                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
                           </span>
-                        </span>
+                          {availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type && (
+                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                              ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type})
+                            </span>
+                          )}
+                          <Badge variant="secondary" className="text-[9px] font-mono shrink-0">
+                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
+                          </Badge>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground font-medium">
                           {availableTemplates.length > 0
@@ -2028,60 +2020,41 @@ export default function CalibrationWizard() {
                             : "-- No Templates Found (Using Custom Grid) --"}
                         </span>
                       )}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2 space-y-2 z-50 bg-popover shadow-xl border">
-                    {/* Search Filter Input */}
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <Input
+                  <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0 shadow-xl border-border/80 rounded-xl overflow-hidden">
+                    <div className="p-2 border-b bg-muted/40 flex items-center gap-2">
+                      <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Filter templates..."
                         value={templateSearchQuery}
                         onChange={(e) => setTemplateSearchQuery(e.target.value)}
-                        placeholder="Search template name, instrument type..."
-                        className="pl-8 pr-7 h-8 text-xs bg-background"
+                        className="w-full bg-transparent text-xs focus:outline-none placeholder:text-muted-foreground"
                       />
-                      {templateSearchQuery && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setTemplateSearchQuery("")}
-                          className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      )}
                     </div>
-
-                    {/* Filtered Suggestion List */}
-                    <div className="max-h-56 overflow-y-auto space-y-1">
-                      {/* Default Option: None */}
+                    <div className="max-h-60 overflow-y-auto divide-y">
                       <div
                         onClick={() => {
                           handleApplyTemplate("none");
                           setTemplatePopoverOpen(false);
                           setTemplateSearchQuery("");
                         }}
-                        className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                          !selectedTemplateId || selectedTemplateId === "none"
-                            ? "bg-primary/10 text-primary font-bold"
-                            : "hover:bg-accent text-muted-foreground"
-                        }`}
+                        className={cn(
+                          "p-2.5 text-xs cursor-pointer hover:bg-muted/50 transition-colors flex items-center justify-between",
+                          (!selectedTemplateId || selectedTemplateId === "none") && "bg-primary/10 font-bold text-primary"
+                        )}
                       >
-                        <span>-- None / Custom (No Template) --</span>
-                        {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary" />}
+                        <div>
+                          <p className="font-medium text-foreground">Custom / Manual Data Entry</p>
+                          <p className="text-[10px] text-muted-foreground">Do not use a saved template structure</p>
+                        </div>
+                        {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
                       </div>
 
-                      {/* Templates List */}
                       {availableTemplates
-                        .filter((tpl) => {
-                          if (!templateSearchQuery.trim()) return true;
-                          const q = templateSearchQuery.toLowerCase();
-                          return (
-                            tpl.name.toLowerCase().includes(q) ||
-                            tpl.instrument_type.toLowerCase().includes(q)
-                          );
-                        })
+                        .filter(t => !templateSearchQuery || t.name.toLowerCase().includes(templateSearchQuery.toLowerCase()) || t.instrument_type?.toLowerCase().includes(templateSearchQuery.toLowerCase()))
                         .map((tpl) => {
                           const isSelected = selectedTemplateId === tpl.id;
                           return (
@@ -2092,13 +2065,14 @@ export default function CalibrationWizard() {
                                 setTemplatePopoverOpen(false);
                                 setTemplateSearchQuery("");
                               }}
-                              className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                                isSelected ? "bg-primary/10 text-primary font-bold" : "hover:bg-accent"
-                              }`}
+                              className={cn(
+                                "p-2.5 text-xs cursor-pointer hover:bg-primary/5 transition-colors flex items-center justify-between",
+                                isSelected && "bg-primary/10 font-bold text-primary"
+                              )}
                             >
-                              <div className="truncate pr-2">
+                              <div>
                                 <p className="font-semibold text-foreground">{tpl.name}</p>
-                                <p className="text-[10px] text-muted-foreground truncate">
+                                <p className="text-[10px] text-muted-foreground font-mono">
                                   {tpl.instrument_type} • {tpl.calibration_points?.length || 0} test points
                                 </p>
                               </div>
@@ -2106,69 +2080,68 @@ export default function CalibrationWizard() {
                             </div>
                           );
                         })}
-
-                      {availableTemplates.length === 0 && (
-                        <div className="p-3 text-center text-xs text-muted-foreground">
-                          No templates found. Go to <span className="font-semibold text-primary cursor-pointer hover:underline" onClick={() => navigate("/templates")}>Calibration Templates</span> to create one.
-                        </div>
-                      )}
                     </div>
                   </PopoverContent>
                 </Popover>
               </div>
 
-              <div className="space-y-3 mb-6 p-3 bg-card border rounded-xl shadow-xs">
+              <div className="space-y-3 mb-6 p-3.5 bg-card border rounded-xl shadow-xs">
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="space-y-1.5 flex-1 min-w-[220px]">
                     <Label className="text-xs font-semibold">Standard Reference</Label>
                     <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
                   </div>
-                  <div className="space-y-1.5 w-32 sm:w-36">
+                  <div className="space-y-1.5 w-36">
                     <Label className="text-xs font-semibold">Template Doc No</Label>
                     <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
                   </div>
-                  <div className="space-y-1.5 w-24 sm:w-28">
+                  <div className="space-y-1.5 w-28">
                     <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
-                    <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD/MM/YYYY" className="text-xs font-medium" />
+                    <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD-MM-YYYY" className="text-xs font-medium text-center" />
                   </div>
-                  <div className="space-y-1.5 w-16 sm:w-20">
+                  <div className="space-y-1.5 w-20">
                     <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
-                    <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium" />
+                    <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium text-center" />
                   </div>
-                  <div className="space-y-1.5 w-20 sm:w-24">
+                  <div className="space-y-1.5 w-24">
                     <Label className="text-xs font-medium">Temp (°C)</Label>
                     <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
                   </div>
-                  <div className="space-y-1.5 w-20 sm:w-24">
+                  <div className="space-y-1.5 w-24">
                     <Label className="text-xs font-medium">Humidity (%)</Label>
                     <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
                   </div>
                 </div>
 
                 {/* Procedure & Acceptance Criteria Details */}
-                <div className="pt-2.5 border-t border-border/70 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  <div className="space-y-1">
+                <div className="pt-3 border-t border-border/70 grid grid-cols-1 md:grid-cols-12 gap-3">
+                  <div className="space-y-1 col-span-12 md:col-span-3">
                     <Label className="text-[11px] font-semibold text-foreground">Procedure Name</Label>
-                    <Input value={procedureName} onChange={(e) => setProcedureName(e.target.value)} placeholder="e.g. Gauges & Instruments Calibration Procedure" className="text-xs h-7.5" />
+                    <Input value={procedureName} onChange={(e) => setProcedureName(e.target.value)} placeholder="e.g. Master procedure" className="text-xs h-8 font-medium" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 col-span-12 md:col-span-2">
+                    <Label className="text-[11px] font-semibold text-foreground">Procedure No</Label>
+                    <Input value={procedureNo} onChange={(e) => setProcedureNo(e.target.value)} placeholder="e.g. PC-01" className="text-xs h-8 font-medium" />
+                  </div>
+                  <div className="space-y-1 col-span-12 md:col-span-7">
                     <Label className="text-[11px] font-semibold text-foreground">Procedure Doc &amp; Rev/Date</Label>
-                    <div className="flex gap-1.5">
-                      <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="Doc No (e.g. D/QCM/GI/006/01)" className="text-xs h-7.5 flex-1" />
-                      <Input value={procedureRev} onChange={(e) => setProcedureRev(e.target.value)} placeholder="Rev" className="text-xs h-7.5 w-14" />
-                      <Input value={procedureDate} onChange={(e) => setProcedureDate(e.target.value)} placeholder="Date" className="text-xs h-7.5 w-20" />
+                    <div className="flex gap-1.5 items-center">
+                      <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="Doc No (e.g. AE/CAL)" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
+                      <Input value={procedureRev} onChange={(e) => setProcedureRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
+                      <Input value={procedureDate} onChange={(e) => setProcedureDate(e.target.value)} placeholder="Date" className="text-xs h-8 w-28 shrink-0 font-medium text-center" />
                     </div>
                   </div>
-                  <div className="space-y-1">
+
+                  <div className="space-y-1 col-span-12 md:col-span-4">
                     <Label className="text-[11px] font-semibold text-foreground">Acceptance Criteria Doc No</Label>
-                    <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/006/03" className="text-xs h-7.5" />
+                    <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/001/03" className="text-xs h-8 font-medium" />
                   </div>
-                  <div className="space-y-1">
+                  <div className="space-y-1 col-span-12 md:col-span-8">
                     <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
-                    <div className="flex gap-1.5">
-                      <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-7.5 w-14" />
-                      <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-7.5 w-20" />
-                      <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-7.5 flex-1" />
+                    <div className="flex gap-1.5 items-center">
+                      <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
+                      <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-8 w-28 shrink-0 font-medium text-center" />
+                      <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
                     </div>
                   </div>
                 </div>
@@ -2536,6 +2509,7 @@ export default function CalibrationWizard() {
                       doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
                       doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
                       procedure_reference: procedureReference,
+                      procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
                       procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
                       procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
                       procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,

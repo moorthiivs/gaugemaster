@@ -120,7 +120,7 @@ export function AppSidebar() {
                       <SidebarMenuButton asChild tooltip={item.title} className="h-9 relative group/btn group-data-[collapsible=icon]:mx-auto">
                         <NavLink 
                           to={item.url} 
-                          end 
+                          end={item.url === "/dashboard" || item.url === "/settings"} 
                           className={({ isActive }) => cn(
                             "flex items-center gap-2.5 px-3 w-full h-full rounded-md text-xs font-medium transition-all duration-200 relative group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
                             isActive 

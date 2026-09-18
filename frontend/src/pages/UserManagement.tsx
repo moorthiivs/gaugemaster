@@ -294,6 +294,29 @@ export default function UserManagement() {
     }));
   };
 
+  const handleToggleColumnAll = (action: "create" | "edit" | "view" | "delete", checked: boolean) => {
+    setRolePermissions((prev) => {
+      const next = { ...prev };
+      MODULE_NAMES.forEach((m) => {
+        next[m.key] = {
+          ...(next[m.key] || { create: false, edit: false, view: false, delete: false }),
+          [action]: checked,
+        };
+      });
+      return next;
+    });
+  };
+
+  const handleGrantAllPermissions = (checked: boolean) => {
+    setRolePermissions(() => {
+      const next: RolePermissions = {};
+      MODULE_NAMES.forEach((m) => {
+        next[m.key] = { create: checked, edit: checked, view: checked, delete: checked };
+      });
+      return next;
+    });
+  };
+
   const handleSaveRole = async () => {
     if (!roleName.trim()) {
       toast({ title: "Missing Field", description: "Role name is required.", variant: "destructive" });
@@ -372,7 +395,7 @@ export default function UserManagement() {
   };
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="space-y-6">
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-muted/20 p-6 rounded-2xl border">
         <div>
@@ -794,19 +817,72 @@ export default function UserManagement() {
                 <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
                   Module Permissions Matrix
                 </h4>
-                <span className="text-[10px] text-muted-foreground italic">
-                  Check boxes to grant specific permissions
-                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px] font-bold px-2 text-primary border-primary/30 hover:bg-primary/10"
+                    onClick={() => handleGrantAllPermissions(true)}
+                  >
+                    Grant All
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px] font-bold px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => handleGrantAllPermissions(false)}
+                  >
+                    Clear All
+                  </Button>
+                </div>
               </div>
 
               <Table className="border rounded-lg bg-background">
                 <TableHeader className="bg-muted/40">
                   <TableRow>
                     <TableHead className="w-[40%]">Module</TableHead>
-                    <TableHead className="text-center w-[15%]">View</TableHead>
-                    <TableHead className="text-center w-[15%]">Create</TableHead>
-                    <TableHead className="text-center w-[15%]">Edit</TableHead>
-                    <TableHead className="text-center w-[15%]">Delete</TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>View</span>
+                        <Checkbox
+                          title="Toggle View for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.view)}
+                          onCheckedChange={(c) => handleToggleColumnAll("view", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Create</span>
+                        <Checkbox
+                          title="Toggle Create for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.create)}
+                          onCheckedChange={(c) => handleToggleColumnAll("create", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Edit</span>
+                        <Checkbox
+                          title="Toggle Edit for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.edit)}
+                          onCheckedChange={(c) => handleToggleColumnAll("edit", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Delete</span>
+                        <Checkbox
+                          title="Toggle Delete for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.delete)}
+                          onCheckedChange={(c) => handleToggleColumnAll("delete", !!c)}
+                        />
+                      </div>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

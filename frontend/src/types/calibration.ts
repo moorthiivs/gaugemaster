@@ -46,6 +46,7 @@ export interface CalibrationRecord {
   };
 
   procedure_reference?: string;
+  procedure_no?: string;
   procedure_name?: string;
   procedure_date?: string;
   procedure_rev?: string;

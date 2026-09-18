@@ -24,6 +24,7 @@ export interface TemplatePackageSpec {
   remarks?: string;
   standard_reference?: string;
   procedure_reference?: string;
+  procedure_no?: string;
   procedure_name?: string;
   procedure_date?: string;
   procedure_rev?: string;
@@ -120,6 +121,7 @@ export class TemplateExportService {
         remarks: tpl.remarks,
         standard_reference: tpl.standard_reference,
         procedure_reference: tpl.procedure_reference,
+        procedure_no: tpl.procedure_no,
         procedure_name: tpl.procedure_name,
         procedure_date: tpl.procedure_date,
         procedure_rev: tpl.procedure_rev,

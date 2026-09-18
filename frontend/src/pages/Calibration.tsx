@@ -134,8 +134,9 @@ export default function Calibration() {
       return true;
     });
 
-    if (overdueSearchQuery.trim()) {
-      const q = overdueSearchQuery.trim().toLowerCase();
+    const activeQuery = searchQuery.trim() || overdueSearchQuery.trim();
+    if (activeQuery) {
+      const q = activeQuery.toLowerCase();
       list = list.filter(
         (inst) =>
           inst.name?.toLowerCase().includes(q) ||
@@ -145,7 +146,33 @@ export default function Calibration() {
       );
     }
     return list;
-  }, [overdueInstruments, overdueSearchQuery, overdueScope]);
+  }, [overdueInstruments, searchQuery, overdueSearchQuery, overdueScope]);
+
+  const paginatedOverdueInstruments = useMemo(() => {
+    return filteredOverdueInstruments.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredOverdueInstruments, page, pageSize]);
+
+  const filteredDrafts = useMemo(() => {
+    if (!searchQuery.trim()) return drafts;
+    const q = searchQuery.trim().toLowerCase();
+    return drafts.filter((draft) => {
+      let parsedData = draft.data;
+      if (typeof parsedData === "string") {
+        try { parsedData = JSON.parse(parsedData); } catch (e) {}
+      }
+      const inst = parsedData?.selectedInstrument;
+      const typeLabel = parsedData?.selectedType?.label || "";
+      return (
+        inst?.name?.toLowerCase().includes(q) ||
+        inst?.id_code?.toLowerCase().includes(q) ||
+        typeLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [drafts, searchQuery]);
+
+  const paginatedDrafts = useMemo(() => {
+    return filteredDrafts.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredDrafts, page, pageSize]);
 
   const currentMonthOverdueCount = useMemo(() => {
     const now = new Date();
@@ -337,7 +364,7 @@ export default function Calibration() {
   };
 
   return (
-    <div className="space-y-6 py-6 px-4 max-w-[1600px] mx-auto">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
@@ -858,9 +885,9 @@ export default function Calibration() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell className="px-4 py-3"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400">
+                          <TableCell className="px-4 py-3 whitespace-nowrap"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
+                          <TableCell className="px-4 py-3 whitespace-nowrap">
+                            <Badge variant="outline" className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center px-2 py-0.5">
                               Pending Generation
                             </Badge>
                           </TableCell>
@@ -1010,54 +1037,120 @@ export default function Calibration() {
           {/* OVERDUE INSTRUMENTS TAB */}
           <TabsContent value="overdue" className="mt-4">
             {filteredOverdueInstruments.length > 0 ? (
-              <div className="overflow-x-auto border rounded-xl shadow-2xs">
-                <Table>
-                  <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredOverdueInstruments.map((inst) => (
-                      <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
-                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="text-xs font-semibold text-foreground">{inst.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {inst.location || "-"}
-                        </TableCell>
-                        <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                          {fmtDate(inst.due_date || inst.next_due_date)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="destructive" className="text-[10px] uppercase font-bold">
-                            Overdue
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            onClick={() => navigate(`/calibration/new/${inst.id}`)}
-                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
-                          >
-                            <PlayCircle className="w-3.5 h-3.5" />
-                            Start Calibration
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                  <Table>
+                    <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedOverdueInstruments.map((inst) => (
+                        <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
+                          <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {inst.location || "-"}
+                          </TableCell>
+                          <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                            {fmtDate(inst.due_date || inst.next_due_date)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge variant="destructive" className="text-[10px] uppercase font-bold whitespace-nowrap inline-flex items-center px-2 py-0.5">
+                              Overdue
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              onClick={() => navigate(`/calibration/new/${inst.id}`)}
+                              className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                            >
+                              <PlayCircle className="w-3.5 h-3.5" />
+                              Start Calibration
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Enhanced Pagination Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground">
+                      Showing <strong>{filteredOverdueInstruments.length === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, filteredOverdueInstruments.length)}</strong> of <strong>{filteredOverdueInstruments.length}</strong> overdue instruments
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-2">
+                      <span className="text-muted-foreground">Per page:</span>
+                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="h-7 text-xs"
+                    >
+                      Previous
+                    </Button>
+                    {Array.from({ length: Math.ceil(filteredOverdueInstruments.length / pageSize) || 1 }).map((_, idx) => {
+                      const pNum = idx + 1;
+                      const totalPages = Math.ceil(filteredOverdueInstruments.length / pageSize) || 1;
+                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
+                        return (
+                          <Button
+                            key={pNum}
+                            variant={page === pNum ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setPage(pNum)}
+                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
+                          >
+                            {pNum}
+                          </Button>
+                        );
+                      }
+                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
+                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
+                      return null;
+                    })}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page * pageSize >= filteredOverdueInstruments.length}
+                      onClick={() => setPage((p) => p + 1)}
+                      className="h-7 text-xs"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="text-center py-12 flex flex-col items-center">
                 <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
@@ -1069,70 +1162,136 @@ export default function Calibration() {
 
           {/* DRAFTS TAB */}
           <TabsContent value="drafts" className="mt-4">
-            {drafts.length > 0 ? (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Instrument</TableHead>
-                      <TableHead className="text-xs">Type</TableHead>
-                      <TableHead className="text-xs">Last Saved</TableHead>
-                      <TableHead className="text-xs text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {drafts.map((draft) => {
-                      let parsedData = draft.data;
-                      if (typeof parsedData === "string") {
-                        try { parsedData = JSON.parse(parsedData); } catch (e) {}
-                      }
-                      const inst = parsedData?.selectedInstrument;
-                      const typeLabel = parsedData?.selectedType?.label || "-";
-                      
-                      return (
-                        <TableRow key={draft.id}>
-                          <TableCell>
-                            <div>
-                              <p className="text-xs font-medium">{inst?.name || "Unknown Instrument"}</p>
-                              <p className="text-[10px] text-muted-foreground">{inst?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-[10px] capitalize">
-                              {typeLabel}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {draft.updated_at ? format(new Date(draft.updated_at), "dd-MMM-yyyy hh:mm a") : "-"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <Button 
-                                variant="default" 
-                                size="sm" 
-                                className="h-7 text-xs px-3"
-                                onClick={() => navigate(`/calibration/new?draftId=${draft.id}`)}
-                              >
-                                Resume
-                              </Button>
-                              {canAccess("calibrations", "delete") && (
+            {filteredDrafts.length > 0 ? (
+              <>
+                <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                  <Table>
+                    <TableHeader className="bg-muted/50">
+                      <TableRow>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Last Saved</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedDrafts.map((draft) => {
+                        let parsedData = draft.data;
+                        if (typeof parsedData === "string") {
+                          try { parsedData = JSON.parse(parsedData); } catch (e) {}
+                        }
+                        const inst = parsedData?.selectedInstrument;
+                        const typeLabel = parsedData?.selectedType?.label || "-";
+                        
+                        return (
+                          <TableRow key={draft.id} className="hover:bg-muted/20 transition-colors">
+                            <TableCell className="px-4 py-3">
+                              <div>
+                                <p className="text-xs font-medium text-foreground">{inst?.name || "Unknown Instrument"}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{inst?.id_code || ""}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="px-4 py-3">
+                              <Badge variant="outline" className="text-[10px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
+                                {typeLabel}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap text-muted-foreground px-4 py-3">
+                              {draft.updated_at ? format(new Date(draft.updated_at), "dd-MMM-yyyy hh:mm a") : "-"}
+                            </TableCell>
+                            <TableCell className="text-right px-4 py-3">
+                              <div className="flex items-center justify-end gap-2">
                                 <Button 
-                                  variant="ghost" 
-                                  size="icon"
-                                  className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
-                                  onClick={() => handleDeleteDraft(draft.id)}
+                                  variant="default" 
+                                  size="sm" 
+                                  className="h-7 text-xs px-3 font-semibold"
+                                  onClick={() => navigate(`/calibration/new?draftId=${draft.id}`)}
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  Resume
                                 </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
+                                {canAccess("calibrations", "delete") && (
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon"
+                                    className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                    onClick={() => handleDeleteDraft(draft.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Enhanced Pagination Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground">
+                      Showing <strong>{filteredDrafts.length === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, filteredDrafts.length)}</strong> of <strong>{filteredDrafts.length}</strong> unfinished drafts
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-2">
+                      <span className="text-muted-foreground">Per page:</span>
+                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="h-7 text-xs"
+                    >
+                      Previous
+                    </Button>
+                    {Array.from({ length: Math.ceil(filteredDrafts.length / pageSize) || 1 }).map((_, idx) => {
+                      const pNum = idx + 1;
+                      const totalPages = Math.ceil(filteredDrafts.length / pageSize) || 1;
+                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
+                        return (
+                          <Button
+                            key={pNum}
+                            variant={page === pNum ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setPage(pNum)}
+                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
+                          >
+                            {pNum}
+                          </Button>
+                        );
+                      }
+                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
+                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
+                      return null;
                     })}
-                  </TableBody>
-                </Table>
-              </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page * pageSize >= filteredDrafts.length}
+                      onClick={() => setPage((p) => p + 1)}
+                      className="h-7 text-xs"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="text-center py-12 flex flex-col items-center">
                 <FileText className="w-12 h-12 text-muted-foreground/30 mb-4" />

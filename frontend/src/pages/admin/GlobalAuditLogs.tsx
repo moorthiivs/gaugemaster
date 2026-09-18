@@ -28,7 +28,7 @@ const GlobalAuditLogs: React.FC = () => {
   const selectedCompany = companies.find((c) => c.id === selectedCompanyId);
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">
+    <div className="space-y-6">
       {/* ── Main Page Header ── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
         <div>

@@ -109,6 +109,11 @@ export function CertificatePreview({
     (calibration as any).procedureReference ||
     ((calibration as any).template as any)?.procedure_reference ||
     "AE/CAL-SOP/01";
+  const procedureNo =
+    calibration.procedure_no ||
+    (calibration as any).procedureNo ||
+    ((calibration as any).template as any)?.procedure_no ||
+    ((calibration as any).template as any)?.procedureNo;
   const procedureName =
     calibration.procedure_name ||
     (calibration as any).procedureName ||
@@ -988,7 +993,7 @@ export function CertificatePreview({
                 <img
                   src={`${import.meta.env.VITE_API_BASE_URL || ""}${companyLogoPath}`}
                   alt="Logo"
-                  className="max-h-8 w-auto object-contain"
+                  className="max-h-12 w-auto object-contain"
                   onError={(e) => {
                     (e.target as HTMLImageElement).style.display = "none";
                   }}
@@ -1014,11 +1019,11 @@ export function CertificatePreview({
           </div>
           <div className="shrink-0 min-w-[140px] flex justify-end">
             {docNo ? (
-              <div className="border border-black bg-white px-2 py-0.5 text-left text-black shadow-xs">
-                <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+              <div className="text-right text-black min-w-[140px]">
+                <div className="text-[8px] font-bold tracking-tight whitespace-nowrap">
                   Doc.No : <span className="font-extrabold">{docNo}</span>
                 </div>
-                <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                <div className="text-[8px] font-bold tracking-tight whitespace-nowrap">
                   Date &amp; Rev : <span className="font-semibold">{docDate || "-"} &amp; {docRev || "-"}</span>
                 </div>
               </div>
@@ -1145,21 +1150,27 @@ export function CertificatePreview({
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black font-bold text-left">
-                <th className={`w-[22%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No</th>
-                <th className={`w-[38%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
-                <th className={`w-[40%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
+                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure Name &amp; No</th>
+                <th className={`w-[26%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Doc.No &amp; Rev-Date</th>
+                <th className={`w-[25%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+                <th className={`w-[25%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-black">
                 <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  {procedureName && (
-                    <div className="font-bold text-black leading-tight text-[8px] mb-0.5">
-                      {procedureName}
+                  <div className="font-bold text-black leading-tight text-[8px] mb-0.5">
+                    {procedureName || "-"}
+                  </div>
+                  {procedureNo && (
+                    <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                      Proc No: {procedureNo}
                     </div>
                   )}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
                   <div className="font-semibold leading-tight text-[7.5px]">
-                    Doc.No.: {procedureReference}
+                    Doc.No.: {procedureReference || "AE/CAL-SOP/01"}
                   </div>
                   {(procedureRev || procedureDate) && (
                     <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
@@ -1175,7 +1186,7 @@ export function CertificatePreview({
                 </td>
               </tr>
               <tr>
-                <td colSpan={3} className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"} font-medium`}>
+                <td colSpan={4} className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"} font-medium`}>
                   <span className="font-bold">Environmental Conditions</span> : Temperature at {env.temperature || "-"}° C RH {env.humidity || "-"} %
                   {Boolean(env.soaking_time || env.soaking_start_time || env.soaking_end_time) && (
                     <span className="ml-3">

@@ -19,8 +19,8 @@ export function VerdictBadge({ verdict, size = "md" }: VerdictBadgeProps) {
 
   if (upper === "PASS") {
     return (
-      <Badge className={`bg-emerald-500/15 text-emerald-600 border-emerald-300 hover:bg-emerald-500/20 gap-1.5 ${sizeClasses[size]}`}>
-        <CheckCircle2 className="w-3.5 h-3.5" />
+      <Badge className={`bg-emerald-500/15 text-emerald-600 border-emerald-300 hover:bg-emerald-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
+        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
         PASS
       </Badge>
     );
@@ -28,16 +28,16 @@ export function VerdictBadge({ verdict, size = "md" }: VerdictBadgeProps) {
 
   if (upper === "FAIL") {
     return (
-      <Badge className={`bg-red-500/15 text-red-600 border-red-300 hover:bg-red-500/20 gap-1.5 ${sizeClasses[size]}`}>
-        <XCircle className="w-3.5 h-3.5" />
+      <Badge className={`bg-red-500/15 text-red-600 border-red-300 hover:bg-red-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
+        <XCircle className="w-3.5 h-3.5 shrink-0" />
         FAIL
       </Badge>
     );
   }
 
   return (
-    <Badge className={`bg-amber-500/15 text-amber-600 border-amber-300 hover:bg-amber-500/20 gap-1.5 ${sizeClasses[size]}`}>
-      <AlertTriangle className="w-3.5 h-3.5" />
+    <Badge className={`bg-amber-500/15 text-amber-600 border-amber-300 hover:bg-amber-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
+      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
       {upper || "PENDING"}
     </Badge>
   );

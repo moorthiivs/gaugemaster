@@ -156,6 +156,7 @@ export function AppHeader() {
   const [suggestions, setSuggestions] = useState<Instrument[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState<number>(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const superAdminQuickActions: QuickActionConfig[] = [
@@ -391,7 +392,7 @@ export function AppHeader() {
   };
 
   return (
-    <header className="sticky top-0 z-20 bg-background/80 backdrop-blur-md border-b border-border/60 shadow-sm transition-all duration-300">
+    <header className="sticky top-0 z-30 bg-background/95 backdrop-blur-md border-b border-border/60 shadow-xs transition-all duration-300">
       <div className="h-14 flex items-center justify-between gap-3 px-4">
         <div className="flex items-center gap-3">
           <SidebarTrigger aria-label="Toggle sidebar" />
@@ -414,15 +415,37 @@ export function AppHeader() {
                   value={searchQuery}
                   onChange={(e) => {
                     setSearchQuery(e.target.value);
+                    setSelectedSuggestionIndex(-1);
                     setSearchOpen(true);
                   }}
                   onFocus={() => setSearchOpen(true)}
                   placeholder="Search instruments by Code, Name, Location..." 
                   aria-label="Search instruments" 
+                  role="combobox"
+                  aria-expanded={searchOpen && suggestions.length > 0}
+                  aria-autocomplete="list"
                   className="pl-9 pr-14 h-9 text-xs bg-muted/40 hover:bg-muted/60 focus:bg-background transition-all border-border/70 rounded-lg font-medium shadow-xs"
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleSearchSubmit();
+                    if (e.key === 'ArrowDown') {
+                      e.preventDefault();
+                      if (suggestions.length > 0) {
+                        setSelectedSuggestionIndex((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+                      }
+                    } else if (e.key === 'ArrowUp') {
+                      e.preventDefault();
+                      if (suggestions.length > 0) {
+                        setSelectedSuggestionIndex((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+                      }
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (selectedSuggestionIndex >= 0 && selectedSuggestionIndex < suggestions.length) {
+                        handleSelectSuggestion(suggestions[selectedSuggestionIndex]);
+                      } else {
+                        handleSearchSubmit();
+                      }
+                    } else if (e.key === 'Escape') {
+                      setSearchOpen(false);
+                      setSelectedSuggestionIndex(-1);
                     }
                   }}
                 />
@@ -433,6 +456,7 @@ export function AppHeader() {
                     className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 text-muted-foreground hover:text-foreground rounded-md"
                     onClick={() => {
                       setSearchQuery("");
+                      setSelectedSuggestionIndex(-1);
                       setSearchOpen(false);
                     }}
                   >
@@ -466,56 +490,67 @@ export function AppHeader() {
                 )}
               </div>
 
-              <div className="max-h-[340px] overflow-y-auto divide-y divide-border/30">
+              <div className="max-h-[340px] overflow-y-auto divide-y divide-border/30" role="listbox">
                 {suggestions.length === 0 && !searchLoading ? (
                   <div className="p-6 text-center text-xs text-muted-foreground space-y-1">
                     <p className="font-semibold text-foreground/80">No matching instruments found</p>
                     <p className="text-[10px] text-muted-foreground">Press Enter to search full inventory</p>
                   </div>
                 ) : (
-                  suggestions.map((item) => (
-                    <div 
-                      key={item.id} 
-                      className="p-3 hover:bg-primary/10 transition-colors cursor-pointer flex items-center justify-between gap-3 group"
-                      onClick={() => handleSelectSuggestion(item)}
-                    >
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary shrink-0 group-hover:scale-105 transition-transform">
-                          <Gauge className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1 space-y-0.5">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-foreground truncate tracking-tight">{item.name}</span>
-                            {item.id_code && (
-                              <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 bg-background text-primary border-primary/30 shrink-0">
-                                {item.id_code}
-                              </Badge>
-                            )}
+                  suggestions.map((item, idx) => {
+                    const isSelected = idx === selectedSuggestionIndex;
+                    return (
+                      <div 
+                        key={item.id} 
+                        role="option"
+                        aria-selected={isSelected}
+                        className={cn(
+                          "p-3 transition-colors cursor-pointer flex items-center justify-between gap-3 group",
+                          isSelected ? "bg-primary/20 border-l-2 border-l-primary" : "hover:bg-primary/10"
+                        )}
+                        onClick={() => handleSelectSuggestion(item)}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={cn(
+                            "p-2 rounded-xl border shrink-0 transition-transform",
+                            isSelected ? "bg-primary text-primary-foreground border-primary scale-105" : "bg-primary/10 border-primary/20 text-primary group-hover:scale-105"
+                          )}>
+                            <Gauge className="h-4 w-4" />
                           </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate">
-                            {item.location && <span>Loc: {item.location}</span>}
-                            {item.make && <span>• Make: {item.make}</span>}
-                            {item.serial_no && <span>• S/N: {item.serial_no}</span>}
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-foreground truncate tracking-tight">{item.name}</span>
+                              {item.id_code && (
+                                <Badge variant="outline" className="text-[9px] font-mono px-1.5 py-0 bg-background text-primary border-primary/30 shrink-0">
+                                  {item.id_code}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground truncate">
+                              {item.location && <span>Loc: {item.location}</span>}
+                              {item.make && <span>• Make: {item.make}</span>}
+                              {item.serial_no && <span>• S/N: {item.serial_no}</span>}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge 
-                          variant={item.status === 'Overdue' ? 'destructive' : item.status === 'Calibrated' || item.status === 'Pass' ? 'default' : 'secondary'} 
-                          className={cn(
-                            "text-[10px] px-2 py-0.5 font-semibold capitalize shrink-0 shadow-xs",
-                            item.status === 'Overdue' && "bg-red-500/15 text-red-600 border border-red-500/30 hover:bg-red-500/20",
-                            (item.status === 'Calibrated' || item.status === 'Pass') && "bg-green-500/15 text-green-700 border border-green-500/30 hover:bg-green-500/20",
-                            item.status === 'Due Soon' && "bg-amber-500/15 text-amber-700 border border-amber-500/30 hover:bg-amber-500/20"
-                          )}
-                        >
-                          {item.status || 'Active'}
-                        </Badge>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground/60 opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all shrink-0" />
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge 
+                            variant={item.status === 'Overdue' ? 'destructive' : item.status === 'Calibrated' || item.status === 'Pass' ? 'default' : 'secondary'} 
+                            className={cn(
+                              "text-[10px] px-2 py-0.5 font-semibold capitalize shrink-0 shadow-xs",
+                              item.status === 'Overdue' && "bg-red-500/15 text-red-600 border border-red-500/30 hover:bg-red-500/20",
+                              (item.status === 'Calibrated' || item.status === 'Pass') && "bg-green-500/15 text-green-700 border border-green-500/30 hover:bg-green-500/20",
+                              item.status === 'Due Soon' && "bg-amber-500/15 text-amber-700 border border-amber-500/30 hover:bg-amber-500/20"
+                            )}
+                          >
+                            {item.status || 'Active'}
+                          </Badge>
+                          <ChevronRight className={cn("h-4 w-4 text-muted-foreground/60 transition-all shrink-0", isSelected ? "opacity-100 translate-x-0.5 text-primary" : "opacity-0 group-hover:opacity-100 group-hover:translate-x-0.5")} />
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
 

@@ -141,12 +141,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           userRole: authUser.userRole,
           avatarUrl: authUser.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
           provider: "password",
-          isNewCustomer: authUser.onboarded,
+          isNewCustomer: !authUser.onboarded,
           companyId: authUser.companyId,
           isSuperAdmin: authUser.isSuperAdmin || false,
           companyAccess: authUser.companyAccess || null,
         };
         setUser(userObj);
+        setIsNewCustomer(!authUser.onboarded);
         localStorage.setItem(USER_KEY, JSON.stringify(userObj));
         return true;
       }
@@ -218,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   userRole: authUser.userRole,
                   avatarUrl: authUser.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
                   provider: "password",
-                  isNewCustomer: authUser.onboarded,
+                  isNewCustomer: !authUser.onboarded,
                   companyId: authUser.companyId,
                   isSuperAdmin: authUser.isSuperAdmin || false,
                   companyAccess: authUser.companyAccess || null,
@@ -243,7 +244,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (activeToken && parsedUser) {
           setToken(activeToken);
           setUser(parsedUser);
-          setIsNewCustomer(!parsedUser.isNewCustomer && setupCompleted !== "true");
+          setIsNewCustomer(parsedUser.isNewCustomer && setupCompleted !== "true");
+          validateSession().catch(() => {});
         } else {
           setToken(null);
           setUser(null);
@@ -291,7 +293,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           userRole: u.userRole || prev?.userRole,
           avatarUrl: u.avatarUrl || prev?.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.name || prev?.name || "User")}`,
           provider: prev?.provider || "password",
-          isNewCustomer: u.onboarded !== undefined ? u.onboarded : (prev?.isNewCustomer ?? false),
+          isNewCustomer: u.onboarded !== undefined ? !u.onboarded : (prev?.isNewCustomer ?? false),
           companyId: u.companyId !== undefined ? u.companyId : (prev?.companyId || ""),
           isSuperAdmin: u.isSuperAdmin !== undefined ? u.isSuperAdmin : prev?.isSuperAdmin,
           companyAccess: u.companyAccess !== undefined ? u.companyAccess : prev?.companyAccess,
@@ -347,7 +349,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setToken(accessToken);
     setUser(userData);
-    setIsNewCustomer(!userData.isNewCustomer);
+    setIsNewCustomer(userData.isNewCustomer);
   };
 
   const effectiveUser = useMemo(() => {
@@ -386,7 +388,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "google",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,
@@ -412,7 +414,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "password",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,
@@ -441,7 +443,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "password",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,

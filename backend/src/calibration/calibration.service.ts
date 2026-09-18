@@ -502,7 +502,7 @@ export class CalibrationService {
   async findByInstrument(instrumentId: string) {
     return this.calibrationRepository.find({
       where: { instrument_id: instrumentId },
-      order: { calibration_date: 'DESC' },
+      order: { calibration_date: 'DESC', created_at: 'DESC' },
       relations: ['instrument'],
     });
   }
@@ -670,6 +670,7 @@ export class CalibrationService {
     if (dto.is_canvas_template !== undefined) existing.is_canvas_template = dto.is_canvas_template;
     if (dto.layout_blocks !== undefined) existing.layout_blocks = dto.layout_blocks;
     if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
+    if ((dto as any).procedure_no !== undefined) (existing as any).procedure_no = (dto as any).procedure_no;
     if ((dto as any).procedure_name !== undefined) (existing as any).procedure_name = (dto as any).procedure_name;
     if ((dto as any).procedure_date !== undefined) (existing as any).procedure_date = (dto as any).procedure_date;
     if ((dto as any).procedure_rev !== undefined) (existing as any).procedure_rev = (dto as any).procedure_rev;

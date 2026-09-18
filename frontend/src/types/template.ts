@@ -155,6 +155,7 @@ export interface CalibrationTemplate {
   remarks?: string;
   standard_reference?: string;
   procedure_reference?: string;
+  procedure_no?: string;
   procedure_name?: string;
   procedure_date?: string;
   procedure_rev?: string;

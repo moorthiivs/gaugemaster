@@ -156,6 +156,10 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  procedure_no?: string;
+
+  @IsOptional()
+  @IsString()
   procedure_name?: string;
 
   @IsOptional()

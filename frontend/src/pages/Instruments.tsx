@@ -1469,7 +1469,7 @@ export default function Instruments() {
 
   return (
     <>
-      <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-500">
+      <div className="space-y-6 animate-in fade-in duration-500">
         {/* ─── Header Banner (Industrial Precision + Subtle Glass) ─── */}
         <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="space-y-1">
