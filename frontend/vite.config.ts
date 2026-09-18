@@ -38,20 +38,14 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
-              return 'vendor-react';
-            }
-            if (id.includes('@radix-ui') || id.includes('lucide-react') || id.includes('sonner')) {
-              return 'vendor-ui';
-            }
-            if (id.includes('apexcharts') || id.includes('recharts')) {
-              return 'vendor-charts';
+            if (id.includes('exceljs') || id.includes('xlsx') || id.includes('jszip')) {
+              return 'vendor-excel';
             }
             if (id.includes('hyperformula')) {
               return 'vendor-hyperformula';
             }
-            if (id.includes('exceljs') || id.includes('xlsx') || id.includes('jszip')) {
-              return 'vendor-excel';
+            if (id.includes('apexcharts') || id.includes('recharts')) {
+              return 'vendor-charts';
             }
             if (id.includes('jodit') || id.includes('jodit-react')) {
               return 'vendor-editor';
