@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   CanvasBlock,
   TableGridBlock,
@@ -29,6 +29,8 @@ import {
   Sparkles,
   LayoutGrid,
   FileText,
+  FileSpreadsheet,
+  Maximize2,
   Table,
   Sliders,
   SplitSquareVertical,
@@ -330,6 +332,93 @@ export function CanvasTemplateEditor({
     const updated = [...blocks];
     updated[index] = updatedBlock;
     markChanged(updated);
+  };
+
+  // Canvas Viewport Width Mode: "fit" (100% full width), "wide" (1240px landscape sheet), "standard" (860px A4 portrait)
+  const [canvasWidthMode, setCanvasWidthMode] = useState<"fit" | "wide" | "standard">("fit");
+  
+  // Interactive column resizer state for header drag-to-resize
+  const [resizingCol, setResizingCol] = useState<{
+    blockIndex: number;
+    columnId: string;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  // Global mouse listeners for real-time column width dragging
+  useEffect(() => {
+    if (!resizingCol) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - resizingCol.startX;
+      const newWidth = Math.max(65, Math.min(500, Math.round(resizingCol.startWidth + deltaX)));
+
+      const block = blocks[resizingCol.blockIndex];
+      if (block && block.type === "table_grid") {
+        const updatedCols = block.columns.map((c) =>
+          c.id === resizingCol.columnId ? { ...c, width: `${newWidth}px` } : c
+        );
+        updateBlock(resizingCol.blockIndex, { ...block, columns: updatedCols });
+      }
+    };
+
+    const handleMouseUp = () => {
+      setResizingCol(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [resizingCol, blocks]);
+
+  const handleColResizeStart = (
+    e: React.MouseEvent,
+    blockIndex: number,
+    columnId: string,
+    currentWidth?: string
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const th = (e.target as HTMLElement).closest("th");
+    const initialWidth = th ? th.getBoundingClientRect().width : (parseInt(currentWidth || "100") || 100);
+
+    setResizingCol({
+      blockIndex,
+      columnId,
+      startX: e.clientX,
+      startWidth: initialWidth,
+    });
+  };
+
+  const autoFitColumns = (blockIndex: number) => {
+    const block = blocks[blockIndex];
+    if (!block || block.type !== "table_grid") return;
+    const updatedCols = block.columns.map((c) => {
+      const id = c.id.toLowerCase();
+      const label = (c.label || "").toLowerCase();
+      let suggestedWidth = "110px";
+      if (id === "point_number" || id === "sl_no" || id === "sino" || label.includes("sl.no") || label.includes("sl no") || label.includes("si no")) {
+        suggestedWidth = "65px";
+      } else if (label.includes("spec") || label.includes("condition") || label.includes("parameter") || label.includes("desc")) {
+        suggestedWidth = "180px";
+      } else if (label.includes("nominal") || id === "nominal") {
+        suggestedWidth = "110px";
+      } else if (label.includes("limit") || label.includes("tolerance") || label.includes("tol")) {
+        suggestedWidth = "110px";
+      } else if (label.includes("actual") || label.includes("reading") || label.includes("trial") || label.includes("bore") || label.includes("gauge")) {
+        suggestedWidth = "105px";
+      } else if (label.includes("deviation") || label.includes("average") || label.includes("error")) {
+        suggestedWidth = "115px";
+      } else if (label.includes("judge") || label.includes("status")) {
+        suggestedWidth = "115px";
+      }
+      return { ...c, width: suggestedWidth };
+    });
+    updateBlock(blockIndex, { ...block, columns: updatedCols });
+    toast.success("Applied intelligent auto-fit column widths!");
   };
 
   // Find currently selected block
@@ -828,15 +917,79 @@ export function CanvasTemplateEditor({
         {/* ========================================================================= */}
         {/* COLUMN 2: CENTRAL CANVAS WORKSPACE (LIVE A4 CERTIFICATE SHEET) */}
         {/* ========================================================================= */}
-        <div className="flex-1 w-full bg-slate-100 dark:bg-slate-950 p-3 sm:p-5 rounded-xl border border-slate-300 dark:border-slate-800 min-h-[700px] flex flex-col items-center overflow-x-auto">
-          <div className="w-full max-w-[850px] bg-white dark:bg-slate-900 shadow-xl border border-black/80 rounded-sm p-4 sm:p-6 space-y-3.5 text-black dark:text-slate-100 font-sans">
+        <div className="flex-1 w-full bg-slate-100/90 dark:bg-slate-950 p-2 sm:p-4 rounded-xl border-2 border-slate-300 dark:border-slate-800 min-h-[700px] flex flex-col items-center overflow-x-auto transition-all">
+          {/* Canvas Viewport Mode Control Bar */}
+          <div className="w-full mb-3 flex items-center justify-between bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-800 rounded-lg px-3 py-1.5 shadow-xs flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5 text-primary" />
+                Canvas Viewport:
+              </span>
+              <div className="inline-flex rounded-md border border-slate-300 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setCanvasWidthMode("fit")}
+                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
+                    canvasWidthMode === "fit"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                  title="Fit Studio - 100% full responsive width, zero wasted whitespace"
+                >
+                  <Maximize2 className="w-3 h-3" />
+                  <span>Fit Studio (100%)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCanvasWidthMode("wide")}
+                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
+                    canvasWidthMode === "wide"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                  title="Wide Landscape - 1240px width optimized for multi-column calibration sheets"
+                >
+                  <FileSpreadsheet className="w-3 h-3" />
+                  <span>Wide Sheet (1240px)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCanvasWidthMode("standard")}
+                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
+                    canvasWidthMode === "standard"
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                  title="Standard A4 - 860px portrait print preview"
+                >
+                  <FileText className="w-3 h-3" />
+                  <span>Standard A4 (860px)</span>
+                </button>
+              </div>
+            </div>
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 hidden sm:inline-flex items-center gap-1">
+              <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+              Tip: Drag column header dividers to adjust width manually
+            </span>
+          </div>
+
+          <div className={`w-full transition-all duration-200 bg-white dark:bg-slate-900 shadow-xl border-2 border-slate-400/90 dark:border-slate-700 rounded-xl p-3 sm:p-5 space-y-4 text-slate-900 dark:text-slate-100 font-sans ${
+            canvasWidthMode === "fit"
+              ? "max-w-full"
+              : canvasWidthMode === "wide"
+              ? "max-w-[1240px]"
+              : "max-w-[860px]"
+          }`}>
             
             {/* Certificate Header Banner */}
-            <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-xs">
-              <span className="font-bold tracking-wide uppercase text-[10.5px] text-slate-700 dark:text-slate-300">
+            <div className="border-2 border-slate-300 dark:border-slate-700 p-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-lg flex items-center justify-between text-xs shadow-2xs">
+              <span className="font-bold tracking-wide uppercase text-xs text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5 text-primary" />
                 [ Calibration Certificate Live Layout Preview ]
               </span>
-              <span className="font-mono text-[10px] text-muted-foreground">ISO/IEC 17025 Accredited Sheet</span>
+              <span className="font-mono text-xs font-semibold text-slate-600 dark:text-slate-400">
+                ISO/IEC 17025 Accredited Sheet
+              </span>
             </div>
 
             {/* Blocks List */}
@@ -860,16 +1013,16 @@ export function CanvasTemplateEditor({
                   }}
                   style={{
                     marginTop: `${(block as any).marginTop !== undefined ? (block as any).marginTop : 0}px`,
-                    marginBottom: `${(block as any).marginBottom !== undefined ? (block as any).marginBottom : 6}px`,
+                    marginBottom: `${(block as any).marginBottom !== undefined ? (block as any).marginBottom : 10}px`,
                   }}
-                  className={`relative group border transition-all rounded-sm cursor-pointer ${
+                  className={`relative group transition-all rounded-xl cursor-pointer border-2 shadow-sm ${
                     selectedBlockId === block.id
-                      ? "ring-2 ring-primary border-primary shadow-sm bg-primary/[0.01]"
-                      : "border-slate-300 hover:border-primary/50"
+                      ? "border-primary ring-4 ring-primary/20 shadow-lg bg-primary/[0.01]"
+                      : "border-slate-400/90 dark:border-slate-700 hover:border-slate-500 dark:hover:border-slate-600 hover:shadow-md bg-card"
                   }`}
                 >
                   {/* Floating Action Controls on Hover */}
-                  <div className="absolute -top-3.5 right-2 z-10 hidden group-hover:flex items-center gap-1 bg-slate-900 text-white px-2 py-0.5 rounded shadow text-xs">
+                  <div className="absolute -top-3.5 right-3 z-30 hidden group-hover:flex items-center gap-1 bg-slate-900 text-white px-2 py-0.5 rounded shadow text-xs border border-slate-700">
                     <span className="text-[9px] font-mono text-amber-400 mr-1 uppercase font-bold">{block.type}</span>
                     <button
                       type="button"
@@ -916,21 +1069,26 @@ export function CanvasTemplateEditor({
                     );
 
                     return (
-                      <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                        <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black flex-wrap gap-1">
-                          <Input
-                            value={block.title}
-                            onChange={(e) => {
-                              const updated = { ...block, title: e.target.value };
-                              updateBlock(index, updated);
-                            }}
-                            className="h-7 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[280px]"
-                            placeholder="Table Section Title"
-                          />
-                          <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
-                            <span>Unit: {block.unit || "mm"}</span>
-                            <span>
-                              • Tol: {
+                      <div className="border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
+                        <div className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 dark:from-slate-850 dark:via-slate-800 dark:to-slate-850 text-slate-900 dark:text-slate-100 px-3 py-2 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700 flex-wrap gap-2">
+                          <div className="flex items-center gap-2">
+                            <Table className="w-4 h-4 text-primary shrink-0" />
+                            <Input
+                              value={block.title}
+                              onChange={(e) => {
+                                const updated = { ...block, title: e.target.value };
+                                updateBlock(index, updated);
+                              }}
+                              className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs w-[240px] sm:w-[280px]"
+                              placeholder="Table Section Title"
+                            />
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                              Unit: {block.unit || "mm"}
+                            </span>
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                              Tol: {
                                 (block as TableGridBlock).toleranceType === "mixed" ||
                                 (block as TableGridBlock).toleranceType === "row_specific" ||
                                 ((block as TableGridBlock).rows && (block as TableGridBlock).rows.some((r, i, arr) => r.tolerance !== arr[0]?.tolerance))
@@ -938,19 +1096,35 @@ export function CanvasTemplateEditor({
                                   : `±${block.tolerance ?? "0.01"}`
                               }
                             </span>
-                            <span>• Dec: {block.decimal_places ?? decimalPlaces}</span>
+                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                              Dec: {block.decimal_places ?? decimalPlaces}
+                            </span>
                             <Button
                               type="button"
                               size="sm"
-                              variant="ghost"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                autoFitColumns(index);
+                              }}
+                              className="h-6 px-2 text-[10.5px] bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold rounded flex items-center gap-1 shadow-2xs"
+                              title="Auto-Fit all column widths proportionally"
+                            >
+                              <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+                              <span>Auto Widths</span>
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenTableAudit(block as TableGridBlock);
                               }}
-                              className="h-5 px-1.5 text-[9.5px] bg-amber-100/80 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-300 font-bold rounded flex items-center gap-1"
+                              className="h-6 px-2 text-[10.5px] bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 font-bold rounded flex items-center gap-1 shadow-2xs"
                               title="Audit Table Formulas & Tolerances"
                             >
-                              <ShieldCheck className="w-3 h-3 text-amber-600" />
+                              <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                               <span>Audit</span>
                             </Button>
                             <button
@@ -967,16 +1141,16 @@ export function CanvasTemplateEditor({
                                 toast.info(`Print Orientation: ${nextOrient === "auto" ? `Auto (${getEffectiveTableOrientation({ ...block, orientation: "auto" })})` : nextOrient}`);
                               }}
                               title="Click to toggle print orientation (Auto / Horizontal / Vertical)"
-                              className={`px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center gap-1 border transition-colors ${
+                              className={`h-6 px-2 rounded text-[10.5px] font-bold flex items-center gap-1 border transition-colors shadow-2xs ${
                                 effOrient === "horizontal"
                                   ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border-indigo-400 hover:bg-indigo-200"
-                                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-400 hover:bg-slate-200"
+                                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-100"
                               }`}
                             >
                               {effOrient === "horizontal" ? (
-                                <ArrowLeftRight className="w-2.5 h-2.5" />
+                                <ArrowLeftRight className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                               ) : (
-                                <ArrowUpDown className="w-2.5 h-2.5" />
+                                <ArrowUpDown className="w-3 h-3 text-slate-600 dark:text-slate-400" />
                               )}
                               <span>{isAuto ? `Auto (${effOrient})` : effOrient}</span>
                             </button>
@@ -985,32 +1159,36 @@ export function CanvasTemplateEditor({
 
                         {/* HORIZONTAL TRANSPOSED VIEW */}
                         {effOrient === "horizontal" ? (
-                          <div className="overflow-x-auto">
-                            <table className="w-full border-collapse text-[10px] text-center border-black" style={{ tableLayout: 'auto' }}>
+                          <div className="overflow-x-auto relative scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 hover:scrollbar-thumb-slate-500 scrollbar-track-slate-100 dark:scrollbar-track-slate-800">
+                            <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700" style={{ tableLayout: 'auto' }}>
                               <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  <th className="py-1 px-2 text-left bg-slate-200/80 dark:bg-slate-700/80 font-bold w-36 min-w-[130px] text-black dark:text-white">
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                  <th className="py-2.5 px-3 text-left bg-slate-200 dark:bg-slate-750 font-bold w-40 min-w-[140px] text-slate-900 dark:text-white sticky left-0 z-20 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-400 dark:border-slate-600">
                                     Parameter / Sl no
                                   </th>
                                   {block.rows.map((r, rIdx) => (
-                                    <th key={rIdx} className="py-1 px-1.5 font-bold min-w-[45px] text-black dark:text-white">
+                                    <th key={rIdx} className="py-2.5 px-2 font-bold min-w-[65px] text-slate-900 dark:text-white">
                                       {r.point_number ?? (rIdx + 1)}
                                     </th>
                                   ))}
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-black font-mono">
+                              <tbody className="divide-y divide-slate-300 dark:divide-slate-700 font-mono">
                                 {displayCols.map((col) => (
-                                  <tr key={col.id} className="divide-x divide-black hover:bg-slate-50/50">
-                                    <td className="py-1 px-2 text-left font-bold bg-slate-50 dark:bg-slate-800/60 text-[9.5px] font-sans text-black dark:text-slate-200">
-                                      {col.label}
-                                      {col.type === "formula" && <span className="text-[8px] text-primary ml-1 font-normal">(fx)</span>}
+                                  <tr key={col.id} className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-indigo-50/20">
+                                    <td className="py-2 px-3 text-left font-bold bg-slate-100/90 dark:bg-slate-800/80 text-xs font-sans text-slate-900 dark:text-slate-100 sticky left-0 z-10 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700">
+                                      <div className="flex items-center justify-between">
+                                        <span>{col.label}</span>
+                                        {col.type === "formula" && (
+                                          <span className="text-[10px] text-primary bg-primary/10 px-1 rounded font-bold font-mono">(fx)</span>
+                                        )}
+                                      </div>
                                     </td>
                                     {block.rows.map((row, rIdx) => {
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "");
                                         return (
-                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                          <td key={rIdx} className="py-1 px-1.5 min-w-[65px]">
                                             <Input
                                               type="text"
                                               value={cellVal ?? ""}
@@ -1025,7 +1203,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0"
                                             />
                                           </td>
@@ -1034,7 +1212,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "text") {
                                         const cellVal = row[col.id] ?? (col.id === "description" ? row.description : "") ?? "";
                                         return (
-                                          <td key={rIdx} className="py-0.5 px-1 min-w-[50px]">
+                                          <td key={rIdx} className="py-1 px-1.5 min-w-[70px]">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1046,7 +1224,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder={col.label || "Desc"}
                                             />
                                           </td>
@@ -1055,7 +1233,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "reading" || col.type === "trial") {
                                         const cellVal = row[col.id] ?? (col.id === "reading" ? row.reading : "") ?? "";
                                         return (
-                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                          <td key={rIdx} className="py-1 px-1.5 min-w-[65px]">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1069,7 +1247,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -1078,7 +1256,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "tolerance") {
                                         const cellVal = row[col.id] ?? (col.id === "tolerance" ? row.tolerance : "") ?? "";
                                         return (
-                                          <td key={rIdx} className="py-0.5 px-1 min-w-[45px]">
+                                          <td key={rIdx} className="py-1 px-1.5 min-w-[65px]">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1092,16 +1270,37 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="±Tol"
                                             />
                                           </td>
                                         );
                                       }
+                                      const evaluated = evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces);
+                                      const isJudgementCol = col.type === "status" || col.role === "JUDGEMENT" || col.label.toLowerCase().includes("judg");
+                                      if (isJudgementCol && evaluated) {
+                                        const isPass = String(evaluated).trim().toUpperCase() === "PASS";
+                                        const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
+                                        return (
+                                          <td key={rIdx} className="py-1 px-1.5 min-w-[65px]">
+                                            {isPass ? (
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 shadow-2xs">
+                                                PASS
+                                              </span>
+                                            ) : isFail ? (
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700 shadow-2xs">
+                                                FAIL
+                                              </span>
+                                            ) : (
+                                              <span className="font-mono text-xs text-slate-400">{evaluated}</span>
+                                            )}
+                                          </td>
+                                        );
+                                      }
                                       return (
-                                        <td key={rIdx} className="py-1 px-1.5 min-w-[45px]">
-                                          <span className="text-muted-foreground font-mono">
-                                            {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
+                                        <td key={rIdx} className="py-1.5 px-2 min-w-[65px]">
+                                          <span className="text-slate-900 dark:text-slate-100 font-mono text-xs font-bold">
+                                            {evaluated}
                                           </span>
                                         </td>
                                       );
@@ -1113,26 +1312,55 @@ export function CanvasTemplateEditor({
                           </div>
                         ) : (
                           /* VERTICAL STANDARD VIEW */
-                          <div className="overflow-x-auto">
-                            <table className="w-full border-collapse text-[10px] text-center border-black">
+                          <div className="overflow-x-auto relative scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 hover:scrollbar-thumb-slate-500 scrollbar-track-slate-100 dark:scrollbar-track-slate-800">
+                            <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
                               <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                  {block.columns.map((col) => (
-                                    <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5 font-bold">
-                                      {col.label}
-                                      {col.type === "formula" && <span className="text-[8px] text-primary block font-normal">(fx)</span>}
-                                    </th>
-                                  ))}
+                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                  {block.columns.map((col) => {
+                                    const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                                    return (
+                                      <th
+                                        key={col.id}
+                                        style={{ width: col.width, minWidth: col.width || (isPointNo ? "65px" : "95px") }}
+                                        className={`relative group/th py-2.5 px-3 font-bold text-xs uppercase tracking-wider select-none text-slate-800 dark:text-slate-100 ${
+                                          isPointNo
+                                            ? "sticky left-0 z-20 bg-slate-200 dark:bg-slate-750 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-400 dark:border-slate-600"
+                                            : "bg-slate-100 dark:bg-slate-800"
+                                        }`}
+                                      >
+                                        <div className="flex items-center justify-center gap-1">
+                                          <span>{col.label}</span>
+                                          {col.type === "formula" && (
+                                            <span className="px-1 py-0.2 rounded text-[9.5px] font-mono font-bold bg-primary/15 text-primary border border-primary/30">
+                                              fx
+                                            </span>
+                                          )}
+                                        </div>
+                                        {/* Draggable Resizer Handle */}
+                                        <div
+                                          onMouseDown={(e) => handleColResizeStart(e, index, col.id, col.width)}
+                                          className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary active:bg-primary z-30 opacity-0 group-hover/th:opacity-100 transition-opacity flex items-center justify-center"
+                                          title="Click & drag to resize column width"
+                                        >
+                                          <div className="w-[2px] h-4 bg-slate-400 group-hover/th:bg-white rounded" />
+                                        </div>
+                                      </th>
+                                    );
+                                  })}
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-black">
+                              <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
                                 {block.rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                  <tr key={rIdx} className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-indigo-50/20">
                                     {block.columns.map((col) => {
                                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                                       if (isPointNo) {
                                         return (
-                                          <td key={col.id} className="py-1 px-1.5 font-bold text-slate-700 dark:text-slate-300">
+                                          <td
+                                            key={col.id}
+                                            style={{ width: col.width, minWidth: col.width || "65px" }}
+                                            className="py-2 px-2 text-xs font-bold text-slate-850 dark:text-slate-100 sticky left-0 z-10 bg-slate-100/95 dark:bg-slate-850 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700"
+                                          >
                                             {row.point_number ?? (rIdx + 1)}
                                           </td>
                                         );
@@ -1140,7 +1368,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "");
                                         return (
-                                          <td key={col.id} className="py-0.5 px-1">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-1 px-1.5">
                                             <Input
                                               type="text"
                                               value={cellVal ?? ""}
@@ -1155,7 +1383,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0"
                                             />
                                           </td>
@@ -1164,7 +1392,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "text") {
                                         const cellVal = row[col.id] ?? (col.id === "description" ? row.description : "") ?? "";
                                         return (
-                                          <td key={col.id} className="py-0.5 px-1">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "100px" }} className="py-1 px-1.5">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1176,7 +1404,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder={col.label || "Value"}
                                             />
                                           </td>
@@ -1185,7 +1413,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "reading" || col.type === "trial") {
                                         const cellVal = row[col.id] ?? (col.id === "reading" ? row.reading : "") ?? "";
                                         return (
-                                          <td key={col.id} className="py-0.5 px-1">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1.5">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1199,7 +1427,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -1208,7 +1436,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "tolerance") {
                                         const cellVal = row[col.id] ?? (col.id === "tolerance" ? row.tolerance : "") ?? "";
                                         return (
-                                          <td key={col.id} className="py-0.5 px-1">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1.5">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1222,16 +1450,37 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-6 text-[10px] text-center bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded px-1 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-1 focus:ring-primary/40 focus:bg-primary/5 transition-all shadow-2xs"
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="±Tol"
                                             />
                                           </td>
                                         );
                                       }
+                                      const evaluated = evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces);
+                                      const isJudgementCol = col.type === "status" || col.role === "JUDGEMENT" || col.label.toLowerCase().includes("judg");
+                                      if (isJudgementCol && evaluated) {
+                                        const isPass = String(evaluated).trim().toUpperCase() === "PASS";
+                                        const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
+                                        return (
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-2 px-2">
+                                            {isPass ? (
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 shadow-2xs">
+                                                PASS
+                                              </span>
+                                            ) : isFail ? (
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700 shadow-2xs">
+                                                FAIL
+                                              </span>
+                                            ) : (
+                                              <span className="font-mono text-xs text-slate-400">{evaluated}</span>
+                                            )}
+                                          </td>
+                                        );
+                                      }
                                       return (
-                                        <td key={col.id} className="py-1 px-1.5">
-                                          <span className="text-muted-foreground font-mono">
-                                            {evaluatePreviewCell(row, col, block.decimal_places ?? decimalPlaces)}
+                                        <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-2 px-2">
+                                          <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
+                                            {evaluated}
                                           </span>
                                         </td>
                                       );
@@ -1244,7 +1493,7 @@ export function CanvasTemplateEditor({
                         )}
 
                         {/* Add Row Controls */}
-                        <div className="bg-slate-50 dark:bg-slate-800/40 p-1 flex items-center justify-between text-[10px] border-t border-black">
+                        <div className="bg-slate-100/80 dark:bg-slate-800/60 p-2 flex items-center justify-between text-xs border-t-2 border-slate-300 dark:border-slate-700">
                           <Button
                             type="button"
                             variant="ghost"
@@ -1257,9 +1506,9 @@ export function CanvasTemplateEditor({
                               };
                               updateBlock(index, { ...block, rows: [...block.rows, newRow] });
                             }}
-                            className="h-5 px-1.5 text-[10px] text-primary gap-1 font-semibold hover:bg-primary/10"
+                            className="h-6 px-2.5 text-xs text-primary gap-1 font-bold hover:bg-primary/10 rounded-md"
                           >
-                            <Plus className="w-2.5 h-2.5" />
+                            <Plus className="w-3.5 h-3.5" />
                             Add Point / Row
                           </Button>
                           {block.rows.length > 1 && (
@@ -1271,7 +1520,7 @@ export function CanvasTemplateEditor({
                                 const newRows = block.rows.slice(0, -1);
                                 updateBlock(index, { ...block, rows: newRows });
                               }}
-                              className="h-5 px-1.5 text-[10px] text-destructive hover:bg-destructive/10"
+                              className="h-6 px-2.5 text-xs text-destructive hover:bg-destructive/10 rounded-md font-semibold"
                             >
                               Remove Last Point
                             </Button>
@@ -1283,15 +1532,15 @@ export function CanvasTemplateEditor({
 
                   {/* 2. SPLIT ROW CONTAINER */}
                   {block.type === "split_row" && (
-                    <div className="space-y-2 p-1.5 bg-slate-50/50 dark:bg-slate-800/30 rounded border border-dashed border-indigo-400">
-                      <div className="flex items-center justify-between text-[10px] text-indigo-600 dark:text-indigo-400 font-bold px-1">
-                        <span className="flex items-center gap-1">
-                          <SplitSquareVertical className="w-3 h-3" />
+                    <div className="space-y-2 p-2 bg-slate-50/50 dark:bg-slate-800/30 rounded-xl border-2 border-dashed border-indigo-400 shadow-2xs">
+                      <div className="flex items-center justify-between text-xs text-indigo-700 dark:text-indigo-400 font-bold px-1">
+                        <span className="flex items-center gap-1.5">
+                          <SplitSquareVertical className="w-3.5 h-3.5" />
                           Side-by-Side Split ({block.children.length} Columns)
                         </span>
                       </div>
 
-                      <div className={`grid grid-cols-1 md:grid-cols-${block.children.length} gap-2 items-start`}>
+                      <div className={`grid grid-cols-1 md:grid-cols-${block.children.length} gap-3 items-start`}>
                         {block.children.map((child, cIdx) => (
                           <div
                             key={child.id || cIdx}
@@ -1301,8 +1550,8 @@ export function CanvasTemplateEditor({
                               setSelectedChildTableId(child.id);
                               setShowInspector(true);
                             }}
-                            className={`border border-black overflow-hidden bg-white dark:bg-slate-900 flex flex-col ${
-                              selectedChildTableId === child.id ? "ring-2 ring-indigo-500" : ""
+                            className={`border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 flex flex-col shadow-2xs transition-all ${
+                              selectedChildTableId === child.id ? "ring-2 ring-indigo-500 border-indigo-500" : "hover:border-indigo-300"
                             }`}
                           >
                             {child.type === "table_grid" && (() => {
@@ -1312,32 +1561,32 @@ export function CanvasTemplateEditor({
                               );
                               return (
                                 <>
-                                  <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-0.5 flex items-center justify-between border-b border-black">
-                                    <span className="text-[10px] font-bold">{child.title}</span>
-                                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground">
+                                  <div className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 px-3 py-1.5 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700">
+                                    <span className="text-xs font-bold">{child.title}</span>
+                                    <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                       <span>Dec: {child.decimal_places ?? decimalPlaces}</span>
-                                      <Badge variant="outline" className="text-[8px] py-0 px-1 font-mono uppercase">
+                                      <Badge variant="outline" className="text-[9px] py-0 px-1 font-mono uppercase font-bold">
                                         {childEff}
                                       </Badge>
                                     </div>
                                   </div>
                                   {childEff === "horizontal" ? (
-                                    <div className="overflow-x-auto">
-                                      <table className="w-full border-collapse text-[9px] text-center border-black">
+                                    <div className="overflow-x-auto scrollbar-thin">
+                                      <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
                                         <thead>
-                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                            <th className="py-0.5 px-1 text-left bg-slate-200/80 font-bold">Sl no</th>
+                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                            <th className="py-1 px-2 text-left bg-slate-200/80 font-bold sticky left-0 z-20">Sl no</th>
                                             {child.rows.map((r, rIdx) => (
-                                              <th key={rIdx} className="py-0.5 px-1 font-bold">{r.point_number ?? (rIdx + 1)}</th>
+                                              <th key={rIdx} className="py-1 px-2 font-bold">{r.point_number ?? (rIdx + 1)}</th>
                                             ))}
                                           </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-black font-mono">
+                                        <tbody className="divide-y divide-slate-300 dark:divide-slate-700 font-mono">
                                           {childDisplayCols.map((col) => (
-                                            <tr key={col.id} className="divide-x divide-black">
-                                              <td className="py-0.5 px-1 text-left font-bold bg-slate-50 font-sans">{col.label}</td>
+                                            <tr key={col.id} className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-slate-50/50">
+                                              <td className="py-1 px-2 text-left font-bold bg-slate-50 font-sans sticky left-0 z-10">{col.label}</td>
                                               {child.rows.map((row, rIdx) => (
-                                                <td key={rIdx} className="py-0.5 px-1">
+                                                <td key={rIdx} className="py-1 px-1.5 font-bold text-slate-900 dark:text-slate-100">
                                                   {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
                                                 </td>
                                               ))}
@@ -1347,26 +1596,28 @@ export function CanvasTemplateEditor({
                                       </table>
                                     </div>
                                   ) : (
-                                    <table className="w-full border-collapse text-[9.5px] text-center border-black">
-                                      <thead>
-                                        <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-black divide-x divide-black">
-                                          {child.columns.map((col) => (
-                                            <th key={col.id} className="py-0.5 px-1">{col.label}</th>
-                                          ))}
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-black">
-                                        {child.rows.map((row, rIdx) => (
-                                          <tr key={rIdx} className="divide-x divide-black">
+                                    <div className="overflow-x-auto scrollbar-thin">
+                                      <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
+                                        <thead>
+                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
                                             {child.columns.map((col) => (
-                                              <td key={col.id} className="py-0.5 px-1 font-mono">
-                                                {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
-                                              </td>
+                                              <th key={col.id} className="py-1.5 px-2 font-bold">{col.label}</th>
                                             ))}
                                           </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
+                                          {child.rows.map((row, rIdx) => (
+                                            <tr key={rIdx} className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-slate-50/50">
+                                              {child.columns.map((col) => (
+                                                <td key={col.id} className="py-1 px-2 font-mono font-bold text-slate-900 dark:text-slate-100">
+                                                  {evaluatePreviewCell(row, col, child.decimal_places ?? decimalPlaces)}
+                                                </td>
+                                              ))}
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
                                   )}
                                 </>
                               );
@@ -1379,75 +1630,77 @@ export function CanvasTemplateEditor({
 
                   {/* 3. MATRIX TABLE */}
                   {block.type === "matrix_table" && (
-                    <div className="border border-black overflow-hidden bg-white dark:bg-slate-900">
-                      <div className="bg-slate-200 dark:bg-slate-800 text-black dark:text-white px-2 py-1 flex items-center justify-between border-b border-black">
+                    <div className="border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
+                      <div className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 dark:from-slate-850 dark:to-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700">
                         <Input
                           value={block.title}
                           onChange={(e) => {
                             const updated = { ...block, title: e.target.value };
                             updateBlock(index, updated);
                           }}
-                          className="h-7 text-xs font-bold bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[320px]"
+                          className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[320px]"
                           placeholder="Matrix Table Title"
                         />
-                        <Badge variant="outline" className="text-[9px] uppercase font-mono">
+                        <Badge variant="outline" className="text-[10px] uppercase font-mono font-bold">
                           Matrix Table
                         </Badge>
                       </div>
-                      <table className="w-full border-collapse text-[10px] text-center border-black">
-                        <thead>
-                          {(block.headers || []).map((hRow, hIdx) => {
-                            const cells: any[] = Array.isArray(hRow)
-                              ? hRow
-                              : (hRow && typeof hRow === "object")
-                                ? [hRow]
-                                : [{ text: String(hRow || "") }];
-                            return (
-                              <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold">
-                                {cells.map((cell: any, cIdx: number) => {
-                                  const cellText = typeof cell === "object" && cell !== null ? (cell.text ?? "") : String(cell ?? "");
-                                  const colSpan = typeof cell === "object" && cell !== null ? cell.colSpan : undefined;
-                                  const rowSpan = typeof cell === "object" && cell !== null ? cell.rowSpan : undefined;
-                                  return (
-                                    <th key={cIdx} colSpan={colSpan} rowSpan={rowSpan} className="py-1 px-1.5 font-bold border border-black">
-                                      {cellText}
-                                    </th>
-                                  );
-                                })}
-                              </tr>
-                            );
-                          })}
-                        </thead>
-                        <tbody>
-                          {(block.rows || []).map((r: any, rIdx: number) => {
-                            const cells: any[] = Array.isArray(r)
-                              ? r
-                              : (r && typeof r === "object")
-                                ? Object.values(r)
-                                : [r];
-                            return (
-                              <tr key={rIdx} className="hover:bg-slate-50/50">
-                                {cells.map((val: any, cIdx: number) => (
-                                  <td key={cIdx} className="py-1 px-1.5 font-mono text-[10px] border border-black">
-                                    {typeof val === "object" && val !== null ? (val.text ?? JSON.stringify(val)) : String(val ?? "")}
-                                  </td>
-                                ))}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                      <div className="overflow-x-auto scrollbar-thin">
+                        <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
+                          <thead>
+                            {(block.headers || []).map((hRow, hIdx) => {
+                              const cells: any[] = Array.isArray(hRow)
+                                ? hRow
+                                : (hRow && typeof hRow === "object")
+                                  ? [hRow]
+                                  : [{ text: String(hRow || "") }];
+                              return (
+                                <tr key={hIdx} className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-300 dark:border-slate-700">
+                                  {cells.map((cell: any, cIdx: number) => {
+                                    const cellText = typeof cell === "object" && cell !== null ? (cell.text ?? "") : String(cell ?? "");
+                                    const colSpan = typeof cell === "object" && cell !== null ? cell.colSpan : undefined;
+                                    const rowSpan = typeof cell === "object" && cell !== null ? cell.rowSpan : undefined;
+                                    return (
+                                      <th key={cIdx} colSpan={colSpan} rowSpan={rowSpan} className="py-2 px-2.5 font-bold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100">
+                                        {cellText}
+                                      </th>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </thead>
+                          <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
+                            {(block.rows || []).map((r: any, rIdx: number) => {
+                              const cells: any[] = Array.isArray(r)
+                                ? r
+                                : (r && typeof r === "object")
+                                  ? Object.values(r)
+                                  : [r];
+                              return (
+                                <tr key={rIdx} className="hover:bg-slate-50/50">
+                                  {cells.map((val: any, cIdx: number) => (
+                                    <td key={cIdx} className="py-1.5 px-2 font-mono text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100">
+                                      {typeof val === "object" && val !== null ? (val.text ?? JSON.stringify(val)) : String(val ?? "")}
+                                    </td>
+                                  ))}
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
 
                   {/* 4. NOTE / CALLOUT */}
                   {block.type === "text_block" && (
-                    <div className="p-2 border border-black bg-slate-50 dark:bg-slate-800/40 flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div className="p-3 border-2 border-slate-300 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-850 flex items-center gap-2.5 shadow-2xs">
+                      <FileText className="w-5 h-5 text-emerald-600 shrink-0" />
                       <Input
                         value={block.content}
                         onChange={(e) => updateBlock(index, { ...block, content: e.target.value })}
-                        className="h-7 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary font-medium"
+                        className="h-8 text-xs bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary font-medium text-slate-900 dark:text-slate-100 shadow-2xs"
                         placeholder="Enter statement or observation notes..."
                       />
                     </div>
@@ -1455,7 +1708,7 @@ export function CanvasTemplateEditor({
 
                   {/* 5. PAGE BREAK */}
                   {block.type === "page_break" && (
-                    <div className="border-2 border-dashed border-amber-500/80 bg-amber-50 dark:bg-amber-950/20 p-2 rounded text-center my-2">
+                    <div className="border-2 border-dashed border-amber-500 bg-amber-50 dark:bg-amber-950/20 p-2.5 rounded-lg text-center my-2 shadow-2xs">
                       <div className="flex items-center justify-center gap-2 text-xs font-bold text-amber-700 dark:text-amber-300">
                         <Columns className="w-4 h-4" />
                         PAGE BREAK (Next content starts on new certificate sheet)
@@ -1467,9 +1720,9 @@ export function CanvasTemplateEditor({
             )}
 
             {/* Simulated Footer */}
-            <div className="border border-black p-2 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-between text-[10px] text-muted-foreground">
-              <span>Standard Signatures & NABL Calibration Footer</span>
-              <span>Page 1 of 1</span>
+            <div className="border-2 border-slate-300 dark:border-slate-700 p-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-lg flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 shadow-2xs">
+              <span className="font-medium">Standard Signatures & NABL Calibration Footer</span>
+              <span className="font-mono font-bold">Page 1 of 1</span>
             </div>
           </div>
         </div>
@@ -1698,28 +1951,43 @@ export function CanvasTemplateEditor({
 
               {/* Columns Editor with Variable Chips & Snippets */}
               <div className="border rounded-lg p-2.5 bg-slate-50/50 dark:bg-slate-900/40 space-y-2.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-1">
                   <span className="text-xs font-bold flex items-center gap-1">
-                    <Columns className="w-3 h-3 text-primary" />
+                    <Columns className="w-3.5 h-3.5 text-primary" />
                     Columns ({activeTableBlock.columns.length})
                   </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => {
-                      const newColId = `col_${Date.now().toString().slice(-4)}`;
-                      const newCol: CanvasColumnDef = {
-                        id: newColId,
-                        label: `Col ${activeTableBlock!.columns.length + 1}`,
-                        type: "trial",
-                        width: "14%",
-                      };
-                      updateActiveTable({ ...activeTableBlock!, columns: [...activeTableBlock!.columns, newCol] });
-                    }}
-                    className="h-6 text-[10px] gap-1 bg-primary text-primary-foreground font-semibold"
-                  >
-                    <Plus className="w-3 h-3" /> Add Col
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (selectedBlockIndex >= 0) autoFitColumns(selectedBlockIndex);
+                      }}
+                      className="h-6 text-[10px] gap-1 border-slate-300 dark:border-slate-700 font-semibold"
+                      title="Auto-Fit all columns proportionally"
+                    >
+                      <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
+                      Auto-Fit
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        const newColId = `col_${Date.now().toString().slice(-4)}`;
+                        const newCol: CanvasColumnDef = {
+                          id: newColId,
+                          label: `Col ${activeTableBlock!.columns.length + 1}`,
+                          type: "trial",
+                          width: "110px",
+                        };
+                        updateActiveTable({ ...activeTableBlock!, columns: [...activeTableBlock!.columns, newCol] });
+                      }}
+                      className="h-6 text-[10px] gap-1 bg-primary text-primary-foreground font-semibold"
+                    >
+                      <Plus className="w-3 h-3" /> Add Col
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
@@ -1775,6 +2043,62 @@ export function CanvasTemplateEditor({
                           <SelectItem value="text">Text / Desc</SelectItem>
                         </SelectContent>
                       </Select>
+
+                      {/* Manual Column Width Controls */}
+                      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                          <span className="flex items-center gap-1">
+                            <SlidersHorizontal className="w-3 h-3 text-primary" />
+                            Column Width
+                          </span>
+                          <span className="font-mono text-xs font-bold text-primary">
+                            {col.width || "Auto"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Input
+                            type="number"
+                            min={50}
+                            max={500}
+                            step={5}
+                            placeholder="110"
+                            value={col.width ? parseInt(col.width) || "" : ""}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const updatedCols = [...activeTableBlock!.columns];
+                              updatedCols[cIdx] = { ...col, width: val ? `${val}px` : undefined };
+                              updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                            }}
+                            className="h-7 text-xs font-mono w-20 bg-background"
+                          />
+                          <span className="text-[10px] text-muted-foreground font-semibold">px</span>
+                          <div className="flex items-center gap-1 ml-auto flex-wrap">
+                            {[
+                              { label: "Compact", w: "70px" },
+                              { label: "Normal", w: "110px" },
+                              { label: "Wide", w: "165px" },
+                              { label: "Auto", w: undefined },
+                            ].map((p) => (
+                              <button
+                                key={p.label}
+                                type="button"
+                                onClick={() => {
+                                  const updatedCols = [...activeTableBlock!.columns];
+                                  updatedCols[cIdx] = { ...col, width: p.w };
+                                  updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                                }}
+                                className={`px-2 py-0.5 text-[10px] rounded border font-semibold transition-all ${
+                                  (col.width === p.w || (!col.width && !p.w))
+                                    ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                                    : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750"
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
 
                       {(col.type === "formula" || col.type === "status" || col.role === "CALCULATED" || col.role === "JUDGEMENT" || Boolean(col.formula)) && (
                         <div className="pt-2 border-t border-dashed">

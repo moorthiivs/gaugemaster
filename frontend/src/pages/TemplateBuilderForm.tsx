@@ -1383,7 +1383,7 @@ export default function TemplateBuilderForm() {
               )}
             </div>
           </CardHeader>
-          <CardContent className="flex-1 overflow-y-auto p-3 space-y-3">
+          <CardContent className={`flex-1 overflow-y-auto ${isCanvasMode ? "p-1.5 sm:p-2 space-y-2" : "p-3 space-y-3"}`}>
             {isCanvasMode ? (
               <CanvasTemplateEditor
                 blocks={layoutBlocks}
