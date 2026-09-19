@@ -45,16 +45,23 @@ import {
   ArrowUpDown,
   ArrowLeftRight,
   SlidersHorizontal,
+  Bot,
+  ShieldCheck,
+  Wand2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
 import { TrialRunModal } from "@/components/calibration/template-management/TrialRunModal";
+import { TableAuditModal } from "@/components/calibration/template-management/TableAuditModal";
+import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
+import { GaugemasterTemplateAssistant } from "@/components/calibration/template-management/GaugemasterTemplateAssistant";
 import { GeneratedTemplateResult } from "@/lib/geminiService";
 import {
   getEffectiveTableOrientation,
   getTableOrientationRecommendation,
 } from "@/lib/tableLayoutOptimizer";
+import { ColumnFormulaInspector } from "@/components/calibration/template-management/ColumnFormulaInspector";
 
 export { CANVAS_PRESETS };
 export type { CanvasTemplatePreset };
@@ -119,11 +126,40 @@ export function CanvasTemplateEditor({
   const [showAiModal, setShowAiModal] = useState(false);
   const [showTrialRun, setShowTrialRun] = useState(false);
   const [showInspector, setShowInspector] = useState(false);
+  const [showTableAuditModal, setShowTableAuditModal] = useState(false);
+  const [auditTargetTable, setAuditTargetTable] = useState<TableGridBlock | null>(null);
+  const [showAssistant, setShowAssistant] = useState(false);
+  const [showPreSaveModal, setShowPreSaveModal] = useState(false);
   const [isBannerCollapsed, setIsBannerCollapsed] = useState(false);
   const [isToolboxCollapsed, setIsToolboxCollapsed] = useState(false);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     onChange(newBlocks);
+  };
+
+  const handleOpenTableAudit = (table: TableGridBlock) => {
+    setAuditTargetTable(table);
+    setShowTableAuditModal(true);
+  };
+
+  const handleApplyTableFixes = (tableId: string, updatedColumns: CanvasColumnDef[]) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return { ...b, columns: updatedColumns };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return { ...c, columns: updatedColumns };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+    toast.success("AI audited formulas applied to table!");
   };
 
   // Block Manipulation Helpers
@@ -309,6 +345,21 @@ export function CanvasTemplateEditor({
     activeTableBlock = (split.children.find((c) => c.id === selectedChildTableId && c.type === "table_grid") as TableGridBlock) ||
       (split.children.find((c) => c.type === "table_grid") as TableGridBlock) || null;
   }
+  if (!activeTableBlock) {
+    for (const blk of blocks) {
+      if (blk.type === "table_grid") {
+        activeTableBlock = blk as TableGridBlock;
+        break;
+      }
+      if (blk.type === "split_row" && blk.children) {
+        const first = blk.children.find((c) => c.type === "table_grid");
+        if (first) {
+          activeTableBlock = first as TableGridBlock;
+          break;
+        }
+      }
+    }
+  }
 
   // Update active table block either at root or inside split row
   const updateActiveTable = (updatedTbl: TableGridBlock) => {
@@ -441,6 +492,26 @@ export function CanvasTemplateEditor({
               <FlaskConical className="w-3 h-3" />
               Trial Run
             </Button>
+            {activeTableBlock && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => handleOpenTableAudit(activeTableBlock)}
+                className="text-[11px] h-6 px-2 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 gap-1 font-bold shadow-xs"
+              >
+                <ShieldCheck className="w-3 h-3 text-amber-400" />
+                Audit Table
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowAssistant(true)}
+              className="text-[11px] h-6 px-2 bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 gap-1 font-bold shadow-xs"
+            >
+              <Bot className="w-3 h-3 text-indigo-400" />
+              Assistant
+            </Button>
             <Button
               type="button"
               size="sm"
@@ -518,6 +589,30 @@ export function CanvasTemplateEditor({
             >
               <FlaskConical className="w-3.5 h-3.5" />
               Trial Run
+            </Button>
+
+            {activeTableBlock && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenTableAudit(activeTableBlock)}
+                className="text-xs h-8 px-3 rounded-lg bg-slate-800 text-amber-300 border-amber-500/40 hover:bg-amber-950/40 gap-1.5 font-semibold shadow-xs transition-all"
+              >
+                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                AI Audit Table
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAssistant(true)}
+              className="text-xs h-8 px-3 rounded-lg bg-indigo-950/60 text-indigo-200 border-indigo-500/40 hover:bg-indigo-900/60 gap-1.5 font-semibold shadow-xs transition-all"
+            >
+              <Bot className="w-3.5 h-3.5 text-indigo-400" />
+              Assistant
             </Button>
 
             <Button
@@ -834,8 +929,30 @@ export function CanvasTemplateEditor({
                           />
                           <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-600 dark:text-slate-400">
                             <span>Unit: {block.unit || "mm"}</span>
-                            <span>• Tol: ±{block.tolerance ?? "0.01"}</span>
+                            <span>
+                              • Tol: {
+                                (block as TableGridBlock).toleranceType === "mixed" ||
+                                (block as TableGridBlock).toleranceType === "row_specific" ||
+                                ((block as TableGridBlock).rows && (block as TableGridBlock).rows.some((r, i, arr) => r.tolerance !== arr[0]?.tolerance))
+                                  ? "Row-specific"
+                                  : `±${block.tolerance ?? "0.01"}`
+                              }
+                            </span>
                             <span>• Dec: {block.decimal_places ?? decimalPlaces}</span>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenTableAudit(block as TableGridBlock);
+                              }}
+                              className="h-5 px-1.5 text-[9.5px] bg-amber-100/80 hover:bg-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-300 font-bold rounded flex items-center gap-1"
+                              title="Audit Table Formulas & Tolerances"
+                            >
+                              <ShieldCheck className="w-3 h-3 text-amber-600" />
+                              <span>Audit</span>
+                            </Button>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -1358,10 +1475,10 @@ export function CanvasTemplateEditor({
         </div>
 
         {/* ========================================================================= */}
-        {/* COLUMN 3: RIGHT INSPECTOR PANEL (DEFAULT HIDDEN, TOGGLEABLE!) (340px) */}
+        {/* COLUMN 3: RIGHT INSPECTOR PANEL (DEFAULT HIDDEN, TOGGLEABLE!) (440-480px) */}
         {/* ========================================================================= */}
         {showInspector && (
-          <div className="w-full lg:w-[340px] shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto">
+          <div className="w-full lg:w-[440px] xl:w-[480px] lg:min-w-[400px] shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto transition-all">
             <div className="flex items-center justify-between border-b pb-2">
               <h4 className="text-xs font-bold flex items-center gap-1.5 text-foreground">
                 <Settings2 className="w-4 h-4 text-primary" />
@@ -1659,37 +1776,26 @@ export function CanvasTemplateEditor({
                         </SelectContent>
                       </Select>
 
-                      {(col.type === "formula" || col.type === "status") && (
-                        <div className="space-y-1 pt-1 border-t border-dashed">
-                          <Input
-                            value={col.formula || ""}
-                            onChange={(e) => {
+                      {(col.type === "formula" || col.type === "status" || col.role === "CALCULATED" || col.role === "JUDGEMENT" || Boolean(col.formula)) && (
+                        <div className="pt-2 border-t border-dashed">
+                          <ColumnFormulaInspector
+                            column={col}
+                            allColumns={activeTableBlock!.columns}
+                            tableDecimalPlaces={activeTableBlock!.decimal_places ?? decimalPlaces}
+                            onUpdateColumn={(updatedCol) => {
                               const updatedCols = [...activeTableBlock!.columns];
-                              updatedCols[cIdx] = { ...col, formula: e.target.value };
+                              updatedCols[cIdx] = updatedCol;
                               updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
                             }}
-                            className="h-6 text-[10px] font-mono bg-slate-50 dark:bg-slate-900"
-                            placeholder="e.g. reading - nominal"
+                            onSelectColumn={(colId) => {
+                              const targetIdx = activeTableBlock!.columns.findIndex(
+                                (c) => c.id.toLowerCase() === colId.toLowerCase() || c.label.toLowerCase() === colId.toLowerCase()
+                              );
+                              if (targetIdx >= 0) {
+                                toast.info(`Selected referenced column: ${activeTableBlock!.columns[targetIdx].label || colId}`);
+                              }
+                            }}
                           />
-
-                          {/* Variable Chips */}
-                          <div className="flex flex-wrap gap-1 pt-0.5">
-                            {["nominal", "reading", "error", "tolerance", "MPE", "t1", "t2", "t3", "t4", "t5", "avg", "average"].map((tok) => (
-                              <button
-                                key={tok}
-                                type="button"
-                                onClick={() => {
-                                  const updatedCols = [...activeTableBlock!.columns];
-                                  const cur = col.formula || "";
-                                  updatedCols[cIdx] = { ...col, formula: cur ? `${cur} ${tok}` : tok };
-                                  updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                                }}
-                                className="px-1 py-0.2 rounded bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 font-mono text-[9px]"
-                              >
-                                +{tok}
-                              </button>
-                            ))}
-                          </div>
                         </div>
                       )}
                     </div>
@@ -1884,6 +1990,41 @@ export function CanvasTemplateEditor({
         acceptanceCriteriaDate={acceptanceCriteriaDate}
         acceptanceCriteriaRev={acceptanceCriteriaRev}
         acceptanceCriteriaReference={acceptanceCriteriaReference}
+      />
+
+      {/* MODAL: AI Calibration Table Audit & Repair */}
+      <TableAuditModal
+        open={showTableAuditModal}
+        onOpenChange={setShowTableAuditModal}
+        table={auditTargetTable || activeTableBlock}
+        onApplyFixes={handleApplyTableFixes}
+      />
+
+      {/* MODAL: Pre-Save Template Quality Gate */}
+      <PreSaveAuditModal
+        open={showPreSaveModal}
+        onOpenChange={setShowPreSaveModal}
+        blocks={blocks}
+        onConfirmSave={() => {
+          toast.success("Pre-save audit passed! Template ready for production calibration.");
+        }}
+      />
+
+      {/* COPILOT DRAWER: Gaugemaster Template Assistant */}
+      <GaugemasterTemplateAssistant
+        open={showAssistant}
+        onClose={() => setShowAssistant(false)}
+        templateName={templateName || "Visual Canvas Template"}
+        instrumentType="Calibration Instrument"
+        calibrationType="dimensional"
+        blocks={blocks}
+        selectedTable={auditTargetTable || activeTableBlock}
+        selectedColumnId={null}
+        onUpdateTableColumns={handleApplyTableFixes}
+        onOpenTableAuditModal={() => {
+          if (activeTableBlock) handleOpenTableAudit(activeTableBlock);
+        }}
+        onOpenPreSaveModal={() => setShowPreSaveModal(true)}
       />
     </div>
   );

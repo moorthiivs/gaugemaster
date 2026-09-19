@@ -25,7 +25,7 @@ import { CanvasBlock, TableGridBlock, SplitRowBlock, MatrixTableBlock, TextBlock
 import { CalibrationRecord } from "@/types/calibration";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
-import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
+import { evaluateCanvasRowFormulas, buildRowContext } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
 interface TrialRunModalProps {
@@ -82,39 +82,15 @@ export function TrialRunModal({
   const [activeTab, setActiveTab] = useState<"test" | "certificate">("test");
   const [testBlocks, setTestBlocks] = useState<CanvasBlock[]>([]);
 
-  // Pre-fill and evaluate table rows for all trial columns (t1..t5, 1..5)
+  // Prepare table rows for trial run (evaluating structured bounds with blank or existing readings)
   const prefillTableRows = (tbl: TableGridBlock) => {
     if (!tbl.rows || !tbl.columns) return;
     const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
     const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
 
-    tbl.rows.forEach((r: any) => {
-      const nom = parseFloat(String(r.nominal ?? 0)) || 0;
-      const nomFormatted = nom.toFixed(dec);
-
-      // Pre-fill nominal
-      r.nominal = nom;
-
-      // Identify and pre-fill all trial and reading columns
-      tbl.columns.forEach((col) => {
-        if (col.type === "trial" || /^t[1-9]$/i.test(col.id) || /^[1-9]$/.test(col.id) || /^col_[1-9]$/i.test(col.id)) {
-          r[col.id] = nomFormatted;
-        }
-        if (col.type === "reading" || col.id === "reading") {
-          r[col.id] = nomFormatted;
-        }
-      });
-
-      // Populate standard trial attributes t1..t5 and reading
-      r.reading = nomFormatted;
-      r.t1 = nomFormatted;
-      r.t2 = nomFormatted;
-      r.t3 = nomFormatted;
-      r.t4 = nomFormatted;
-      r.t5 = nomFormatted;
-
-      // Evaluate row formulas (Avg, Error, Status) using deterministic multi-pass
-      evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
+    tbl.rows = tbl.rows.map((r: any) => {
+      // Evaluate row formulas (Avg, Error, Judgement) with deterministic metrology engine
+      return evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
     });
   };
 
@@ -163,9 +139,9 @@ export function TrialRunModal({
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (decimalPlaces || 3);
 
     // Multi-pass formula evaluation: Pass 1 (Average) -> Pass 2 (Error) -> Pass 3 (Status)
-    evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
+    const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
-    targetTbl.rows[rowIndex] = row;
+    targetTbl.rows[rowIndex] = evaluatedRow;
     setTestBlocks(updated);
   };
 
@@ -178,31 +154,55 @@ export function TrialRunModal({
         const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
         const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
 
-        tbl.rows.forEach((r: any) => {
-          const nom = parseFloat(String(r.nominal ?? 0)) || 0;
-          const delta = type === "pass" ? tol * 0.5 : tol * 1.8;
-          const readVal = parseFloat((nom + delta).toFixed(dec));
+        tbl.rows = tbl.rows.map((r: any) => {
+          const ctx = buildRowContext(r, tbl.columns, tol, dec);
+          let readVal: number;
+          if (type === "pass") {
+            // Midpoint of tolerance limits guarantees PASS across symmetric, asymmetric, and negative-only tolerances
+            readVal = parseFloat(((ctx.lowerLimit + ctx.upperLimit) / 2).toFixed(dec));
+          } else {
+            // Distinctly out-of-tolerance value beyond upper boundary
+            const span = Math.abs(ctx.upperLimit - ctx.lowerLimit) || (tol * 2);
+            readVal = parseFloat((ctx.upperLimit + span * 0.75 + 0.001).toFixed(dec));
+          }
           const readStr = readVal.toFixed(dec);
+
+          const updatedRow = { ...r };
 
           // Populate all trial and reading columns
           tbl.columns.forEach((c) => {
+            const cId = (c.id || "").toLowerCase();
+            const cLbl = (c.label || "").toLowerCase();
             if (c.type === "trial" || /^t[1-9]$/i.test(c.id) || /^[1-9]$/.test(c.id) || /^col_[1-9]$/i.test(c.id)) {
-              r[c.id] = readStr;
+              updatedRow[c.id] = readStr;
             }
-            if (c.type === "reading" || c.id === "reading") {
-              r[c.id] = readStr;
+            if (
+              c.type === "reading" ||
+              c.role === "READING" ||
+              c.role === "MEASUREMENT" ||
+              cId === "reading" ||
+              cId === "actual" ||
+              cId === "actual_dimension" ||
+              cId === "observation" ||
+              cLbl.includes("actual") ||
+              cLbl.includes("reading") ||
+              cLbl.includes("observed")
+            ) {
+              updatedRow[c.id] = readStr;
             }
           });
 
-          r.reading = readStr;
-          r.t1 = readStr;
-          r.t2 = readStr;
-          r.t3 = readStr;
-          r.t4 = readStr;
-          r.t5 = readStr;
+          updatedRow.actual_dimension = readStr;
+          updatedRow.actual = readStr;
+          updatedRow.reading = readStr;
+          updatedRow.t1 = readStr;
+          updatedRow.t2 = readStr;
+          updatedRow.t3 = readStr;
+          updatedRow.t4 = readStr;
+          updatedRow.t5 = readStr;
 
           // Re-evaluate with new readings
-          evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
+          return evaluateCanvasRowFormulas(updatedRow, tbl.columns, tol, dec);
         });
       };
 
@@ -231,8 +231,9 @@ export function TrialRunModal({
     if (b.type === "table_grid" && b.rows) {
       b.rows.forEach((r: any) => {
         totalPoints++;
-        if (r.status === "PASS") passPoints++;
-        if (r.status === "FAIL") failPoints++;
+        const st = String(r.status ?? r.judgement ?? r.judgment ?? "");
+        if (st === "PASS") passPoints++;
+        if (st === "FAIL") failPoints++;
       });
     }
   });

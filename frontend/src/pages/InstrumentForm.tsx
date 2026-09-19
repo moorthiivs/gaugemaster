@@ -110,6 +110,7 @@ export default function InstrumentForm() {
   const [isSaving, setIsSaving] = useState(false);
   const [validationRules, setValidationRules] = useState<any[]>([]);
   const [instrumentData, setInstrumentData] = useState<any>(null);
+  const [rawCustomParameters, setRawCustomParameters] = useState<Record<string, any>>({});
 
   // 1. Fetch dynamic validation rules
   useEffect(() => {
@@ -145,6 +146,7 @@ export default function InstrumentForm() {
 
         const customValues: Record<string, any> = {};
         if (i.custom_parameters && typeof i.custom_parameters === "object") {
+          setRawCustomParameters(i.custom_parameters);
           Object.keys(i.custom_parameters).forEach((k) => {
             customValues[`custom_${k}`] = i.custom_parameters[k];
           });
@@ -226,7 +228,7 @@ export default function InstrumentForm() {
     }
 
     // Extract custom parameters
-    const custom_parameters: Record<string, any> = {};
+    const custom_parameters: Record<string, any> = { ...rawCustomParameters };
     validationRules
       .filter((r) => r.isCustom)
       .forEach((r) => {

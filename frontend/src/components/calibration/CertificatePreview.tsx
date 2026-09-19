@@ -1094,7 +1094,7 @@ export function CertificatePreview({
               <tbody>
                 <tr className="border-b border-black">
                   <td className="w-1/3 p-1 border-r border-black">
-                    <div className="font-bold text-slate-600 text-[8px]">Instrument (UUC)</div>
+                    <div className="font-bold text-slate-600 text-[8px]">Instrument (DUC)</div>
                     <div className="font-bold">{instrumentName || inst?.name || "-"}</div>
                   </td>
                   <td className="w-1/3 p-1 border-r border-black">
@@ -1138,22 +1138,14 @@ export function CertificatePreview({
             </table>
           </div>
 
-          {/* Acceptance Criteria Row (Directly above Procedure No, Standard Reference, Discipline) */}
-          {Boolean(acceptanceCriteriaText) && (
-            <div className={`border border-black bg-slate-50 ${isCompact ? "px-1.5 py-0.5 text-[7.5px]" : "px-2 py-1 text-[8.5px]"} flex items-center gap-1.5`}>
-              <span className="font-bold uppercase tracking-wider text-black">Acceptance Criteria :</span>
-              <span className="font-semibold text-black">{acceptanceCriteriaText}</span>
-            </div>
-          )}
-
           {/* Procedure & Environmental Conditions Table */}
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black font-bold text-left">
-                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure Name &amp; No</th>
-                <th className={`w-[26%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Doc.No &amp; Rev-Date</th>
-                <th className={`w-[25%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
-                <th className={`w-[25%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
+                <th className={`w-[28%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure Doc.No &amp; Rev.No</th>
+                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
+                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+                <th className={`w-[24%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
               </tr>
             </thead>
             <tbody>
@@ -1167,14 +1159,32 @@ export function CertificatePreview({
                       Proc No: {procedureNo}
                     </div>
                   )}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  <div className="font-semibold leading-tight text-[7.5px]">
-                    Doc.No.: {procedureReference || "AE/CAL-SOP/01"}
-                  </div>
+                  {procedureReference && (
+                    <div className="font-semibold leading-tight text-[7.5px] mt-0.5">
+                      Doc.No.: {procedureReference}
+                    </div>
+                  )}
                   {(procedureRev || procedureDate) && (
                     <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
                       {[procedureRev ? `Rev-${procedureRev.replace(/^rev-?/i, "")}` : "", procedureDate ? `dated ${procedureDate}` : ""].filter(Boolean).join(" ")}
+                    </div>
+                  )}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+                  {acceptanceCriteriaDocNo || acceptanceCriteriaReference ? (
+                    <>
+                      <div className="font-semibold leading-tight text-[7.5px]">
+                        Doc.No.: {acceptanceCriteriaDocNo || acceptanceCriteriaReference}
+                      </div>
+                      {(acceptanceCriteriaRev || acceptanceCriteriaDate) && (
+                        <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                          {[acceptanceCriteriaRev ? `Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, "")}` : "", acceptanceCriteriaDate ? `dated ${acceptanceCriteriaDate}` : ""].filter(Boolean).join(" ")}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-slate-600 font-medium leading-tight text-[7.5px]">
+                      {acceptanceCriteriaText || "-"}
                     </div>
                   )}
                 </td>

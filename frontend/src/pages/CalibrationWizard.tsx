@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -193,6 +193,322 @@ export default function CalibrationWizard() {
   const [certIssueDate, setCertIssueDate] = useState(toLocalYyyyMmDd(new Date()));
   const [nextCalDate, setNextCalDate] = useState("");
   const [systemUsers, setSystemUsers] = useState<any[]>([]);
+
+  // Template Variant & Instrument Master Custom Parameters State
+  const [savingInstrumentCustom, setSavingInstrumentCustom] = useState(false);
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
+  const [showCertPreviewModal, setShowCertPreviewModal] = useState(false);
+  const [isDragOverDiagram, setIsDragOverDiagram] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateDescription, setNewTemplateDescription] = useState("");
+  const [savingTemplateVariant, setSavingTemplateVariant] = useState(false);
+
+  // Copy diagram image base64 to system clipboard
+  const handleCopyImageToClipboard = async () => {
+    if (!wizardDiagramImage) return;
+    try {
+      const res = await fetch(wizardDiagramImage);
+      const blob = await res.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      toast.success("Diagram image copied to clipboard");
+    } catch (err) {
+      console.error("Failed to copy image to clipboard", err);
+      toast.error("Could not copy image to clipboard");
+    }
+  };
+
+  // Paste image from system clipboard via Navigator Clipboard API
+  const handlePasteFromClipboard = async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find(t => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const base64 = e.target?.result as string;
+            if (base64) {
+              setWizardDiagramImage(base64);
+              toast.success("Gauge Diagram pasted from clipboard");
+            }
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      toast.info("No image found in clipboard. Press Ctrl+V anywhere to paste.");
+    } catch (err) {
+      toast.info("Press Ctrl+V anywhere on the page to paste image");
+    }
+  };
+
+  // Process uploaded or dropped image file
+  const processImageFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload a valid image file (PNG, JPG, WEBP, SVG)");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File size must be under 5MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        setWizardDiagramImage(base64);
+        toast.success("Diagram image attached");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Merge Instrument Custom Parameters (gauge drawing, specific specifications, doc properties, env defaults)
+  const applyInstrumentCustomParameters = (instr: Instrument) => {
+    if (!instr || !instr.custom_parameters) return;
+    const cp = instr.custom_parameters;
+
+    // 1. Diagram Image
+    if (cp.diagram_image !== undefined) {
+      setWizardDiagramImage(cp.diagram_image || null);
+      if (cp.diagram_image_width) setWizardDiagramWidth(cp.diagram_image_width);
+      if (cp.diagram_image_height) setWizardDiagramHeight(cp.diagram_image_height);
+      if (cp.diagram_image_alignment) setWizardDiagramAlignment(cp.diagram_image_alignment);
+    }
+
+    // 2. Doc Properties
+    if (cp.doc_properties) {
+      if (cp.doc_properties.doc_no) setDocNo(cp.doc_properties.doc_no);
+      if (cp.doc_properties.doc_date) setDocDate(cp.doc_properties.doc_date);
+      if (cp.doc_properties.doc_rev) setDocRev(cp.doc_properties.doc_rev);
+      if (cp.doc_properties.procedure_no) setProcedureNo(cp.doc_properties.procedure_no);
+      if (cp.doc_properties.procedure_name) setProcedureName(cp.doc_properties.procedure_name);
+      if (cp.doc_properties.procedure_date) setProcedureDate(cp.doc_properties.procedure_date);
+      if (cp.doc_properties.procedure_rev) setProcedureRev(cp.doc_properties.procedure_rev);
+      if (cp.doc_properties.procedure_reference) setProcedureReference(cp.doc_properties.procedure_reference);
+      if (cp.doc_properties.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(cp.doc_properties.acceptance_criteria_doc_no);
+      if (cp.doc_properties.acceptance_criteria_date) setAcceptanceCriteriaDate(cp.doc_properties.acceptance_criteria_date);
+      if (cp.doc_properties.acceptance_criteria_rev) setAcceptanceCriteriaRev(cp.doc_properties.acceptance_criteria_rev);
+      if (cp.doc_properties.acceptance_criteria_reference) setAcceptanceCriteriaReference(cp.doc_properties.acceptance_criteria_reference);
+    }
+
+    // 3. Environmental Defaults
+    if (cp.environmental_defaults) {
+      if (cp.environmental_defaults.temperature) setEnvTemp(cp.environmental_defaults.temperature);
+      if (cp.environmental_defaults.humidity) setEnvHumidity(cp.environmental_defaults.humidity);
+      if (cp.environmental_defaults.soaking_time) setEnvSoakingTime(cp.environmental_defaults.soaking_time);
+      if (cp.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(cp.environmental_defaults.soaking_start_time);
+      if (cp.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(cp.environmental_defaults.soaking_end_time);
+    }
+
+    // 4. Specifications auto-merge into calPoints
+    if (cp.specifications && Array.isArray(cp.specifications) && cp.specifications.length > 0) {
+      const mergedPoints: CalibrationPoint[] = cp.specifications.map((spec: any, idx: number) => ({
+        point_number: spec.point_number || idx + 1,
+        description: spec.description || `Point ${idx + 1}`,
+        nominal: spec.nominal !== undefined ? Number(spec.nominal) : 0,
+        ascending_reading: spec.ascending_reading !== undefined ? Number(spec.ascending_reading) : (spec.nominal !== undefined ? Number(spec.nominal) : 0),
+        descending_reading: spec.descending_reading !== undefined ? Number(spec.descending_reading) : undefined,
+        error: spec.error !== undefined ? Number(spec.error) : 0,
+        unit: spec.unit || calUnit || "mm",
+        tolerance: spec.tolerance !== undefined ? Number(spec.tolerance) : calTolerance,
+        status: spec.status || "PASS",
+        customFields: spec.customFields || {},
+      }));
+      setCalPoints(mergedPoints);
+    }
+  };
+
+  // Clipboard Paste Listener for Diagram Image (Ctrl+V)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (step !== 2 && step !== 3) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const file = items[i].getAsFile();
+          if (file) {
+            e.preventDefault();
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const base64 = event.target?.result as string;
+              if (base64) {
+                setWizardDiagramImage(base64);
+                toast.success("Gauge Diagram pasted from clipboard (Ctrl+V)");
+              }
+            };
+            reader.readAsDataURL(file);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [step]);
+
+  // Diagram Image File Upload
+  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload a valid image file (PNG, JPG, WEBP)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        setWizardDiagramImage(base64);
+        toast.success("Diagram image uploaded");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Save current diagram, specifications, doc info to Instrument Master
+  const handleSaveToInstrumentMaster = async () => {
+    if (!selectedInstrument) {
+      toast.error("No instrument selected");
+      return;
+    }
+    setSavingInstrumentCustom(true);
+    try {
+      const updatedCustomParams = {
+        ...(selectedInstrument.custom_parameters || {}),
+        diagram_image: wizardDiagramImage ? wizardDiagramImage : null,
+        diagram_image_width: wizardDiagramWidth,
+        diagram_image_height: wizardDiagramHeight,
+        diagram_image_alignment: wizardDiagramAlignment,
+        doc_properties: {
+          doc_no: docNo || undefined,
+          doc_date: docDate || undefined,
+          doc_rev: docRev || undefined,
+          procedure_no: procedureNo || undefined,
+          procedure_name: procedureName || undefined,
+          procedure_date: procedureDate || undefined,
+          procedure_rev: procedureRev || undefined,
+          procedure_reference: procedureReference || undefined,
+          acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+          acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+          acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+          acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
+        },
+        environmental_defaults: {
+          temperature: envTemp || undefined,
+          humidity: envHumidity || undefined,
+          soaking_time: envSoakingTime || undefined,
+          soaking_start_time: envSoakingStartTime || undefined,
+          soaking_end_time: envSoakingEndTime || undefined,
+        },
+        specifications: calPoints.map(p => ({
+          point_number: p.point_number,
+          description: p.description,
+          nominal: p.nominal,
+          unit: p.unit,
+          tolerance: p.tolerance,
+          customFields: p.customFields,
+        })),
+      };
+
+      await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+        custom_parameters: updatedCustomParams,
+      });
+
+      setSelectedInstrument({
+        ...selectedInstrument,
+        custom_parameters: updatedCustomParams,
+      });
+
+      toast.success(`Saved specifications & diagram to Instrument Master (${selectedInstrument.id_code})`);
+    } catch (err: any) {
+      console.error("Failed to save to Instrument Master", err);
+      toast.error(err.response?.data?.message || "Failed to update Instrument Master");
+    } finally {
+      setSavingInstrumentCustom(false);
+    }
+  };
+
+  // Save current configuration as a new standalone Calibration Template Variant
+  const handleSaveAsNewTemplate = async () => {
+    if (!newTemplateName.trim()) {
+      toast.error("Please enter a Template Variant Name");
+      return;
+    }
+    setSavingTemplateVariant(true);
+    try {
+      const payload = {
+        name: newTemplateName.trim(),
+        description: newTemplateDescription.trim() || undefined,
+        category: selectedInstrument?.category || "General",
+        instrument_type: selectedInstrument?.item_type || selectedInstrument?.name || selectedType?.type || "General",
+        calibration_type: selectedType?.type || (selectedInstrument as any)?.calibration_type || "dimensional",
+        default_unit: calUnit || "mm",
+        default_tolerance: calTolerance || 0,
+        is_active: true,
+        doc_no: docNo || undefined,
+        doc_date: docDate || undefined,
+        doc_rev: docRev || undefined,
+        procedure_no: procedureNo || undefined,
+        procedure_name: procedureName || undefined,
+        procedure_date: procedureDate || undefined,
+        procedure_rev: procedureRev || undefined,
+        procedure_reference: procedureReference || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
+        standard_reference: standardReference || undefined,
+        environmental_defaults: {
+          temperature: envTemp || undefined,
+          humidity: envHumidity || undefined,
+          soaking_time: envSoakingTime || undefined,
+          soaking_start_time: envSoakingStartTime || undefined,
+          soaking_end_time: envSoakingEndTime || undefined,
+        },
+        is_canvas_template: wizardIsCanvas,
+        layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
+        custom_columns: wizardCustomColumns,
+        standard_columns_config: wizardStandardColumnConfigs,
+        column_order: wizardColumnOrder,
+        hidden_columns: wizardHiddenColumns,
+        decimal_places: wizardDecimalPlaces,
+        acceptance_criteria: wizardAcceptanceCriteria,
+        diagram_image: wizardDiagramImage || undefined,
+        diagram_image_width: wizardDiagramWidth,
+        diagram_image_height: wizardDiagramHeight,
+        diagram_image_alignment: wizardDiagramAlignment,
+        calibration_points: calPoints.map((p, idx) => ({
+          point_number: p.point_number || idx + 1,
+          description: p.description || `Point ${idx + 1}`,
+          nominal: p.nominal,
+          unit: p.unit || calUnit || "mm",
+          tolerance: p.tolerance,
+          customFields: p.customFields,
+        })),
+      };
+
+      const res = await httpClient.post("/calibration-templates", payload);
+      const createdTpl = res.data;
+      setAvailableTemplates(prev => [createdTpl, ...prev]);
+      setSelectedTemplateId(createdTpl.id);
+      setSaveTemplateModalOpen(false);
+      setNewTemplateName("");
+      setNewTemplateDescription("");
+      toast.success(`Saved new template variant "${createdTpl.name}"`);
+    } catch (err: any) {
+      console.error("Failed to save template variant", err);
+      toast.error(err.response?.data?.message || "Failed to create template variant");
+    } finally {
+      setSavingTemplateVariant(false);
+    }
+  };
 
   useEffect(() => {
     const fetchSystemUsers = async () => {
@@ -875,6 +1191,7 @@ export default function CalibrationWizard() {
     if (instrumentId) {
       getInstrument(instrumentId).then((inst) => {
         setSelectedInstrument(inst);
+        applyInstrumentCustomParameters(inst);
         if (inst.due_date) {
           const prevDueDate = toLocalYyyyMmDd(inst.due_date);
           if (prevDueDate) {
@@ -941,6 +1258,7 @@ export default function CalibrationWizard() {
 
   const proceedWithInstrumentSelect = (inst: Instrument) => {
     setSelectedInstrument(inst);
+    applyInstrumentCustomParameters(inst);
     if (inst.due_date) {
       const prevDueDate = toLocalYyyyMmDd(inst.due_date);
       if (prevDueDate) {
@@ -1181,10 +1499,10 @@ export default function CalibrationWizard() {
     const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
-    // Deterministic multi-pass formula evaluation: Average -> Error -> Status
-    evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
+    // Deterministic formula evaluation (topological order, formula string parsing, blank propagation)
+    const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
-    targetTbl.rows[rowIndex] = row;
+    targetTbl.rows[rowIndex] = evaluatedRow;
     setWizardLayoutBlocks(updatedBlocks);
   };
 
@@ -2186,6 +2504,312 @@ export default function CalibrationWizard() {
                 </div>
               </div>
 
+              {/* ═══ Diagram / Schematic Image (Optional) Card ═══ */}
+              <div className="p-4 bg-card border rounded-xl shadow-xs space-y-3 mb-4">
+                <div className="flex items-center justify-between gap-2 border-b pb-2">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-primary" />
+                    <span className="text-xs font-bold text-foreground">Diagram / Schematic Image (Optional)</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCertPreviewModal(true)}
+                      className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                      title="Open Full Certificate Preview"
+                    >
+                      <Eye className="w-3 h-3" />
+                      Full Preview
+                    </Button>
+                    {wizardDiagramImage && (
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-semibold">
+                        Uploaded
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-muted-foreground leading-tight">
+                  Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
+                </p>
+
+                {!wizardDiagramImage ? (
+                  <div
+                    tabIndex={0}
+                    onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                    onDragLeave={() => setIsDragOverDiagram(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragOverDiagram(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) processImageFile(file);
+                    }}
+                    className={`border-2 border-dashed ${
+                      isDragOverDiagram ? "border-primary bg-primary/10" : "border-muted-foreground/30 hover:border-primary/50 bg-background/50"
+                    } rounded-lg p-3 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40`}
+                  >
+                    <input
+                      type="file"
+                      id="wizard-diagram-upload"
+                      accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) processImageFile(file);
+                      }}
+                    />
+                    <div className="flex flex-col items-center gap-1.5 py-1">
+                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <Upload className="w-4 h-4" />
+                      </div>
+                      <div className="flex items-center gap-2 flex-wrap justify-center mt-0.5">
+                        <label
+                          htmlFor="wizard-diagram-upload"
+                          className="cursor-pointer text-xs font-semibold text-primary hover:underline"
+                        >
+                          Browse File
+                        </label>
+                        <span className="text-xs text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={handlePasteFromClipboard}
+                          className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+                        >
+                          <ClipboardPaste className="w-3 h-3" />
+                          Paste from Clipboard
+                        </button>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        PNG, JPG, SVG, WebP (Max 5MB) • Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Ctrl+V</kbd> anywhere to paste
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3 bg-muted/20 p-3 rounded-xl border">
+                    {/* Live Preview Box */}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                        <span className="font-semibold text-foreground">Live Certificate Preview</span>
+                        <span className="font-mono text-[10px]">{wizardDiagramWidth || 350}px × {wizardDiagramHeight || 160}px • {wizardDiagramAlignment || "center"}</span>
+                      </div>
+                      <div
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                        onDragLeave={() => setIsDragOverDiagram(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragOverDiagram(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) processImageFile(file);
+                        }}
+                        className={`border rounded-lg bg-slate-50 dark:bg-slate-900 p-3 flex ${
+                          wizardDiagramAlignment === 'left' ? 'justify-start' : wizardDiagramAlignment === 'right' ? 'justify-end' : 'justify-center'
+                        } overflow-hidden min-h-[100px] max-h-[220px] items-center relative ${isDragOverDiagram ? 'ring-2 ring-primary bg-primary/5' : ''}`}
+                      >
+                        <img
+                          src={wizardDiagramImage}
+                          alt="Diagram Preview"
+                          style={{
+                            width: `${wizardDiagramWidth || 350}px`,
+                            maxHeight: `${wizardDiagramHeight || 160}px`,
+                            objectFit: "contain",
+                          }}
+                          className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Size Sliders */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth || 350}px</span></Label>
+                        </div>
+                        <input
+                          type="range"
+                          min={80}
+                          max={540}
+                          step={5}
+                          value={wizardDiagramWidth || 350}
+                          onChange={(e) => setWizardDiagramWidth(parseInt(e.target.value, 10))}
+                          className="w-full accent-primary h-1.5 cursor-pointer"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight || 160}px</span></Label>
+                        </div>
+                        <input
+                          type="range"
+                          min={40}
+                          max={280}
+                          step={5}
+                          value={wizardDiagramHeight || 160}
+                          onChange={(e) => setWizardDiagramHeight(parseInt(e.target.value, 10))}
+                          className="w-full accent-primary h-1.5 cursor-pointer"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Alignment & Actions Row */}
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t flex-wrap">
+                      <div className="flex items-center gap-1">
+                        <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
+                        <Button
+                          type="button"
+                          variant={wizardDiagramAlignment === "left" ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => setWizardDiagramAlignment("left")}
+                          title="Align Left"
+                        >
+                          <AlignLeft className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={wizardDiagramAlignment === "center" ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => setWizardDiagramAlignment("center")}
+                          title="Align Center"
+                        >
+                          <AlignCenter className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={wizardDiagramAlignment === "right" ? "default" : "outline"}
+                          size="sm"
+                          className="h-7 w-7 p-0"
+                          onClick={() => setWizardDiagramAlignment("right")}
+                          title="Align Right"
+                        >
+                          <AlignRight className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs gap-1 font-medium"
+                          onClick={handleCopyImageToClipboard}
+                          title="Copy Diagram Image to Clipboard"
+                        >
+                          <Copy className="w-3 h-3" />
+                          Copy
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs gap-1 font-medium"
+                          onClick={handlePasteFromClipboard}
+                          title="Paste new image from Clipboard (or press Ctrl+V)"
+                        >
+                          <ClipboardPaste className="w-3 h-3" />
+                          Paste
+                        </Button>
+                        <label
+                          htmlFor="wizard-diagram-replace-upload"
+                          className="cursor-pointer inline-flex items-center gap-1 text-xs h-7 px-2.5 border rounded-md hover:bg-muted font-medium"
+                        >
+                          <Upload className="w-3 h-3" />
+                          Replace
+                        </label>
+                        <input
+                          type="file"
+                          id="wizard-diagram-replace-upload"
+                          accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) processImageFile(file);
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 gap-1"
+                          onClick={() => {
+                            setWizardDiagramImage(null);
+                            toast.info("Diagram image removed");
+                          }}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Remove
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* View in Full Certificate Preview Button */}
+                    <div className="pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowCertPreviewModal(true)}
+                        className="w-full h-8 text-xs font-semibold text-primary border-primary/30 hover:bg-primary/5 bg-primary/5 gap-2"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        View in Full Certificate Preview
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* ═══ Template Variant & Instrument Master Action Bar ═══ */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-muted/50 via-card to-muted/50 border rounded-xl shadow-xs mb-4">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20 font-semibold px-2 py-0.5">
+                    REUSABLE TEMPLATES &amp; SPECIFICATIONS
+                  </Badge>
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    Save customized specifications &amp; drawing to Instrument Master or as a new Template Variant
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  {selectedInstrument && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSaveToInstrumentMaster}
+                      disabled={savingInstrumentCustom}
+                      className="text-xs h-8 gap-1.5 border-primary/30 hover:bg-primary/5 text-primary font-medium"
+                    >
+                      {savingInstrumentCustom ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className="w-3.5 h-3.5" />
+                      )}
+                      Save to Instrument Master
+                    </Button>
+                  )}
+
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedInstrument) {
+                        setNewTemplateName(`${selectedInstrument.name} - ${selectedInstrument.id_code} Variant`);
+                      }
+                      setSaveTemplateModalOpen(true);
+                    }}
+                    className="text-xs h-8 gap-1.5 shadow-xs font-semibold"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Save as New Template Variant
+                  </Button>
+                </div>
+              </div>
+
               {wizardIsCanvas && wizardLayoutBlocks.length > 0 ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between bg-primary/10 border border-primary/20 p-2.5 rounded-lg text-xs">
@@ -2627,6 +3251,175 @@ export default function CalibrationWizard() {
               setRecentCalModalOpen(false);
             }}>
               Proceed with Calibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Modal for Saving New Template Variant ═══ */}
+      <Dialog open={saveTemplateModalOpen} onOpenChange={setSaveTemplateModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Copy className="w-4 h-4 text-primary" />
+              Save as New Template Variant
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Create a new reusable calibration template variant containing all current points, diagram image, document metadata, and environmental parameters without affecting the original master template.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Template Variant Name</Label>
+              <Input
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="e.g., LF Gauge - Part 41311-076CL Variant"
+                className="text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Description (Optional)</Label>
+              <Textarea
+                value={newTemplateDescription}
+                onChange={(e) => setNewTemplateDescription(e.target.value)}
+                placeholder="Specific calibration template variant for gauge drawing number..."
+                className="text-xs h-20"
+              />
+            </div>
+
+            <div className="p-3 bg-muted/40 rounded-lg text-[11px] space-y-1 text-muted-foreground border">
+              <p className="font-semibold text-foreground">Included in this Template Variant:</p>
+              <p>• {calPoints.length} Specification / Calibration Points</p>
+              <p>• Gauge Diagram Image ({wizardDiagramImage ? "Attached" : "None"})</p>
+              <p>• Document &amp; Procedure Metadata ({docNo || procedureNo || "Defined"})</p>
+              <p>• Environmental Defaults ({envTemp ? `${envTemp}°C` : "Default"})</p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSaveTemplateModalOpen(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSaveAsNewTemplate}
+              disabled={savingTemplateVariant || !newTemplateName.trim()}
+              className="text-xs gap-1.5"
+            >
+              {savingTemplateVariant ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  Save Template Variant
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Modal for Full Certificate Preview ═══ */}
+      <Dialog open={showCertPreviewModal} onOpenChange={setShowCertPreviewModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 text-primary">
+                <Eye className="w-5 h-5" />
+                Full Certificate Preview
+              </span>
+              <Badge variant="outline" className="text-xs">
+                {selectedInstrument?.id_code || "Draft"}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Live preview of how the final calibration certificate will look when printed, including layout, diagram image, and calibration points.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 flex justify-center bg-slate-100 dark:bg-slate-900/60 p-4 rounded-xl border min-h-[400px]">
+            <CertificatePreview
+              calibration={{
+                instrument: selectedInstrument as any,
+                certificate_number: nextCertNumber !== "—" ? nextCertNumber : "CERT-PREVIEW-001",
+                ulr_number: ulrEnabled ? (nextUlrNumber !== "—" ? nextUlrNumber : "ULR-PREVIEW-001") : undefined,
+                calibration_date: calDate,
+                certificate_issue_date: certIssueDate || calDate,
+                next_calibration_date: nextCalDate,
+                reference_standards: referenceStandards,
+                reference_standard_name: referenceStandards[0]?.name,
+                reference_standard_id: referenceStandards[0]?.id,
+                reference_standard_traceable_to: referenceStandards[0]?.traceable_to,
+                reference_standard_validity: referenceStandards[0]?.validity,
+                environmental_conditions: {
+                  temperature: envTemp,
+                  humidity: envHumidity,
+                  soaking_time: envSoakingTime || undefined,
+                  soaking_start_time: envSoakingStartTime || undefined,
+                  soaking_end_time: envSoakingEndTime || undefined,
+                },
+                doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+                doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+                doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
+                procedure_reference: procedureReference,
+                procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
+                procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+                procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+                procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+                acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+                acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+                acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+                acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
+                standard_reference: standardReference || remarks,
+                is_canvas_template: wizardIsCanvas,
+                layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
+                calibration_points: calPoints,
+                uncertainty,
+                verdict,
+                remarks,
+                calibrated_by: calibratedBy,
+                calibrated_by_designation: calibratedByDesignation,
+                calibrated_by_signature: calibratedBySignature,
+                reviewed_by: reviewedBy,
+                reviewed_by_designation: reviewedByDesignation,
+                reviewed_by_signature: reviewedBySignature,
+                approved_by: approvedBy,
+                approved_by_designation: approvedByDesignation,
+                approved_by_signature: approvedBySignature,
+                column_order: wizardColumnOrder,
+                hidden_columns: wizardHiddenColumns,
+                custom_columns: wizardCustomColumns as any,
+                standard_columns_config: wizardStandardColumnConfigs,
+                acceptance_criteria: wizardAcceptanceCriteria,
+                diagram_image: wizardDiagramImage || undefined,
+                diagram_image_width: wizardDiagramWidth,
+                diagram_image_height: wizardDiagramHeight,
+                diagram_image_alignment: wizardDiagramAlignment,
+              }}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCertPreviewModal(false)}
+            >
+              Close Preview
             </Button>
           </DialogFooter>
         </DialogContent>

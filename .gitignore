@@ -11,4 +11,9 @@ frontend/.env
 backend/backups/
 backend/uploads/
 *.png
-
+~$*
+*.tmp
+*.xlsx
+frontend/*.pdf
+!frontend/Customer_Requirement_Document_GaugeMaster_Calibration_V4.pdf
+!frontend/Certificate-CAL-CERT-2026-00050.pdf

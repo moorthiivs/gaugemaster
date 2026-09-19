@@ -163,8 +163,8 @@ export function AiTemplateGeneratorModal({
         textOutput = `Sheet: CSV\n${text}\n`;
         sheetCount = 1;
       } else {
-        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx
-        const workbook = XLSX.read(buffer, { type: "array" });
+        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx with formula extraction
+        const workbook = XLSX.read(buffer, { type: "array", cellFormula: true });
         sheetCount = workbook.SheetNames.length;
 
         workbook.SheetNames.forEach((sheetName) => {
@@ -172,11 +172,28 @@ export function AiTemplateGeneratorModal({
           if (!worksheet) return;
           textOutput += `Sheet: ${sheetName}\n`;
           const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+          const extractedFormulas: string[] = [];
+
           rows.forEach((row, rowIdx) => {
             if (row && row.some((cell) => cell !== "" && cell !== null && cell !== undefined)) {
               textOutput += `Row ${rowIdx + 1}: ${row.map((c) => String(c)).join(" | ")}\n`;
             }
           });
+
+          // Extract Excel cell formulas (e.g., cell.f = "D31-C31")
+          Object.keys(worksheet).forEach((cellAddr) => {
+            if (cellAddr.startsWith("!")) return;
+            const cell = worksheet[cellAddr];
+            if (cell && cell.f) {
+              const val = cell.v !== undefined ? cell.v : "";
+              extractedFormulas.push(`Cell ${cellAddr}: =${cell.f} (Evaluated Value: ${val})`);
+            }
+          });
+
+          if (extractedFormulas.length > 0) {
+            textOutput += `\n=== DETECTED EXCEL CELL FORMULAS (${sheetName}) ===\n`;
+            textOutput += extractedFormulas.join("\n") + "\n";
+          }
           textOutput += "\n";
         });
       }
@@ -197,12 +214,25 @@ export function AiTemplateGeneratorModal({
         let textOutput = "";
         workbook.eachSheet((worksheet) => {
           textOutput += `Sheet: ${worksheet.name}\n`;
+          const extractedFormulas: string[] = [];
+
           worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
             const rowValues = Array.isArray(row.values)
               ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
               : "";
             textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+
+            row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+              if (cell.formula) {
+                extractedFormulas.push(`Cell R${rowNumber}C${colNumber}: =${cell.formula} (Value: ${cell.result ?? cell.value})`);
+              }
+            });
           });
+
+          if (extractedFormulas.length > 0) {
+            textOutput += `\n=== DETECTED EXCEL CELL FORMULAS (${worksheet.name}) ===\n`;
+            textOutput += extractedFormulas.join("\n") + "\n";
+          }
           textOutput += "\n";
         });
 

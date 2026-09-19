@@ -1,4 +1,6 @@
-import { CanvasBlock, TableGridBlock, MatrixTableBlock, TextBlock, SplitRowBlock } from "@/types/template";
+import { CanvasBlock, TableGridBlock, MatrixTableBlock, TextBlock, SplitRowBlock, CanvasColumnDef } from "@/types/template";
+import { validateFormulaSyntax, validateFormula } from "./formulaEngine";
+import { translateExcelFormula, explainSemanticFormula } from "./excelFormulaTranslator";
 
 export interface GeneratedTemplateResult {
   name: string;
@@ -44,78 +46,93 @@ CRITICAL EXTRACTION & FIDELITY RULES:
    - Return ONLY valid, pure JSON without any comments, markdown fences, explanations, or extraneous text.
 2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM:
    - Accurately identify the core calibration results tables (e.g. Section 10 "Results" or error test tables).
-   - In accredited certificates, test results may cover multiple serial numbers / units (for example, 3 Current Transformers tested in one report: OC-3271/1/11/11, OC-3271/1/17/11, OC-3271/1/16/11). In this case, create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
-   - If the certificate tests a single instrument, extract its test table(s).
+   - In accredited certificates, test results may cover multiple serial numbers / units. Create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
 3. MULTI-DOMAIN SUPPORT (ELECTRICAL, PRESSURE, TEMPERATURE, METROLOGY, DIMENSIONAL):
-   - Do NOT assume every template is a micrometer or caliper!
-   - For electrical instruments (Current Transformers, Voltage Transformers, Energy Meters, Multimeters): Extract columns such as Set Burden, Load %, Ratio Error %, Allowed Limits %, Expanded Uncertainty %, Coverage Factor (k), Phase Error (Min), Allowed Limits (Min), etc.
-   - For pressure/temperature/torque/dimensional: Extract test points, ascending/descending readings, hysteresis, error, and permissible limits.
-4. EXACT COLUMN DEFINITIONS & DESCRIPTIVE IDs:
+   - Support all domains: dimensional, electrical, pressure, temperature, torque, force, mass, volume.
+4. COLUMN SEMANTIC ROLES & FORMULAS (CRITICAL):
    - Extract ALL table columns verbatim from the document header.
-   - Assign a clean, unique snake_case "id" to each column (e.g. "point_number", "set_burden", "load_percent", "ratio_error", "allowed_limits_ratio", "uncertainty_ratio", "coverage_factor_ratio", "phase_error", "allowed_limits_phase", "uncertainty_phase", "coverage_factor_phase").
-   - Column types:
-     * "nominal": for nominal test points, load %, target values, slip sizes, set points.
-     * "reading": for observed readings, measured errors (ratio error, phase error), actual values.
-     * "tolerance": for allowed limits, permissible tolerances, specification limits.
-     * "text": for burden ratings ("100 % 10VA", "25 % 2.5VA"), reference standards, coverage factor labels, or non-numeric strings.
-     * "trial": for repeat measurement trials ("t1", "t2", etc.).
-     * "formula": for calculated error ("reading - nominal", "avg - nominal") or average ("AVERAGE(t1,t2,t3)").
-     * "status": for Pass/Fail judgements.
-5. STRICT ROW-TO-COLUMN BINDING (CRITICAL):
+   - Assign a clean, unique snake_case "id" to each column (e.g. "point_number", "nominal", "reading", "deviation", "tolerance", "judgement").
+   - Assign a semantic "role" to every column:
+     * "SPECIFICATION" / "NOMINAL": Target size, set point, nominal dimension, slip size.
+     * "TOLERANCE" / "LOWER_LIMIT" / "UPPER_LIMIT": Allowed limits, tolerance spec (e.g. ±0.01, -0.02/-0.01, +0.018).
+     * "READING" / "INPUT": Measured value, observed reading, actual dimension, trial 1/2/3.
+     * "CALCULATED": Derived columns calculated from other columns (e.g. Deviation = reading - nominal, Error = avg - nominal, Average = AVERAGE(t1,t2,t3), Range = MAX(t1,t2) - MIN(t1,t2)).
+     * "JUDGEMENT": Final result/status (PASS/FAIL).
+     * "METADATA" / "DISPLAY_ONLY": Sl.No., parameter description, units, serial numbers.
+   - For CALCULATED and JUDGEMENT columns:
+     * "formula": Explicity state the executable semantic formula using column IDs (e.g. "reading - nominal", "actual >= lower_limit AND actual <= upper_limit", "AVERAGE(t1,t2,t3)"). Do NOT use Excel cell coordinates like D31 or C31 in "formula"!
+     * "sourceFormula": If the document or Excel contained a cell formula (e.g., "=D31-C31"), include it here verbatim.
+     * "dependsOn": Array of column IDs referenced in the formula (e.g. ["reading", "nominal"]).
+     * "formulaSource": "SOURCE_EXCEL" if extracted from Excel cell formula, "AI_INFERRED" if derived from semantics, or "SYSTEM_GENERATED".
+     * "formulaStatus": "VALIDATED" if clear, or "NEEDS_REVIEW" if calculation logic is ambiguous.
+     * "formulaReviewMessage": Explanation if marked NEEDS_REVIEW.
+5. STRICT ROW-TO-COLUMN BINDING:
    - For EVERY row in "rows", create an object containing:
      * "point_number": 1, 2, 3...
-     * A key matching EACH column's "id" with the EXACT numeric or string value from that row in the document!
-     * DO NOT use placeholder zeroes or collapse rows into empty objects.
-     * If the table has 10 rows, output all 10 rows with their complete data!
+     * A key matching EACH column's "id" with the EXACT numeric or string value from that row!
+     * If the document provides specification strings like "13±0.01" or "Ø35.035-0.02/-0.01", store the full specification in description/specification column and parse nominal and tolerances into numeric fields!
 6. REFERENCE STANDARDS & METADATA:
-   - If reference standards used (equipment, validity, traceability) are shown, extract them into a "table_grid" block with all rows containing the actual standard name, valid date, traceability, and parameter.
-   - If environmental conditions (Temp, Humidity, Frequency) or general notes exist, include them in "footerNote" or as a "text_block".
+   - Extract reference standards used and environmental conditions into notes or table_grid blocks.
 
 OUTPUT JSON SCHEMA:
 {
-  "name": "Instrument / Test Name (e.g. 132kV Current Transformer Calibration)",
-  "description": "Concise description of calibration procedure, standard (e.g. IS -2705 Part-II), and accuracy class",
-  "instrumentType": "Identified Instrument Type (e.g. Current Transformer)",
-  "defaultUnit": "Unit of measurement (e.g. %, mm, bar, °C, V, A)",
-  "defaultTolerance": 0.2,
+  "name": "Instrument / Test Name (e.g. LF Gauge Calibration)",
+  "description": "Concise description of calibration procedure and standard",
+  "instrumentType": "Identified Instrument Type (e.g. Plug Gauge / Micrometer)",
+  "defaultUnit": "mm",
+  "defaultTolerance": 0.01,
   "decimalPlaces": 3,
   "blocks": [
     {
       "id": "table_1",
       "type": "table_grid",
-      "title": "Title from Document (e.g. Results: CT Sr. No. OC-3271/1/11/11)",
+      "title": "Calibration Results",
       "width": "100%",
-      "unit": "%",
-      "tolerance": 0.2,
+      "unit": "mm",
+      "tolerance": 0.01,
       "decimal_places": 3,
       "columns": [
-        { "id": "point_number", "label": "Sl.No.", "type": "nominal", "width": "6%" },
-        { "id": "set_burden", "label": "Set Burden VA / %", "type": "text", "width": "12%" },
-        { "id": "load_pct", "label": "Load %", "type": "nominal", "width": "9%" },
-        { "id": "ratio_error", "label": "Ratio Error %", "type": "reading", "width": "10%" },
-        { "id": "allowed_limits_ratio", "label": "Allowed Limits ± %", "type": "tolerance", "width": "10%" },
-        { "id": "uncertainty_ratio", "label": "± Expanded Uncertainty %", "type": "text", "width": "11%" },
-        { "id": "coverage_factor_ratio", "label": "Coverage Factor (k)", "type": "text", "width": "9%" },
-        { "id": "phase_error", "label": "Phase Error (Min)", "type": "reading", "width": "10%" },
-        { "id": "allowed_limits_phase", "label": "Allowed Limits ± (Min)", "type": "tolerance", "width": "11%" },
-        { "id": "uncertainty_phase", "label": "± Expanded Uncertainty (Min)", "type": "text", "width": "12%" }
+        { "id": "point_number", "label": "Sl.No.", "role": "METADATA", "type": "number", "width": "6%" },
+        { "id": "description", "label": "Specification", "role": "SPECIFICATION", "type": "text", "width": "24%" },
+        { "id": "nominal", "label": "Nominal", "role": "NOMINAL", "type": "nominal", "width": "12%" },
+        { "id": "lower_limit", "label": "Lower Limit", "role": "LOWER_LIMIT", "type": "tolerance", "width": "10%" },
+        { "id": "upper_limit", "label": "Upper Limit", "role": "UPPER_LIMIT", "type": "tolerance", "width": "10%" },
+        { "id": "reading", "label": "Actual Dimension", "role": "READING", "type": "reading", "width": "14%" },
+        { 
+          "id": "deviation", 
+          "label": "Deviation", 
+          "role": "CALCULATED", 
+          "type": "formula", 
+          "width": "12%",
+          "formula": "reading - nominal",
+          "dependsOn": ["reading", "nominal"],
+          "formulaSource": "AI_INFERRED",
+          "formulaStatus": "VALIDATED"
+        },
+        { 
+          "id": "judgement", 
+          "label": "Judgement", 
+          "role": "JUDGEMENT", 
+          "type": "status", 
+          "width": "12%",
+          "formula": "reading >= lower_limit AND reading <= upper_limit",
+          "dependsOn": ["reading", "lower_limit", "upper_limit"],
+          "formulaSource": "AI_INFERRED",
+          "formulaStatus": "VALIDATED"
+        }
       ],
       "rows": [
         {
           "point_number": 1,
-          "set_burden": "100 % 10VA",
-          "load_pct": 120,
-          "nominal": 120,
-          "ratio_error": -0.05,
-          "allowed_limits_ratio": 0.20,
-          "uncertainty_ratio": "0.061",
-          "coverage_factor_ratio": "2.00",
-          "phase_error": 3.32,
-          "allowed_limits_phase": 10.00,
-          "uncertainty_phase": "2.63"
+          "description": "Shaft Dist 13±0.01",
+          "nominal": 13.0,
+          "lower_limit": 12.99,
+          "upper_limit": 13.01,
+          "reading": 13.004,
+          "deviation": 0.004,
+          "judgement": "PASS"
         }
-      ],
-      "footerNote": "Expanded uncertainty is based on combined uncertainty with coverage factor k=2 at 95% confidence level."
+      ]
     }
   ]
 }
@@ -312,64 +329,202 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
 
   // Helper to sanitize table_grid block
   const sanitizeTableGrid = (tbl: TableGridBlock, fallbackId: string): TableGridBlock => {
-    // Normalise columns
-    let cols = (tbl.columns || []).map((c, cIdx) => {
-      let colType = c.type;
+    // 1. Initial normalization of columns & detection of roles
+    let cols = (tbl.columns || []).map((c: any, cIdx: number) => {
       let label = c.label || `Column ${cIdx + 1}`;
       let colId = c.id || `col_${cIdx}`;
+      let colType = c.type;
+      let role = c.role;
 
-      // Recognize trial columns "1", "2", "3", "4", "5"
-      if (/^[1-5]$/.test(label.trim())) {
-        colType = "trial";
-        colId = `t${label.trim()}`;
-      } else if (label.toLowerCase() === "avg" || label.toLowerCase() === "average") {
-        colType = "formula";
-        colId = "avg";
-      } else if (label.toLowerCase() === "error") {
-        colType = "formula";
-        colId = "error";
-      } else if (label.toLowerCase().includes("judge") || label.toLowerCase() === "status") {
-        colType = "status";
-        colId = "status";
+      const normLabel = label.toLowerCase().trim();
+      const normId = colId.toLowerCase().trim();
+
+      // Semantic Role & Type Inference if not explicit
+      if (!role) {
+        if (/^(sl\.?\s*no\.?|point|item|parameter|slno)$/.test(normLabel) || normId === "point_number") {
+          role = "METADATA";
+          colType = colType || "nominal";
+        } else if (normLabel.includes("spec") || normLabel.includes("drawing") || normLabel.includes("description") || normId === "description") {
+          role = "SPECIFICATION";
+          colType = colType || "text";
+        } else if (normLabel.includes("nominal") || normLabel.includes("required") || normLabel.includes("master") || normLabel.includes("target") || normId === "nominal") {
+          role = "NOMINAL";
+          colType = colType || "nominal";
+        } else if (normLabel.includes("lower limit") || normLabel.includes("min limit") || normId === "lower_limit") {
+          role = "LOWER_LIMIT";
+          colType = colType || "tolerance";
+        } else if (normLabel.includes("upper limit") || normLabel.includes("max limit") || normId === "upper_limit") {
+          role = "UPPER_LIMIT";
+          colType = colType || "tolerance";
+        } else if (normLabel.includes("tolerance") || normLabel.includes("allowed limit") || normLabel.includes("mpe") || normId === "tolerance") {
+          role = "TOLERANCE";
+          colType = colType || "tolerance";
+        } else if (/^[1-5]$/.test(normLabel)) {
+          role = "READING";
+          colType = "trial";
+          colId = `t${normLabel}`;
+        } else if (normLabel.includes("actual") || normLabel.includes("reading") || normLabel.includes("observed") || normLabel.includes("measured") || normId.includes("reading") || normId.includes("actual")) {
+          role = "READING";
+          colType = colType || "reading";
+        } else if (normLabel.includes("deviat") || normLabel.includes("error") || normLabel.includes("diff") || normLabel.includes("avg") || normLabel.includes("average") || normLabel.includes("mean") || normLabel.includes("range") || normLabel.includes("correct") || normLabel.includes("uncert")) {
+          role = "CALCULATED";
+          colType = "formula";
+        } else if (normLabel.includes("judge") || normLabel.includes("status") || normLabel.includes("result") || normLabel.includes("pass")) {
+          role = "JUDGEMENT";
+          colType = "status";
+        } else {
+          role = "INPUT";
+          colType = colType || "reading";
+        }
       }
+
+      if (c.formula && !colType) colType = "formula";
 
       return {
         ...c,
         id: colId,
         label,
-        type: colType || (c.formula ? "formula" : "reading"),
+        role,
+        type: colType || (role === "CALCULATED" ? "formula" : role === "JUDGEMENT" ? "status" : "reading"),
+        formula: c.formula || "",
+        sourceFormula: c.sourceFormula || undefined,
+        dependsOn: Array.isArray(c.dependsOn) ? c.dependsOn : [],
+        formulaSource: c.formulaSource || (c.sourceFormula ? "SOURCE_EXCEL" : c.formula ? "AI_INFERRED" : undefined),
+        formulaStatus: c.formulaStatus || (c.formula ? "VALIDATED" : undefined),
+        formulaReviewMessage: c.formulaReviewMessage || undefined,
       };
     });
 
-    // Check if table has trials t1..t5 and ensure formula for avg and error
-    const hasTrials = cols.some((c) => c.type === "trial");
-    if (hasTrials) {
-      const trialIds = cols.filter((c) => c.type === "trial").map((c) => c.id);
-      cols = cols.map((c) => {
-        if (c.id === "avg" || c.label.toLowerCase() === "avg") {
-          return {
-            ...c,
-            type: "formula",
-            formula: c.formula || `AVERAGE(${trialIds.join(",")})`,
-          };
+    // 2. Identify key semantic column IDs to bind generic calculations
+    const nominalCol = cols.find((c: any) => c.role === "NOMINAL" || c.id === "nominal") || cols.find((c: any) => c.label.toLowerCase().includes("nominal"));
+    const readingCol = cols.find((c: any) => c.role === "READING" && c.type !== "trial") || cols.find((c: any) => c.label.toLowerCase().includes("actual") || c.label.toLowerCase().includes("reading"));
+    const trialCols = cols.filter((c: any) => c.type === "trial");
+    const lowerLimitCol = cols.find((c: any) => c.role === "LOWER_LIMIT" || c.id === "lower_limit");
+    const upperLimitCol = cols.find((c: any) => c.role === "UPPER_LIMIT" || c.id === "upper_limit");
+    const toleranceCol = cols.find((c: any) => c.role === "TOLERANCE" || c.id === "tolerance");
+    const devCol = cols.find((c: any) => c.label.toLowerCase().includes("deviat") || c.label.toLowerCase().includes("error"));
+
+    const nominalId = nominalCol?.id || "nominal";
+    const readingId = readingCol?.id || "reading";
+    const trialIds = trialCols.map((c: any) => c.id);
+
+    // 3. Populate formulas & dependency lists for CALCULATED and JUDGEMENT columns
+    cols = cols.map((c: any) => {
+      let formula = c.formula || "";
+      let sourceFormula = c.sourceFormula;
+      let dependsOn: string[] = Array.isArray(c.dependsOn) ? [...c.dependsOn] : [];
+      let formulaSource = c.formulaSource;
+      let formulaStatus = c.formulaStatus || "VALIDATED";
+      let formulaReviewMessage = c.formulaReviewMessage;
+      let translationReason = c.translationReason;
+      let aiSuggestedFormula = c.aiSuggestedFormula;
+      let aiReason = c.aiReason;
+      let aiConfidence = c.aiConfidence;
+
+      const normLabel = c.label.toLowerCase().trim();
+      const normId = c.id.toLowerCase().trim();
+
+      // If an Excel formula exists (starts with '=' or contains CHOOSE, ROW, INDEX, cell coordinates)
+      const rawFormulaToCheck = formula || sourceFormula || "";
+      if (rawFormulaToCheck && (rawFormulaToCheck.startsWith("=") || /choose|row\(|index|\b[a-z]+\d+\s*-\s*[a-z]+\d+\b/i.test(rawFormulaToCheck))) {
+        const transResult = translateExcelFormula(rawFormulaToCheck, cols, c);
+        if (transResult.isSupported && transResult.translatedFormula) {
+          if (!sourceFormula) sourceFormula = rawFormulaToCheck;
+          formula = transResult.translatedFormula;
+          formulaSource = "EXCEL_TRANSLATED";
+          translationReason = transResult.reason;
+          aiConfidence = transResult.confidence;
+          if (transResult.dependencies.length > 0) {
+            dependsOn = transResult.dependencies;
+          }
+        } else if (!transResult.isSupported && transResult.translatedFormula) {
+          if (!sourceFormula) sourceFormula = rawFormulaToCheck;
+          aiSuggestedFormula = transResult.translatedFormula;
+          aiReason = transResult.reason;
+          aiConfidence = transResult.confidence;
         }
-        if (c.id === "error" || c.label.toLowerCase() === "error") {
-          return {
-            ...c,
-            type: "formula",
-            formula: c.formula || "avg - nominal",
-          };
+      }
+
+      if (c.role === "CALCULATED" || c.type === "formula") {
+        if (!formula) {
+          if (normLabel.includes("deviat") || normLabel.includes("error") || normLabel.includes("diff")) {
+            formula = `${readingId} - ${nominalId}`;
+            dependsOn = [readingId, nominalId];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else if ((normLabel.includes("avg") || normLabel.includes("average") || normLabel.includes("mean")) && trialIds.length > 0) {
+            formula = `AVERAGE(${trialIds.join(", ")})`;
+            dependsOn = trialIds;
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else if (normLabel.includes("range") && trialIds.length > 0) {
+            formula = `MAX(${trialIds.join(", ")}) - MIN(${trialIds.join(", ")})`;
+            dependsOn = trialIds;
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else {
+            formulaStatus = "NEEDS_REVIEW";
+            formulaReviewMessage = `Calculated column '${c.label}' requires formula specification.`;
+          }
         }
-        if (c.id === "status" || c.type === "status") {
-          return {
-            ...c,
-            type: "status",
-            formula: c.formula || `IF(ABS(error)<=${tbl.tolerance ?? result.defaultTolerance},'PASS','FAIL')`,
-          };
+      } else if (c.role === "JUDGEMENT" || c.type === "status") {
+        if (!formula) {
+          if (lowerLimitCol && upperLimitCol) {
+            formula = `${readingId} >= ${lowerLimitCol.id} AND ${readingId} <= ${upperLimitCol.id}`;
+            dependsOn = [readingId, lowerLimitCol.id, upperLimitCol.id];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else if (toleranceCol && devCol) {
+            formula = `ABS(${devCol.id}) <= ${toleranceCol.id}`;
+            dependsOn = [devCol.id, toleranceCol.id];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else {
+            formula = `${readingId} >= lowerLimit AND ${readingId} <= upperLimit`;
+            dependsOn = [readingId];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          }
         }
-        return c;
-      });
-    }
+      }
+
+      // Validate formula syntax, variables, and dependencies using unified AST validator
+      let formulaConfidence: "HIGH" | "MEDIUM" | "LOW" = c.formulaConfidence || aiConfidence || "HIGH";
+      if (formula) {
+        const valRes = validateFormula(formula, cols, {
+          targetColumnId: c.id,
+          sourceConfidence: formulaConfidence,
+        });
+
+        if (!valRes.valid) {
+          formulaStatus = "NEEDS_REVIEW";
+          formulaReviewMessage = valRes.errors[0] || "Invalid formula syntax";
+          formulaConfidence = "LOW";
+        } else if (valRes.status === "NEEDS_REVIEW") {
+          formulaStatus = "NEEDS_REVIEW";
+          formulaReviewMessage = valRes.warnings[0] || "Formula needs review";
+          formulaConfidence = valRes.confidence;
+        } else {
+          formulaStatus = "VALIDATED";
+          formulaReviewMessage = undefined;
+          formulaConfidence = "HIGH";
+        }
+
+        // Ensure dependsOn is synchronized with real AST dependencies if missing
+        if ((!dependsOn || dependsOn.length === 0) && valRes.dependencies.length > 0) {
+          dependsOn = valRes.dependencies;
+        }
+      }
+
+      return {
+        ...c,
+        formula,
+        sourceFormula,
+        dependsOn,
+        formulaSource: formulaSource || (formula ? "AI_INFERRED" : undefined),
+        formulaStatus: formula ? formulaStatus : undefined,
+        formulaConfidence: formula ? formulaConfidence : undefined,
+        formulaReviewMessage,
+        translationReason,
+        aiSuggestedFormula,
+        aiReason,
+        aiConfidence,
+      };
+    });
 
     // Check for Parallelism table and ensure Corner descriptions
     const isParallelism = (tbl.title || "").toLowerCase().includes("parallelism");
@@ -875,5 +1030,158 @@ Analyze the calibration document, tables, measurement trials, nominal values, to
 
   const textOutput = await executeGeminiRequest(apiKey, requestBody);
   return cleanAndParseJson(textOutput);
+}
+
+export interface AssistantContext {
+  templateName?: string;
+  instrumentType?: string;
+  calibrationType?: string;
+  selectedTableTitle?: string;
+  selectedTableId?: string;
+  selectedColumnId?: string;
+  columns?: CanvasColumnDef[];
+  tablesSummary?: Array<{
+    id: string;
+    title: string;
+    columns: Array<{ id: string; label: string; formula?: string; role?: string }>;
+  }>;
+  formulaErrors?: string[];
+}
+
+export interface AssistantResponse {
+  reply: string;
+  action?: "FIX_FORMULA" | "AUDIT_TABLE" | "FIX_TABLE" | "TEST_BOUNDARIES" | "EXPLAIN_FORMULA" | "NONE";
+  actionPayload?: {
+    tableId?: string;
+    columnId?: string;
+    formula?: string;
+    reason?: string;
+  };
+}
+
+/**
+ * Gaugemaster Template Assistant Copilot
+ * Context-aware intelligent assistant for template editing, formula auditing, and repair.
+ */
+export async function askTemplateAssistant(
+  userQuery: string,
+  context: AssistantContext,
+  apiKeyOverride?: string
+): Promise<AssistantResponse> {
+  const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
+
+  // If no API key is set, provide high-precision deterministic assistant responses
+  if (!apiKey) {
+    const q = userQuery.toLowerCase();
+    if (q.includes("audit") || q.includes("check table") || q.includes("entire table")) {
+      return {
+        reply: `I have analyzed the table '${context.selectedTableTitle || "current table"}'. You can run the full table audit to review all columns, tolerances, and formula dependencies.`,
+        action: "AUDIT_TABLE",
+        actionPayload: { tableId: context.selectedTableId }
+      };
+    }
+    if (q.includes("fix") && (q.includes("formula") || q.includes("choose") || q.includes("deviation"))) {
+      return {
+        reply: "Excel row lookup formulas like CHOOSE(ROW()-k, ...) should be replaced with normalized semantic formulas ('actual_dimension - nominal'). Would you like me to apply this fix?",
+        action: "FIX_FORMULA",
+        actionPayload: {
+          tableId: context.selectedTableId,
+          columnId: context.selectedColumnId || "deviation",
+          formula: "actual_dimension - nominal",
+          reason: "Translates row-based Excel nominal lookup into normalized point metadata."
+        }
+      };
+    }
+    if (q.includes("boundary") || q.includes("test")) {
+      return {
+        reply: "Automated 4-point boundary testing verifies: Lower Limit (PASS), Upper Limit (PASS), Lower-Δ (FAIL), Upper+Δ (FAIL), blank reading ('-'), and numeric zero.",
+        action: "TEST_BOUNDARIES",
+        actionPayload: { tableId: context.selectedTableId, columnId: context.selectedColumnId }
+      };
+    }
+
+    return {
+      reply: `I am the Gaugemaster Template Assistant. I understand your template '${context.templateName || "Calibration Template"}'. You can ask me to audit the table, fix formulas, explain calculations, test tolerance boundaries, or check blank reading handling.`,
+      action: "NONE"
+    };
+  }
+
+  const promptText = `
+You are the "Gaugemaster Template Assistant", a Senior Calibration Software Architect & Metrology Expert.
+The user is working in the Gaugemaster Calibration Template Builder.
+
+CURRENT TEMPLATE CONTEXT:
+- Template Name: ${context.templateName || "Unknown"}
+- Instrument Type: ${context.instrumentType || "Unknown"}
+- Calibration Type: ${context.calibrationType || "Dimensional"}
+- Selected Table: ${context.selectedTableTitle || "None"} (ID: ${context.selectedTableId || ""})
+- Selected Column ID: ${context.selectedColumnId || "None"}
+- Columns: ${JSON.stringify((context.columns || []).map(c => ({ id: c.id, label: c.label, role: c.role, formula: c.formula, sourceFormula: c.sourceFormula })))}
+- Known Errors/Warnings: ${JSON.stringify(context.formulaErrors || [])}
+
+USER MESSAGE:
+"${userQuery}"
+
+CRITICAL RULES:
+1. NEVER output executable JavaScript, HTML, script tags, eval, or Function code.
+2. Formulas must use Gaugemaster canonical DSL: e.g. "actual_dimension - nominal", "IF(AND(actual >= lower_limit, actual <= upper_limit), \\"PASS\\", \\"FAIL\\")", "AVERAGE(t1, t2, t3)".
+3. Return a JSON object with:
+   - "reply": Markdown response explaining the calibration/metrological logic clearly to the user.
+   - "action": One of ["FIX_FORMULA", "AUDIT_TABLE", "FIX_TABLE", "TEST_BOUNDARIES", "EXPLAIN_FORMULA", "NONE"]
+   - "actionPayload": Optional object with tableId, columnId, formula, and reason if proposing a change.
+`;
+
+  try {
+    const requestBody = {
+      contents: [{ parts: [{ text: promptText }] }],
+      generationConfig: {
+        response_mime_type: "application/json",
+        temperature: 0.2
+      }
+    };
+
+    const textOutput = await executeGeminiRequest(apiKey, requestBody);
+    const parsed = JSON.parse(textOutput.trim().replace(/^```json\s*/, "").replace(/```\s*$/, ""));
+    return {
+      reply: parsed.reply || "I have analyzed your request.",
+      action: parsed.action || "NONE",
+      actionPayload: parsed.actionPayload
+    };
+  } catch (err: any) {
+    return {
+      reply: `Template Assistant response: ${err.message || "Unable to contact Gemini."} You can still use the local deterministic audit and formula tools below.`,
+      action: "NONE"
+    };
+  }
+}
+
+/**
+ * Explains a formula's calibration meaning.
+ */
+export async function explainFormulaWithAi(params: {
+  formula: string;
+  columnLabel: string;
+  role?: string;
+  tableColumns?: CanvasColumnDef[];
+  apiKeyOverride?: string;
+}): Promise<string> {
+  const baseExplanation = explainSemanticFormula(params.formula, params.role);
+  const apiKey = params.apiKeyOverride?.trim() || getStoredGeminiApiKey();
+
+  if (!apiKey) {
+    return baseExplanation;
+  }
+
+  try {
+    const prompt = `Explain the metrological meaning of this calibration formula for column "${params.columnLabel}": "${params.formula}". Keep it to 1-2 concise, professional sentences.`;
+    const requestBody = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2 }
+    };
+    const response = await executeGeminiRequest(apiKey, requestBody);
+    return response.trim() || baseExplanation;
+  } catch {
+    return baseExplanation;
+  }
 }
 

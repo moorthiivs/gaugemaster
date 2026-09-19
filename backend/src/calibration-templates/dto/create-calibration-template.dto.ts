@@ -19,8 +19,9 @@ export class CreateCalibrationTemplateDto {
   @IsString()
   instrument_type: string;
 
+  @IsOptional()
   @IsString()
-  calibration_type: string;
+  calibration_type?: string;
 
   @IsOptional()
   @IsString()

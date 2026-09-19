@@ -42,7 +42,35 @@ export type Instrument = {
   is_reference_standard?: boolean;
   companyId?: string;
   certificate_file?: string;
-  custom_parameters?: Record<string, any>;
+  custom_parameters?: {
+    diagram_image?: string;
+    diagram_image_width?: number;
+    diagram_image_height?: number;
+    diagram_image_alignment?: "left" | "center" | "right";
+    specifications?: any[];
+    doc_properties?: {
+      doc_no?: string;
+      doc_date?: string;
+      doc_rev?: string;
+      procedure_no?: string;
+      procedure_name?: string;
+      procedure_date?: string;
+      procedure_rev?: string;
+      procedure_reference?: string;
+      acceptance_criteria_doc_no?: string;
+      acceptance_criteria_date?: string;
+      acceptance_criteria_rev?: string;
+      acceptance_criteria_reference?: string;
+      standard_reference?: string;
+    };
+    environmental_defaults?: {
+      temperature?: string;
+      humidity?: string;
+      soaking_time?: string;
+      soaking_start_time?: string;
+      soaking_end_time?: string;
+    };
+  } & Record<string, any>;
   created_by?: any;
   updated_by?: any;
 };

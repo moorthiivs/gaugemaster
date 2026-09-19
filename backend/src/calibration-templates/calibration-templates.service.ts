@@ -38,6 +38,9 @@ export class CalibrationTemplatesService {
         );
       }
     }
+    if (!dto.calibration_type) {
+      dto.calibration_type = 'dimensional';
+    }
     const template = this.repository.create(dto);
     return this.repository.save(template);
   }

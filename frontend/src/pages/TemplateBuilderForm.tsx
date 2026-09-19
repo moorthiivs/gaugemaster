@@ -22,6 +22,8 @@ import { CanvasTemplateEditor, CANVAS_PRESETS } from "@/components/calibration/C
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { SlidersHorizontal, LayoutGrid } from "lucide-react";
+import { validateTemplatePreSave } from "@/lib/templatePreSaveValidator";
+import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
 
 export default function TemplateBuilderForm() {
   useSEO({
@@ -40,6 +42,7 @@ export default function TemplateBuilderForm() {
   const [isDirty, setIsDirty] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [showCertPreviewModal, setShowCertPreviewModal] = useState(false);
+  const [showPreSaveModal, setShowPreSaveModal] = useState(false);
   const [existingTemplates, setExistingTemplates] = useState<CalibrationTemplate[]>([]);
 
   // Canvas Mode State
@@ -398,7 +401,7 @@ export default function TemplateBuilderForm() {
     (t) => t.id !== templateId && t.name.trim().toLowerCase() === name.trim().toLowerCase()
   );
 
-  const handleSave = async (options?: { navigateOnSave?: boolean }) => {
+  const handleSave = async (options?: { navigateOnSave?: boolean; force?: boolean }) => {
     if (!name.trim()) {
       toast.error("Please enter a Template Name");
       return;
@@ -410,6 +413,15 @@ export default function TemplateBuilderForm() {
     if (!instrumentType.trim()) {
       toast.error("Please enter a Target Instrument Type");
       return;
+    }
+
+    // Pre-save quality & formula audit gate
+    if (isCanvasMode && layoutBlocks.length > 0 && !options?.force) {
+      const preSaveCheck = validateTemplatePreSave(layoutBlocks);
+      if (!preSaveCheck.canSaveProduction) {
+        setShowPreSaveModal(true);
+        return;
+      }
     }
 
     setSaving(true);
@@ -1645,6 +1657,14 @@ export default function TemplateBuilderForm() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Pre-Save Validation Gate Modal */}
+      <PreSaveAuditModal
+        open={showPreSaveModal}
+        onOpenChange={setShowPreSaveModal}
+        blocks={layoutBlocks}
+        onConfirmSave={() => handleSave({ force: true, navigateOnSave: true })}
+      />
     </div>
   );
 }
