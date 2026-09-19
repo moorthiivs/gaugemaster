@@ -65,7 +65,7 @@ export interface CanvasColumnDef {
   id: string;
   name?: string;
   label: string;
-  type: "nominal" | "reading" | "trial" | "formula" | "text" | "status" | "tolerance";
+  type: "nominal" | "reading" | "trial" | "formula" | "text" | "status" | "tolerance" | "number";
   role?: ColumnRole;
   semanticRole?: ColumnSemanticRole;
   dataType?: ColumnDataType;

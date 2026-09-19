@@ -1,5 +1,6 @@
 import { HyperFormula } from "hyperformula";
 import { CalibrationPoint } from "@/types/calibration";
+import type { CalibrationCalculationModel } from "@/types/template";
 
 export interface CustomColumn {
   id: string;
