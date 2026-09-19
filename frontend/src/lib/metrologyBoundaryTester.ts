@@ -156,14 +156,29 @@ export function runMetrologyBoundaryTests(params: {
   const testCases: BoundaryTestCase[] = [];
 
   for (const spec of testSpecs) {
-    const scope = {
+    const scope: Record<string, any> = {
       ...baseScope,
       [readingVarName]: spec.reading,
       actual: spec.reading,
       reading: spec.reading,
       actual_dimension: spec.reading,
       measured: spec.reading,
-      value: spec.reading
+      value: spec.reading,
+      average: spec.reading,
+      avg: spec.reading,
+      mean: spec.reading,
+      actual_1: spec.reading,
+      actual_2: spec.reading,
+      actual_3: spec.reading,
+      reading_1: spec.reading,
+      reading_2: spec.reading,
+      reading_3: spec.reading,
+      trial_1: spec.reading,
+      trial_2: spec.reading,
+      trial_3: spec.reading,
+      t1: spec.reading,
+      t2: spec.reading,
+      t3: spec.reading,
     };
 
     // If reading is numeric, calculate deviation in scope

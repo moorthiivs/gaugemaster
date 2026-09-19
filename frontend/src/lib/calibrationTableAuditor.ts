@@ -400,10 +400,14 @@ export function auditCalibrationTable(table: TableGridBlock): TableAuditReport {
 
       // Check boundary tests for judgement or calculated tolerance columns
       if (role === "JUDGEMENT" || col.type === "status" || col.label.toLowerCase().includes("judgement")) {
-        const sampleNominal = rows[0]?.nominal ?? 35.035;
-        const sampleLower = rows[0]?.customFields?.lowerLimit ?? (sampleNominal - 0.02);
-        const sampleUpper = rows[0]?.customFields?.upperLimit ?? (sampleNominal - 0.01);
+        const sampleNominal = typeof rows[0]?.nominal === "number" ? rows[0].nominal : (parseFloat(String(rows[0]?.nominal ?? 35.035)) || 35.035);
+        const sampleLower = typeof rows[0]?.lower_limit === "number" ? rows[0].lower_limit : (typeof rows[0]?.lowerLimit === "number" ? rows[0].lowerLimit : (rows[0]?.customFields?.lowerLimit ?? (sampleNominal - (table.tolerance ?? 0.02))));
+        const sampleUpper = typeof rows[0]?.upper_limit === "number" ? rows[0].upper_limit : (typeof rows[0]?.upperLimit === "number" ? rows[0].upperLimit : (rows[0]?.customFields?.upperLimit ?? (sampleNominal + (table.tolerance ?? 0.02))));
         const precision = col.decimal_places ?? table.decimal_places ?? 3;
+
+        const effectiveReadingVar = (/average|avg/i.test(formula) || calcModel === "MULTI_TRIAL_ERROR" || calcModel === "MULTI_TRIAL_AVERAGE")
+          ? (avgVar || "average")
+          : readingVar;
 
         boundaryReport = runMetrologyBoundaryTests({
           formula,
@@ -411,7 +415,7 @@ export function auditCalibrationTable(table: TableGridBlock): TableAuditReport {
           lowerLimit: sampleLower,
           upperLimit: sampleUpper,
           decimalPlaces: precision,
-          readingVarName: calcModel === "MULTI_TRIAL_ERROR" || calcModel === "MULTI_TRIAL_AVERAGE" ? avgVar : readingVar
+          readingVarName: effectiveReadingVar
         });
 
         if (boundaryReport.allPassed) {

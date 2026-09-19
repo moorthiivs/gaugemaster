@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   CanvasBlock,
   TableGridBlock,
@@ -344,6 +344,31 @@ export function CanvasTemplateEditor({
     startX: number;
     startWidth: number;
   } | null>(null);
+
+  // Draggable Inspector & Properties panel width (340px - 800px)
+  const [inspectorWidth, setInspectorWidth] = useState<number>(460);
+  const [isResizingInspector, setIsResizingInspector] = useState(false);
+  const inspectorResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    if (!isResizingInspector) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!inspectorResizeRef.current) return;
+      const delta = inspectorResizeRef.current.startX - e.clientX;
+      const newWidth = Math.max(340, Math.min(800, Math.round(inspectorResizeRef.current.startWidth + delta)));
+      setInspectorWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      setIsResizingInspector(false);
+      inspectorResizeRef.current = null;
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizingInspector]);
 
   // Global mouse listeners for real-time column width dragging
   useEffect(() => {
@@ -1339,10 +1364,10 @@ export function CanvasTemplateEditor({
                                         {/* Draggable Resizer Handle */}
                                         <div
                                           onMouseDown={(e) => handleColResizeStart(e, index, col.id, col.width)}
-                                          className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary active:bg-primary z-30 opacity-0 group-hover/th:opacity-100 transition-opacity flex items-center justify-center"
+                                          className="absolute right-0 top-0 bottom-0 w-3.5 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-60 group-hover/th:opacity-100 transition-opacity flex items-center justify-center"
                                           title="Click & drag to resize column width"
                                         >
-                                          <div className="w-[2px] h-4 bg-slate-400 group-hover/th:bg-white rounded" />
+                                          <div className="w-[2px] h-4 bg-slate-400 dark:bg-slate-500 group-hover/th:bg-primary group-hover/th:h-6 transition-all rounded" />
                                         </div>
                                       </th>
                                     );
@@ -1731,7 +1756,22 @@ export function CanvasTemplateEditor({
         {/* COLUMN 3: RIGHT INSPECTOR PANEL (DEFAULT HIDDEN, TOGGLEABLE!) (440-480px) */}
         {/* ========================================================================= */}
         {showInspector && (
-          <div className="w-full lg:w-[440px] xl:w-[480px] lg:min-w-[400px] shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto transition-all">
+          <div
+            style={{ width: `${inspectorWidth}px` }}
+            className="w-full shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto relative"
+          >
+            {/* Draggable Resizer Handle on left border of Inspector */}
+            <div
+              onMouseDown={(e) => {
+                e.preventDefault();
+                setIsResizingInspector(true);
+                inspectorResizeRef.current = { startX: e.clientX, startWidth: inspectorWidth };
+              }}
+              className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary z-40 transition-colors flex items-center justify-center group select-none"
+              title="Drag to adjust Inspector & Properties width"
+            >
+              <div className="w-[3px] h-8 bg-slate-300 dark:bg-slate-700 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors" />
+            </div>
             <div className="flex items-center justify-between border-b pb-2">
               <h4 className="text-xs font-bold flex items-center gap-1.5 text-foreground">
                 <Settings2 className="w-4 h-4 text-primary" />
@@ -2044,61 +2084,93 @@ export function CanvasTemplateEditor({
                         </SelectContent>
                       </Select>
 
-                      {/* Manual Column Width Controls */}
-                      <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                          <span className="flex items-center gap-1">
-                            <SlidersHorizontal className="w-3 h-3 text-primary" />
-                            Column Width
-                          </span>
-                          <span className="font-mono text-xs font-bold text-primary">
-                            {col.width || "Auto"}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <Input
-                            type="number"
-                            min={50}
-                            max={500}
-                            step={5}
-                            placeholder="110"
-                            value={col.width ? parseInt(col.width) || "" : ""}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              const updatedCols = [...activeTableBlock!.columns];
-                              updatedCols[cIdx] = { ...col, width: val ? `${val}px` : undefined };
-                              updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                            }}
-                            className="h-7 text-xs font-mono w-20 bg-background"
-                          />
-                          <span className="text-[10px] text-muted-foreground font-semibold">px</span>
-                          <div className="flex items-center gap-1 ml-auto flex-wrap">
-                            {[
-                              { label: "Compact", w: "70px" },
-                              { label: "Normal", w: "110px" },
-                              { label: "Wide", w: "165px" },
-                              { label: "Auto", w: undefined },
-                            ].map((p) => (
-                              <button
-                                key={p.label}
-                                type="button"
-                                onClick={() => {
+                      {/* Manual Column Width Controls with Draggable Slider */}
+                      {(() => {
+                        const isPercent = typeof col.width === "string" && col.width.endsWith("%");
+                        const parsedPx = col.width
+                          ? (isPercent ? Math.round((parseFloat(col.width) / 100) * 1100) : parseInt(col.width) || 110)
+                          : 110;
+                        return (
+                          <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-2">
+                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                              <span className="flex items-center gap-1">
+                                <SlidersHorizontal className="w-3 h-3 text-primary" />
+                                Column Width
+                              </span>
+                              <span className="font-mono text-xs font-bold text-primary">
+                                {col.width || "Auto"}
+                              </span>
+                            </div>
+
+                            {/* Drag-to-Set Range Slider */}
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9.5px] text-muted-foreground font-mono">50px</span>
+                                <input
+                                  type="range"
+                                  min={50}
+                                  max={400}
+                                  step={5}
+                                  value={parsedPx}
+                                  onChange={(e) => {
+                                    const val = parseInt(e.target.value) || 110;
+                                    const updatedCols = [...activeTableBlock!.columns];
+                                    updatedCols[cIdx] = { ...col, width: `${val}px` };
+                                    updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                                  }}
+                                  className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
+                                  title="Drag slider to set column width"
+                                />
+                                <span className="text-[9.5px] text-muted-foreground font-mono">400px</span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                              <Input
+                                type="number"
+                                min={50}
+                                max={500}
+                                step={5}
+                                placeholder="110"
+                                value={col.width ? parsedPx : ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
                                   const updatedCols = [...activeTableBlock!.columns];
-                                  updatedCols[cIdx] = { ...col, width: p.w };
+                                  updatedCols[cIdx] = { ...col, width: val ? `${val}px` : undefined };
                                   updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
                                 }}
-                                className={`px-2 py-0.5 text-[10px] rounded border font-semibold transition-all ${
-                                  (col.width === p.w || (!col.width && !p.w))
-                                    ? "bg-primary text-primary-foreground border-primary shadow-2xs"
-                                    : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750"
-                                }`}
-                              >
-                                {p.label}
-                              </button>
-                            ))}
+                                className="h-7 text-xs font-mono w-20 bg-background"
+                              />
+                              <span className="text-[10px] text-muted-foreground font-semibold">px</span>
+                              <div className="flex items-center gap-1 ml-auto flex-wrap">
+                                {[
+                                  { label: "Compact", w: "70px" },
+                                  { label: "Normal", w: "110px" },
+                                  { label: "Wide", w: "165px" },
+                                  { label: "Auto", w: undefined },
+                                ].map((p) => (
+                                  <button
+                                    key={p.label}
+                                    type="button"
+                                    onClick={() => {
+                                      const updatedCols = [...activeTableBlock!.columns];
+                                      updatedCols[cIdx] = { ...col, width: p.w };
+                                      updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
+                                    }}
+                                    className={`px-2 py-0.5 text-[10px] rounded border font-semibold transition-all ${
+                                      (col.width === p.w || (!col.width && !p.w))
+                                        ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750"
+                                    }`}
+                                  >
+                                    {p.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      </div>
+                        );
+                      })()}
 
                       {(col.type === "formula" || col.type === "status" || col.role === "CALCULATED" || col.role === "JUDGEMENT" || Boolean(col.formula)) && (
                         <div className="pt-2 border-t border-dashed">

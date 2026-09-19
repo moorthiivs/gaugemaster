@@ -1649,6 +1649,10 @@ export function syncTrialAliases(row: any): void {
       `trial${i}`,
       `reading_${i}`,
       `reading${i}`,
+      `actual_${i}`,
+      `actual${i}`,
+      `observed_${i}`,
+      `observed${i}`,
       `r${i}`,
       `col_${i}`,
       String(i),
@@ -1742,6 +1746,10 @@ export function buildRowContext(
       `trial${i}`,
       `reading_${i}`,
       `reading${i}`,
+      `actual_${i}`,
+      `actual${i}`,
+      `observed_${i}`,
+      `observed${i}`,
       `r${i}`,
       `col_${i}`,
       String(i),
@@ -1759,9 +1767,9 @@ export function buildRowContext(
     }
   }
 
-  // Also check any column explicitly marked as trial
+  // Also check any column explicitly marked as trial or reading
   columns.forEach((col) => {
-    if (col && (col.type === "trial" || /^t\d+$/i.test(col.id))) {
+    if (col && (col.type === "trial" || col.type === "reading" || col.role === "READING" || /^t\d+$/i.test(col.id))) {
       const v = row[col.id];
       if (!isBlankValue(v)) {
         const num = parseFloat(String(v));
@@ -2210,9 +2218,10 @@ export function evaluateCanvasRowFormulas(
 
     const isAvg =
       colId === "avg" ||
+      colId === "average" ||
       colLabel === "avg" ||
       colLabel === "average" ||
-      /^=?AVERAGE\b/i.test(formula);
+      /^=?AVERAGE\s*\(/i.test(formula);
 
     const isError =
       (colId === "error" ||
@@ -2239,10 +2248,7 @@ export function evaluateCanvasRowFormulas(
 
     // A. Blank reading propagation check
     let isBlankInput = false;
-    if (!ctx.hasReading) {
-      if (isError || isStatus) isBlankInput = true;
-      if (isAvg && ctx.trialValues.length === 0) isBlankInput = true;
-    } else if (col.dependsOn && col.dependsOn.length > 0) {
+    if (col.dependsOn && col.dependsOn.length > 0) {
       for (const dep of col.dependsOn) {
         const depClean = dep.trim().toLowerCase();
         // Parameter limits, specifications, and tolerances are metrological boundaries, not user measurement readings
@@ -2273,19 +2279,22 @@ export function evaluateCanvasRowFormulas(
           break;
         }
       }
+    } else if (!ctx.hasReading) {
+      if (isError || isStatus) isBlankInput = true;
+      if (isAvg && ctx.trialValues.length === 0) isBlankInput = true;
     }
 
     if (isBlankInput) {
       newRow[colId] = "-";
-      if (isAvg) {
+      if (isAvg && (colId === "avg" || colId === "average" || colLabel.includes("average"))) {
         newRow.avg = "-";
         newRow.average = "-";
       }
-      if (isError) {
+      if (isError && (colId === "deviation" || colId === "error" || colLabel.includes("deviation") || colLabel.includes("error"))) {
         newRow.deviation = "-";
         newRow.error = undefined;
       }
-      if (isStatus) {
+      if (isStatus && (colRole === "JUDGEMENT" || colType === "status" || colId === "status" || colId === "judgement" || colLabel.includes("judge"))) {
         newRow.status = "-";
         newRow.judgement = "-";
       }
@@ -2303,19 +2312,21 @@ export function evaluateCanvasRowFormulas(
           const rounded = parseFloat(evalRes.numeric.toFixed(colDec));
           finalVal = (rounded >= 0 ? "+" : "") + rounded.toFixed(colDec);
           newRow[colId] = finalVal;
-          newRow.deviation = finalVal;
-          newRow.error = rounded;
+          if (colId === "deviation" || colId === "error" || colLabel.includes("deviation") || colLabel.includes("error")) {
+            newRow.deviation = finalVal;
+            newRow.error = rounded;
+          }
         } else if (isAvg && typeof evalRes.numeric === "number") {
           finalVal = evalRes.numeric.toFixed(colDec);
           newRow[colId] = finalVal;
         } else {
           newRow[colId] = finalVal;
         }
-        if (isAvg) {
+        if (isAvg && (colId === "avg" || colId === "average" || colLabel.includes("avg") || colLabel.includes("average") || /^=?AVERAGE\s*\(/i.test(formula))) {
           newRow.avg = finalVal;
           newRow.average = finalVal;
         }
-        if (isStatus) {
+        if (isStatus && (colRole === "JUDGEMENT" || colType === "status" || colId === "status" || colId === "judgement" || colId === "judgment" || colLabel.includes("judge") || colLabel.includes("status"))) {
           newRow.status = finalVal;
           newRow.judgement = finalVal;
         }

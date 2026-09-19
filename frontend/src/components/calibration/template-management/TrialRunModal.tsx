@@ -450,7 +450,14 @@ export function TrialRunModal({
                                           </td>
                                         );
                                       }
-                                      if (col.type === "reading" || col.type === "trial") {
+                                      if (
+                                        col.type === "reading" ||
+                                        col.type === "trial" ||
+                                        col.role === "READING" ||
+                                        col.role === "MEASUREMENT" ||
+                                        /actual|reading|trial|observed/i.test(col.id) ||
+                                        /actual|reading|trial|observed/i.test(col.label)
+                                      ) {
                                         return (
                                           <td key={rIdx} className="p-1">
                                             <Input
@@ -520,7 +527,14 @@ export function TrialRunModal({
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
                                         return <td key={col.id} className="py-1 px-2 font-bold font-mono">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
                                       }
-                                      if (col.type === "reading" || col.type === "trial") {
+                                      if (
+                                        col.type === "reading" ||
+                                        col.type === "trial" ||
+                                        col.role === "READING" ||
+                                        col.role === "MEASUREMENT" ||
+                                        /actual|reading|trial|observed/i.test(col.id) ||
+                                        /actual|reading|trial|observed/i.test(col.label)
+                                      ) {
                                         return (
                                           <td key={col.id} className="p-1">
                                             <Input

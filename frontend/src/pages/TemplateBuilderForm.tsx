@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
@@ -243,6 +243,31 @@ export default function TemplateBuilderForm() {
       }
     }
   };
+
+  // Draggable properties sidebar width (280px - 600px)
+  const [propertiesWidth, setPropertiesWidth] = useState<number>(360);
+  const [isResizingProps, setIsResizingProps] = useState(false);
+  const propsResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    if (!isResizingProps) return;
+    const onMouseMove = (e: MouseEvent) => {
+      if (!propsResizeRef.current) return;
+      const delta = e.clientX - propsResizeRef.current.startX;
+      const newWidth = Math.max(280, Math.min(600, Math.round(propsResizeRef.current.startWidth + delta)));
+      setPropertiesWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      setIsResizingProps(false);
+      propsResizeRef.current = null;
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [isResizingProps]);
 
   // Global window paste listener when not typing in text fields
   useEffect(() => {
@@ -639,7 +664,11 @@ export default function TemplateBuilderForm() {
       <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-hidden bg-slate-50/50 dark:bg-slate-950/40">
         {/* Left Column: Properties Sidebar */}
         {!isPropertiesCollapsed && (
-          <Card className="w-full lg:w-[350px] xl:w-[380px] shrink-0 h-full flex flex-col overflow-hidden border shadow-xs bg-card">
+          <div
+            style={{ width: `${propertiesWidth}px` }}
+            className="w-full shrink-0 h-full flex relative select-none"
+          >
+            <Card className="w-full h-full flex flex-col overflow-hidden border shadow-xs bg-card">
           <CardHeader className="py-2.5 px-3.5 border-b shrink-0 bg-muted/20 flex flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle className="text-xs font-bold flex items-center gap-1.5">
@@ -1334,7 +1363,20 @@ export default function TemplateBuilderForm() {
               </TabsContent>
             </Tabs>
           </CardContent>
-        </Card>
+          </Card>
+          {/* Draggable Resizer Handle on right border of Properties */}
+          <div
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setIsResizingProps(true);
+              propsResizeRef.current = { startX: e.clientX, startWidth: propertiesWidth };
+            }}
+            className="absolute right-0 top-0 bottom-0 w-3 -mr-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary z-40 transition-colors flex items-center justify-center group select-none"
+            title="Drag to adjust Properties sidebar width"
+          >
+            <div className="w-[3px] h-8 bg-slate-300 dark:bg-slate-700 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors" />
+          </div>
+        </div>
         )}
 
         {/* Right Column: Interactive Canvas & Data Grid (Expands to 100% full width when Properties Collapsed) */}
