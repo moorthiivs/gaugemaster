@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { useSEO } from "@/hooks/useSEO";
@@ -293,6 +295,185 @@ export default function WorkInstructions() {
     }
   };
 
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const paginatedInstructions = useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return instructions.slice(start, start + pageSize);
+  }, [instructions, pageIndex, pageSize]);
+
+  const workInstructionColumns = useMemo<ColumnDef<WorkInstruction>[]>(
+    () => [
+      {
+        id: "sno",
+        header: () => <div className="text-center font-semibold">S.No</div>,
+        cell: ({ row }) => (
+          <div className="text-center font-mono text-xs text-muted-foreground">
+            {(pageIndex - 1) * pageSize + row.index + 1}
+          </div>
+        ),
+        size: 60,
+      },
+      {
+        accessorKey: "title",
+        header: () => <span className="font-semibold min-w-[200px]">Work Instruction / Title</span>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-foreground">
+                {inst.title}
+              </span>
+              {inst.description && (
+                <span className="text-xs text-muted-foreground line-clamp-1">
+                  {inst.description}
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "id_code",
+        header: () => <span className="font-semibold">ID Code / IMTE</span>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          return inst.id_code ? (
+            <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
+              <Hash className="h-3 w-3 text-muted-foreground" />
+              <span>{inst.id_code}</span>
+            </Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: "part_name",
+        header: () => <span className="font-semibold">Part Name</span>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          return inst.part_name ? (
+            <div className="flex items-center gap-1 text-xs font-medium text-foreground">
+              <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span>{inst.part_name}</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: "document_name",
+        header: () => <span className="font-semibold">Document</span>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          const isPdf =
+            inst.file_type?.toLowerCase().includes("pdf") ||
+            inst.document_name?.toLowerCase().endsWith(".pdf");
+
+          return inst.document_name ? (
+            <div className="flex items-center gap-2">
+              {isPdf ? (
+                <FileText className="h-4 w-4 text-red-500 shrink-0" />
+              ) : (
+                <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+              )}
+              <span className="text-xs font-medium truncate max-w-[180px]" title={inst.document_name}>
+                {inst.document_name}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">No document</span>
+          );
+        },
+      },
+      {
+        accessorKey: "version",
+        header: () => <div className="text-center font-semibold">Version</div>,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <Badge variant="secondary" className="font-mono text-[11px] font-bold">
+              v{row.original.version}
+            </Badge>
+          </div>
+        ),
+        size: 80,
+      },
+      {
+        accessorKey: "updated_at",
+        header: () => <span className="font-semibold">Last Updated</span>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          return (
+            <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+              <span className="text-foreground font-medium flex items-center gap-1">
+                <User className="h-3 w-3 text-muted-foreground" />
+                {inst.updated_by_name || inst.created_by_name || "User"}
+              </span>
+              <span className="flex items-center gap-1 text-[11px]">
+                <Clock className="h-2.5 w-2.5" />
+                {inst.updated_at ? format(new Date(inst.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right font-semibold pr-4">Action</div>,
+        cell: ({ row }) => {
+          const inst = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
+                onClick={() => handleView(inst)}
+                disabled={!inst.file_path}
+                title="View Document"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">View</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
+                onClick={() => handleOpenEdit(inst)}
+                title="Edit Instruction"
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Edit</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
+                onClick={() => handleOpenHistory(inst)}
+                title="Revision History"
+              >
+                <History className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
+                onClick={() => setDeletingId(inst.id)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize]
+  );
+
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
@@ -348,167 +529,26 @@ export default function WorkInstructions() {
           </div>
         </CardHeader>
 
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow>
-                <TableHead className="w-14 text-center font-semibold">S.No</TableHead>
-                <TableHead className="font-semibold min-w-[200px]">Work Instruction / Title</TableHead>
-                <TableHead className="font-semibold w-40">ID Code / IMTE</TableHead>
-                <TableHead className="font-semibold min-w-[150px]">Part Name</TableHead>
-                <TableHead className="font-semibold">Document</TableHead>
-                <TableHead className="font-semibold w-24 text-center">Version</TableHead>
-                <TableHead className="font-semibold">Last Updated</TableHead>
-                <TableHead className="text-right font-semibold pr-6">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex items-center justify-center gap-2">
-                      <RefreshCw className="h-4 w-4 animate-spin text-primary" />
-                      <span>Loading work instructions...</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : instructions.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <BookOpen className="h-8 w-8 text-muted-foreground/50" />
-                      <p className="font-medium text-foreground">No work instructions found</p>
-                      <p className="text-xs text-muted-foreground">
-                        Click "Create Work Instruction" to link instructions and SOPs to your gauges.
-                      </p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                instructions.map((inst, index) => {
-                  const isPdf =
-                    inst.file_type?.toLowerCase().includes("pdf") ||
-                    inst.document_name?.toLowerCase().endsWith(".pdf");
-
-                  return (
-                    <TableRow key={inst.id} className="hover:bg-muted/30 transition-colors">
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-foreground">
-                            {inst.title}
-                          </span>
-                          {inst.description && (
-                            <span className="text-xs text-muted-foreground line-clamp-1">
-                              {inst.description}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {inst.id_code ? (
-                          <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
-                            <Hash className="h-3 w-3 text-muted-foreground" />
-                            <span>{inst.id_code}</span>
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {inst.part_name ? (
-                          <div className="flex items-center gap-1 text-xs font-medium text-foreground">
-                            <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span>{inst.part_name}</span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {inst.document_name ? (
-                          <div className="flex items-center gap-2">
-                            {isPdf ? (
-                              <FileText className="h-4 w-4 text-red-500 shrink-0" />
-                            ) : (
-                              <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
-                            )}
-                            <span className="text-xs font-medium truncate max-w-[180px]" title={inst.document_name}>
-                              {inst.document_name}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">No document</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary" className="font-mono text-[11px] font-bold">
-                          v{inst.version}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-foreground font-medium flex items-center gap-1">
-                            <User className="h-3 w-3 text-muted-foreground" />
-                            {inst.updated_by_name || inst.created_by_name || "User"}
-                          </span>
-                          <span className="flex items-center gap-1 text-[11px]">
-                            <Clock className="h-2.5 w-2.5" />
-                            {inst.updated_at ? format(new Date(inst.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right pr-4">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
-                            onClick={() => handleView(inst)}
-                            disabled={!inst.file_path}
-                            title="View Document"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">View</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
-                            onClick={() => handleOpenEdit(inst)}
-                            title="Edit Instruction"
-                          >
-                            <Edit2 className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Edit</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
-                            onClick={() => handleOpenHistory(inst)}
-                            title="Revision History"
-                          >
-                            <History className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
-                            onClick={() => setDeletingId(inst.id)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+        <CardContent className="p-4">
+          <DataTable
+            columns={workInstructionColumns}
+            data={paginatedInstructions}
+            loading={loading}
+            pageIndex={pageIndex}
+            pageSize={pageSize}
+            pageCount={Math.max(1, Math.ceil(instructions.length / pageSize))}
+            totalItems={instructions.length}
+            onPageChange={setPageIndex}
+            onPageSizeChange={(s) => {
+              setPageSize(s);
+              setPageIndex(1);
+            }}
+            hideSearch={true}
+            hideColumnToggle={false}
+            emptyTitle="No work instructions found"
+            emptyDescription='Click "Create Work Instruction" to link instructions and SOPs to your gauges.'
+            emptyIcon={<BookOpen className="h-8 w-8 text-muted-foreground/50" />}
+          />
         </CardContent>
       </Card>
 

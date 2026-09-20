@@ -1639,9 +1639,10 @@ export function isBlankValue(val: any): boolean {
 
 /**
  * Synchronizes trial reading aliases across row data.
- * Supports patterns: t{n}, trial_{n}, trial{n}, reading_{n}, reading{n}, r{n}, col_{n}, and pure digits {n}.
+ * Supports patterns: t{n}, trial_{n}, trial{n}, reading_{n}, reading{n}, actual_{n}, actual{n}, observed_{n}, observed{n}, r{n}, col_{n}, and pure digits {n}.
+ * When columns are provided, any alias matching an explicitly defined table column acts as the authoritative canonical source.
  */
-export function syncTrialAliases(row: any): void {
+export function syncTrialAliases(row: any, columns: any[] = []): void {
   if (!row) return;
   for (let i = 1; i <= 20; i++) {
     const aliases = [
@@ -1658,14 +1659,30 @@ export function syncTrialAliases(row: any): void {
       `col_${i}`,
       String(i),
     ];
+
+    // Priority 1: Check if any alias corresponds to an explicitly defined column in table columns
     let foundVal: any = undefined;
-    for (const a of aliases) {
-      if (!isBlankValue(row[a])) {
-        foundVal = row[a];
-        break;
+    const definedCol = columns.find((c) => c && aliases.includes(c.id));
+    if (definedCol) {
+      foundVal = row[definedCol.id];
+    } else {
+      // Priority 2: Fallback to the first non-blank alias
+      for (const a of aliases) {
+        if (!isBlankValue(row[a])) {
+          foundVal = row[a];
+          break;
+        }
       }
     }
-    if (foundVal !== undefined) {
+
+    if (definedCol && isBlankValue(foundVal)) {
+      // If canonical column is blank, clear all sibling aliases to prevent stale values from persisting
+      for (const a of aliases) {
+        if (a !== definedCol.id) {
+          delete row[a];
+        }
+      }
+    } else if (foundVal !== undefined) {
       for (const a of aliases) {
         row[a] = foundVal;
       }
@@ -1704,13 +1721,33 @@ export function buildRowContext(
   // 1. Structured specification parsing
   const specText =
     row.specificationText ||
+    row.specification ||
+    row.specification_text ||
     row.description ||
     row.gauge_receipt_condition ||
     row.required_dimension ||
     "";
   let nom = typeof row.nominal === "number" ? row.nominal : parseFloat(String(row.nominal));
-  let lowerTol = typeof row.lowerTolerance === "number" ? row.lowerTolerance : undefined;
-  let upperTol = typeof row.upperTolerance === "number" ? row.upperTolerance : undefined;
+  let lowerTol = typeof row.lowerTolerance === "number" ? row.lowerTolerance : (typeof row.lower_tolerance === "number" ? row.lower_tolerance : undefined);
+  let upperTol = typeof row.upperTolerance === "number" ? row.upperTolerance : (typeof row.upper_tolerance === "number" ? row.upper_tolerance : undefined);
+
+  // Check if explicit row limits already exist
+  const existingLowerLimit =
+    typeof row.lower_limit === "number"
+      ? row.lower_limit
+      : typeof row.lowerLimit === "number"
+        ? row.lowerLimit
+        : !isBlankValue(row.lower_limit ?? row.lowerLimit)
+          ? parseFloat(String(row.lower_limit ?? row.lowerLimit))
+          : NaN;
+  const existingUpperLimit =
+    typeof row.upper_limit === "number"
+      ? row.upper_limit
+      : typeof row.upperLimit === "number"
+        ? row.upperLimit
+        : !isBlankValue(row.upper_limit ?? row.upperLimit)
+          ? parseFloat(String(row.upper_limit ?? row.upperLimit))
+          : NaN;
 
   if (specText && (isNaN(nom) || lowerTol === undefined || upperTol === undefined)) {
     const parsed = parseSpecification(specText, row.unit || "mm", tableTol, dec);
@@ -1722,6 +1759,14 @@ export function buildRowContext(
   }
 
   if (isNaN(nom)) nom = 0;
+
+  if (lowerTol === undefined && !isNaN(existingLowerLimit)) {
+    lowerTol = existingLowerLimit - nom;
+  }
+  if (upperTol === undefined && !isNaN(existingUpperLimit)) {
+    upperTol = existingUpperLimit - nom;
+  }
+
   if (lowerTol === undefined) {
     const tolVal =
       typeof row.tolerance === "number"
@@ -1732,8 +1777,8 @@ export function buildRowContext(
   }
   if (upperTol === undefined) upperTol = -lowerTol;
 
-  const lowerLimit = nom + lowerTol;
-  const upperLimit = nom + upperTol;
+  const lowerLimit = !isNaN(existingLowerLimit) ? existingLowerLimit : (nom + lowerTol);
+  const upperLimit = !isNaN(existingUpperLimit) ? existingUpperLimit : (nom + upperTol);
   const tolerance = typeof row.tolerance === "number" ? row.tolerance : tableTol;
 
   // 2. Identify all trial values
@@ -1786,13 +1831,19 @@ export function buildRowContext(
   let actualVal: number | undefined = undefined;
   let rawReading: any = undefined;
 
-  if (!isBlankValue(row.actual_dimension)) {
+  const hasTrialCols = columns.some(
+    (c) => c && (c.type === "trial" || /^t\d+$/i.test(c.id) || /^actual_\d+$/i.test(c.id) || /^reading_\d+$/i.test(c.id))
+  );
+
+  if (hasTrialCols && trialValues.length > 0) {
+    actualVal = trialValues.reduce((a, b) => a + b, 0) / trialValues.length;
+  } else if (!isBlankValue(row.actual_dimension) && (!hasTrialCols || columns.some(c => c.id === "actual_dimension"))) {
     rawReading = row.actual_dimension;
-  } else if (!isBlankValue(row.actual)) {
+  } else if (!isBlankValue(row.actual) && (!hasTrialCols || columns.some(c => c.id === "actual"))) {
     rawReading = row.actual;
-  } else if (!isBlankValue(row.reading)) {
+  } else if (!isBlankValue(row.reading) && (!hasTrialCols || columns.some(c => c.id === "reading"))) {
     rawReading = row.reading;
-  } else if (!isBlankValue(row.observation)) {
+  } else if (!isBlankValue(row.observation) && (!hasTrialCols || columns.some(c => c.id === "observation"))) {
     rawReading = row.observation;
   } else if (!isBlankValue(row.avg) && row.avg !== "-") {
     rawReading = row.avg;
@@ -1846,12 +1897,12 @@ export function buildRowContext(
     Observation: hasReading ? actualVal : "",
     point_number: typeof row.point_number === "number" ? row.point_number : (typeof row.sl_no === "number" ? row.sl_no : 1),
     sl_no: typeof row.sl_no === "number" ? row.sl_no : (typeof row.point_number === "number" ? row.point_number : 1),
-    avg: row.avg ?? (trialValues.length > 0 ? actualVal : ""),
-    average: row.average ?? (trialValues.length > 0 ? actualVal : ""),
-    error: row.error ?? (hasReading ? (actualVal! - nom) : ""),
-    Error: row.error ?? (hasReading ? (actualVal! - nom) : ""),
-    deviation: row.deviation ?? (hasReading ? (actualVal! - nom) : ""),
-    Deviation: row.deviation ?? (hasReading ? (actualVal! - nom) : ""),
+    avg: trialValues.length > 0 ? actualVal : (row.avg ?? ""),
+    average: trialValues.length > 0 ? actualVal : (row.average ?? ""),
+    error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
+    Error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
+    deviation: hasReading ? (actualVal! - nom) : (row.deviation ?? ""),
+    Deviation: hasReading ? (actualVal! - nom) : (row.deviation ?? ""),
     MPE: acceptanceCriteriaValue || tolerance,
     mpe: acceptanceCriteriaValue || tolerance,
     Limit: acceptanceCriteriaValue || tolerance,
@@ -1866,7 +1917,18 @@ export function buildRowContext(
 
   // Register trial variables in valuesMap
   for (let i = 1; i <= 20; i++) {
-    const val = row[`t${i}`] ?? row[String(i)] ?? row[`col_${i}`] ?? row[`trial_${i}`];
+    const val =
+      row[`t${i}`] ??
+      row[String(i)] ??
+      row[`col_${i}`] ??
+      row[`trial_${i}`] ??
+      row[`trial${i}`] ??
+      row[`actual_${i}`] ??
+      row[`actual${i}`] ??
+      row[`reading_${i}`] ??
+      row[`reading${i}`] ??
+      row[`observed_${i}`] ??
+      row[`observed${i}`];
     if (!isBlankValue(val)) {
       const num = parseFloat(String(val));
       const finalVal = isNaN(num) ? val : num;
@@ -1875,12 +1937,22 @@ export function buildRowContext(
       valuesMap[`trial${i}`] = finalVal;
       valuesMap[`reading_${i}`] = finalVal;
       valuesMap[`reading${i}`] = finalVal;
+      valuesMap[`actual_${i}`] = finalVal;
+      valuesMap[`actual${i}`] = finalVal;
+      valuesMap[`observed_${i}`] = finalVal;
+      valuesMap[`observed${i}`] = finalVal;
       valuesMap[`r${i}`] = finalVal;
       valuesMap[`col_${i}`] = finalVal;
       valuesMap[String(i)] = finalVal;
       rawValuesMap[`t${i}`] = val;
       rawValuesMap[`trial_${i}`] = val;
+      rawValuesMap[`trial${i}`] = val;
       rawValuesMap[`reading_${i}`] = val;
+      rawValuesMap[`reading${i}`] = val;
+      rawValuesMap[`actual_${i}`] = val;
+      rawValuesMap[`actual${i}`] = val;
+      rawValuesMap[`observed_${i}`] = val;
+      rawValuesMap[`observed${i}`] = val;
       rawValuesMap[`col_${i}`] = val;
       rawValuesMap[String(i)] = val;
     }
@@ -2180,13 +2252,13 @@ export function evaluateCanvasRowFormulas(
   const dec = tableDec;
 
   // 1. Synchronize trial aliases (supports t{n}, trial_{n}, reading_{n}, r{n}, col_{n})
-  syncTrialAliases(newRow);
+  syncTrialAliases(newRow, columns);
 
   // 2. Build initial row context
   let ctx = buildRowContext(newRow, columns, tableTol, dec);
 
   // 3. Populate structured limits on newRow
-  newRow.nominal = ctx.nom;
+  newRow.nominal = typeof row.nominal === "string" && (row.nominal.endsWith(".") || row.nominal === "-" || row.nominal.includes(".")) ? row.nominal : ctx.nom;
   newRow.nom = ctx.nom;
   newRow.lowerTolerance = ctx.lowerTol;
   newRow.upperTolerance = ctx.upperTol;
@@ -2198,10 +2270,14 @@ export function evaluateCanvasRowFormulas(
   newRow.upper_limit = ctx.upperLimit;
   newRow.min_limit = ctx.lowerLimit;
   newRow.max_limit = ctx.upperLimit;
-  if (ctx.hasReading) {
-    if (newRow.actual_dimension === undefined) newRow.actual_dimension = ctx.actualVal;
-    if (newRow.actual === undefined) newRow.actual = ctx.actualVal;
-    if (newRow.reading === undefined) newRow.reading = ctx.actualVal;
+
+  const hasMultiTrials = columns.some(
+    (c) => c && (c.type === "trial" || /^actual_\d+$/i.test(c.id) || /^t\d+$/i.test(c.id))
+  );
+  if (ctx.hasReading && !hasMultiTrials) {
+    if (newRow.actual_dimension === undefined && columns.some((c) => c.id === "actual_dimension")) newRow.actual_dimension = ctx.actualVal;
+    if (newRow.actual === undefined && columns.some((c) => c.id === "actual")) newRow.actual = ctx.actualVal;
+    if (newRow.reading === undefined && columns.some((c) => c.id === "reading")) newRow.reading = ctx.actualVal;
   }
 
   // 4. Get topologically sorted calculated and status columns
@@ -2222,7 +2298,11 @@ export function evaluateCanvasRowFormulas(
       colId === "average" ||
       colLabel === "avg" ||
       colLabel === "average" ||
-      /^=?AVERAGE\s*\(/i.test(formula);
+      colLabel.includes("avarage") ||
+      colLabel.includes("avg") ||
+      colLabel.includes("average") ||
+      /^=?AVERAGE\s*\(/i.test(formula) ||
+      /\b(actual_1\s*\+\s*actual_2|t1\s*\+\s*t2|reading_1\s*\+\s*reading_2)/i.test(formula);
 
     const isError =
       (colId === "error" ||
@@ -2304,10 +2384,11 @@ export function evaluateCanvasRowFormulas(
 
     // B. Evaluate formula string if present
     let evaluated = false;
+    const hasExplicitColDec = col.decimal_places !== undefined || col.decimalPrecision !== undefined || col.decimalPlaces !== undefined;
+    const colDec = col.decimal_places ?? col.decimalPrecision ?? col.decimalPlaces ?? dec;
     if (formula) {
-      const colDec = col.decimal_places ?? col.decimalPlaces ?? dec;
       const evalRes = evaluateFormulaExpression(formula, ctx, colDec);
-      if (evalRes.success) {
+      if (evalRes.success && (!isAvg || (typeof evalRes.numeric === "number" && evalRes.formatted !== "-"))) {
         let finalVal = evalRes.formatted;
         if (isError && typeof evalRes.numeric === "number") {
           const rounded = parseFloat(evalRes.numeric.toFixed(colDec));
@@ -2319,6 +2400,9 @@ export function evaluateCanvasRowFormulas(
           }
         } else if (isAvg && typeof evalRes.numeric === "number") {
           finalVal = evalRes.numeric.toFixed(colDec);
+          newRow[colId] = finalVal;
+        } else if (hasExplicitColDec && typeof evalRes.numeric === "number") {
+          finalVal = colDec === 0 ? String(Math.round(evalRes.numeric)) : evalRes.numeric.toFixed(colDec);
           newRow[colId] = finalVal;
         } else {
           newRow[colId] = finalVal;
@@ -2340,16 +2424,18 @@ export function evaluateCanvasRowFormulas(
       if (isAvg) {
         if (ctx.trialValues.length > 0) {
           const sum = ctx.trialValues.reduce((a, b) => a + b, 0);
-          const avgVal = parseFloat((sum / ctx.trialValues.length).toFixed(dec));
-          const formatted = avgVal.toFixed(dec);
+          const avgVal = parseFloat((sum / ctx.trialValues.length).toFixed(colDec));
+          const formatted = avgVal.toFixed(colDec);
           newRow[colId] = formatted;
           newRow.avg = formatted;
           newRow.average = formatted;
+          evaluated = true;
         } else if (ctx.actualVal !== undefined) {
-          const formatted = ctx.actualVal.toFixed(dec);
+          const formatted = ctx.actualVal.toFixed(colDec);
           newRow[colId] = formatted;
           newRow.avg = formatted;
           newRow.average = formatted;
+          evaluated = true;
         } else {
           newRow[colId] = "-";
           newRow.avg = "-";
@@ -2363,8 +2449,8 @@ export function evaluateCanvasRowFormulas(
             : undefined);
         if (reading !== undefined) {
           const dev = reading - ctx.nom;
-          const roundedDev = parseFloat(dev.toFixed(dec));
-          const formatted = (roundedDev >= 0 ? "+" : "") + roundedDev.toFixed(dec);
+          const roundedDev = parseFloat(dev.toFixed(colDec));
+          const formatted = (roundedDev >= 0 ? "+" : "") + roundedDev.toFixed(colDec);
           newRow[colId] = formatted;
           newRow.deviation = formatted;
           newRow.error = roundedDev;

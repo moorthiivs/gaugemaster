@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
 import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
@@ -363,6 +365,305 @@ export default function Calibration() {
     }
   };
 
+  const recentColumns = useMemo<ColumnDef<CalibrationRecord>[]>(
+    () => [
+      {
+        accessorKey: "certificate_number",
+        header: "Certificate No",
+        cell: ({ row }) => (
+          <span className="font-semibold text-primary tabular-nums">
+            {row.original.certificate_number || row.original.id}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "instrument",
+        header: "Instrument",
+        cell: ({ row }) => {
+          const inst = row.original.instrument;
+          return (
+            <div>
+              <p className="text-[13px] font-semibold text-foreground leading-tight">
+                {inst?.name || "-"}
+              </p>
+              <p className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+                {inst?.id_code || ""}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "calibration_type",
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary"
+          >
+            {row.original.calibration_type || "-"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "calibration_date",
+        header: "Date",
+        cell: ({ row }) => (
+          <span className="text-[13px] whitespace-nowrap font-medium text-muted-foreground tabular-nums">
+            {fmtDate(row.original.calibration_date)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "verdict",
+        header: "Verdict",
+        cell: ({ row }) => <VerdictBadge verdict={row.original.verdict} size="sm" />,
+      },
+      {
+        accessorKey: "ulr_number",
+        header: "ULR",
+        cell: ({ row }) => (
+          <span className="text-[13px] font-medium text-slate-600 tabular-nums">
+            {row.original.ulr_number || "-"}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)
+                }
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
+                title="View Calibration History"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                View
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenAuditLogs(cal)}
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold text-slate-700 hover:bg-slate-100"
+                title="View Audit Trail"
+              >
+                <History className="w-3.5 h-3.5 text-slate-600" />
+                Audit
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
+                  {cal.certificate_generated ? (
+                    <DropdownMenuItem
+                      onClick={() => handleDownload(cal)}
+                      className="gap-2 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-600" />
+                      Download PDF
+                    </DropdownMenuItem>
+                  ) : (
+                    <DropdownMenuItem disabled className="gap-2 text-muted-foreground text-[11px]">
+                      <FileText className="w-3.5 h-3.5" />
+                      No Certificate
+                    </DropdownMenuItem>
+                  )}
+                  {canAccess("calibrations", "edit") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700"
+                    >
+                      <Edit className="w-3.5 h-3.5 text-amber-600" />
+                      Edit Calibration
+                    </DropdownMenuItem>
+                  )}
+                  {canAccess("calibrations", "delete") && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setCalibrationToDelete(cal);
+                        setDeleteModalOpen(true);
+                      }}
+                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      Delete Record
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [navigate, canAccess]
+  );
+
+  const pendingColumns = useMemo<ColumnDef<CalibrationRecord>[]>(
+    () => [
+      {
+        accessorKey: "certificate_number",
+        header: "Certificate No",
+        cell: ({ row }) => (
+          <span className="font-semibold text-primary tabular-nums">
+            {row.original.certificate_number || row.original.id}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "instrument",
+        header: "Instrument",
+        cell: ({ row }) => {
+          const inst = row.original.instrument;
+          return (
+            <div>
+              <p className="text-[13px] font-semibold text-foreground leading-tight">
+                {inst?.name || "-"}
+              </p>
+              <p className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+                {inst?.id_code || ""}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "calibration_type",
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary"
+          >
+            {row.original.calibration_type || "-"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "calibration_date",
+        header: "Calibration Date",
+        cell: ({ row }) => (
+          <span className="text-[13px] whitespace-nowrap font-medium text-muted-foreground tabular-nums">
+            {fmtDate(row.original.calibration_date)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "verdict",
+        header: "Verdict",
+        cell: ({ row }) => <VerdictBadge verdict={row.original.verdict} size="sm" />,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: () => (
+          <Badge
+            variant="outline"
+            className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center px-2 py-0.5"
+          >
+            Pending Generation
+          </Badge>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              <Button
+                size="sm"
+                onClick={() => handleGenerateCertificate(cal)}
+                disabled={generatingId === cal.id}
+                className="gap-1.5 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
+                title="Generate and Download Official Certificate PDF"
+              >
+                {generatingId === cal.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
+                Generate Certificate
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)
+                }
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
+                title="View Calibration History"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                View
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
+                  <DropdownMenuItem onClick={() => handleOpenAuditLogs(cal)} className="gap-2 cursor-pointer">
+                    <History className="w-3.5 h-3.5 text-slate-600" />
+                    Audit Trail
+                  </DropdownMenuItem>
+                  {canAccess("calibrations", "edit") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700"
+                    >
+                      <Edit className="w-3.5 h-3.5 text-amber-600" />
+                      Edit Calibration
+                    </DropdownMenuItem>
+                  )}
+                  {canAccess("calibrations", "delete") && (
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setCalibrationToDelete(cal);
+                        setDeleteModalOpen(true);
+                      }}
+                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      Delete Record
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [navigate, canAccess, generatingId]
+  );
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -658,381 +959,47 @@ export default function Calibration() {
           </CardHeader>
           <CardContent className="pt-0">
             <TabsContent value="recent" className="mt-0">
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />
-                ))}
-              </div>
-            ) : calibrations.length > 0 ? (
-              <>
-                <div className="overflow-x-auto border rounded-xl shadow-sm">
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow className="hover:bg-transparent border-b">
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Certificate No</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Date</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Verdict</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">ULR</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {calibrations.map((cal) => (
-                        <TableRow key={cal.id} className="hover:bg-muted/20 transition-colors">
-                          <TableCell className="font-mono text-[13px] font-bold text-primary px-4 py-3">{cal.certificate_number}</TableCell>
-                          <TableCell className="px-4 py-3">
-                            <div>
-                              <p className="text-[13px] font-semibold text-foreground leading-tight">{cal.instrument?.name || "-"}</p>
-                              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{cal.instrument?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
-                              {cal.calibration_type || "-"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell className="px-4 py-3"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="text-[13px] font-mono font-medium text-slate-600 px-4 py-3">{cal.ulr_number || "-"}</TableCell>
-                          <TableCell className="text-right px-4 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Default Visible Button 1: View */}
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)} 
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
-                                title="View Calibration History"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View
-                              </Button>
+              <DataTable
+                columns={recentColumns}
+                data={calibrations}
+                loading={loading}
+                pageCount={Math.ceil(total / pageSize) || 1}
+                pageIndex={page}
+                pageSize={pageSize}
+                totalItems={total}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                hideSearch={true}
+                hideColumnToggle={false}
+                emptyTitle="No calibrations found"
+                emptyDescription="We couldn't find any calibration records matching your criteria."
+                emptyAction={
+                  <Button onClick={() => navigate("/calibration/new")} className="gap-2">
+                    <PlusCircle className="w-4 h-4" />
+                    Start First Calibration
+                  </Button>
+                }
+              />
+            </TabsContent>
 
-                              {/* Default Visible Button 2: Audit */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleOpenAuditLogs(cal)}
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold text-slate-700 hover:bg-slate-100"
-                                title="View Audit Trail"
-                              >
-                                <History className="w-3.5 h-3.5 text-slate-600" />
-                                Audit
-                              </Button>
-
-                              {/* Dropdown Menu for More Options (PDF, Edit, Delete) */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                                    <MoreVertical className="w-4 h-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
-                                  {cal.certificate_generated ? (
-                                    <DropdownMenuItem onClick={() => handleDownload(cal)} className="gap-2 cursor-pointer">
-                                      <Download className="w-3.5 h-3.5 text-emerald-600" />
-                                      Download PDF
-                                    </DropdownMenuItem>
-                                  ) : (
-                                    <DropdownMenuItem disabled className="gap-2 text-muted-foreground text-[11px]">
-                                      <FileText className="w-3.5 h-3.5" />
-                                      No Certificate
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "edit") && (
-                                    <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
-                                      <Edit className="w-3.5 h-3.5 text-amber-600" />
-                                      Edit Calibration
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "delete") && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        setCalibrationToDelete(cal);
-                                        setDeleteModalOpen(true);
-                                      }}
-                                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                      Delete Record
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Enhanced Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
-                  <div className="flex items-center gap-3">
-                    <span className="text-muted-foreground">
-                      Showing <strong>{total === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, total)}</strong> of <strong>{total}</strong> calibrations
-                    </span>
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <span className="text-muted-foreground">Per page:</span>
-                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
-                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      className="h-7 text-xs"
-                    >
-                      Previous
-                    </Button>
-                    {Array.from({ length: Math.ceil(total / pageSize) || 1 }).map((_, idx) => {
-                      const pNum = idx + 1;
-                      const totalPages = Math.ceil(total / pageSize) || 1;
-                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
-                        return (
-                          <Button
-                            key={pNum}
-                            variant={page === pNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setPage(pNum)}
-                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
-                          >
-                            {pNum}
-                          </Button>
-                        );
-                      }
-                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
-                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
-                      return null;
-                    })}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page * pageSize >= total}
-                      onClick={() => setPage((p) => p + 1)}
-                      className="h-7 text-xs"
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-12">
-                <FileText className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">No calibrations found</p>
-                <Button onClick={() => navigate("/calibration/new")} className="mt-4 gap-2">
-                  <PlusCircle className="w-4 h-4" />
-                  Start First Calibration
-                </Button>
-              </div>
-            )}
-          </TabsContent>
-
-          {/* PENDING CERTIFICATES TAB */}
-          <TabsContent value="pending" className="mt-0">
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />
-                ))}
-              </div>
-            ) : calibrations.length > 0 ? (
-              <>
-                <div className="overflow-x-auto border rounded-xl shadow-sm">
-                  <Table>
-                    <TableHeader className="bg-amber-50/50 dark:bg-amber-950/20 border-b border-amber-200/40">
-                      <TableRow className="hover:bg-transparent border-b">
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Certificate No</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Calibration Date</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Verdict</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Status</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {calibrations.map((cal) => (
-                        <TableRow key={cal.id} className="hover:bg-amber-50/20 dark:hover:bg-amber-950/10 transition-colors">
-                          <TableCell className="font-mono text-[13px] font-bold text-primary px-4 py-3">{cal.certificate_number || cal.id}</TableCell>
-                          <TableCell className="px-4 py-3">
-                            <div>
-                              <p className="text-[13px] font-semibold text-foreground leading-tight">{cal.instrument?.name || "-"}</p>
-                              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{cal.instrument?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
-                              {cal.calibration_type || "-"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="px-4 py-3 whitespace-nowrap">
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center px-2 py-0.5">
-                              Pending Generation
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right px-4 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Primary Generate Button */}
-                              <Button
-                                size="sm"
-                                onClick={() => handleGenerateCertificate(cal)}
-                                disabled={generatingId === cal.id}
-                                className="gap-1.5 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
-                                title="Generate and Download Official Certificate PDF"
-                              >
-                                {generatingId === cal.id ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <FileText className="w-3.5 h-3.5" />
-                                )}
-                                Generate Certificate
-                              </Button>
-
-                              {/* View Button */}
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)} 
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
-                                title="View Calibration History"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View
-                              </Button>
-
-                              {/* More Options Dropdown */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                                    <MoreVertical className="w-4 h-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
-                                  <DropdownMenuItem onClick={() => handleOpenAuditLogs(cal)} className="gap-2 cursor-pointer">
-                                    <History className="w-3.5 h-3.5 text-slate-600" />
-                                    Audit Trail
-                                  </DropdownMenuItem>
-                                  {canAccess("calibrations", "edit") && (
-                                    <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
-                                      <Edit className="w-3.5 h-3.5 text-amber-600" />
-                                      Edit Calibration
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "delete") && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        setCalibrationToDelete(cal);
-                                        setDeleteModalOpen(true);
-                                      }}
-                                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                      Delete Record
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Enhanced Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
-                  <div className="flex items-center gap-3">
-                    <span className="text-muted-foreground">
-                      Showing <strong>{total === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, total)}</strong> of <strong>{total}</strong> pending certificates
-                    </span>
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <span className="text-muted-foreground">Per page:</span>
-                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
-                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      className="h-7 text-xs"
-                    >
-                      Previous
-                    </Button>
-                    {Array.from({ length: Math.ceil(total / pageSize) || 1 }).map((_, idx) => {
-                      const pNum = idx + 1;
-                      const totalPages = Math.ceil(total / pageSize) || 1;
-                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
-                        return (
-                          <Button
-                            key={pNum}
-                            variant={page === pNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setPage(pNum)}
-                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
-                          >
-                            {pNum}
-                          </Button>
-                        );
-                      }
-                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
-                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
-                      return null;
-                    })}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page * pageSize >= total}
-                      onClick={() => setPage((p) => p + 1)}
-                      className="h-7 text-xs"
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-12 flex flex-col items-center">
-                <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
-                <p className="text-base font-bold text-foreground">All Certificates Generated!</p>
-                <p className="text-xs text-muted-foreground">There are no completed calibrations waiting for certificate generation.</p>
-              </div>
-            )}
-          </TabsContent>
+            <TabsContent value="pending" className="mt-0">
+              <DataTable
+                columns={pendingColumns}
+                data={calibrations}
+                loading={loading}
+                pageCount={Math.ceil(total / pageSize) || 1}
+                pageIndex={page}
+                pageSize={pageSize}
+                totalItems={total}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                hideSearch={true}
+                hideColumnToggle={false}
+                emptyTitle="All Certificates Generated!"
+                emptyDescription="There are no completed calibrations waiting for certificate generation."
+                emptyIcon={CheckCircle2}
+              />
+            </TabsContent>
 
           {/* OVERDUE INSTRUMENTS TAB */}
           <TabsContent value="overdue" className="mt-4">

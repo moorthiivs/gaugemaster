@@ -48,6 +48,7 @@ import {
 import { extractDocxTextAndTables } from "@/lib/docxExtractor";
 import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
+import { AiConnectionBadge } from "./AiConnectionBadge";
 
 interface AiTemplateGeneratorModalProps {
   open: boolean;
@@ -248,15 +249,8 @@ export function AiTemplateGeneratorModal({
     }
   };
 
-  // Generate Template via Gemini
+  // Generate Template via Gemini Gateway
   const handleGenerate = async () => {
-    const keyToUse = apiKey.trim() || getStoredGeminiApiKey();
-    if (!keyToUse) {
-      toast.error("Please enter a Google Gemini API Key first.");
-      setShowKeyInput(true);
-      return;
-    }
-
     if (activeTab === "pdf" && !pdfFile) {
       toast.error("Please upload a PDF calibration certificate first.");
       return;
@@ -281,6 +275,7 @@ export function AiTemplateGeneratorModal({
     setExtractedResult(null);
 
     try {
+      const keyToUse = apiKey?.trim() || undefined;
       let result: GeneratedTemplateResult;
       if (activeTab === "pdf" && pdfFile) {
         result = await generateTemplateFromPdf(pdfFile, customInstructions, keyToUse);
@@ -529,7 +524,7 @@ export function AiTemplateGeneratorModal({
                 <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-white">
                   AI Smart Template Generator
                   <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                    Gemini 2.0 / 1.5 Flash
+                    Gemini 3.5 / 3.8 Flash
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-300">
@@ -538,15 +533,18 @@ export function AiTemplateGeneratorModal({
               </div>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowKeyInput(!showKeyInput)}
-              className="text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 h-8 gap-1.5"
-            >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              {apiKey ? "API Key Configured" : "Enter API Key"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <AiConnectionBadge compact />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowKeyInput(!showKeyInput)}
+                className="text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 h-8 gap-1.5 cursor-pointer"
+              >
+                <Key className="w-3.5 h-3.5 text-amber-400" />
+                {apiKey ? "API Key Override" : "API Key Override"}
+              </Button>
+            </div>
           </div>
 
           {/* API Key Configuration Dropdown */}

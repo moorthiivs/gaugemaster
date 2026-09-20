@@ -50,6 +50,8 @@ import {
   Bot,
   ShieldCheck,
   Wand2,
+  Grid2X2,
+  SeparatorHorizontal,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
@@ -59,6 +61,7 @@ import { TableAuditModal } from "@/components/calibration/template-management/Ta
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
 import { GaugemasterTemplateAssistant } from "@/components/calibration/template-management/GaugemasterTemplateAssistant";
 import { GeneratedTemplateResult } from "@/lib/geminiService";
+import { evaluateCanvasRowFormulas, buildRowContext, testEvaluateFormula } from "@/lib/formulaEngine";
 import {
   getEffectiveTableOrientation,
   getTableOrientationRecommendation,
@@ -68,11 +71,20 @@ import { ColumnFormulaInspector } from "@/components/calibration/template-manage
 export { CANVAS_PRESETS };
 export type { CanvasTemplatePreset };
 
-interface CanvasTemplateEditorProps {
+export interface CanvasEditorActions {
+  openTrialRun: () => void;
+  openTableAudit: () => void;
+  openAiGenerator: () => void;
+  toggleInspector: () => void;
+  toggleAssistant: () => void;
+}
+
+export interface CanvasTemplateEditorProps {
   blocks: CanvasBlock[];
   onChange: (blocks: CanvasBlock[]) => void;
   onSelectPreset?: (preset: CanvasTemplatePreset) => void;
   onApplyGeneratedTemplate?: (template: GeneratedTemplateResult) => void;
+  onRegisterActions?: (actions: CanvasEditorActions) => void;
   templateName?: string;
   diagramImage?: string | null;
   diagramImageWidth?: number;
@@ -101,6 +113,7 @@ export function CanvasTemplateEditor({
   onChange,
   onSelectPreset,
   onApplyGeneratedTemplate,
+  onRegisterActions,
   templateName,
   diagramImage,
   diagramImageWidth,
@@ -130,10 +143,62 @@ export function CanvasTemplateEditor({
   const [showInspector, setShowInspector] = useState(false);
   const [showTableAuditModal, setShowTableAuditModal] = useState(false);
   const [auditTargetTable, setAuditTargetTable] = useState<TableGridBlock | null>(null);
-  const [showAssistant, setShowAssistant] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(true);
+  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
   const [showPreSaveModal, setShowPreSaveModal] = useState(false);
-  const [isBannerCollapsed, setIsBannerCollapsed] = useState(false);
+  const [isBannerCollapsed, setIsBannerCollapsed] = useState(true);
   const [isToolboxCollapsed, setIsToolboxCollapsed] = useState(false);
+  const [isAssistantDocked, setIsAssistantDocked] = useState(true);
+
+  // Find currently selected block
+  const selectedBlockIndex = blocks.findIndex((b) => b.id === selectedBlockId);
+  const selectedBlock = selectedBlockIndex !== -1 ? blocks[selectedBlockIndex] : null;
+
+  // Selected Table inside Split Row or Root Table
+  let activeTableBlock: TableGridBlock | null = null;
+  if (selectedBlock?.type === "table_grid") {
+    activeTableBlock = selectedBlock as TableGridBlock;
+  } else if (selectedBlock?.type === "split_row") {
+    const split = selectedBlock as SplitRowBlock;
+    activeTableBlock = (split.children.find((c) => c.id === selectedChildTableId && c.type === "table_grid") as TableGridBlock) ||
+      (split.children.find((c) => c.type === "table_grid") as TableGridBlock) || null;
+  }
+  if (!activeTableBlock) {
+    for (const blk of blocks) {
+      if (blk.type === "table_grid") {
+        activeTableBlock = blk as TableGridBlock;
+        break;
+      }
+      if (blk.type === "split_row" && blk.children) {
+        const first = blk.children.find((c) => c.type === "table_grid");
+        if (first) {
+          activeTableBlock = first as TableGridBlock;
+          break;
+        }
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (onRegisterActions) {
+      onRegisterActions({
+        openTrialRun: () => setShowTrialRun(true),
+        openTableAudit: () => {
+          if (activeTableBlock) {
+            handleOpenTableAudit(activeTableBlock);
+          } else {
+            setShowTableAuditModal(true);
+          }
+        },
+        openAiGenerator: () => setShowAiModal(true),
+        toggleInspector: () => setShowInspector((prev) => !prev),
+        toggleAssistant: () => {
+          setShowAssistant((prev) => !prev);
+          setIsAssistantDocked(true);
+        },
+      });
+    }
+  }, [onRegisterActions, activeTableBlock]);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     onChange(newBlocks);
@@ -162,6 +227,160 @@ export function CanvasTemplateEditor({
     });
     markChanged(newBlocks);
     toast.success("AI audited formulas applied to table!");
+  };
+
+  const handleRestoreTableState = (
+    tableId: string,
+    previousState: {
+      columns?: CanvasColumnDef[];
+      tableSettings?: Partial<TableGridBlock>;
+      rows?: CanvasRowData[];
+    }
+  ) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return {
+          ...b,
+          ...(previousState.columns ? { columns: previousState.columns } : {}),
+          ...(previousState.tableSettings || {}),
+          ...(previousState.rows ? { rows: previousState.rows } : {}),
+        };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return {
+              ...c,
+              ...(previousState.columns ? { columns: previousState.columns } : {}),
+              ...(previousState.tableSettings || {}),
+              ...(previousState.rows ? { rows: previousState.rows } : {}),
+            };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+  };
+
+  const handleUpdateTableBlock = (tableId: string, updatedFields: Partial<TableGridBlock>) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return { ...b, ...updatedFields };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return { ...c, ...updatedFields };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+    toast.success("Updated table properties successfully");
+  };
+
+  const handleAddTableColumn = (tableId: string, newColumn: CanvasColumnDef) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return { ...b, columns: [...b.columns, newColumn] };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return { ...c, columns: [...c.columns, newColumn] };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+    toast.success(`Added column "${newColumn.label}" successfully`);
+  };
+
+  const handleDeleteTableColumn = (tableId: string, columnId: string) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return { ...b, columns: b.columns.filter((c) => c.id !== columnId) };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return { ...c, columns: c.columns.filter((col) => col.id !== columnId) };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+    toast.success("Removed column from table");
+  };
+
+  const handleAddTableBlock = (tableData?: Partial<TableGridBlock>) => {
+    const newBlock: TableGridBlock = {
+      id: tableData?.id || `table_${Date.now()}`,
+      type: "table_grid",
+      title: tableData?.title || "New Calibration Table",
+      width: tableData?.width || "100%",
+      unit: tableData?.unit || defaultUnit,
+      tolerance: tableData?.tolerance || defaultTolerance,
+      decimal_places: tableData?.decimal_places ?? decimalPlaces,
+      columns: tableData?.columns || [
+        { id: "point_number", label: "Sl.No.", type: "nominal", width: "8%" },
+        { id: "nominal", label: "Std. Spec", type: "nominal", width: "22%" },
+        { id: "reading", label: "Actual Reading", type: "reading", width: "25%" },
+        { id: "deviation", label: "Deviation", type: "formula", formula: "reading - nominal", width: "25%" },
+        { id: "status", label: "Judgement", type: "status", formula: "IF(ABS(deviation)<=tolerance,'PASS','FAIL')", width: "20%" },
+      ],
+      rows: tableData?.rows || [
+        { point_number: 1, nominal: 10.0, unit: defaultUnit },
+        { point_number: 2, nominal: 20.0, unit: defaultUnit },
+        { point_number: 3, nominal: 50.0, unit: defaultUnit },
+      ],
+    };
+    markChanged([...blocks, newBlock]);
+    setSelectedBlockId(newBlock.id);
+    setSelectedChildTableId(null);
+    toast.success(`Created table "${newBlock.title}"`);
+    return newBlock;
+  };
+
+  const handleDeleteTableBlock = (tableId: string) => {
+    const newBlocks = blocks.filter((b) => b.id !== tableId);
+    markChanged(newBlocks);
+    if (selectedBlockId === tableId) {
+      setSelectedBlockId(newBlocks[0]?.id || null);
+    }
+    toast.info("Deleted table block from template");
+  };
+
+  const handleUpdateTableRows = (tableId: string, updatedRows: CanvasRowData[]) => {
+    const newBlocks = blocks.map((b) => {
+      if (b.type === "table_grid" && b.id === tableId) {
+        return { ...b, rows: updatedRows };
+      }
+      if (b.type === "split_row" && b.children) {
+        const newChildren = b.children.map((c) => {
+          if (c.type === "table_grid" && c.id === tableId) {
+            return { ...c, rows: updatedRows };
+          }
+          return c;
+        });
+        return { ...b, children: newChildren as any };
+      }
+      return b;
+    });
+    markChanged(newBlocks);
+    toast.success("Updated table rows successfully");
   };
 
   // Block Manipulation Helpers
@@ -403,12 +622,16 @@ export function CanvasTemplateEditor({
     e: React.MouseEvent,
     blockIndex: number,
     columnId: string,
-    currentWidth?: string
+    currentWidth?: string | number
   ) => {
     e.preventDefault();
     e.stopPropagation();
     const th = (e.target as HTMLElement).closest("th");
-    const initialWidth = th ? th.getBoundingClientRect().width : (parseInt(currentWidth || "100") || 100);
+    const initialWidth = th
+      ? th.getBoundingClientRect().width
+      : typeof currentWidth === "number"
+      ? currentWidth
+      : parseInt(currentWidth || "100") || 100;
 
     setResizingCol({
       blockIndex,
@@ -446,34 +669,7 @@ export function CanvasTemplateEditor({
     toast.success("Applied intelligent auto-fit column widths!");
   };
 
-  // Find currently selected block
-  const selectedBlockIndex = blocks.findIndex((b) => b.id === selectedBlockId);
-  const selectedBlock = selectedBlockIndex !== -1 ? blocks[selectedBlockIndex] : null;
 
-  // Selected Table inside Split Row or Root Table
-  let activeTableBlock: TableGridBlock | null = null;
-  if (selectedBlock?.type === "table_grid") {
-    activeTableBlock = selectedBlock as TableGridBlock;
-  } else if (selectedBlock?.type === "split_row") {
-    const split = selectedBlock as SplitRowBlock;
-    activeTableBlock = (split.children.find((c) => c.id === selectedChildTableId && c.type === "table_grid") as TableGridBlock) ||
-      (split.children.find((c) => c.type === "table_grid") as TableGridBlock) || null;
-  }
-  if (!activeTableBlock) {
-    for (const blk of blocks) {
-      if (blk.type === "table_grid") {
-        activeTableBlock = blk as TableGridBlock;
-        break;
-      }
-      if (blk.type === "split_row" && blk.children) {
-        const first = blk.children.find((c) => c.type === "table_grid");
-        if (first) {
-          activeTableBlock = first as TableGridBlock;
-          break;
-        }
-      }
-    }
-  }
 
   // Update active table block either at root or inside split row
   const updateActiveTable = (updatedTbl: TableGridBlock) => {
@@ -487,13 +683,124 @@ export function CanvasTemplateEditor({
     }
   };
 
+  // Recalculates row formulas live when user edits any cell in builder table
+  const handleTableCellChange = (
+    blockIndex: number,
+    rowIndex: number,
+    colId: string,
+    val: any
+  ) => {
+    const block = blocks[blockIndex] as TableGridBlock;
+    if (!block || !block.rows) return;
+    const newRows = [...block.rows];
+    const currentRow = newRows[rowIndex] || {};
+    const parsedNum = parseFloat(String(val));
+    const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
+    const updatedRow = {
+      ...currentRow,
+      [colId]: val,
+      ...(colId === "reading" ? { reading: numVal } : {}),
+      ...(colId === "nominal" ? { nominal: numVal } : {}),
+      ...(colId === "tolerance" ? { tolerance: numVal } : {}),
+    };
+
+    // Synchronize trial aliases across row for live formula evaluation
+    const trialMatch = colId.match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        updatedRow[a] = val;
+      });
+    }
+
+    const tol = parseFloat(String(updatedRow.tolerance ?? block.tolerance ?? 0.02)) || 0.02;
+    const dec = block.decimal_places ?? decimalPlaces ?? 3;
+    const evaluatedRow = evaluateCanvasRowFormulas(updatedRow, block.columns, tol, dec);
+
+    // CRITICAL: Ensure the active cell keeps the exact string the user is typing (e.g. "35.", "0.", "-")
+    evaluatedRow[colId] = val;
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        evaluatedRow[a] = val;
+      });
+    }
+
+    newRows[rowIndex] = evaluatedRow;
+    updateBlock(blockIndex, { ...block, rows: newRows });
+  };
+
+  const handleChildTableCellChange = (
+    blockIndex: number,
+    childIndex: number,
+    rowIndex: number,
+    colId: string,
+    val: any
+  ) => {
+    const split = blocks[blockIndex] as SplitRowBlock;
+    if (!split || !split.children) return;
+    const child = split.children[childIndex] as TableGridBlock;
+    if (!child || !child.rows) return;
+    const newRows = [...child.rows];
+    const currentRow = newRows[rowIndex] || {};
+    const parsedNum = parseFloat(String(val));
+    const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
+    const updatedRow = {
+      ...currentRow,
+      [colId]: val,
+      ...(colId === "reading" ? { reading: numVal } : {}),
+      ...(colId === "nominal" ? { nominal: numVal } : {}),
+      ...(colId === "tolerance" ? { tolerance: numVal } : {}),
+    };
+
+    const trialMatch = colId.match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        updatedRow[a] = val;
+      });
+    }
+
+    const tol = parseFloat(String(updatedRow.tolerance ?? child.tolerance ?? 0.02)) || 0.02;
+    const dec = child.decimal_places ?? decimalPlaces ?? 3;
+    const evaluatedRow = evaluateCanvasRowFormulas(updatedRow, child.columns, tol, dec);
+
+    evaluatedRow[colId] = val;
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        evaluatedRow[a] = val;
+      });
+    }
+
+    newRows[rowIndex] = evaluatedRow;
+    const updatedChildren = split.children.map((c, i) => (i === childIndex ? { ...child, rows: newRows } : c));
+    updateBlock(blockIndex, { ...split, children: updatedChildren });
+  };
+
   // Helper to evaluate formula preview in builder with decimal formatting
   const evaluatePreviewCell = (
     row: CanvasRowData,
     col: CanvasColumnDef,
     tableDec: number = 3
   ): React.ReactNode => {
-    const dec = col.decimal_places ?? tableDec ?? decimalPlaces ?? 3;
+    const dec = col.decimal_places ?? col.decimalPrecision ?? tableDec ?? decimalPlaces ?? 3;
     const cellVal = row[col.id] !== undefined
       ? row[col.id]
       : col.type === "nominal"
@@ -506,56 +813,94 @@ export function CanvasTemplateEditor({
       ? row.reading
       : undefined;
 
+    const formatNumericVal = (val: any) => {
+      if (val === undefined || val === null || val === "") return "-";
+      if (typeof val === "number") return dec === 0 ? String(Math.round(val)) : val.toFixed(dec);
+      const str = String(val).trim();
+      const num = parseFloat(str);
+      if (!isNaN(num) && /^[+-]?\d+(\.\d+)?$/.test(str)) {
+        return dec === 0 ? String(Math.round(num)) : num.toFixed(dec);
+      }
+      return str;
+    };
+
     if (col.type === "nominal") {
-      return cellVal !== undefined && cellVal !== null && cellVal !== ""
-        ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal))
-        : "-";
+      return formatNumericVal(cellVal);
     }
     if (col.type === "text") {
       return cellVal !== undefined && cellVal !== null ? String(cellVal) : "-";
     }
     if (col.type === "tolerance") {
       if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
-        return typeof cellVal === "number"
-          ? (cellVal >= 0 ? `±${cellVal.toFixed(dec)}` : cellVal.toFixed(dec))
-          : String(cellVal);
+        if (typeof cellVal === "number") {
+          return cellVal >= 0 ? `±${cellVal.toFixed(dec)}` : cellVal.toFixed(dec);
+        }
+        const p = parseFloat(String(cellVal));
+        if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(String(cellVal).trim())) {
+          return p >= 0 ? `±${p.toFixed(dec)}` : p.toFixed(dec);
+        }
+        return String(cellVal);
       }
       return row.tolerance ? `±${row.tolerance.toFixed(dec)}` : "-";
     }
     if (col.type === "trial" || col.type === "reading") {
-      return cellVal !== undefined && cellVal !== null && cellVal !== ""
-        ? (typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal))
-        : "-";
+      return formatNumericVal(cellVal);
     }
     if (col.type === "formula") {
       if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
-        return typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal);
+        return formatNumericVal(cellVal);
       }
-      const formula = (col.formula || "").toLowerCase();
-      const nom = Number(row.nominal ?? 0);
-      if (formula.includes("-") || formula.includes("error")) {
-        return `+${(0).toFixed(dec)}`;
+      if (col.formula) {
+        const tol = parseFloat(String(row.tolerance ?? 0.02)) || 0.02;
+        const ctx = buildRowContext(row, [col], tol, dec);
+        const evalRes = testEvaluateFormula(col.formula, ctx.valuesMap, dec);
+        if (evalRes.success && evalRes.formatted) {
+          return evalRes.formatted;
+        }
       }
-      if (formula.includes("average") || formula.includes("avg")) {
-        return nom.toFixed(dec);
-      }
-      return `+${(0).toFixed(dec)}`;
+      return "-";
     }
-    if (col.type === "status") {
-      const statusVal = cellVal || row.status || "PASS";
-      const isPass = statusVal === "PASS";
-      return (
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
-          isPass
-            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-            : "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
-        }`}>
-          {statusVal}
-        </span>
-      );
+    if (col.type === "status" || col.role === "JUDGEMENT" || col.label.toLowerCase().includes("judg")) {
+      const statusVal = cellVal || row.status || row.judgement;
+      if (statusVal) {
+        const isPass = String(statusVal).trim().toUpperCase() === "PASS";
+        const isFail = String(statusVal).trim().toUpperCase() === "FAIL";
+        return (
+          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-bold ${
+            isPass
+              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+              : isFail
+              ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+              : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+          }`}>
+            {statusVal}
+          </span>
+        );
+      }
+      if (col.formula) {
+        const tol = parseFloat(String(row.tolerance ?? 0.02)) || 0.02;
+        const ctx = buildRowContext(row, [col], tol, dec);
+        const evalRes = testEvaluateFormula(col.formula, ctx.valuesMap, dec);
+        if (evalRes.success && evalRes.formatted) {
+          const isPass = String(evalRes.formatted).trim().toUpperCase() === "PASS";
+          const isFail = String(evalRes.formatted).trim().toUpperCase() === "FAIL";
+          return (
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-bold ${
+              isPass
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
+                : isFail
+                ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
+                : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            }`}>
+              {evalRes.formatted}
+            </span>
+          );
+        }
+      }
+      return "-";
     }
     if (cellVal !== undefined && cellVal !== null) {
-      return typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal);
+      return formatNumericVal(cellVal);
     }
     return "-";
   };
@@ -573,211 +918,28 @@ export function CanvasTemplateEditor({
 
   return (
     <div className="space-y-4">
-      {/* Top Banner & Quick Presets Header */}
-      {isBannerCollapsed ? (
-        <div className="bg-slate-900 text-white px-3 py-1.5 rounded-lg shadow-xs border border-slate-800 flex items-center justify-between flex-wrap gap-2 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-slate-200 text-xs flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-amber-400" />
-              WYSIWYG Visual Canvas Designer
-            </span>
-            <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10 py-0">
-              {blocks.length} Blocks
-            </Badge>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <Button
-              type="button"
-              variant={showInspector ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowInspector(!showInspector)}
-              className="text-[11px] h-6 px-2 gap-1 font-bold shadow-xs bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
-            >
-              <Settings2 className="w-3 h-3" />
-              Block Props
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowTrialRun(true)}
-              disabled={blocks.length === 0}
-              className="text-[11px] h-6 px-2 bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 text-white gap-1 font-bold shadow-xs"
-            >
-              <FlaskConical className="w-3 h-3" />
-              Trial Run
-            </Button>
-            {activeTableBlock && (
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => handleOpenTableAudit(activeTableBlock)}
-                className="text-[11px] h-6 px-2 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 gap-1 font-bold shadow-xs"
-              >
-                <ShieldCheck className="w-3 h-3 text-amber-400" />
-                Audit Table
-              </Button>
-            )}
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowAssistant(true)}
-              className="text-[11px] h-6 px-2 bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 border border-indigo-500/30 gap-1 font-bold shadow-xs"
-            >
-              <Bot className="w-3 h-3 text-indigo-400" />
-              Assistant
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowAiModal(true)}
-              className="text-[11px] h-6 px-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 text-white gap-1 font-bold shadow-xs"
-            >
-              <Sparkles className="w-3 h-3" />
-              AI Generate
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsBannerCollapsed(false)}
-              className="h-6 w-6 text-slate-400 hover:text-white"
-              title="Expand Banner"
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-slate-900 text-white p-2.5 sm:p-3 rounded-xl shadow-md border border-slate-800 flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30">
-              <Layers className="w-4 h-4" />
-            </div>
-            <div>
-              <h3 className="text-xs sm:text-sm font-bold text-slate-100 flex items-center gap-2">
-                WYSIWYG Visual Canvas Designer 2.0
-                <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                  {blocks.length} Modular Blocks
-                </Badge>
-              </h3>
-              <p className="text-[10px] sm:text-[11px] text-slate-400">
-                Click any block on the central certificate to edit properties, formulas & tolerances in the Right Inspector Panel.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant={isToolboxCollapsed ? "default" : "outline"}
-              size="sm"
-              onClick={() => setIsToolboxCollapsed(!isToolboxCollapsed)}
-              className={`text-xs gap-1.5 h-8 px-3 rounded-lg font-semibold shadow-xs transition-all ${
-                isToolboxCollapsed ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
-              }`}
-              title={isToolboxCollapsed ? "Show Modular Blocks toolbox" : "Hide Modular Blocks toolbox"}
-            >
-              <Plus className="w-3.5 h-3.5" />
-              {isToolboxCollapsed ? "Show Blocks" : "Hide Blocks"}
-            </Button>
-
-            <Button
-              type="button"
-              variant={showInspector ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowInspector(!showInspector)}
-              className={`text-xs gap-1.5 h-8 px-3 rounded-lg font-semibold shadow-xs transition-all ${
-                showInspector ? "bg-primary text-primary-foreground" : "bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700"
-              }`}
-            >
-              <Settings2 className="w-3.5 h-3.5" />
-              {showInspector ? "Hide Properties" : "Block Properties"}
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowTrialRun(true)}
-              disabled={blocks.length === 0}
-              className="text-xs h-8 px-3 rounded-lg bg-gradient-to-r from-cyan-600 to-cyan-700 hover:from-cyan-700 hover:to-cyan-800 text-white gap-1.5 font-semibold shadow-xs transition-all"
-            >
-              <FlaskConical className="w-3.5 h-3.5" />
-              Trial Run
-            </Button>
-
-            {activeTableBlock && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenTableAudit(activeTableBlock)}
-                className="text-xs h-8 px-3 rounded-lg bg-slate-800 text-amber-300 border-amber-500/40 hover:bg-amber-950/40 gap-1.5 font-semibold shadow-xs transition-all"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                AI Audit Table
-              </Button>
-            )}
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAssistant(true)}
-              className="text-xs h-8 px-3 rounded-lg bg-indigo-950/60 text-indigo-200 border-indigo-500/40 hover:bg-indigo-900/60 gap-1.5 font-semibold shadow-xs transition-all"
-            >
-              <Bot className="w-3.5 h-3.5 text-indigo-400" />
-              Assistant
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowAiModal(true)}
-              className="text-xs h-8 px-3 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white gap-1.5 font-semibold shadow-xs transition-all"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              AI Smart Generate
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsBannerCollapsed(true)}
-              className="h-8 w-8 text-slate-400 hover:text-white rounded-lg"
-              title="Compact Banner"
-            >
-              <ChevronUp className="w-3.5 h-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* 3-COLUMN WYSIWYG WORKSPACE */}
+      {/* 3-COLUMN WORKSPACE: LEFT TOOLBOX + CANVAS BLOCKS + RIGHT COPILOT */}
       <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
-        
-        {/* ========================================================================= */}
-        {/* COLUMN 1: LEFT TOOLBOX & PRESETS (240px COLLAPSIBLE) */}
-        {/* ========================================================================= */}
+        {/* MODULAR BLOCKS TOOLBOX (MATCHES USER DESIGN) */}
         {isToolboxCollapsed ? (
-          <div className="w-10 shrink-0 bg-card border rounded-xl p-1.5 flex flex-col items-center gap-2 shadow-xs py-3">
+          <div className="w-11 shrink-0 bg-card border border-slate-200 dark:border-slate-800 rounded-xl p-1.5 flex flex-col items-center gap-2 shadow-xs py-3 mt-5">
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={() => setIsToolboxCollapsed(false)}
               className="h-7 w-7 text-primary hover:bg-primary/10 rounded-lg"
-              title="Expand Modular Blocks & Presets Panel"
+              title="Expand Add Modular Blocks Panel"
             >
               <ChevronRight className="w-4 h-4" />
             </Button>
-            <div className="h-px w-6 bg-border my-1" />
+            <div className="w-6 h-[1px] bg-border my-0.5" />
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={addTableBlock}
-              className="h-7 w-7 text-blue-500 hover:bg-blue-500/10 rounded-lg"
+              className="h-8 w-8 text-blue-500 hover:bg-blue-500/10 rounded-lg"
               title="Add Data Table Grid"
             >
               <Table className="w-4 h-4" />
@@ -787,8 +949,8 @@ export function CanvasTemplateEditor({
               variant="ghost"
               size="icon"
               onClick={addSplitRowBlock}
-              className="h-7 w-7 text-indigo-500 hover:bg-indigo-500/10 rounded-lg"
-              title="Add Side-by-Side Split Row"
+              className="h-8 w-8 text-indigo-500 hover:bg-indigo-500/10 rounded-lg"
+              title="Add Side-by-Side (50/50)"
             >
               <SplitSquareVertical className="w-4 h-4" />
             </Button>
@@ -797,17 +959,17 @@ export function CanvasTemplateEditor({
               variant="ghost"
               size="icon"
               onClick={addMatrixBlock}
-              className="h-7 w-7 text-purple-500 hover:bg-purple-500/10 rounded-lg"
+              className="h-8 w-8 text-purple-500 hover:bg-purple-500/10 rounded-lg"
               title="Add Reference Matrix Table"
             >
-              <LayoutGrid className="w-4 h-4" />
+              <Grid2X2 className="w-4 h-4" />
             </Button>
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={addTextBlock}
-              className="h-7 w-7 text-emerald-500 hover:bg-emerald-500/10 rounded-lg"
+              className="h-8 w-8 text-emerald-500 hover:bg-emerald-500/10 rounded-lg"
               title="Add Note / Statement"
             >
               <FileText className="w-4 h-4" />
@@ -817,20 +979,20 @@ export function CanvasTemplateEditor({
               variant="ghost"
               size="icon"
               onClick={addPageBreak}
-              className="h-7 w-7 text-amber-500 hover:bg-amber-500/10 rounded-lg"
+              className="h-8 w-8 text-amber-500 hover:bg-amber-500/10 rounded-lg"
               title="Add Page Break"
             >
-              <Columns className="w-4 h-4" />
+              <SeparatorHorizontal className="w-4 h-4" />
             </Button>
           </div>
         ) : (
-          <div className="w-full lg:w-[240px] shrink-0 space-y-4">
-            {/* Add Blocks Toolbox */}
-            <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
+          <div className="w-full lg:w-[240px] xl:w-[260px] shrink-0 space-y-4 mt-5">
+            {/* Add Modular Blocks Card matching user image */}
+            <div className="bg-card border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-3">
+              <div className="flex items-center justify-between pb-0.5">
+                <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5 tracking-tight">
                   <Plus className="w-3.5 h-3.5 text-primary" />
-                  Add Modular Blocks
+                  <span>Add Modular Blocks</span>
                 </h4>
                 <Button
                   type="button"
@@ -838,250 +1000,167 @@ export function CanvasTemplateEditor({
                   size="icon"
                   onClick={() => setIsToolboxCollapsed(true)}
                   className="h-6 w-6 text-muted-foreground hover:text-foreground rounded-md"
-                  title="Hide Modular Blocks Panel"
+                  title="Collapse Modular Blocks Panel"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                 </Button>
               </div>
-              <div className="grid grid-cols-1 gap-1.5">
-                <Button
+
+              <div className="grid grid-cols-1 gap-2">
+                {/* 1. Data Table Grid */}
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addTableBlock}
-                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                  className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 hover:bg-primary/5 hover:text-primary hover:border-primary/40 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-all shadow-2xs group cursor-pointer"
                 >
-                  <Table className="w-3.5 h-3.5 text-blue-500" />
-                  + Data Table Grid
-                </Button>
+                  <Table className="w-4 h-4 text-blue-500 group-hover:scale-110 transition-transform shrink-0" />
+                  <span>+ Data Table Grid</span>
+                </button>
 
-                <Button
+                {/* 2. Side-by-Side (50/50) */}
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addSplitRowBlock}
-                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                  className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-500/40 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-all shadow-2xs group cursor-pointer"
                 >
-                  <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
-                  + Side-by-Side (50/50)
-                </Button>
+                  <SplitSquareVertical className="w-4 h-4 text-indigo-500 group-hover:scale-110 transition-transform shrink-0" />
+                  <span>+ Side-by-Side (50/50)</span>
+                </button>
 
-                <Button
+                {/* 3. Reference Matrix */}
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addMatrixBlock}
-                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                  className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 hover:bg-purple-500/10 hover:text-purple-600 dark:hover:text-purple-400 hover:border-purple-500/40 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-all shadow-2xs group cursor-pointer"
                 >
-                  <LayoutGrid className="w-3.5 h-3.5 text-purple-500" />
-                  + Reference Matrix
-                </Button>
+                  <Grid2X2 className="w-4 h-4 text-purple-500 group-hover:scale-110 transition-transform shrink-0" />
+                  <span>+ Reference Matrix</span>
+                </button>
 
-                <Button
+                {/* 4. Note / Statement */}
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addTextBlock}
-                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                  className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/40 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-all shadow-2xs group cursor-pointer"
                 >
-                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                  + Note / Statement
-                </Button>
+                  <FileText className="w-4 h-4 text-emerald-500 group-hover:scale-110 transition-transform shrink-0" />
+                  <span>+ Note / Statement</span>
+                </button>
 
-                <Button
+                {/* 5. Page Break */}
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
                   onClick={addPageBreak}
-                  className="justify-start text-xs h-8 gap-2 bg-slate-50 dark:bg-slate-900/60 hover:bg-primary/10 hover:text-primary hover:border-primary/40 font-medium"
+                  className="w-full text-left flex items-center gap-3 px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-500/40 text-slate-800 dark:text-slate-200 font-semibold text-xs transition-all shadow-2xs group cursor-pointer"
                 >
-                  <Columns className="w-3.5 h-3.5 text-amber-500" />
-                  + Page Break
-                </Button>
-              </div>
-            </div>
-
-            {/* Standard Presets List */}
-            <div className="bg-card border rounded-xl p-3 shadow-sm space-y-2.5">
-              <h4 className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                <BookOpen className="w-3.5 h-3.5 text-amber-500" />
-                1-Click Standard Presets
-              </h4>
-              <div className="space-y-1.5">
-                {CANVAS_PRESETS.map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    onClick={() => {
-                      if (onSelectPreset) {
-                        onSelectPreset(preset);
-                      } else {
-                        markChanged(JSON.parse(JSON.stringify(preset.blocks)));
-                      }
-                      setSelectedBlockId(preset.blocks[0]?.id || null);
-                      toast.success(`Loaded "${preset.name}" preset!`);
-                    }}
-                    className="w-full text-left p-2 rounded-lg border bg-slate-50/60 dark:bg-slate-900/40 hover:bg-primary/5 hover:border-primary/40 transition-all group space-y-0.5"
-                  >
-                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200 group-hover:text-primary flex items-center justify-between">
-                      {preset.name}
-                      <Badge variant="outline" className="text-[9px] uppercase px-1 py-0">
-                        {preset.instrumentType}
-                      </Badge>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground line-clamp-2">
-                      {preset.description}
-                    </p>
-                  </button>
-                ))}
+                  <SeparatorHorizontal className="w-4 h-4 text-amber-500 group-hover:scale-110 transition-transform shrink-0" />
+                  <span>+ Page Break</span>
+                </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* ========================================================================= */}
-        {/* COLUMN 2: CENTRAL CANVAS WORKSPACE (LIVE A4 CERTIFICATE SHEET) */}
-        {/* ========================================================================= */}
-        <div className="flex-1 w-full bg-slate-100/90 dark:bg-slate-950 p-2 sm:p-4 rounded-xl border-2 border-slate-300 dark:border-slate-800 min-h-[700px] flex flex-col items-center overflow-x-auto transition-all">
-          {/* Canvas Viewport Mode Control Bar */}
-          <div className="w-full mb-3 flex items-center justify-between bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-800 rounded-lg px-3 py-1.5 shadow-xs flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-                <Layers className="w-3.5 h-3.5 text-primary" />
-                Canvas Viewport:
-              </span>
-              <div className="inline-flex rounded-md border border-slate-300 dark:border-slate-700 p-0.5 bg-slate-100 dark:bg-slate-800">
-                <button
+        {/* MIDDLE COLUMN: CALIBRATION DATA & CANVAS BLOCKS */}
+        <div className="flex-1 min-w-0 space-y-6 w-full pt-5 px-1">
+          {blocks.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3 shadow-xs">
+              <Table className="w-8 h-8 mx-auto text-muted-foreground/40" />
+              <div className="space-y-1">
+                <h4 className="font-bold text-xs text-foreground">Your Certificate Canvas is Empty</h4>
+                <p className="text-tiny text-muted-foreground">
+                  Click below to add a table or use <strong>AI Smart Generate</strong> to build your template.
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                <Button
                   type="button"
-                  onClick={() => setCanvasWidthMode("fit")}
-                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
-                    canvasWidthMode === "fit"
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                  title="Fit Studio - 100% full responsive width, zero wasted whitespace"
+                  size="sm"
+                  onClick={addTableBlock}
+                  className="text-xs font-semibold gap-1.5"
                 >
-                  <Maximize2 className="w-3 h-3" />
-                  <span>Fit Studio (100%)</span>
-                </button>
-                <button
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Calibration Table
+                </Button>
+                <Button
                   type="button"
-                  onClick={() => setCanvasWidthMode("wide")}
-                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
-                    canvasWidthMode === "wide"
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                  title="Wide Landscape - 1240px width optimized for multi-column calibration sheets"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowAiModal(true)}
+                  className="text-xs font-semibold gap-1.5 text-amber-600 border-amber-500/40 hover:bg-amber-50 dark:hover:bg-amber-950/30"
                 >
-                  <FileSpreadsheet className="w-3 h-3" />
-                  <span>Wide Sheet (1240px)</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCanvasWidthMode("standard")}
-                  className={`px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1.5 transition-all ${
-                    canvasWidthMode === "standard"
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                  title="Standard A4 - 860px portrait print preview"
-                >
-                  <FileText className="w-3 h-3" />
-                  <span>Standard A4 (860px)</span>
-                </button>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI Smart Generate
+                </Button>
               </div>
             </div>
-            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 hidden sm:inline-flex items-center gap-1">
-              <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
-              Tip: Drag column header dividers to adjust width manually
-            </span>
-          </div>
-
-          <div className={`w-full transition-all duration-200 bg-white dark:bg-slate-900 shadow-xl border-2 border-slate-400/90 dark:border-slate-700 rounded-xl p-3 sm:p-5 space-y-4 text-slate-900 dark:text-slate-100 font-sans ${
-            canvasWidthMode === "fit"
-              ? "max-w-full"
-              : canvasWidthMode === "wide"
-              ? "max-w-[1240px]"
-              : "max-w-[860px]"
-          }`}>
-            
-            {/* Certificate Header Banner */}
-            <div className="border-2 border-slate-300 dark:border-slate-700 p-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-lg flex items-center justify-between text-xs shadow-2xs">
-              <span className="font-bold tracking-wide uppercase text-xs text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5 text-primary" />
-                [ Calibration Certificate Live Layout Preview ]
-              </span>
-              <span className="font-mono text-xs font-semibold text-slate-600 dark:text-slate-400">
-                ISO/IEC 17025 Accredited Sheet
-              </span>
-            </div>
-
-            {/* Blocks List */}
-            {blocks.length === 0 ? (
-              <div className="border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-lg p-10 text-center space-y-3">
-                <Table className="w-8 h-8 mx-auto text-muted-foreground/50" />
-                <div className="space-y-1">
-                  <h4 className="font-bold text-xs">Your Certificate Canvas is Empty</h4>
-                  <p className="text-[11px] text-muted-foreground">
-                    Click a block on the left or use <strong>AI Smart Generate</strong> to build your template.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              blocks.map((block, index) => (
+          ) : (
+            blocks.map((block, index) => (
                 <div
                   key={block.id}
                   onClick={() => {
                     setSelectedBlockId(block.id);
-                    setShowInspector(true);
                   }}
                   style={{
-                    marginTop: `${(block as any).marginTop !== undefined ? (block as any).marginTop : 0}px`,
+                    marginTop: `${(block as any).marginTop !== undefined ? (block as any).marginTop : (index === 0 ? 6 : 0)}px`,
                     marginBottom: `${(block as any).marginBottom !== undefined ? (block as any).marginBottom : 10}px`,
                   }}
-                  className={`relative group transition-all rounded-xl cursor-pointer border-2 shadow-sm ${
+                  className={`relative group transition-all rounded-xl cursor-pointer border shadow-sm bg-white dark:bg-slate-900 ${
                     selectedBlockId === block.id
-                      ? "border-primary ring-4 ring-primary/20 shadow-lg bg-primary/[0.01]"
-                      : "border-slate-400/90 dark:border-slate-700 hover:border-slate-500 dark:hover:border-slate-600 hover:shadow-md bg-card"
+                      ? "border-primary ring-2 ring-primary/20 shadow-md"
+                      : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md"
                   }`}
                 >
                   {/* Floating Action Controls on Hover */}
-                  <div className="absolute -top-3.5 right-3 z-30 hidden group-hover:flex items-center gap-1 bg-slate-900 text-white px-2 py-0.5 rounded shadow text-xs border border-slate-700">
-                    <span className="text-[9px] font-mono text-amber-400 mr-1 uppercase font-bold">{block.type}</span>
+                  <div className="absolute -top-3.5 right-4 z-30 hidden group-hover:flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1 rounded-full shadow-lg border border-slate-700 text-xs backdrop-blur-md select-none animate-in fade-in zoom-in-95 duration-100">
+                    <span className="text-xxs font-mono text-amber-400 mr-1 uppercase font-bold tracking-wider">
+                      {block.type === "table_grid" ? "TABLE" : block.type.replace("_", " ")}
+                    </span>
                     <button
                       type="button"
                       disabled={index === 0}
-                      onClick={(e) => { e.stopPropagation(); moveBlock(index, "up"); }}
-                      className="p-0.5 hover:text-amber-400 disabled:opacity-30"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveBlock(index, "up");
+                      }}
+                      className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
                       title="Move Up"
                     >
-                      <ChevronUp className="w-3 h-3" />
+                      <ChevronUp className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
                       disabled={index === blocks.length - 1}
-                      onClick={(e) => { e.stopPropagation(); moveBlock(index, "down"); }}
-                      className="p-0.5 hover:text-amber-400 disabled:opacity-30"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveBlock(index, "down");
+                      }}
+                      className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
                       title="Move Down"
                     >
-                      <ChevronDown className="w-3 h-3" />
+                      <ChevronDown className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); duplicateBlock(block, index); }}
-                      className="p-0.5 hover:text-emerald-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        duplicateBlock(block, index);
+                      }}
+                      className="p-1 hover:text-emerald-400 rounded hover:bg-slate-800 transition-colors"
                       title="Duplicate Block"
                     >
-                      <Copy className="w-3 h-3" />
+                      <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={(e) => { e.stopPropagation(); deleteBlock(index); }}
-                      className="p-0.5 hover:text-red-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteBlock(index);
+                      }}
+                      className="p-1 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
                       title="Delete Block"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
@@ -1094,91 +1173,71 @@ export function CanvasTemplateEditor({
                     );
 
                     return (
-                      <div className="border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
-                        <div className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 dark:from-slate-850 dark:via-slate-800 dark:to-slate-850 text-slate-900 dark:text-slate-100 px-3 py-2 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700 flex-wrap gap-2">
-                          <div className="flex items-center gap-2">
-                            <Table className="w-4 h-4 text-primary shrink-0" />
-                            <Input
-                              value={block.title}
-                              onChange={(e) => {
-                                const updated = { ...block, title: e.target.value };
-                                updateBlock(index, updated);
-                              }}
-                              className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs w-[240px] sm:w-[280px]"
-                              placeholder="Table Section Title"
-                            />
+                      <div className="rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                        <div className="bg-slate-50 dark:bg-slate-800/80 px-4 py-3 flex items-center justify-between border-b border-slate-200 dark:border-slate-700 flex-wrap gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <Table className="w-4 h-4 text-primary shrink-0" />
+                              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                                {block.title || "Calibration Data"}
+                              </h3>
+                            </div>
+                            <p className="text-tiny text-muted-foreground pt-0.5">
+                              Calibration Points and Readings
+                            </p>
                           </div>
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                          
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Badge variant="outline" className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700">
                               Unit: {block.unit || "mm"}
-                            </span>
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                              Tol: {
+                            </Badge>
+                            <Badge variant="outline" className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
+                              Tolerance: {
                                 (block as TableGridBlock).toleranceType === "mixed" ||
                                 (block as TableGridBlock).toleranceType === "row_specific" ||
                                 ((block as TableGridBlock).rows && (block as TableGridBlock).rows.some((r, i, arr) => r.tolerance !== arr[0]?.tolerance))
                                   ? "Row-specific"
-                                  : `±${block.tolerance ?? "0.01"}`
+                                  : `±${block.tolerance ?? "0.010"}`
                               }
-                            </span>
-                            <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                              Dec: {block.decimal_places ?? decimalPlaces}
-                            </span>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                autoFitColumns(index);
-                              }}
-                              className="h-6 px-2 text-[10.5px] bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 hover:bg-slate-100 text-slate-700 dark:text-slate-200 font-semibold rounded flex items-center gap-1 shadow-2xs"
-                              title="Auto-Fit all column widths proportionally"
-                            >
-                              <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
-                              <span>Auto Widths</span>
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleOpenTableAudit(block as TableGridBlock);
-                              }}
-                              className="h-6 px-2 text-[10.5px] bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 font-bold rounded flex items-center gap-1 shadow-2xs"
-                              title="Audit Table Formulas & Tolerances"
-                            >
-                              <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
-                              <span>Audit</span>
-                            </Button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const nextOrient =
+                            </Badge>
+
+                            {/* Table Print Orientation Toggle */}
+                            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-xs shadow-2xs">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateBlock(index, { ...block, orientation: "vertical" });
+                                  toast.success("Table layout set to Vertical (Standard Rows)");
+                                }}
+                                className={`px-2.5 py-0.5 rounded-full text-tiny font-semibold transition-all flex items-center gap-1 ${
+                                  (block.orientation === "vertical" || (!block.orientation && effOrient === "vertical"))
+                                    ? "bg-white dark:bg-slate-900 text-primary shadow-2xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                                title="Vertical print orientation (Standard Rows)"
+                              >
+                                <ArrowUpDown className="w-3 h-3" />
+                                <span>Vertical</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  updateBlock(index, { ...block, orientation: "horizontal" });
+                                  toast.success("Table layout set to Horizontal (Transposed Columns)");
+                                }}
+                                className={`px-2.5 py-0.5 rounded-full text-tiny font-semibold transition-all flex items-center gap-1 ${
                                   block.orientation === "horizontal"
-                                    ? "vertical"
-                                    : block.orientation === "vertical"
-                                    ? "auto"
-                                    : "horizontal";
-                                updateBlock(index, { ...block, orientation: nextOrient });
-                                toast.info(`Print Orientation: ${nextOrient === "auto" ? `Auto (${getEffectiveTableOrientation({ ...block, orientation: "auto" })})` : nextOrient}`);
-                              }}
-                              title="Click to toggle print orientation (Auto / Horizontal / Vertical)"
-                              className={`h-6 px-2 rounded text-[10.5px] font-bold flex items-center gap-1 border transition-colors shadow-2xs ${
-                                effOrient === "horizontal"
-                                  ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border-indigo-400 hover:bg-indigo-200"
-                                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-600 hover:bg-slate-100"
-                              }`}
-                            >
-                              {effOrient === "horizontal" ? (
-                                <ArrowLeftRight className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
-                              ) : (
-                                <ArrowUpDown className="w-3 h-3 text-slate-600 dark:text-slate-400" />
-                              )}
-                              <span>{isAuto ? `Auto (${effOrient})` : effOrient}</span>
-                            </button>
+                                    ? "bg-white dark:bg-slate-900 text-primary shadow-2xs"
+                                    : "text-muted-foreground hover:text-foreground"
+                                }`}
+                                title="Horizontal print orientation (Transposed Columns)"
+                              >
+                                <ArrowLeftRight className="w-3 h-3" />
+                                <span>Horizontal</span>
+                              </button>
+                            </div>
                           </div>
                         </div>
 
@@ -1192,8 +1251,24 @@ export function CanvasTemplateEditor({
                                     Parameter / Sl no
                                   </th>
                                   {block.rows.map((r, rIdx) => (
-                                    <th key={rIdx} className="py-2.5 px-2 font-bold min-w-[65px] text-slate-900 dark:text-white">
-                                      {r.point_number ?? (rIdx + 1)}
+                                    <th key={rIdx} className="py-2.5 px-2 font-bold min-w-[65px] text-slate-900 dark:text-white group/hcol">
+                                      <div className="flex items-center justify-center gap-1">
+                                        <span>{r.point_number ?? (rIdx + 1)}</span>
+                                        {block.rows.length > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              const newRows = block.rows.filter((_, i) => i !== rIdx);
+                                              updateBlock(index, { ...block, rows: newRows });
+                                            }}
+                                            className="opacity-0 group-hover/hcol:opacity-100 p-0.5 text-slate-400 hover:text-rose-400 rounded transition-opacity"
+                                            title={`Delete point ${rIdx + 1}`}
+                                          >
+                                            <Trash2 className="w-2.5 h-2.5" />
+                                          </button>
+                                        )}
+                                      </div>
                                     </th>
                                   ))}
                                 </tr>
@@ -1205,7 +1280,7 @@ export function CanvasTemplateEditor({
                                       <div className="flex items-center justify-between">
                                         <span>{col.label}</span>
                                         {col.type === "formula" && (
-                                          <span className="text-[10px] text-primary bg-primary/10 px-1 rounded font-bold font-mono">(fx)</span>
+                                          <span className="text-xxs text-primary bg-primary/10 px-1 rounded font-bold font-mono">(fx)</span>
                                         )}
                                       </div>
                                     </td>
@@ -1218,17 +1293,22 @@ export function CanvasTemplateEditor({
                                               type="text"
                                               value={cellVal ?? ""}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "nominal" ? { nominal: typeof val === "number" ? val : 0 } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0"
                                             />
                                           </td>
@@ -1262,17 +1342,22 @@ export function CanvasTemplateEditor({
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "reading" ? { reading: typeof val === "number" ? val : undefined } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -1285,17 +1370,22 @@ export function CanvasTemplateEditor({
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "tolerance" ? { tolerance: typeof val === "number" ? val : undefined } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="±Tol"
                                             />
                                           </td>
@@ -1317,14 +1407,14 @@ export function CanvasTemplateEditor({
                                                 FAIL
                                               </span>
                                             ) : (
-                                              <span className="font-mono text-xs text-slate-400">{evaluated}</span>
+                                              <span className="font-metrology text-xs text-slate-400">{evaluated}</span>
                                             )}
                                           </td>
                                         );
                                       }
                                       return (
                                         <td key={rIdx} className="py-1.5 px-2 min-w-[65px]">
-                                          <span className="text-slate-900 dark:text-slate-100 font-mono text-xs font-bold">
+                                          <span className="text-slate-900 dark:text-slate-100 font-metrology text-xs font-bold">
                                             {evaluated}
                                           </span>
                                         </td>
@@ -1338,25 +1428,25 @@ export function CanvasTemplateEditor({
                         ) : (
                           /* VERTICAL STANDARD VIEW */
                           <div className="overflow-x-auto relative scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 hover:scrollbar-thumb-slate-500 scrollbar-track-slate-100 dark:scrollbar-track-slate-800">
-                            <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
+                            <table className="w-full border-collapse text-xs text-center border-border">
                               <thead>
-                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                <tr className="bg-muted/40 font-semibold border-b text-muted-foreground divide-x divide-border">
                                   {block.columns.map((col) => {
                                     const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                                     return (
                                       <th
                                         key={col.id}
-                                        style={{ width: col.width, minWidth: col.width || (isPointNo ? "65px" : "95px") }}
-                                        className={`relative group/th py-2.5 px-3 font-bold text-xs uppercase tracking-wider select-none text-slate-800 dark:text-slate-100 ${
+                                        style={{ width: col.width, minWidth: col.width || (isPointNo ? "60px" : "95px") }}
+                                        className={`relative group/th py-2 px-3 font-semibold text-tiny uppercase tracking-wider select-none text-muted-foreground ${
                                           isPointNo
-                                            ? "sticky left-0 z-20 bg-slate-200 dark:bg-slate-750 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-400 dark:border-slate-600"
-                                            : "bg-slate-100 dark:bg-slate-800"
+                                            ? "sticky left-0 z-20 bg-muted/80 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.08)] border-r border-border"
+                                            : "bg-muted/40"
                                         }`}
                                       >
                                         <div className="flex items-center justify-center gap-1">
                                           <span>{col.label}</span>
                                           {col.type === "formula" && (
-                                            <span className="px-1 py-0.2 rounded text-[9.5px] font-mono font-bold bg-primary/15 text-primary border border-primary/30">
+                                            <span className="px-1 py-0.2 rounded text-2xs font-mono font-bold bg-primary/15 text-primary border border-primary/30">
                                               fx
                                             </span>
                                           )}
@@ -1364,51 +1454,72 @@ export function CanvasTemplateEditor({
                                         {/* Draggable Resizer Handle */}
                                         <div
                                           onMouseDown={(e) => handleColResizeStart(e, index, col.id, col.width)}
-                                          className="absolute right-0 top-0 bottom-0 w-3.5 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-60 group-hover/th:opacity-100 transition-opacity flex items-center justify-center"
+                                          className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-40 group-hover/th:opacity-100 transition-opacity flex items-center justify-center"
                                           title="Click & drag to resize column width"
                                         >
-                                          <div className="w-[2px] h-4 bg-slate-400 dark:bg-slate-500 group-hover/th:bg-primary group-hover/th:h-6 transition-all rounded" />
+                                          <div className="w-[1.5px] h-3.5 bg-muted-foreground/50 group-hover/th:bg-primary group-hover/th:h-5 transition-all rounded" />
                                         </div>
                                       </th>
                                     );
                                   })}
                                 </tr>
                               </thead>
-                              <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
+                              <tbody className="divide-y divide-border">
                                 {block.rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-indigo-50/20">
+                                  <tr key={rIdx} className="divide-x divide-border hover:bg-muted/20 transition-colors group/row">
                                     {block.columns.map((col) => {
                                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                                       if (isPointNo) {
                                         return (
                                           <td
                                             key={col.id}
-                                            style={{ width: col.width, minWidth: col.width || "65px" }}
-                                            className="py-2 px-2 text-xs font-bold text-slate-850 dark:text-slate-100 sticky left-0 z-10 bg-slate-100/95 dark:bg-slate-850 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700"
+                                            style={{ width: col.width, minWidth: col.width || "60px" }}
+                                            className="py-1.5 px-2 text-xs font-semibold text-muted-foreground sticky left-0 z-10 bg-card/90 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.06)] border-r border-border"
                                           >
-                                            {row.point_number ?? (rIdx + 1)}
+                                            <div className="flex items-center justify-center gap-1">
+                                              <span>{row.point_number ?? (rIdx + 1)}</span>
+                                              {block.rows.length > 1 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    const newRows = block.rows.filter((_, i) => i !== rIdx);
+                                                    updateBlock(index, { ...block, rows: newRows });
+                                                  }}
+                                                  className="opacity-0 group-hover/row:opacity-100 p-0.5 text-muted-foreground hover:text-rose-500 rounded transition-opacity"
+                                                  title={`Delete row ${rIdx + 1}`}
+                                                >
+                                                  <Trash2 className="w-2.5 h-2.5" />
+                                                </button>
+                                              )}
+                                            </div>
                                           </td>
                                         );
                                       }
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "");
                                         return (
-                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-1 px-1.5">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-1 px-1">
                                             <Input
                                               type="text"
                                               value={cellVal ?? ""}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "nominal" ? { nominal: typeof val === "number" ? val : 0 } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                               placeholder="0"
                                             />
                                           </td>
@@ -1417,7 +1528,7 @@ export function CanvasTemplateEditor({
                                       if (col.type === "text") {
                                         const cellVal = row[col.id] ?? (col.id === "description" ? row.description : "") ?? "";
                                         return (
-                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "100px" }} className="py-1 px-1.5">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "100px" }} className="py-1 px-1">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
@@ -1429,7 +1540,7 @@ export function CanvasTemplateEditor({
                                                 };
                                                 updateBlock(index, { ...block, rows: newRows });
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-sans text-slate-800 dark:text-slate-200 font-medium transition-colors"
                                               placeholder={col.label || "Value"}
                                             />
                                           </td>
@@ -1438,21 +1549,26 @@ export function CanvasTemplateEditor({
                                       if (col.type === "reading" || col.type === "trial") {
                                         const cellVal = row[col.id] ?? (col.id === "reading" ? row.reading : "") ?? "";
                                         return (
-                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1.5">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "reading" ? { reading: typeof val === "number" ? val : undefined } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                               placeholder="0.00"
                                             />
                                           </td>
@@ -1461,21 +1577,26 @@ export function CanvasTemplateEditor({
                                       if (col.type === "tolerance") {
                                         const cellVal = row[col.id] ?? (col.id === "tolerance" ? row.tolerance : "") ?? "";
                                         return (
-                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1.5">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "90px" }} className="py-1 px-1">
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                const raw = e.target.value;
-                                                const val = raw === "" ? "" : !isNaN(Number(raw)) ? Number(raw) : raw;
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: val,
-                                                  ...(col.id === "tolerance" ? { tolerance: typeof val === "number" ? val : undefined } : {}),
-                                                };
-                                                updateBlock(index, { ...block, rows: newRows });
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleTableCellChange(index, rIdx, col.id, v);
+                                                }
                                               }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-mono font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const colDec = col.decimal_places ?? col.decimalPrecision ?? block.decimal_places ?? decimalPlaces ?? 3;
+                                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                  handleTableCellChange(index, rIdx, col.id, formatted);
+                                                }
+                                              }}
+                                              className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                               placeholder="±Tol"
                                             />
                                           </td>
@@ -1487,13 +1608,13 @@ export function CanvasTemplateEditor({
                                         const isPass = String(evaluated).trim().toUpperCase() === "PASS";
                                         const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
                                         return (
-                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-2 px-2">
+                                          <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-1.5 px-2">
                                             {isPass ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 shadow-2xs">
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
                                                 PASS
                                               </span>
                                             ) : isFail ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700 shadow-2xs">
+                                              <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
                                                 FAIL
                                               </span>
                                             ) : (
@@ -1503,8 +1624,8 @@ export function CanvasTemplateEditor({
                                         );
                                       }
                                       return (
-                                        <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-2 px-2">
-                                          <span className="font-mono text-xs font-bold text-slate-900 dark:text-slate-100">
+                                        <td key={col.id} style={{ width: col.width, minWidth: col.width || "95px" }} className="py-1.5 px-2">
+                                          <span className="font-metrology text-xs font-semibold text-slate-800 dark:text-slate-200">
                                             {evaluated}
                                           </span>
                                         </td>
@@ -1518,10 +1639,10 @@ export function CanvasTemplateEditor({
                         )}
 
                         {/* Add Row Controls */}
-                        <div className="bg-slate-100/80 dark:bg-slate-800/60 p-2 flex items-center justify-between text-xs border-t-2 border-slate-300 dark:border-slate-700">
+                        <div className="bg-slate-50/80 dark:bg-slate-900/60 p-2.5 flex items-center justify-between text-xs border-t border-slate-200 dark:border-slate-800">
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
                             onClick={() => {
                               const newRow: CanvasRowData = {
@@ -1531,10 +1652,10 @@ export function CanvasTemplateEditor({
                               };
                               updateBlock(index, { ...block, rows: [...block.rows, newRow] });
                             }}
-                            className="h-6 px-2.5 text-xs text-primary gap-1 font-bold hover:bg-primary/10 rounded-md"
+                            className="h-8 px-4 text-xs font-bold text-primary hover:text-primary hover:bg-primary/10 border-dashed border-primary/40 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
                           >
-                            <Plus className="w-3.5 h-3.5" />
-                            Add Point / Row
+                            <Plus className="w-4 h-4" />
+                            <span>Add Point / Row</span>
                           </Button>
                           {block.rows.length > 1 && (
                             <Button
@@ -1545,7 +1666,7 @@ export function CanvasTemplateEditor({
                                 const newRows = block.rows.slice(0, -1);
                                 updateBlock(index, { ...block, rows: newRows });
                               }}
-                              className="h-6 px-2.5 text-xs text-destructive hover:bg-destructive/10 rounded-md font-semibold"
+                              className="h-7 px-2.5 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md font-medium"
                             >
                               Remove Last Point
                             </Button>
@@ -1590,7 +1711,7 @@ export function CanvasTemplateEditor({
                                     <span className="text-xs font-bold">{child.title}</span>
                                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                       <span>Dec: {child.decimal_places ?? decimalPlaces}</span>
-                                      <Badge variant="outline" className="text-[9px] py-0 px-1 font-mono uppercase font-bold">
+                                      <Badge variant="outline" className="text-2xs py-0 px-1 font-mono uppercase font-bold">
                                         {childEff}
                                       </Badge>
                                     </div>
@@ -1666,7 +1787,7 @@ export function CanvasTemplateEditor({
                           className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[320px]"
                           placeholder="Matrix Table Title"
                         />
-                        <Badge variant="outline" className="text-[10px] uppercase font-mono font-bold">
+                        <Badge variant="outline" className="text-xxs uppercase font-mono font-bold">
                           Matrix Table
                         </Badge>
                       </div>
@@ -1744,615 +1865,169 @@ export function CanvasTemplateEditor({
               ))
             )}
 
-            {/* Simulated Footer */}
-            <div className="border-2 border-slate-300 dark:border-slate-700 p-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-lg flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 shadow-2xs">
-              <span className="font-medium">Standard Signatures & NABL Calibration Footer</span>
-              <span className="font-mono font-bold">Page 1 of 1</span>
-            </div>
-          </div>
-        </div>
-
-        {/* ========================================================================= */}
-        {/* COLUMN 3: RIGHT INSPECTOR PANEL (DEFAULT HIDDEN, TOGGLEABLE!) (440-480px) */}
-        {/* ========================================================================= */}
-        {showInspector && (
-          <div
-            style={{ width: `${inspectorWidth}px` }}
-            className="w-full shrink-0 bg-card border rounded-xl p-4 shadow-sm space-y-4 max-h-[85vh] overflow-y-auto relative"
-          >
-            {/* Draggable Resizer Handle on left border of Inspector */}
-            <div
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setIsResizingInspector(true);
-                inspectorResizeRef.current = { startX: e.clientX, startWidth: inspectorWidth };
-              }}
-              className="absolute left-0 top-0 bottom-0 w-3 -ml-1.5 cursor-col-resize hover:bg-primary/40 active:bg-primary z-40 transition-colors flex items-center justify-center group select-none"
-              title="Drag to adjust Inspector & Properties width"
-            >
-              <div className="w-[3px] h-8 bg-slate-300 dark:bg-slate-700 group-hover:bg-primary group-active:bg-primary rounded-full transition-colors" />
-            </div>
-            <div className="flex items-center justify-between border-b pb-2">
-              <h4 className="text-xs font-bold flex items-center gap-1.5 text-foreground">
-                <Settings2 className="w-4 h-4 text-primary" />
-                Inspector & Properties
-              </h4>
-              <div className="flex items-center gap-1.5">
-                {selectedBlock && (
-                  <Badge variant="secondary" className="text-[10px] uppercase font-mono">
-                    {selectedBlock.type}
-                  </Badge>
-                )}
+            {/* Quick Add Modular Blocks Section at bottom of blocks */}
+            <div className="pt-3 pb-2 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-tiny font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-primary" />
+                  <span>Add Modular Block to Canvas</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setShowInspector(false)}
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  title="Close Inspector"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTableBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-primary/5 hover:text-primary hover:border-primary/40 text-slate-800 dark:text-slate-200"
+                  title="Add Data Table Grid"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <Table className="w-3.5 h-3.5 text-blue-500" />
+                  <span>+ Data Table Grid</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addSplitRowBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Side-by-Side (50/50)"
+                >
+                  <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>+ Side-by-Side (50/50)</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addMatrixBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-purple-500/10 hover:text-purple-600 dark:hover:text-purple-400 hover:border-purple-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Reference Matrix Table"
+                >
+                  <Grid2X2 className="w-3.5 h-3.5 text-purple-500" />
+                  <span>+ Reference Matrix</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTextBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Note / Statement"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>+ Note / Statement</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addPageBreak}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Page Break"
+                >
+                  <SeparatorHorizontal className="w-3.5 h-3.5 text-amber-500" />
+                  <span>+ Page Break</span>
                 </Button>
               </div>
             </div>
+          </div>
 
-          {/* Universal Spacing & Gaps Control for Selected Block */}
-          {selectedBlock && (
-            <div className="p-2.5 bg-slate-50 dark:bg-slate-900/70 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-bold text-foreground flex items-center gap-1">
-                  <Sliders className="w-3 h-3 text-primary" />
-                  Block Spacing & Gaps (px)
-                </Label>
-                <span className="text-[10px] text-muted-foreground font-mono">
-                  Top: {(selectedBlock as any).marginTop ?? 0}px • Bottom: {(selectedBlock as any).marginBottom ?? 6}px
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                {/* Top Gap */}
-                <div className="space-y-1">
-                  <Label className="text-[10.5px] text-muted-foreground font-semibold">Top Gap (px)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={(selectedBlock as any).marginTop ?? 0}
-                    onChange={(e) => {
-                      const val = Math.max(0, parseInt(e.target.value) || 0);
-                      updateBlock(selectedBlockIndex, { ...selectedBlock, marginTop: val } as any);
-                    }}
-                    className="h-7 text-xs font-mono"
-                  />
-                  <div className="flex gap-1 flex-wrap">
-                    {[0, 4, 8, 12, 16].map((gap) => (
-                      <button
-                        key={gap}
-                        type="button"
-                        onClick={() => updateBlock(selectedBlockIndex, { ...selectedBlock, marginTop: gap } as any)}
-                        className={`px-1.5 py-0.2 rounded text-[9px] font-mono transition-colors ${
-                          ((selectedBlock as any).marginTop ?? 0) === gap
-                            ? "bg-primary text-primary-foreground font-bold"
-                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-primary/20"
-                        }`}
-                      >
-                        {gap}px
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Bottom Gap */}
-                <div className="space-y-1">
-                  <Label className="text-[10.5px] text-muted-foreground font-semibold">Bottom Gap (px)</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={(selectedBlock as any).marginBottom ?? 6}
-                    onChange={(e) => {
-                      const val = Math.max(0, parseInt(e.target.value) || 0);
-                      updateBlock(selectedBlockIndex, { ...selectedBlock, marginBottom: val } as any);
-                    }}
-                    className="h-7 text-xs font-mono"
-                  />
-                  <div className="flex gap-1 flex-wrap">
-                    {[0, 4, 6, 12, 18, 24].map((gap) => (
-                      <button
-                        key={gap}
-                        type="button"
-                        onClick={() => updateBlock(selectedBlockIndex, { ...selectedBlock, marginBottom: gap } as any)}
-                        className={`px-1.5 py-0.2 rounded text-[9px] font-mono transition-colors ${
-                          ((selectedBlock as any).marginBottom ?? 6) === gap
-                            ? "bg-primary text-primary-foreground font-bold"
-                            : "bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-primary/20"
-                        }`}
-                      >
-                        {gap}px
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* INSPECTOR: Table Grid Selected */}
-          {activeTableBlock ? (
-            <div className="space-y-3.5">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Table Section Title</Label>
-                <Input
-                  value={activeTableBlock.title}
-                  onChange={(e) => updateActiveTable({ ...activeTableBlock!, title: e.target.value })}
-                  className="h-8 text-xs font-medium"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Unit</Label>
-                  <Input
-                    value={activeTableBlock.unit || "mm"}
-                    onChange={(e) => updateActiveTable({ ...activeTableBlock!, unit: e.target.value })}
-                    className="h-8 text-xs"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Tolerance (±)</Label>
-                  <Input
-                    type="number"
-                    step="any"
-                    value={activeTableBlock.tolerance ?? 0.01}
-                    onChange={(e) => updateActiveTable({ ...activeTableBlock!, tolerance: parseFloat(e.target.value) || 0 })}
-                    className="h-8 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Decimal Precision</Label>
-                <Select
-                  value={String(activeTableBlock.decimal_places ?? decimalPlaces)}
-                  onValueChange={(val) => {
-                    const dp = parseInt(val) || 3;
-                    updateActiveTable({ ...activeTableBlock!, decimal_places: dp });
-                    if (onDecimalPlacesChange) onDecimalPlacesChange(dp);
-                  }}
-                >
-                  <SelectTrigger className="h-8 text-xs font-medium">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 (0.0)</SelectItem>
-                    <SelectItem value="2">2 (0.00)</SelectItem>
-                    <SelectItem value="3">3 (0.000)</SelectItem>
-                    <SelectItem value="4">4 (0.0000)</SelectItem>
-                    <SelectItem value="5">5 (0.00000)</SelectItem>
-                    <SelectItem value="6">6 (0.000000)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Table Print Orientation */}
-              <div className="space-y-1.5 p-2 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <Label className="text-xs font-semibold flex items-center gap-1.5">
-                    <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
-                    Table Print Orientation
-                  </Label>
-                  <Badge variant="outline" className="text-[9px] font-mono capitalize">
-                    {getEffectiveTableOrientation(activeTableBlock)}
-                  </Badge>
-                </div>
-                <Select
-                  value={activeTableBlock.orientation || "auto"}
-                  onValueChange={(val: any) => {
-                    updateActiveTable({ ...activeTableBlock!, orientation: val });
-                    toast.success(
-                      `Table orientation set to ${
-                        val === "auto"
-                          ? `Auto (${getEffectiveTableOrientation({ ...activeTableBlock!, orientation: "auto" })})`
-                          : val
-                      }`
-                    );
-                  }}
-                >
-                  <SelectTrigger className="h-8 text-xs font-medium">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">
-                      <div className="flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                        <span>Auto (Smart Column/Row Optimized)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="vertical">
-                      <div className="flex items-center gap-1.5">
-                        <ArrowUpDown className="w-3.5 h-3.5 text-blue-500" />
-                        <span>Vertical (Standard Columns at Top)</span>
-                      </div>
-                    </SelectItem>
-                    <SelectItem value="horizontal">
-                      <div className="flex items-center gap-1.5">
-                        <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>Horizontal (Transposed Matrix Across)</span>
-                      </div>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-[10px] text-muted-foreground leading-tight">
-                  💡 {getTableOrientationRecommendation(activeTableBlock).reason}
-                </p>
-              </div>
-
-              {/* Columns Editor with Variable Chips & Snippets */}
-              <div className="border rounded-lg p-2.5 bg-slate-50/50 dark:bg-slate-900/40 space-y-2.5">
-                <div className="flex items-center justify-between flex-wrap gap-1">
-                  <span className="text-xs font-bold flex items-center gap-1">
-                    <Columns className="w-3.5 h-3.5 text-primary" />
-                    Columns ({activeTableBlock.columns.length})
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        if (selectedBlockIndex >= 0) autoFitColumns(selectedBlockIndex);
-                      }}
-                      className="h-6 text-[10px] gap-1 border-slate-300 dark:border-slate-700 font-semibold"
-                      title="Auto-Fit all columns proportionally"
-                    >
-                      <SlidersHorizontal className="w-3 h-3 text-indigo-500" />
-                      Auto-Fit
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => {
-                        const newColId = `col_${Date.now().toString().slice(-4)}`;
-                        const newCol: CanvasColumnDef = {
-                          id: newColId,
-                          label: `Col ${activeTableBlock!.columns.length + 1}`,
-                          type: "trial",
-                          width: "110px",
-                        };
-                        updateActiveTable({ ...activeTableBlock!, columns: [...activeTableBlock!.columns, newCol] });
-                      }}
-                      className="h-6 text-[10px] gap-1 bg-primary text-primary-foreground font-semibold"
-                    >
-                      <Plus className="w-3 h-3" /> Add Col
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="space-y-2 max-h-[35vh] overflow-y-auto pr-1">
-                  {activeTableBlock.columns.map((col, cIdx) => (
-                    <div key={col.id || cIdx} className="p-2 border rounded bg-card space-y-1.5 text-xs shadow-sm">
-                      <div className="flex items-center justify-between gap-1">
-                        <Input
-                          value={col.label}
-                          onChange={(e) => {
-                            const updatedCols = [...activeTableBlock!.columns];
-                            updatedCols[cIdx] = { ...col, label: e.target.value };
-                            updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                          }}
-                          className="h-6 text-xs font-bold"
-                          placeholder="Header Label"
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          disabled={activeTableBlock!.columns.length <= 1}
-                          onClick={() => {
-                            const updatedCols = activeTableBlock!.columns.filter((_, i) => i !== cIdx);
-                            updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                          }}
-                          className="h-6 w-6 text-destructive hover:bg-destructive/10 shrink-0"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </Button>
-                      </div>
-
-                      <Select
-                        value={col.type}
-                        onValueChange={(val: any) => {
-                          const updatedCols = [...activeTableBlock!.columns];
-                          let defFormula = col.formula;
-                          if (val === "formula" && !defFormula) defFormula = "reading - nominal";
-                          if (val === "status" && !defFormula) defFormula = "IF(ABS(error)<=tolerance,'PASS','FAIL')";
-                          updatedCols[cIdx] = { ...col, type: val, formula: defFormula };
-                          updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                        }}
-                      >
-                        <SelectTrigger className="h-6 text-[11px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="nominal">Nominal / Spec</SelectItem>
-                          <SelectItem value="reading">Actual / Reading</SelectItem>
-                          <SelectItem value="trial">Trial (t1, t2..)</SelectItem>
-                          <SelectItem value="formula">Formula (fx)</SelectItem>
-                          <SelectItem value="tolerance">Tolerance / Limit (±)</SelectItem>
-                          <SelectItem value="status">Status (PASS/FAIL)</SelectItem>
-                          <SelectItem value="text">Text / Desc</SelectItem>
-                        </SelectContent>
-                      </Select>
-
-                      {/* Manual Column Width Controls with Draggable Slider */}
-                      {(() => {
-                        const isPercent = typeof col.width === "string" && col.width.endsWith("%");
-                        const parsedPx = col.width
-                          ? (isPercent ? Math.round((parseFloat(col.width) / 100) * 1100) : parseInt(col.width) || 110)
-                          : 110;
-                        return (
-                          <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800 space-y-2">
-                            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                              <span className="flex items-center gap-1">
-                                <SlidersHorizontal className="w-3 h-3 text-primary" />
-                                Column Width
-                              </span>
-                              <span className="font-mono text-xs font-bold text-primary">
-                                {col.width || "Auto"}
-                              </span>
-                            </div>
-
-                            {/* Drag-to-Set Range Slider */}
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[9.5px] text-muted-foreground font-mono">50px</span>
-                                <input
-                                  type="range"
-                                  min={50}
-                                  max={400}
-                                  step={5}
-                                  value={parsedPx}
-                                  onChange={(e) => {
-                                    const val = parseInt(e.target.value) || 110;
-                                    const updatedCols = [...activeTableBlock!.columns];
-                                    updatedCols[cIdx] = { ...col, width: `${val}px` };
-                                    updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                                  }}
-                                  className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-primary"
-                                  title="Drag slider to set column width"
-                                />
-                                <span className="text-[9.5px] text-muted-foreground font-mono">400px</span>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                              <Input
-                                type="number"
-                                min={50}
-                                max={500}
-                                step={5}
-                                placeholder="110"
-                                value={col.width ? parsedPx : ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const updatedCols = [...activeTableBlock!.columns];
-                                  updatedCols[cIdx] = { ...col, width: val ? `${val}px` : undefined };
-                                  updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                                }}
-                                className="h-7 text-xs font-mono w-20 bg-background"
-                              />
-                              <span className="text-[10px] text-muted-foreground font-semibold">px</span>
-                              <div className="flex items-center gap-1 ml-auto flex-wrap">
-                                {[
-                                  { label: "Compact", w: "70px" },
-                                  { label: "Normal", w: "110px" },
-                                  { label: "Wide", w: "165px" },
-                                  { label: "Auto", w: undefined },
-                                ].map((p) => (
-                                  <button
-                                    key={p.label}
-                                    type="button"
-                                    onClick={() => {
-                                      const updatedCols = [...activeTableBlock!.columns];
-                                      updatedCols[cIdx] = { ...col, width: p.w };
-                                      updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                                    }}
-                                    className={`px-2 py-0.5 text-[10px] rounded border font-semibold transition-all ${
-                                      (col.width === p.w || (!col.width && !p.w))
-                                        ? "bg-primary text-primary-foreground border-primary shadow-2xs"
-                                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-750"
-                                    }`}
-                                  >
-                                    {p.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {(col.type === "formula" || col.type === "status" || col.role === "CALCULATED" || col.role === "JUDGEMENT" || Boolean(col.formula)) && (
-                        <div className="pt-2 border-t border-dashed">
-                          <ColumnFormulaInspector
-                            column={col}
-                            allColumns={activeTableBlock!.columns}
-                            tableDecimalPlaces={activeTableBlock!.decimal_places ?? decimalPlaces}
-                            onUpdateColumn={(updatedCol) => {
-                              const updatedCols = [...activeTableBlock!.columns];
-                              updatedCols[cIdx] = updatedCol;
-                              updateActiveTable({ ...activeTableBlock!, columns: updatedCols });
-                            }}
-                            onSelectColumn={(colId) => {
-                              const targetIdx = activeTableBlock!.columns.findIndex(
-                                (c) => c.id.toLowerCase() === colId.toLowerCase() || c.label.toLowerCase() === colId.toLowerCase()
-                              );
-                              if (targetIdx >= 0) {
-                                toast.info(`Selected referenced column: ${activeTableBlock!.columns[targetIdx].label || colId}`);
-                              }
-                            }}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Footer Reference Statement</Label>
-                <Input
-                  value={activeTableBlock.footerNote || ""}
-                  onChange={(e) => updateActiveTable({ ...activeTableBlock!, footerNote: e.target.value })}
-                  className="h-8 text-xs"
-                  placeholder="e.g. All dimensions verified via length masters."
-                />
-              </div>
-            </div>
-          ) : selectedBlock?.type === "text_block" ? (
-            /* INSPECTOR: Note / Statement Block */
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Note / Compliance Content</Label>
-                <Textarea
-                  value={(selectedBlock as TextBlock).content}
-                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, content: e.target.value })}
-                  className="text-xs h-24"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Style</Label>
-                <Select
-                  value={(selectedBlock as TextBlock).style || "callout"}
-                  onValueChange={(val: any) => updateBlock(selectedBlockIndex, { ...selectedBlock, style: val })}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="callout">Callout Box</SelectItem>
-                    <SelectItem value="standard">Standard Text</SelectItem>
-                    <SelectItem value="bold">Bold Statement</SelectItem>
-                    <SelectItem value="centered">Centered</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : selectedBlock?.type === "diagram_block" ? (
-            /* INSPECTOR: Diagram / Schematic Block */
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Diagram Caption</Label>
-                <Input
-                  value={(selectedBlock as DiagramBlock).caption || ""}
-                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, caption: e.target.value } as any)}
-                  className="h-8 text-xs"
-                  placeholder="e.g. Measurement Points Schematic"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Width (px)</Label>
-                  <Input
-                    type="number"
-                    value={(selectedBlock as DiagramBlock).width || 320}
-                    onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, width: parseInt(e.target.value) || 320 } as any)}
-                    className="h-8 text-xs font-mono"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Height (px)</Label>
-                  <Input
-                    type="number"
-                    value={(selectedBlock as DiagramBlock).height || 160}
-                    onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, height: parseInt(e.target.value) || 160 } as any)}
-                    className="h-8 text-xs font-mono"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Alignment</Label>
-                <Select
-                  value={(selectedBlock as DiagramBlock).alignment || "center"}
-                  onValueChange={(val: any) => updateBlock(selectedBlockIndex, { ...selectedBlock, alignment: val } as any)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="center">Center</SelectItem>
-                    <SelectItem value="left">Left</SelectItem>
-                    <SelectItem value="right">Right</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          ) : selectedBlock?.type === "split_row" ? (
-            /* INSPECTOR: Split Row Container */
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Column Layout</Label>
-                <div className="p-2 bg-slate-50 dark:bg-slate-900 rounded border text-xs font-medium text-muted-foreground">
-                  Side-by-Side Dual Column Grid ({(selectedBlock as SplitRowBlock).children.length} columns)
-                </div>
-              </div>
-            </div>
-          ) : selectedBlock?.type === "matrix_table" ? (
-            /* INSPECTOR: Matrix Table Block */
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Matrix Section Title</Label>
-                <Input
-                  value={(selectedBlock as MatrixTableBlock).title || ""}
-                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, title: e.target.value } as any)}
-                  className="h-8 text-xs font-medium"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Footer Note</Label>
-                <Input
-                  value={(selectedBlock as MatrixTableBlock).footerNote || ""}
-                  onChange={(e) => updateBlock(selectedBlockIndex, { ...selectedBlock, footerNote: e.target.value } as any)}
-                  className="h-8 text-xs"
-                />
-              </div>
-            </div>
-          ) : (
-            /* INSPECTOR: Global Template Settings */
-            <div className="space-y-3 text-xs text-muted-foreground">
-              <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border space-y-1.5">
-                <div className="font-bold text-foreground flex items-center gap-1.5">
-                  <MousePointerClick className="w-4 h-4 text-primary" />
-                  Select a Block on Canvas
-                </div>
-                <p className="text-[11px]">
-                  Click on any table, note, or matrix on the certificate sheet to edit its specific columns, formulas, and tolerances.
-                </p>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t">
-                <div className="flex justify-between">
-                  <span>Default Unit:</span>
-                  <span className="font-bold text-foreground">{defaultUnit}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Default Tolerance:</span>
-                  <span className="font-bold text-foreground">±{defaultTolerance}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Global Decimals:</span>
-                  <span className="font-bold text-foreground">{decimalPlaces} digits</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Total Canvas Blocks:</span>
-                  <span className="font-bold text-foreground">{blocks.length}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* ========================================================================= */}
+        {/* RIGHT COLUMN: DOCKED COPILOT                                             */}
+        {/* ========================================================================= */}
+        {showAssistant && isAssistantDocked && (
+          <div className="w-full lg:w-[420px] xl:w-[460px] 2xl:w-[500px] shrink-0 sticky top-3 h-[calc(100vh-190px)] min-h-[680px]">
+            <GaugemasterTemplateAssistant
+              open={showAssistant}
+              onClose={() => setShowAssistant(false)}
+              templateName={templateName || "Visual Canvas Template"}
+              instrumentType="Calibration Instrument"
+              calibrationType="dimensional"
+              blocks={blocks}
+              selectedTable={auditTargetTable || activeTableBlock}
+              selectedColumnId={selectedColumnId}
+              onUpdateTableColumns={handleApplyTableFixes}
+              onUpdateTableBlock={handleUpdateTableBlock}
+              onAddTableColumn={handleAddTableColumn}
+              onUpdateTableRows={handleUpdateTableRows}
+              onRestoreTableState={handleRestoreTableState}
+              onOpenTrialRun={() => setShowTrialRun(true)}
+              onOpenTableAuditModal={() => {
+                if (activeTableBlock) handleOpenTableAudit(activeTableBlock);
+              }}
+              onOpenPreSaveModal={() => setShowPreSaveModal(true)}
+              onNavigateToColumn={(columnId) => setSelectedColumnId(columnId)}
+              onNavigateToTable={(tableId) => setSelectedBlockId(tableId)}
+              onDeleteTableColumn={handleDeleteTableColumn}
+              onAddTableBlock={handleAddTableBlock}
+              onDeleteTableBlock={handleDeleteTableBlock}
+              docked={true}
+              onToggleDock={() => setIsAssistantDocked(false)}
+            />
+          </div>
         )}
       </div>
+
+      {/* FLOATING COPILOT (WHEN UNDOCKED / FLOATING) */}
+      {showAssistant && !isAssistantDocked && (
+        <GaugemasterTemplateAssistant
+          open={showAssistant}
+          onClose={() => setShowAssistant(false)}
+          templateName={templateName || "Visual Canvas Template"}
+          instrumentType="Calibration Instrument"
+          calibrationType="dimensional"
+          blocks={blocks}
+          selectedTable={auditTargetTable || activeTableBlock}
+          selectedColumnId={selectedColumnId}
+          onUpdateTableColumns={handleApplyTableFixes}
+          onUpdateTableBlock={handleUpdateTableBlock}
+          onAddTableColumn={handleAddTableColumn}
+          onUpdateTableRows={handleUpdateTableRows}
+          onRestoreTableState={handleRestoreTableState}
+          onOpenTrialRun={() => setShowTrialRun(true)}
+          onOpenTableAuditModal={() => {
+            if (activeTableBlock) handleOpenTableAudit(activeTableBlock);
+          }}
+          onOpenPreSaveModal={() => setShowPreSaveModal(true)}
+          onNavigateToColumn={(columnId) => setSelectedColumnId(columnId)}
+          onNavigateToTable={(tableId) => setSelectedBlockId(tableId)}
+          onDeleteTableColumn={handleDeleteTableColumn}
+          onAddTableBlock={handleAddTableBlock}
+          onDeleteTableBlock={handleDeleteTableBlock}
+          docked={false}
+          onToggleDock={() => setIsAssistantDocked(true)}
+        />
+      )}
+
+      {/* FLOATING ACTION PILL TRIGGER WHEN COPILOT IS CLOSED */}
+      {!showAssistant && (
+        <div className="fixed bottom-6 right-6 z-40 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <Button
+            type="button"
+            onClick={() => {
+              setShowAssistant(true);
+              setIsAssistantDocked(true);
+            }}
+            className="h-11 px-4 gap-2.5 rounded-full bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 hover:from-primary hover:to-indigo-600 text-white font-bold text-xs shadow-xl shadow-primary/25 border-2 border-indigo-500/40 hover:border-primary transition-all duration-300 hover:scale-105 cursor-pointer group"
+            title="Open Gaugemaster Template Copilot"
+          >
+            <div className="relative">
+              <Bot className="w-5 h-5 text-indigo-400 group-hover:text-white transition-colors" />
+              <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+            </div>
+            <span>Template Copilot</span>
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+          </Button>
+        </div>
+      )}
 
       {/* MODAL: AI Template Generator (Gemini 1.5 Flash / 2.0 Flash) */}
       <AiTemplateGeneratorModal
@@ -2404,23 +2079,6 @@ export function CanvasTemplateEditor({
         onConfirmSave={() => {
           toast.success("Pre-save audit passed! Template ready for production calibration.");
         }}
-      />
-
-      {/* COPILOT DRAWER: Gaugemaster Template Assistant */}
-      <GaugemasterTemplateAssistant
-        open={showAssistant}
-        onClose={() => setShowAssistant(false)}
-        templateName={templateName || "Visual Canvas Template"}
-        instrumentType="Calibration Instrument"
-        calibrationType="dimensional"
-        blocks={blocks}
-        selectedTable={auditTargetTable || activeTableBlock}
-        selectedColumnId={null}
-        onUpdateTableColumns={handleApplyTableFixes}
-        onOpenTableAuditModal={() => {
-          if (activeTableBlock) handleOpenTableAudit(activeTableBlock);
-        }}
-        onOpenPreSaveModal={() => setShowPreSaveModal(true)}
       />
     </div>
   );

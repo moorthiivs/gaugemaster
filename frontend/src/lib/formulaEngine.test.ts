@@ -386,6 +386,119 @@ function runTests() {
   assert(asymRowBlank.status === "-", `Blank reading produces '-' (got ${asymRowBlank.status})`);
   assert(asymRowBlank.deviation === "-", `Blank deviation produces '-' (got ${asymRowBlank.deviation})`);
 
+  // --- SECTION 16: Multi-Keystroke Typing & Decimal Entry in Trial Columns ---
+  console.log("\n--- SECTION 16: Multi-Keystroke Typing & Decimal Entry ---");
+
+  const multiTrialCols = [
+    { id: "sl_no", label: "SL.NO.", type: "number", role: "METADATA" },
+    { id: "specification", label: "SPECIFICATION", type: "text", role: "SPECIFICATION" },
+    { id: "nominal", label: "Nominal", type: "number", role: "NOMINAL" },
+    { id: "lower_limit", label: "Lower Limit", type: "number", role: "LOWER_LIMIT" },
+    { id: "upper_limit", label: "Upper Limit", type: "number", role: "UPPER_LIMIT" },
+    { id: "actual_1", label: "ACTUAL 1st", type: "trial", role: "READING" },
+    { id: "actual_2", label: "ACTUAL 2nd", type: "trial", role: "READING" },
+    { id: "actual_3", label: "ACTUAL 3rd", type: "trial", role: "READING" },
+    { id: "average", label: "AVARAGE", type: "formula", role: "CALCULATED" },
+    { id: "deviation", label: "DEVIATION", type: "formula", role: "CALCULATED" },
+    { id: "judgement", label: "JUDGEMENT", type: "status", role: "JUDGEMENT" }
+  ];
+
+  let testRow: any = {
+    point_number: 1,
+    specification: "50+0.047/+0.022",
+    nominal: 50,
+    lower_limit: 50.022,
+    upper_limit: 50.047,
+    actual_1: "",
+    actual_2: "",
+    actual_3: ""
+  };
+
+  // Keystroke 1: "5"
+  testRow = { ...testRow, actual_1: "5" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  assert(testRow.actual_1 === "5", `Keystroke 1 retains "5" (got ${testRow.actual_1})`);
+  assert(testRow.average === "5.000", `Average for 5 is 5.000 (got ${testRow.average})`);
+
+  // Keystroke 2: "50" (must NOT be overwritten back to "5" by stale aliases)
+  testRow = { ...testRow, actual_1: "50" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  assert(testRow.actual_1 === "50", `Keystroke 2 retains "50" without locking (got ${testRow.actual_1})`);
+  assert(testRow.average === "50.000", `Average for 50 is 50.000 (got ${testRow.average})`);
+
+  // Keystroke 3: "50." (trailing decimal point must NOT be stripped or locked)
+  testRow = { ...testRow, actual_1: "50." };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  assert(testRow.actual_1 === "50.", `Keystroke 3 retains "50." (got ${testRow.actual_1})`);
+
+  // Keystroke 4: "50.035" (full decimal number)
+  testRow = { ...testRow, actual_1: "50.035" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  assert(testRow.actual_1 === "50.035", `Keystroke 4 retains "50.035" (got ${testRow.actual_1})`);
+  assert(testRow.average === "50.035", `Average is 50.035 (got ${testRow.average})`);
+  assert(testRow.deviation === "+0.035", `Deviation is +0.035 (got ${testRow.deviation})`);
+  assert(testRow.judgement === "PASS", `Judgement is PASS (got ${testRow.judgement})`);
+
+  // Enter actual_2 = "50.030" and actual_3 = "50.031"
+  testRow = { ...testRow, actual_2: "50.030" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  testRow = { ...testRow, actual_3: "50.031" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  // Average of (50.035 + 50.030 + 50.031) / 3 = 50.032
+  assert(testRow.average === "50.032", `Multi-trial average is 50.032 (got ${testRow.average})`);
+  assert(testRow.deviation === "+0.032", `Multi-trial deviation is +0.032 (got ${testRow.deviation})`);
+  assert(testRow.judgement === "PASS", `Multi-trial judgement is PASS (got ${testRow.judgement})`);
+
+  // Backspacing actual_1 to empty
+  testRow = { ...testRow, actual_1: "" };
+  testRow = evaluateCanvasRowFormulas(testRow, multiTrialCols, 0.025, 3);
+  assert(testRow.actual_1 === "", `Backspacing actual_1 to empty string succeeds (got ${testRow.actual_1})`);
+
+  // --- SECTION 17: Column-Wise Decimal Precision & Auto-Rounding ---
+  console.log("\n--- SECTION 17: Column-Wise Decimal Precision & Auto-Rounding ---");
+
+  // A. Auto-rounding helper test
+  const roundToPrecision = (val: string, dec: number) => {
+    const parsed = parseFloat(val.trim());
+    if (isNaN(parsed)) return val;
+    return dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+  };
+
+  assert(roundToPrecision("5.99999", 3) === "6.000", `5.99999 auto-rounds to 6.000 at 3 dec (got ${roundToPrecision("5.99999", 3)})`);
+  assert(roundToPrecision("59.0000", 3) === "59.000", `59.0000 auto-rounds to 59.000 at 3 dec (got ${roundToPrecision("59.0000", 3)})`);
+  assert(roundToPrecision("59.0000", 0) === "59", `59.0000 auto-rounds to 59 at 0 dec (got ${roundToPrecision("59.0000", 0)})`);
+  assert(roundToPrecision("59.456", 1) === "59.5", `59.456 auto-rounds to 59.5 at 1 dec (got ${roundToPrecision("59.456", 1)})`);
+  assert(roundToPrecision("50.00000", 2) === "50.00", `50.00000 auto-rounds to 50.00 at 2 dec (got ${roundToPrecision("50.00000", 2)})`);
+
+  // B. Column-wise decimal precision overrides in evaluateCanvasRowFormulas
+  const colWiseCols = [
+    { id: "nominal", label: "NOMINAL", type: "nominal", role: "NOMINAL", decimal_places: 1 },
+    { id: "actual_1", label: "ACTUAL 1", type: "trial", role: "READING", decimal_places: 3 },
+    { id: "actual_2", label: "ACTUAL 2", type: "trial", role: "READING", decimal_places: 3 },
+    { id: "average", label: "AVERAGE", type: "formula", role: "CALCULATED", decimal_places: 1 },
+    { id: "deviation", label: "DEVIATION", type: "formula", role: "CALCULATED", decimal_places: 2 },
+    { id: "custom_diff", label: "CUSTOM DIFF", type: "formula", role: "CALCULATED", formula: "actual_1 - nominal", decimal_places: 4 },
+    { id: "judgement", label: "JUDGEMENT", type: "status", role: "JUDGEMENT" }
+  ];
+
+  let colWiseRow: any = {
+    point_number: 1,
+    nominal: 50,
+    lower_limit: 49.95,
+    upper_limit: 50.05,
+    actual_1: "50.035",
+    actual_2: "50.025"
+  };
+
+  const resColWise = evaluateCanvasRowFormulas(colWiseRow, colWiseCols, 0.05, 3);
+  // Average of 50.035 and 50.025 = 50.03. With decimal_places = 1, it must be "50.0"
+  assert(resColWise.average === "50.0", `Column-wise average override decimal_places: 1 produces 50.0 (got ${resColWise.average})`);
+  // Deviation: 50.03 - 50 = +0.03. With decimal_places = 2, it must be "+0.03"
+  assert(resColWise.deviation === "+0.03", `Column-wise deviation override decimal_places: 2 produces +0.03 (got ${resColWise.deviation})`);
+  // Custom formula: 50.035 - 50 = 0.0350. With decimal_places = 4, it must be "0.0350"
+  assert(resColWise.custom_diff === "0.0350", `Column-wise custom formula decimal_places: 4 produces 0.0350 (got ${resColWise.custom_diff})`);
+  assert(resColWise.judgement === "PASS", `Judgement passes (got ${resColWise.judgement})`);
+
   console.log(`\n=== FINAL FORMULA ENGINE TEST RESULT: ${passed} PASSED, ${failed} FAILED ===`);
   if (failed > 0) process.exit(1);
 }

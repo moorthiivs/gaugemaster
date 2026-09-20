@@ -110,4 +110,12 @@ export class CreateSettingDto {
         warningDays?: number;
         widgets?: Record<string, boolean>;
     };
+
+    @ApiProperty({ description: 'AI & Copilot Gateway configuration', required: false })
+    @IsOptional()
+    aiConfig?: {
+        apiKey?: string;
+        defaultModel?: string;
+        enabled?: boolean;
+    };
 }

@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { useToast } from "@/hooks/use-toast";
@@ -394,6 +396,138 @@ export default function UserManagement() {
     }
   };
 
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return users.slice(start, start + pageSize);
+  }, [users, pageIndex, pageSize]);
+
+  const userColumns = useMemo<ColumnDef<AppUser>[]>(
+    () => [
+      {
+        id: "sno",
+        header: () => <div className="w-12 text-center font-semibold">#</div>,
+        cell: ({ row }) => (
+          <div className="w-12 text-center text-xs text-muted-foreground font-mono">
+            {(pageIndex - 1) * pageSize + row.index + 1}
+          </div>
+        ),
+        size: 50,
+      },
+      {
+        accessorKey: "name",
+        header: () => <span className="font-semibold">User Details</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="font-bold text-sm text-foreground">{u.name}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Mail className="h-3 w-3" /> {u.email}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "role",
+        header: () => <span className="font-semibold">Role</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          const roleName = u.role?.name || (typeof u.role === "string" ? u.role : u.roleId) || "User";
+          return (
+            <Badge
+              variant="secondary"
+              className="font-semibold bg-primary/10 text-primary border-primary/20"
+            >
+              <ShieldCheck className="h-3 w-3 mr-1" />
+              {roleName}
+            </Badge>
+          );
+        },
+      },
+      {
+        accessorKey: "designation",
+        header: () => <span className="font-semibold">Designation</span>,
+        cell: ({ row }) => (
+          <span className="text-xs font-medium text-foreground">
+            {row.original.designation || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "additionalEmails",
+        header: () => <span className="font-semibold">Additional Emails</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return u.additionalEmails && u.additionalEmails.length > 0 ? (
+            <div className="flex flex-wrap gap-1 max-w-[200px]">
+              {u.additionalEmails.map((em, i) => (
+                <Badge key={i} variant="outline" className="text-[10px] bg-background">
+                  {em}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">—</span>
+          );
+        },
+      },
+      {
+        accessorKey: "signature",
+        header: () => <span className="font-semibold">Digital Signature</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return u.signature ? (
+            <div className="h-8 w-24 bg-white border rounded p-0.5 flex items-center justify-center">
+              <img src={u.signature} alt="Signature" className="max-h-full max-w-full object-contain" />
+            </div>
+          ) : (
+            <Badge variant="outline" className="text-[10px] text-amber-600 bg-amber-50">
+              <PenTool className="h-3 w-3 mr-1" /> Not Drawn
+            </Badge>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right font-semibold pr-2">Actions</div>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              {canAccess("users", "edit") && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-primary hover:bg-primary/10"
+                  onClick={() => handleOpenEditUser(u)}
+                  title="Edit User"
+                >
+                  <Edit2 className="h-4 w-4" />
+                </Button>
+              )}
+              {canAccess("users", "delete") && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                  onClick={() => setUserToDelete(u)}
+                  title="Delete User"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize, canAccess]
+  );
+
   return (
     <div className="space-y-6">
       {/* Top Header */}
@@ -441,114 +575,34 @@ export default function UserManagement() {
                 List of registered users with role access, designations, additional emails, and digital signatures.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
-              {loadingUsers ? (
-                <div className="p-12 text-center text-muted-foreground flex flex-col items-center gap-2">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  <p className="text-xs">Loading users list...</p>
-                </div>
-              ) : users.length === 0 ? (
-                <div className="p-12 text-center text-muted-foreground space-y-2">
-                  <Users className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm font-medium">No users found.</p>
-                  <Button size="sm" onClick={handleOpenCreateUser} className="gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add First User
-                  </Button>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader className="bg-muted/30">
-                      <TableRow>
-                        <TableHead className="w-12">#</TableHead>
-                        <TableHead>User Details</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Designation</TableHead>
-                        <TableHead>Additional Emails</TableHead>
-                        <TableHead>Digital Signature</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {users.map((u, idx) => (
-                        <TableRow key={u.id} className="hover:bg-muted/10">
-                          <TableCell className="text-xs text-muted-foreground font-mono">{idx + 1}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-sm text-foreground">{u.name}</span>
-                              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Mail className="h-3 w-3" /> {u.email}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className="font-semibold bg-primary/10 text-primary border-primary/20"
-                            >
-                              <ShieldCheck className="h-3 w-3 mr-1" />
-                              {u.role?.name || u.roleId || "User"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs font-medium text-foreground">
-                            {u.designation || "—"}
-                          </TableCell>
-                          <TableCell>
-                            {u.additionalEmails && u.additionalEmails.length > 0 ? (
-                              <div className="flex flex-wrap gap-1 max-w-[200px]">
-                                {u.additionalEmails.map((em, i) => (
-                                  <Badge key={i} variant="outline" className="text-[10px] bg-background">
-                                    {em}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground italic">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {u.signature ? (
-                              <div className="h-8 w-24 bg-white border rounded p-0.5 flex items-center justify-center">
-                                <img src={u.signature} alt="Signature" className="max-h-full max-w-full object-contain" />
-                              </div>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] text-amber-600 bg-amber-50">
-                                <PenTool className="h-3 w-3 mr-1" /> Not Drawn
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              {canAccess("users", "edit") && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-primary hover:bg-primary/10"
-                                  onClick={() => handleOpenEditUser(u)}
-                                  title="Edit User"
-                                >
-                                  <Edit2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {canAccess("users", "delete") && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                                  onClick={() => setUserToDelete(u)}
-                                  title="Delete User"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+            <CardContent className="p-4">
+              <DataTable
+                columns={userColumns}
+                data={paginatedUsers}
+                loading={loadingUsers}
+                pageIndex={pageIndex}
+                pageSize={pageSize}
+                pageCount={Math.max(1, Math.ceil(users.length / pageSize))}
+                totalItems={users.length}
+                onPageChange={setPageIndex}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPageIndex(1);
+                }}
+                searchPlaceholder="Search users by name or email..."
+                hideSearch={false}
+                hideColumnToggle={false}
+                emptyTitle="No users found"
+                emptyDescription="Manage your organization's users, assign roles, and configure access permissions."
+                emptyIcon={<Users className="h-10 w-10 mx-auto opacity-30" />}
+                emptyAction={
+                  canAccess("users", "create") ? (
+                    <Button size="sm" onClick={handleOpenCreateUser} className="gap-1 mt-2">
+                      <Plus className="h-3.5 w-3.5" /> Add First User
+                    </Button>
+                  ) : undefined
+                }
+              />
             </CardContent>
           </Card>
         </TabsContent>

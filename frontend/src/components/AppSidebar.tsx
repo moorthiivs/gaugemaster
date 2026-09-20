@@ -1,4 +1,4 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
@@ -85,6 +85,40 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const location = useLocation();
+
+  const isNavActive = (itemUrl: string) => {
+    const currentPath = location.pathname;
+    if (itemUrl === "/calibration") {
+      // Active only on /calibration or execution routes (/calibration/new, /calibration/history)
+      // NOT active on /calibration/templates or /calibration/approval
+      return (
+        currentPath === "/calibration" ||
+        currentPath.startsWith("/calibration/new") ||
+        currentPath.startsWith("/calibration/history")
+      );
+    }
+    if (itemUrl === "/calibration/templates") {
+      return currentPath.startsWith("/calibration/templates");
+    }
+    if (itemUrl === "/calibration/approval") {
+      return currentPath.startsWith("/calibration/approval");
+    }
+    if (itemUrl === "/instruments") {
+      return (
+        currentPath === "/instruments" ||
+        (currentPath.startsWith("/instruments/") && currentPath !== "/instruments/new")
+      );
+    }
+    if (itemUrl === "/instruments/new") {
+      return currentPath === "/instruments/new";
+    }
+    if (itemUrl === "/dashboard" || itemUrl === "/settings") {
+      return currentPath === itemUrl;
+    }
+    return currentPath === itemUrl || currentPath.startsWith(`${itemUrl}/`);
+  };
+
   const activeGroups = user?.isSuperAdmin
     ? (inspectedCompany ? [superAdminGroup, ...navigationGroups] : [superAdminGroup])
     : navigationGroups;
@@ -98,7 +132,7 @@ export function AppSidebar() {
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
             <span className="text-base font-bold tracking-tight text-sidebar-foreground">Gaugemaster</span>
-            <span className="text-[10px] uppercase tracking-wider text-primary font-bold opacity-80">Calibration Suite</span>
+            <span className="text-xs uppercase tracking-wider text-primary font-bold">Calibration Suite</span>
           </div>
         </div>
       </SidebarHeader>
@@ -110,37 +144,35 @@ export function AppSidebar() {
 
           return (
             <SidebarGroup key={group.label} className="group-data-[collapsible=icon]:px-0 py-0">
-              <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-widest px-3 mb-1 group-data-[collapsible=icon]:hidden">
+              <SidebarGroupLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-3 mb-1.5 group-data-[collapsible=icon]:hidden">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:items-center">
-                  {visibleItems.map((item) => (
-                    <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
-                      <SidebarMenuButton asChild tooltip={item.title} className="h-9 relative group/btn group-data-[collapsible=icon]:mx-auto">
-                        <NavLink 
-                          to={item.url} 
-                          end={item.url === "/dashboard" || item.url === "/settings"} 
-                          className={({ isActive }) => cn(
-                            "flex items-center gap-2.5 px-3 w-full h-full rounded-md text-xs font-medium transition-all duration-200 relative group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
-                            isActive 
-                              ? "bg-primary/15 text-primary font-semibold shadow-xs" 
-                              : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                          )}
-                        >
-                          {({ isActive }) => (
-                            <>
-                              {isActive && (
-                                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-primary rounded-r-sm group-data-[collapsible=icon]:h-3" />
-                              )}
-                              <item.icon className={cn("h-4 w-4 shrink-0 transition-transform group-hover/btn:scale-105", isActive && "text-primary")} />
-                              <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
-                            </>
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                  {visibleItems.map((item) => {
+                    const isActive = isNavActive(item.url);
+                    return (
+                      <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
+                        <SidebarMenuButton asChild tooltip={item.title} className="h-9 relative group/btn group-data-[collapsible=icon]:mx-auto">
+                          <NavLink 
+                            to={item.url} 
+                            className={cn(
+                              "flex items-center gap-3 px-3 w-full h-full rounded-md text-[13.5px] font-medium transition-all duration-200 relative group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
+                              isActive 
+                                ? "bg-primary/15 text-primary font-semibold shadow-xs" 
+                                : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                            )}
+                          >
+                            {isActive && (
+                              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-primary rounded-r-sm group-data-[collapsible=icon]:h-3" />
+                            )}
+                            <item.icon className={cn("h-4 w-4 shrink-0 transition-transform group-hover/btn:scale-105", isActive && "text-primary")} />
+                            <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -159,7 +191,7 @@ export function AppSidebar() {
             <div className="flex items-center gap-2 min-w-0">
               <Building2 className="h-4 w-4 text-primary shrink-0" />
               <div className="min-w-0">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-primary">Viewing Tenant</p>
+                <p className="text-2xs font-extrabold uppercase tracking-wider text-primary">Viewing Tenant</p>
                 <p className="text-xs font-bold truncate text-sidebar-foreground">{inspectedCompany.name}</p>
               </div>
             </div>
@@ -189,7 +221,7 @@ export function AppSidebar() {
             </Avatar>
             <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
               <span className="text-xs font-bold truncate text-sidebar-foreground">{user?.name || "User"}</span>
-              <span className="text-[10px] text-muted-foreground truncate">{user?.isSuperAdmin ? "Super Admin" : user?.email || "Member"}</span>
+              <span className="text-xs text-muted-foreground truncate">{user?.isSuperAdmin ? "Super Admin" : user?.email || "Member"}</span>
             </div>
           </div>
 

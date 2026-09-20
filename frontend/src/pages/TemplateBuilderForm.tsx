@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
@@ -11,19 +11,21 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy, FileText, Sliders, FileCheck2 } from "lucide-react";
+import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy, FileText, Sliders, FileCheck2, Target, Settings as SettingsIcon, ShieldCheck, CheckCircle2, Table as TableIcon, Wand2, FlaskConical, MoreVertical, Bot } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { CALIBRATION_TYPES, CalibrationPoint } from "@/types/calibration";
-import { CalibrationTemplate, CanvasBlock } from "@/types/template";
+import { CalibrationTemplate, CanvasBlock, TableGridBlock, CanvasColumnDef } from "@/types/template";
 import { getTemplate, getTemplates, createTemplate, updateTemplate } from "@/lib/templateActions";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
-import { CanvasTemplateEditor, CANVAS_PRESETS } from "@/components/calibration/CanvasTemplateEditor";
+import { CanvasTemplateEditor, CANVAS_PRESETS, CanvasEditorActions } from "@/components/calibration/CanvasTemplateEditor";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { SlidersHorizontal, LayoutGrid } from "lucide-react";
 import { validateTemplatePreSave } from "@/lib/templatePreSaveValidator";
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export default function TemplateBuilderForm() {
   useSEO({
@@ -55,14 +57,41 @@ export default function TemplateBuilderForm() {
   });
 
   // Form State
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [instrumentType, setInstrumentType] = useState("Dial Indicator (0.001 mm)");
+  const [name, setName] = useState<string>(() => {
+    if (!templateId) {
+      return CANVAS_PRESETS[0]?.name || "New Calibration Template";
+    }
+    return "";
+  });
+  const [description, setDescription] = useState<string>(() => {
+    if (!templateId) {
+      return CANVAS_PRESETS[0]?.description || "";
+    }
+    return "";
+  });
+  const [instrumentType, setInstrumentType] = useState<string>(() => {
+    if (!templateId) {
+      return CANVAS_PRESETS[0]?.instrumentType || "Vernier Caliper";
+    }
+    return "Dial Indicator (0.001 mm)";
+  });
   const [calibrationType, setCalibrationType] = useState("dimensional");
-  const [defaultUnit, setDefaultUnit] = useState("mm");
-  const [defaultTolerance, setDefaultTolerance] = useState<number | "">(0.001);
+  const [defaultUnit, setDefaultUnit] = useState<string>(() => {
+    if (!templateId) {
+      return CANVAS_PRESETS[0]?.defaultUnit || "mm";
+    }
+    return "mm";
+  });
+  const [defaultTolerance, setDefaultTolerance] = useState<number | "">(() => {
+    if (!templateId) {
+      return CANVAS_PRESETS[0]?.defaultTolerance ?? 0.02;
+    }
+    return 0.001;
+  });
 
-  const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(false);
+  const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(true);
+  const [isMetrologyPropertiesCollapsed, setIsMetrologyPropertiesCollapsed] = useState(false);
+  const canvasActionsRef = useRef<CanvasEditorActions | null>(null);
 
   // Environmental Defaults
   const [envTemp, setEnvTemp] = useState("20");
@@ -129,6 +158,134 @@ export default function TemplateBuilderForm() {
   const [columnOrder, setColumnOrder] = useState<string[]>([]);
   const [hiddenColumns, setHiddenColumns] = useState<string[]>([]);
   const [decimalPlaces, setDecimalPlaces] = useState<number>(4);
+  const [activeNavTab, setActiveNavTab] = useState<"canvas" | "tableConfig" | "specifications" | "certificateLayout" | "settings">("canvas");
+
+  const totalPointsCount = useMemo(() => {
+    if (isCanvasMode) {
+      return layoutBlocks.reduce((acc, b) => {
+        if (b.type === "table_grid") {
+          return acc + (b.rows?.length || 0);
+        }
+        if (b.type === "split_row" && b.children) {
+          return (
+            acc +
+            b.children.reduce(
+              (cAcc, c) => (c.type === "table_grid" ? cAcc + (c.rows?.length || 0) : cAcc),
+              0
+            )
+          );
+        }
+        return acc;
+      }, 0);
+    }
+    return points.length;
+  }, [isCanvasMode, layoutBlocks, points]);
+
+  const [selectedTableBlockId, setSelectedTableBlockId] = useState<string>("");
+
+  const allTableBlocks = useMemo(() => {
+    const list: { block: TableGridBlock; parentId?: string }[] = [];
+    layoutBlocks.forEach((b) => {
+      if (b.type === "table_grid") {
+        list.push({ block: b as TableGridBlock });
+      } else if (b.type === "split_row" && b.children) {
+        b.children.forEach((c) => {
+          if (c.type === "table_grid") {
+            list.push({ block: c as TableGridBlock, parentId: b.id });
+          }
+        });
+      }
+    });
+    return list;
+  }, [layoutBlocks]);
+
+  const activeTableBlock = useMemo<TableGridBlock | null>(() => {
+    if (!allTableBlocks.length) return null;
+    const found = allTableBlocks.find((item) => item.block.id === selectedTableBlockId);
+    return found ? found.block : allTableBlocks[0].block;
+  }, [allTableBlocks, selectedTableBlockId]);
+
+  const updateActiveTableBlock = (updates: Partial<TableGridBlock>) => {
+    if (!activeTableBlock) return;
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id === activeTableBlock.id && b.type === "table_grid") {
+          return { ...b, ...updates } as CanvasBlock;
+        }
+        if (b.type === "split_row" && b.children) {
+          return {
+            ...b,
+            children: b.children.map((c) =>
+              c.id === activeTableBlock.id && c.type === "table_grid"
+                ? ({ ...c, ...updates } as any)
+                : c
+            ),
+          } as CanvasBlock;
+        }
+        return b;
+      })
+    );
+    markDirty();
+  };
+
+  const handleAutoCalculateWidths = (tableId: string) => {
+    const target = allTableBlocks.find((t) => t.block.id === tableId)?.block;
+    if (!target || !target.columns || target.columns.length === 0) return;
+
+    const updatedCols = target.columns.map((col) => {
+      let baseWidth = Math.max(90, (col.label?.length || 8) * 11 + 35);
+      if (col.type === "number") baseWidth = Math.max(100, baseWidth);
+      if (col.type === "formula" || (col.type as any) === "calculated") baseWidth = Math.max(130, baseWidth);
+      if (col.isPassFail || col.type === "status") baseWidth = Math.max(100, baseWidth);
+      return { ...col, width: baseWidth };
+    });
+
+    updateActiveTableBlock({ columns: updatedCols });
+    toast.success("Optimized column widths based on content type!");
+  };
+
+  const handleAddColumnToActiveTable = () => {
+    if (!activeTableBlock) return;
+    const currentCols = activeTableBlock.columns || [];
+    const newColIndex = currentCols.length + 1;
+    const newColKey = `col_${Date.now()}`;
+    const newCol: CanvasColumnDef = {
+      id: newColKey,
+      key: newColKey,
+      label: `Column ${newColIndex}`,
+      type: "number",
+      width: 110,
+      align: "right",
+      editable: true,
+    };
+    updateActiveTableBlock({ columns: [...currentCols, newCol] });
+    toast.success(`Added new column "${newCol.label}"`);
+  };
+
+  const handleDeleteColumnFromActiveTable = (colId: string) => {
+    if (!activeTableBlock) return;
+    const currentCols = activeTableBlock.columns || [];
+    if (currentCols.length <= 1) {
+      toast.error("Table must have at least one column");
+      return;
+    }
+    const updatedCols = currentCols.filter((c) => c.id !== colId && (!c.key || c.key !== colId));
+    updateActiveTableBlock({ columns: updatedCols });
+    toast.info("Column removed");
+  };
+
+  const handleUpdateColumnInActiveTable = (colId: string, colUpdates: Partial<CanvasColumnDef>) => {
+    if (!activeTableBlock) return;
+    const currentCols = activeTableBlock.columns || [];
+    const updatedCols = currentCols.map((c) => {
+      if (c.id === colId || (c.key && c.key === colId)) {
+        return { ...c, ...colUpdates };
+      }
+      return c;
+    });
+    updateActiveTableBlock({ columns: updatedCols });
+  };
+
   const [remarks, setRemarks] = useState("Standard calibration per ISO/IEC 17025");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
   const [procedureReference, setProcedureReference] = useState("AE/CAL-SOP/01");
@@ -410,8 +567,11 @@ export default function TemplateBuilderForm() {
         if ((tpl as any).hidden_columns) {
           setHiddenColumns((tpl as any).hidden_columns);
         }
-        if ((tpl as any).decimal_places !== undefined) {
-          setDecimalPlaces((tpl as any).decimal_places);
+        if ((tpl as any).decimal_places !== undefined && (tpl as any).decimal_places !== null) {
+          const parsed = Number((tpl as any).decimal_places);
+          setDecimalPlaces(!isNaN(parsed) ? parsed : 4);
+        } else {
+          setDecimalPlaces(4);
         }
         setIsDirty(false);
       })
@@ -555,113 +715,301 @@ export default function TemplateBuilderForm() {
 
   return (
     <div className={isFullWindowPage ? "fixed inset-0 z-50 bg-background flex flex-col h-screen w-screen overflow-hidden" : "min-h-[calc(100vh-4rem)] p-4 max-w-[1700px] mx-auto flex flex-col h-[calc(100vh-4rem)] overflow-hidden space-y-3"}>
-      {/* Top Studio Bar */}
-      <div className="h-12 border-b bg-card px-3 sm:px-4 flex items-center justify-between shrink-0 shadow-xs z-20">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleBackNavigation}
-            className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
-            title="Go back to templates list"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-          <div className="h-4 w-px bg-border shrink-0" />
-          <div className="flex items-center gap-2 overflow-hidden">
-            <h1 className="text-sm font-bold truncate max-w-[180px] sm:max-w-[280px]">
-              {templateId ? `Edit: ${name || "Untitled"}` : name || "New Calibration Template"}
-            </h1>
-            <Badge variant="secondary" className="capitalize text-[10px] px-2 py-0.5 shrink-0 hidden sm:inline-flex">
-              {selectedTypeConfig.label}
-            </Badge>
-            {isDirty && (
-              <Badge variant="outline" className="border-amber-500/80 text-amber-600 dark:text-amber-400 text-[10px] px-1.5 py-0 animate-pulse shrink-0">
-                Unsaved
-              </Badge>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          <div className="hidden md:flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border mr-1">
+      {/* 3-Tier Studio Header matching reference design */}
+      <div className="border-b bg-card shrink-0 z-20">
+        {/* Tier 1: Action Bar (Back + Badge | Segmented View | Action Buttons) */}
+        <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between border-b border-border/60 flex-wrap gap-2">
+          {/* Left: Edit Template + Calibration Template Badge */}
+          <div className="flex items-center gap-2.5">
             <Button
-              type="button"
-              variant={isCanvasMode ? "default" : "ghost"}
+              variant="ghost"
               size="sm"
+              onClick={handleBackNavigation}
+              className="h-8 gap-1.5 text-foreground hover:text-primary font-semibold px-2 rounded-lg"
+              title="Go back to templates list"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>{templateId ? "Edit Template" : "New Template"}</span>
+            </Button>
+            <Badge variant="outline" className="text-xs font-normal bg-muted/60 text-muted-foreground px-2.5 py-0.5 rounded-full border-border">
+              {templateId ? "Calibration Template" : "New Calibration Template"}
+            </Badge>
+          </div>
+
+          {/* Center: Segmented View Switch */}
+          <div className="flex items-center bg-muted/70 p-1 rounded-lg border shadow-2xs">
+            <button
+              type="button"
               onClick={() => {
                 setIsCanvasMode(true);
+                setActiveNavTab("canvas");
                 markDirty();
                 if (layoutBlocks.length === 0) {
                   setLayoutBlocks(JSON.parse(JSON.stringify(CANVAS_PRESETS[0].blocks)));
                 }
               }}
-              className="text-[11px] h-7 px-2.5 gap-1 font-bold shadow-xs"
+              className={`px-3.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                isCanvasMode
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <Sparkles className="w-3 h-3 text-amber-400" />
-              Visual Canvas
-            </Button>
-            <Button
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Visual Canvas</span>
+            </button>
+            <button
               type="button"
-              variant={!isCanvasMode ? "default" : "ghost"}
-              size="sm"
               onClick={() => {
                 setIsCanvasMode(false);
+                setActiveNavTab("canvas");
                 markDirty();
               }}
-              className="text-[11px] h-7 px-2.5 gap-1 font-medium shadow-xs"
+              className={`px-3.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                !isCanvasMode
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              <SlidersHorizontal className="w-3 h-3" />
-              Single Grid
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>Single Grid</span>
+            </button>
+            <Button
+              type="button"
+              variant={!isPropertiesCollapsed ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setIsPropertiesCollapsed(!isPropertiesCollapsed)}
+              className={`gap-1.5 text-xs h-8 px-3 font-medium rounded-lg transition-colors ${
+                !isPropertiesCollapsed
+                  ? "bg-primary/10 text-primary border-primary/30 font-semibold"
+                  : "hover:bg-muted"
+              }`}
+              title="Toggle Template Properties (Document Control, SOP, Environment)"
+            >
+              <Layers className="w-3.5 h-3.5 text-primary" />
+              <span>Properties</span>
             </Button>
           </div>
 
-          <Button
-            variant={isPropertiesCollapsed ? "outline" : "ghost"}
-            size="sm"
-            onClick={() => setIsPropertiesCollapsed(!isPropertiesCollapsed)}
-            className="gap-1 text-xs h-8 px-2.5 font-semibold"
-            title={isPropertiesCollapsed ? "Expand Template Properties panel" : "Collapse Template Properties panel"}
-          >
-            {isPropertiesCollapsed ? <PanelLeftOpen className="w-3.5 h-3.5 text-primary" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isPropertiesCollapsed ? "Show Properties" : "Hide Properties"}</span>
-          </Button>
+          {/* Right: Actions */}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                canvasActionsRef.current?.openTrialRun();
+              }}
+              className="gap-1.5 text-xs h-8 px-3 font-medium rounded-lg hover:bg-muted"
+              title="Trial Run Simulation"
+            >
+              <FlaskConical className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
+              <span>Trial Run</span>
+            </Button>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowCertPreviewModal(true)}
-            className="gap-1 text-xs h-8 px-2.5 font-semibold hover:bg-primary/5 hover:text-primary border-primary/30"
-            title="Preview Full Calibration Certificate layout"
-          >
-            <Eye className="w-3.5 h-3.5 text-primary" />
-            <span className="hidden sm:inline">Preview Certificate</span>
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                canvasActionsRef.current?.openTableAudit();
+              }}
+              className="gap-1.5 text-xs h-8 px-3 font-medium rounded-lg hover:bg-muted"
+              title="AI Audit Table Formulas & Tolerances"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span>AI Audit Table</span>
+            </Button>
 
-          <Button
-            variant={isFullWindowPage ? "secondary" : "outline"}
-            size="sm"
-            onClick={() => setIsFullWindowPage(!isFullWindowPage)}
-            className="gap-1 text-xs h-8 px-2.5 font-semibold"
-            title={isFullWindowPage ? "Exit Studio View Mode" : "Full Screen Studio View"}
-          >
-            {isFullWindowPage ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5 text-primary" />}
-            <span className="hidden lg:inline">{isFullWindowPage ? "Exit Studio View" : "Studio View"}</span>
-          </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                canvasActionsRef.current?.openAiGenerator();
+              }}
+              className="gap-1.5 text-xs h-8 px-3 font-medium border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs"
+              title="AI Smart Template Generator"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>AI Smart Generate</span>
+            </Button>
 
-          <Button variant="ghost" size="sm" onClick={handleBackNavigation} className="text-xs h-8 px-2 text-muted-foreground hover:text-foreground">
-            Cancel
-          </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                canvasActionsRef.current?.toggleAssistant();
+              }}
+              className="gap-1.5 text-xs h-8 px-3 font-semibold border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg shadow-2xs"
+              title="Toggle Gaugemaster Template Copilot"
+            >
+              <Bot className="w-3.5 h-3.5 text-indigo-500" />
+              <span>AI Copilot</span>
+            </Button>
 
-          <Button size="sm" onClick={() => handleSave()} disabled={saving || isNameDuplicate || !name.trim()} className="gap-1.5 h-8 px-3 text-xs shadow-md">
-            <Save className="w-3.5 h-3.5" />
-            {saving ? "Saving..." : templateId ? "Update" : "Save Template"}
-          </Button>
+            <Button
+              size="sm"
+              onClick={() => handleSave()}
+              disabled={saving || isNameDuplicate || !name.trim()}
+              className="gap-1.5 h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs"
+            >
+              <Save className="w-3.5 h-3.5" />
+              {saving ? "Saving..." : templateId ? "Update Template" : "Save Template"}
+            </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
+                  title="More Options"
+                >
+                  <MoreVertical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48 text-xs">
+                <DropdownMenuItem
+                  onClick={() => setShowCertPreviewModal(true)}
+                  className="gap-2 cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5 text-primary" />
+                  <span>Preview Certificate</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setIsFullWindowPage(!isFullWindowPage)}
+                  className="gap-2 cursor-pointer"
+                >
+                  {isFullWindowPage ? (
+                    <>
+                      <Minimize2 className="w-3.5 h-3.5" />
+                      <span>Exit Full Window</span>
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-3.5 h-3.5 text-primary" />
+                      <span>Full Window Studio</span>
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => canvasActionsRef.current?.toggleAssistant()}
+                  className="gap-2 cursor-pointer"
+                >
+                  <Bot className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Toggle Copilot</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleBackNavigation}
+                  className="gap-2 cursor-pointer text-muted-foreground"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Cancel / Exit</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* Tier 2: Template Title & Metadata Row */}
+        <div className="px-4 sm:px-6 pt-2.5 pb-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="relative group max-w-2xl flex-1 min-w-[280px]">
+                <Input
+                  value={name}
+                  onChange={(e) => {
+                    setName(e.target.value);
+                    markDirty();
+                  }}
+                  placeholder="Enter Template Name (e.g. Vernier Caliper Standard IS 3651) *"
+                  className={`h-9 text-base sm:text-lg font-bold tracking-tight rounded-lg px-2.5 transition-all ${
+                    !name.trim()
+                      ? "border-amber-400 dark:border-amber-500 bg-amber-500/5 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      : isNameDuplicate
+                      ? "border-destructive focus:ring-2 focus:ring-destructive/20 bg-background"
+                      : "border-border/60 hover:border-border focus:border-primary focus:ring-2 focus:ring-primary/20 bg-background"
+                  }`}
+                  title="Click to edit Template Name"
+                />
+              </div>
+
+              {isDirty ? (
+                <Badge variant="outline" className="border-amber-500/80 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xxs px-2.5 py-0.5 animate-pulse font-semibold rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  Unsaved
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xxs px-2.5 py-0.5 font-semibold rounded-full flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  Active
+                </Badge>
+              )}
+
+              {isNameDuplicate && (
+                <span className="text-tiny text-destructive font-medium flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>A template with this name already exists</span>
+                </span>
+              )}
+
+              {!name.trim() && (
+                <span className="text-tiny text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                  <span>Template Name is required to save</span>
+                </span>
+              )}
+            </div>
+
+            <div className="text-xs text-muted-foreground flex items-center gap-2 pt-1 flex-wrap">
+              <span>{selectedTypeConfig.label}</span>
+              <span>•</span>
+              <span>{totalPointsCount || 9} Points</span>
+              <span>•</span>
+              <span>ISO 17025</span>
+              {procedureReference && (
+                <>
+                  <span>•</span>
+                  <span>{procedureReference}</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Tier 3: 5 Underline Navigation Tabs */}
+        <div className="px-4 sm:px-6 flex items-center gap-6 border-t border-border/40 overflow-x-auto no-scrollbar">
+          {[
+            { id: "canvas", label: "Canvas View", icon: Layers },
+            { id: "tableConfig", label: "Table Configuration", icon: SlidersHorizontal },
+            { id: "specifications", label: "Specifications", icon: Target },
+            { id: "certificateLayout", label: "Certificate Layout", icon: FileText },
+            { id: "settings", label: "Settings", icon: SettingsIcon },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeNavTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveNavTab(tab.id as any)}
+                className={`py-2.5 text-xs font-semibold flex items-center gap-1.5 border-b-2 transition-all cursor-pointer ${
+                  isActive
+                    ? "border-primary text-primary font-bold"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Main Studio Flex Workspace */}
-      <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-hidden bg-slate-50/50 dark:bg-slate-950/40">
+      {activeNavTab === "canvas" && (
+        <div className="flex-1 flex flex-col lg:flex-row gap-3 p-3 overflow-hidden bg-slate-50/50 dark:bg-slate-950/40">
         {/* Left Column: Properties Sidebar */}
         {!isPropertiesCollapsed && (
           <div
@@ -690,19 +1038,19 @@ export default function TemplateBuilderForm() {
           <CardContent className="flex-1 overflow-y-auto p-3 text-xs">
             <Tabs defaultValue="basic" className="w-full">
               <TabsList className="grid grid-cols-4 h-9 bg-muted/70 p-0.5 rounded-lg mb-3">
-                <TabsTrigger value="basic" className="text-[11px] font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
+                <TabsTrigger value="basic" className="text-tiny font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
                   <Layers className="w-3 h-3" />
                   Basic
                 </TabsTrigger>
-                <TabsTrigger value="docs" className="text-[11px] font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
+                <TabsTrigger value="docs" className="text-tiny font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
                   <FileText className="w-3 h-3" />
                   Docs
                 </TabsTrigger>
-                <TabsTrigger value="env" className="text-[11px] font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
+                <TabsTrigger value="env" className="text-tiny font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
                   <Clock className="w-3 h-3" />
                   Env
                 </TabsTrigger>
-                <TabsTrigger value="rules" className="text-[11px] font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
+                <TabsTrigger value="rules" className="text-tiny font-semibold py-1 px-1 gap-1 data-[state=active]:shadow-xs">
                   <Sparkles className="w-3 h-3" />
                   Rules
                 </TabsTrigger>
@@ -719,7 +1067,7 @@ export default function TemplateBuilderForm() {
                     className={`text-xs ${isNameDuplicate ? "border-destructive focus-visible:ring-destructive" : ""}`}
                   />
                   {isNameDuplicate && (
-                    <p className="text-[11px] text-destructive font-medium flex items-center gap-1 mt-1">
+                    <p className="text-tiny text-destructive font-medium flex items-center gap-1 mt-1">
                       <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
                       A template with this name already exists. Please choose a unique name.
                     </p>
@@ -824,10 +1172,10 @@ export default function TemplateBuilderForm() {
                       <FileText className="w-3.5 h-3.5 text-primary" />
                       Template Document Control
                     </Label>
-                    <span className="text-[10px] text-muted-foreground">Top-right header box</span>
+                    <span className="text-xxs text-muted-foreground">Top-right header box</span>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Doc. No.</Label>
+                    <Label className="text-tiny text-muted-foreground">Doc. No.</Label>
                     <Input
                       placeholder="e.g., R/QCM/GI/001/03"
                       value={docNo}
@@ -837,7 +1185,7 @@ export default function TemplateBuilderForm() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Date</Label>
+                      <Label className="text-tiny text-muted-foreground">Date</Label>
                       <Input
                         placeholder="DD/MM/YYYY"
                         value={docDate}
@@ -846,7 +1194,7 @@ export default function TemplateBuilderForm() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                      <Label className="text-tiny text-muted-foreground">Revision</Label>
                       <Input
                         placeholder="e.g., 3"
                         value={docRev}
@@ -856,7 +1204,7 @@ export default function TemplateBuilderForm() {
                     </div>
                   </div>
                   {docNo && (
-                    <div className="border border-primary/20 bg-background rounded-lg p-2 text-[10px] font-mono shadow-2xs">
+                    <div className="border border-primary/20 bg-background rounded-lg p-2 text-xxs font-mono shadow-2xs">
                       <div className="font-bold text-primary">Doc.No : {docNo}</div>
                       <div className="text-muted-foreground mt-0.5">Date &amp; Rev : {docDate || "-"} &amp; {docRev || "-"}</div>
                     </div>
@@ -870,10 +1218,10 @@ export default function TemplateBuilderForm() {
                       <Sliders className="w-3.5 h-3.5 text-primary" />
                       Calibration Procedure
                     </Label>
-                    <span className="text-[10px] text-muted-foreground">Procedure No cell</span>
+                    <span className="text-xxs text-muted-foreground">Procedure No cell</span>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Procedure Name</Label>
+                    <Label className="text-tiny text-muted-foreground">Procedure Name</Label>
                     <Input
                       placeholder="e.g., Gauges and Instruments Calibration Procedure"
                       value={procedureName}
@@ -882,7 +1230,7 @@ export default function TemplateBuilderForm() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Procedure No</Label>
+                    <Label className="text-tiny text-muted-foreground">Procedure No</Label>
                     <Input
                       placeholder="e.g., CP-001"
                       value={procedureNo}
@@ -891,7 +1239,7 @@ export default function TemplateBuilderForm() {
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Procedure Doc. No. / SOP</Label>
+                    <Label className="text-tiny text-muted-foreground">Procedure Doc. No. / SOP</Label>
                     <Input
                       placeholder="e.g., D/QCM/GI/006/01"
                       value={procedureReference}
@@ -901,7 +1249,7 @@ export default function TemplateBuilderForm() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Date</Label>
+                      <Label className="text-tiny text-muted-foreground">Date</Label>
                       <Input
                         placeholder="DD-MM-YYYY"
                         value={procedureDate}
@@ -910,7 +1258,7 @@ export default function TemplateBuilderForm() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                      <Label className="text-tiny text-muted-foreground">Revision</Label>
                       <Input
                         placeholder="e.g., 2"
                         value={procedureRev}
@@ -928,10 +1276,10 @@ export default function TemplateBuilderForm() {
                       <FileCheck2 className="w-3.5 h-3.5 text-primary" />
                       Acceptance Criteria Reference
                     </Label>
-                    <span className="text-[10px] text-muted-foreground">Above Procedure table</span>
+                    <span className="text-xxs text-muted-foreground">Above Procedure table</span>
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-[11px] text-muted-foreground">Criteria Doc. No.</Label>
+                    <Label className="text-tiny text-muted-foreground">Criteria Doc. No.</Label>
                     <Input
                       placeholder="e.g., D/QCM/GI/006/03"
                       value={acceptanceCriteriaDocNo}
@@ -941,7 +1289,7 @@ export default function TemplateBuilderForm() {
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Date</Label>
+                      <Label className="text-tiny text-muted-foreground">Date</Label>
                       <Input
                         placeholder="DD-MM-YYYY"
                         value={acceptanceCriteriaDate}
@@ -950,7 +1298,7 @@ export default function TemplateBuilderForm() {
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Revision</Label>
+                      <Label className="text-tiny text-muted-foreground">Revision</Label>
                       <Input
                         placeholder="e.g., 01"
                         value={acceptanceCriteriaRev}
@@ -960,7 +1308,7 @@ export default function TemplateBuilderForm() {
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-[11px] text-muted-foreground">Custom Reference Text (Optional)</Label>
+                    <Label className="text-tiny text-muted-foreground">Custom Reference Text (Optional)</Label>
                     <Input
                       placeholder="AS Per D/QCM/GI/006/03 Rev-01 dated 12-05-2026"
                       value={acceptanceCriteriaReference}
@@ -984,7 +1332,7 @@ export default function TemplateBuilderForm() {
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <Label className="text-[10px] text-muted-foreground">Temp (°C)</Label>
+                      <Label className="text-xxs text-muted-foreground">Temp (°C)</Label>
                       <Input
                         value={envTemp}
                         onChange={(e) => { setEnvTemp(e.target.value); markDirty(); }}
@@ -993,7 +1341,7 @@ export default function TemplateBuilderForm() {
                       />
                     </div>
                     <div>
-                      <Label className="text-[10px] text-muted-foreground">Humidity (%)</Label>
+                      <Label className="text-xxs text-muted-foreground">Humidity (%)</Label>
                       <Input
                         value={envHumidity}
                         onChange={(e) => { setEnvHumidity(e.target.value); markDirty(); }}
@@ -1006,15 +1354,15 @@ export default function TemplateBuilderForm() {
                   {/* Soaking Time Settings */}
                   <div className="pt-2 border-t border-border/70 space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold text-foreground">
+                      <span className="text-tiny font-semibold text-foreground">
                         Soaking Time (Optional)
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-mono">hh:mm / hh:mm:ss</span>
+                      <span className="text-xxs text-muted-foreground font-mono">hh:mm / hh:mm:ss</span>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">Start Time</Label>
+                        <Label className="text-xxs text-muted-foreground">Start Time</Label>
                         <TimePicker
                           value={envSoakingStartTime}
                           onChange={(val) => handleSoakingStartChange(val)}
@@ -1022,7 +1370,7 @@ export default function TemplateBuilderForm() {
                         />
                       </div>
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">End Time</Label>
+                        <Label className="text-xxs text-muted-foreground">End Time</Label>
                         <TimePicker
                           value={envSoakingEndTime}
                           onChange={(val) => handleSoakingEndChange(val)}
@@ -1030,7 +1378,7 @@ export default function TemplateBuilderForm() {
                         />
                       </div>
                       <div>
-                        <Label className="text-[10px] text-primary font-semibold">Soaking Time</Label>
+                        <Label className="text-xxs text-primary font-semibold">Soaking Time</Label>
                         <DurationPicker
                           value={envSoakingTime}
                           onChange={(val) => { setEnvSoakingTime(val); markDirty(); }}
@@ -1039,7 +1387,7 @@ export default function TemplateBuilderForm() {
                       </div>
                     </div>
                     {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
-                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
+                      <p className="text-xxs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                         ✓ Soaking time details will be shown on preview and printed certificate
                       </p>
                     )}
@@ -1059,20 +1407,20 @@ export default function TemplateBuilderForm() {
                         variant="outline"
                         size="sm"
                         onClick={() => setShowCertPreviewModal(true)}
-                        className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                        className="h-6 px-2 text-xxs gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
                         title="Open Full Certificate Preview"
                       >
                         <Eye className="w-3 h-3" />
                         Full Preview
                       </Button>
                       {diagramImage && (
-                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 text-[10px]">
+                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 text-xxs">
                           Uploaded
                         </Badge>
                       )}
                     </div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground leading-tight">
+                  <p className="text-tiny text-muted-foreground leading-tight">
                     Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
                   </p>
 
@@ -1123,7 +1471,7 @@ export default function TemplateBuilderForm() {
                             Paste from Clipboard
                           </button>
                         </div>
-                        <span className="text-[10px] text-muted-foreground">
+                        <span className="text-xxs text-muted-foreground">
                           PNG, JPG, SVG, WebP (Max 5MB) • Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Ctrl+V</kbd> anywhere to paste
                         </span>
                       </div>
@@ -1136,9 +1484,9 @@ export default function TemplateBuilderForm() {
                     >
                       {/* Live Preview Box */}
                       <div className="space-y-1">
-                        <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                        <div className="flex items-center justify-between text-tiny font-medium text-muted-foreground">
                           <span>Live Certificate Preview</span>
-                          <span className="font-mono text-[10px]">{diagramWidth}px × {diagramHeight}px • {diagramAlignment}</span>
+                          <span className="font-mono text-xxs">{diagramWidth}px × {diagramHeight}px • {diagramAlignment}</span>
                         </div>
                         <div
                           onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
@@ -1170,7 +1518,7 @@ export default function TemplateBuilderForm() {
                       <div className="grid grid-cols-2 gap-2 pt-1">
                         <div>
                           <div className="flex justify-between items-center mb-1">
-                            <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{diagramWidth}px</span></Label>
+                            <Label className="text-xxs text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{diagramWidth}px</span></Label>
                           </div>
                           <input
                             type="range"
@@ -1187,7 +1535,7 @@ export default function TemplateBuilderForm() {
                         </div>
                         <div>
                           <div className="flex justify-between items-center mb-1">
-                            <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{diagramHeight}px</span></Label>
+                            <Label className="text-xxs text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{diagramHeight}px</span></Label>
                           </div>
                           <input
                             type="range"
@@ -1207,7 +1555,7 @@ export default function TemplateBuilderForm() {
                       {/* Alignment & Actions */}
                       <div className="flex items-center justify-between gap-2 pt-1 border-t flex-wrap">
                         <div className="flex items-center gap-1">
-                          <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
+                          <Label className="text-xxs text-muted-foreground mr-1">Align:</Label>
                           <Button
                             type="button"
                             variant={diagramAlignment === "left" ? "default" : "outline"}
@@ -1245,7 +1593,7 @@ export default function TemplateBuilderForm() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-6 px-2 text-[10px] gap-1 font-medium"
+                            className="h-6 px-2 text-xxs gap-1 font-medium"
                             onClick={handleCopyImageToClipboard}
                             title="Copy Diagram Image to Clipboard"
                           >
@@ -1256,7 +1604,7 @@ export default function TemplateBuilderForm() {
                             type="button"
                             variant="outline"
                             size="sm"
-                            className="h-6 px-2 text-[10px] gap-1 font-medium"
+                            className="h-6 px-2 text-xxs gap-1 font-medium"
                             onClick={handlePasteFromClipboard}
                             title="Paste new image from Clipboard (or press Ctrl+V)"
                           >
@@ -1265,7 +1613,7 @@ export default function TemplateBuilderForm() {
                           </Button>
                           <label
                             htmlFor="diagram-replace-upload"
-                            className="cursor-pointer inline-flex items-center gap-1 text-[10px] h-6 px-2 border rounded-md hover:bg-muted font-medium"
+                            className="cursor-pointer inline-flex items-center gap-1 text-xxs h-6 px-2 border rounded-md hover:bg-muted font-medium"
                           >
                             <Upload className="w-2.5 h-2.5" />
                             Replace
@@ -1284,7 +1632,7 @@ export default function TemplateBuilderForm() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
+                            className="h-6 px-2 text-xxs text-destructive hover:text-destructive hover:bg-destructive/10"
                             onClick={() => {
                               setDiagramImage(null);
                               markDirty();
@@ -1328,14 +1676,14 @@ export default function TemplateBuilderForm() {
                         checked={enableAcceptance}
                         onCheckedChange={(c) => setEnableAcceptance(!!c)}
                       />
-                      <Label htmlFor="acceptance_check" className="text-[11px] cursor-pointer font-medium">Enable</Label>
+                      <Label htmlFor="acceptance_check" className="text-tiny cursor-pointer font-medium">Enable</Label>
                     </div>
                   </div>
 
                   {enableAcceptance && (
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">Criteria Limit</Label>
+                        <Label className="text-xxs text-muted-foreground">Criteria Limit</Label>
                         <Input
                           type="number"
                           step="any"
@@ -1346,7 +1694,7 @@ export default function TemplateBuilderForm() {
                         />
                       </div>
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">Limit Unit</Label>
+                        <Label className="text-xxs text-muted-foreground">Limit Unit</Label>
                         <Select value={acceptanceType} onValueChange={(val: any) => setAcceptanceType(val)}>
                           <SelectTrigger className="text-xs h-8 bg-background">
                             <SelectValue />
@@ -1379,132 +1727,116 @@ export default function TemplateBuilderForm() {
         </div>
         )}
 
-        {/* Right Column: Interactive Canvas & Data Grid (Expands to 100% full width when Properties Collapsed) */}
-        <Card className="flex-1 min-w-0 h-full flex flex-col overflow-hidden border shadow-xs bg-card">
-          <CardHeader className="py-2.5 px-3.5 border-b shrink-0 bg-muted/20 flex flex-row items-center justify-between space-y-0 flex-wrap gap-2">
-            <div>
-              <CardTitle className="text-xs font-bold flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                {isCanvasMode ? "Visual Canvas Designer (IS 3651 & Multi-Table)" : "Standard Test Points & Custom Formulas"}
-              </CardTitle>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <div className="flex md:hidden items-center gap-1 bg-muted p-0.5 rounded-lg border">
-                <Button
-                  type="button"
-                  variant={isCanvasMode ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setIsCanvasMode(true)}
-                  className="text-[10px] h-6 px-2 gap-1 font-bold"
-                >
-                  Canvas
-                </Button>
-                <Button
-                  type="button"
-                  variant={!isCanvasMode ? "default" : "ghost"}
-                  size="sm"
-                  onClick={() => setIsCanvasMode(false)}
-                  className="text-[10px] h-6 px-2 gap-1 font-medium"
-                >
-                  Grid
-                </Button>
+        {/* Right Column: Interactive Canvas or Single Grid Data Table */}
+        {isCanvasMode ? (
+          <div className="flex-1 min-w-0 overflow-y-auto">
+            <CanvasTemplateEditor
+              blocks={layoutBlocks}
+              onChange={(newBlocks) => {
+                setLayoutBlocks(newBlocks);
+                markDirty();
+              }}
+              onRegisterActions={(actions) => {
+                canvasActionsRef.current = actions;
+              }}
+              onSelectPreset={(preset) => {
+                setLayoutBlocks(JSON.parse(JSON.stringify(preset.blocks)));
+                if (!templateId || name === "New Template" || !name.trim()) {
+                  setName(preset.name);
+                }
+                if (preset.instrumentType) {
+                  setInstrumentType(preset.instrumentType);
+                }
+                if (preset.defaultTolerance !== undefined) {
+                  setDefaultTolerance(preset.defaultTolerance);
+                }
+                if (preset.defaultUnit) {
+                  setDefaultUnit(preset.defaultUnit);
+                }
+                markDirty();
+                toast.success(`Loaded "${preset.name}" preset layout and properties!`);
+              }}
+              onApplyGeneratedTemplate={(result) => {
+                if (result.name && (!templateId || name === "New Template" || !name.trim())) {
+                  setName(result.name);
+                }
+                if (result.description) {
+                  setDescription(result.description);
+                }
+                if (result.instrumentType) {
+                  setInstrumentType(result.instrumentType);
+                }
+                if (result.defaultTolerance !== undefined) {
+                  setDefaultTolerance(result.defaultTolerance);
+                }
+                if (result.defaultUnit) {
+                  setDefaultUnit(result.defaultUnit);
+                }
+                if (result.decimalPlaces !== undefined) {
+                  setDecimalPlaces(result.decimalPlaces);
+                }
+                if (result.acceptanceCriteria) {
+                  setEnableAcceptance(result.acceptanceCriteria.enabled);
+                  setAcceptanceType(result.acceptanceCriteria.type);
+                  setAcceptanceValue(result.acceptanceCriteria.value);
+                }
+                if (result.blocks && result.blocks.length > 0) {
+                  setLayoutBlocks(result.blocks);
+                }
+                markDirty();
+              }}
+              defaultUnit={defaultUnit}
+              defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
+              decimalPlaces={decimalPlaces}
+              templateName={name}
+              docNo={docNo}
+              docDate={docDate}
+              docRev={docRev}
+              procedureReference={procedureReference}
+              procedureNo={procedureNo}
+              procedureName={procedureName}
+              procedureDate={procedureDate}
+              procedureRev={procedureRev}
+              acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
+              acceptanceCriteriaDate={acceptanceCriteriaDate}
+              acceptanceCriteriaRev={acceptanceCriteriaRev}
+              acceptanceCriteriaReference={acceptanceCriteriaReference}
+              diagramImage={diagramImage}
+              diagramImageWidth={diagramWidth}
+              diagramImageHeight={diagramHeight}
+              diagramImageAlignment={diagramAlignment}
+              onDecimalPlacesChange={(dp) => {
+                setDecimalPlaces(dp);
+                markDirty();
+              }}
+            />
+          </div>
+        ) : (
+          <Card className="flex-1 min-w-0 h-full flex flex-col overflow-hidden border shadow-xs bg-card">
+            <CardHeader className="py-2.5 px-3.5 border-b shrink-0 bg-muted/20 flex flex-row items-center justify-between space-y-0 flex-wrap gap-2">
+              <div>
+                <CardTitle className="text-xs font-bold flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
+                  Standard Test Points & Custom Formulas
+                </CardTitle>
               </div>
 
-              {isPropertiesCollapsed && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsPropertiesCollapsed(false)}
-                  className="text-xs h-7 gap-1 shadow-xs shrink-0 border-primary/40 text-primary hover:bg-primary/5"
-                  title="Show Template Properties sidebar"
-                >
-                  <PanelLeftOpen className="w-3.5 h-3.5" />
-                  Show Properties
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className={`flex-1 overflow-y-auto ${isCanvasMode ? "p-1.5 sm:p-2 space-y-2" : "p-3 space-y-3"}`}>
-            {isCanvasMode ? (
-              <CanvasTemplateEditor
-                blocks={layoutBlocks}
-                onChange={(newBlocks) => {
-                  setLayoutBlocks(newBlocks);
-                  markDirty();
-                }}
-                onSelectPreset={(preset) => {
-                  setLayoutBlocks(JSON.parse(JSON.stringify(preset.blocks)));
-                  if (!templateId || name === "New Template" || !name.trim()) {
-                    setName(preset.name);
-                  }
-                  if (preset.instrumentType) {
-                    setInstrumentType(preset.instrumentType);
-                  }
-                  if (preset.defaultTolerance !== undefined) {
-                    setDefaultTolerance(preset.defaultTolerance);
-                  }
-                  if (preset.defaultUnit) {
-                    setDefaultUnit(preset.defaultUnit);
-                  }
-                  markDirty();
-                  toast.success(`Loaded "${preset.name}" preset layout and properties!`);
-                }}
-                onApplyGeneratedTemplate={(result) => {
-                  if (result.name && (!templateId || name === "New Template" || !name.trim())) {
-                    setName(result.name);
-                  }
-                  if (result.description) {
-                    setDescription(result.description);
-                  }
-                  if (result.instrumentType) {
-                    setInstrumentType(result.instrumentType);
-                  }
-                  if (result.defaultTolerance !== undefined) {
-                    setDefaultTolerance(result.defaultTolerance);
-                  }
-                  if (result.defaultUnit) {
-                    setDefaultUnit(result.defaultUnit);
-                  }
-                  if (result.decimalPlaces !== undefined) {
-                    setDecimalPlaces(result.decimalPlaces);
-                  }
-                  if (result.acceptanceCriteria) {
-                    setEnableAcceptance(result.acceptanceCriteria.enabled);
-                    setAcceptanceType(result.acceptanceCriteria.type);
-                    setAcceptanceValue(result.acceptanceCriteria.value);
-                  }
-                  if (result.blocks && result.blocks.length > 0) {
-                    setLayoutBlocks(result.blocks);
-                  }
-                  markDirty();
-                }}
-                defaultUnit={defaultUnit}
-                defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
-                decimalPlaces={decimalPlaces}
-                templateName={name}
-                docNo={docNo}
-                docDate={docDate}
-                docRev={docRev}
-                procedureReference={procedureReference}
-                procedureNo={procedureNo}
-                procedureName={procedureName}
-                procedureDate={procedureDate}
-                procedureRev={procedureRev}
-                acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
-                acceptanceCriteriaDate={acceptanceCriteriaDate}
-                acceptanceCriteriaRev={acceptanceCriteriaRev}
-                acceptanceCriteriaReference={acceptanceCriteriaReference}
-                diagramImage={diagramImage}
-                diagramImageWidth={diagramWidth}
-                diagramImageHeight={diagramHeight}
-                diagramImageAlignment={diagramAlignment}
-                onDecimalPlacesChange={(dp) => {
-                  setDecimalPlaces(dp);
-                  markDirty();
-                }}
-              />
-            ) : (
+              <div className="flex items-center gap-2">
+                {isPropertiesCollapsed && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsPropertiesCollapsed(false)}
+                    className="text-xs h-7 gap-1 shadow-xs shrink-0 border-primary/40 text-primary hover:bg-primary/5"
+                    title="Show Template Properties sidebar"
+                  >
+                    <PanelLeftOpen className="w-3.5 h-3.5" />
+                    Show Properties
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-y-auto p-3 space-y-3">
               <CalibrationDataGrid
                 typeConfig={selectedTypeConfig}
                 points={points}
@@ -1542,10 +1874,1506 @@ export default function TemplateBuilderForm() {
                   markDirty();
                 }}
               />
-            )}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </div>
+      )}
+
+      {/* TAB: Table Configuration */}
+      {activeNavTab === "tableConfig" && (
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="w-full max-w-[1900px] mx-auto px-1 sm:px-2 space-y-4">
+            {/* Header Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border bg-card shadow-xs">
+              <div>
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="w-5 h-5 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Table & Column Architecture</h2>
+                  <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/30">
+                    {isCanvasMode ? `${allTableBlocks.length} Table Block${allTableBlocks.length === 1 ? '' : 's'}` : "Single Grid Mode"}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Configure table schemas, column headers, keys, mathematical formulas, alignments, and widths
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setActiveNavTab("canvas")}
+                  className="gap-1.5 text-xs h-8"
+                >
+                  <Layers className="w-3.5 h-3.5 text-primary" />
+                  Return to Canvas View
+                </Button>
+              </div>
+            </div>
+
+            {isCanvasMode ? (
+              <>
+                {/* Table Block Switcher Tabs */}
+                {allTableBlocks.length > 1 && (
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    {allTableBlocks.map((item, idx) => {
+                      const isSelected = activeTableBlock?.id === item.block.id;
+                      return (
+                        <button
+                          key={item.block.id}
+                          type="button"
+                          onClick={() => setSelectedTableBlockId(item.block.id)}
+                          className={`px-3 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-2 border transition-all cursor-pointer shrink-0 ${
+                            isSelected
+                              ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                              : "bg-card text-muted-foreground hover:text-foreground border-border"
+                          }`}
+                        >
+                          <TableIcon className="w-3.5 h-3.5" />
+                          <span>{item.block.title || `Table Block ${idx + 1}`}</span>
+                          <span className={`text-xxs px-1.5 py-0.5 rounded-full ${isSelected ? "bg-primary-foreground/20 text-white" : "bg-muted text-muted-foreground"}`}>
+                            {item.block.rows?.length || 0} rows
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {activeTableBlock ? (
+                  <div className="space-y-4">
+                    {/* Table Block Metrology & Print Settings Card */}
+                    <Card className="border shadow-xs bg-card">
+                      <CardHeader className="py-2.5 px-4 border-b bg-muted/20">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <CardTitle className="text-xs font-bold flex items-center gap-2 text-foreground">
+                              <Sliders className="w-3.5 h-3.5 text-primary" />
+                              Table Metrology & Print Properties
+                            </CardTitle>
+                            <Badge variant="secondary" className="text-xxs font-mono uppercase">
+                              {activeTableBlock.rows?.length || 0} Test Points / Rows
+                            </Badge>
+                            {isMetrologyPropertiesCollapsed && (
+                              <span className="text-tiny text-muted-foreground font-medium hidden sm:inline">
+                                • {activeTableBlock.title || "Untitled"} ({activeTableBlock.unit || defaultUnit || "mm"}, ±{activeTableBlock.tolerance ?? 0.01})
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setIsMetrologyPropertiesCollapsed(!isMetrologyPropertiesCollapsed)}
+                            className="h-7 px-2.5 text-xs gap-1.5 text-muted-foreground hover:text-foreground hover:bg-muted font-medium"
+                            title={isMetrologyPropertiesCollapsed ? "Expand Properties" : "Collapse Properties"}
+                          >
+                            {isMetrologyPropertiesCollapsed ? (
+                              <>
+                                <ChevronDown className="w-3.5 h-3.5" />
+                                <span>Expand</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronUp className="w-3.5 h-3.5" />
+                                <span>Collapse</span>
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      {!isMetrologyPropertiesCollapsed && (
+                        <CardContent className="p-4 space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {/* Table Section Title */}
+                            <div className="space-y-1">
+                              <Label className="text-tiny font-semibold text-muted-foreground uppercase">Section Title</Label>
+                              <Input
+                                value={activeTableBlock.title || ""}
+                                onChange={(e) => updateActiveTableBlock({ title: e.target.value })}
+                                placeholder="e.g. Calibration Data"
+                                className="h-8 text-xs font-semibold"
+                              />
+                            </div>
+
+                            {/* Unit */}
+                            <div className="space-y-1">
+                              <Label className="text-tiny font-semibold text-muted-foreground uppercase">Default Unit</Label>
+                              <Input
+                                value={activeTableBlock.unit || defaultUnit || "mm"}
+                                onChange={(e) => updateActiveTableBlock({ unit: e.target.value })}
+                                placeholder="e.g. mm, µm, bar, °C"
+                                className="h-8 text-xs font-mono"
+                              />
+                            </div>
+
+                            {/* Default Tolerance */}
+                            <div className="space-y-1">
+                              <Label className="text-tiny font-semibold text-muted-foreground uppercase">Default Tolerance (±)</Label>
+                              <Input
+                                type="number"
+                                step="any"
+                                value={activeTableBlock.tolerance ?? (typeof defaultTolerance === "number" ? defaultTolerance : 0.01)}
+                                onChange={(e) => updateActiveTableBlock({ tolerance: parseFloat(e.target.value) || 0 })}
+                                placeholder="0.010"
+                                className="h-8 text-xs font-mono"
+                              />
+                            </div>
+
+                            {/* Table Decimal Precision */}
+                            <div className="space-y-1">
+                              <Label className="text-tiny font-semibold text-muted-foreground uppercase">Table Decimal Precision</Label>
+                              <Select
+                                value={String(activeTableBlock.decimal_places ?? decimalPlaces ?? 4)}
+                                onValueChange={(val) => {
+                                  const dp = parseInt(val, 10) || 3;
+                                  updateActiveTableBlock({ decimal_places: dp });
+                                  setDecimalPlaces(dp);
+                                }}
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="1">1 (0.0)</SelectItem>
+                                  <SelectItem value="2">2 (0.00)</SelectItem>
+                                  <SelectItem value="3">3 (0.000)</SelectItem>
+                                  <SelectItem value="4">4 (0.0000)</SelectItem>
+                                  <SelectItem value="5">5 (0.00000)</SelectItem>
+                                  <SelectItem value="6">6 (0.000000)</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t">
+                            {/* Table Print Orientation */}
+                            <div className="space-y-2 p-3 rounded-lg bg-muted/20 border">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                                  <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
+                                  Table Print Orientation
+                                </Label>
+                                <Badge variant="outline" className="text-xxs font-mono capitalize">
+                                  {activeTableBlock.orientation || "auto"}
+                                </Badge>
+                              </div>
+                              <Select
+                                value={activeTableBlock.orientation || "auto"}
+                                onValueChange={(val: any) => {
+                                  updateActiveTableBlock({ orientation: val });
+                                  toast.success(`Table orientation set to ${val}`);
+                                }}
+                              >
+                                <SelectTrigger className="h-8 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="auto">
+                                    <div className="flex items-center gap-1.5">
+                                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                                      <span>Auto (Smart Column/Row Layout)</span>
+                                    </div>
+                                  </SelectItem>
+                                  <SelectItem value="vertical">
+                                    <span>Vertical (Standard Columns at Top)</span>
+                                  </SelectItem>
+                                  <SelectItem value="horizontal">
+                                    <span>Horizontal (Transposed Matrix Across)</span>
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xxs text-muted-foreground">
+                                {((activeTableBlock.columns?.length || 0) > 6)
+                                  ? "Table has > 6 columns: Horizontal orientation recommended for optimal print width."
+                                  : "Standard vertical layout recommended for standard certificate formatting."}
+                              </p>
+                            </div>
+
+                            {/* Block Spacing & Margins */}
+                            <div className="space-y-2 p-3 rounded-lg bg-muted/20 border">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                                  <Sliders className="w-3.5 h-3.5 text-primary" />
+                                  Block Spacing & Print Margins
+                                </Label>
+                                <span className="text-xxs font-mono text-muted-foreground">
+                                  Top: {activeTableBlock.marginTop ?? 0}px • Bottom: {activeTableBlock.marginBottom ?? 6}px
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-tiny">
+                                    <span className="text-muted-foreground">Top Gap</span>
+                                    <span className="font-mono text-xs font-semibold">{activeTableBlock.marginTop ?? 0}px</span>
+                                  </div>
+                                  <div className="flex gap-1 flex-wrap">
+                                    {[0, 4, 8, 12, 16].map((gap) => (
+                                      <button
+                                        key={gap}
+                                        type="button"
+                                        onClick={() => updateActiveTableBlock({ marginTop: gap })}
+                                        className={`px-2 py-0.5 rounded text-xxs font-mono font-medium transition-colors border ${
+                                          (activeTableBlock.marginTop ?? 0) === gap
+                                            ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                                            : "bg-card text-muted-foreground hover:text-foreground border-border"
+                                        }`}
+                                      >
+                                        {gap}px
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between text-tiny">
+                                    <span className="text-muted-foreground">Bottom Gap</span>
+                                    <span className="font-mono text-xs font-semibold">{activeTableBlock.marginBottom ?? 6}px</span>
+                                  </div>
+                                  <div className="flex gap-1 flex-wrap">
+                                    {[0, 4, 6, 12, 18, 24].map((gap) => (
+                                      <button
+                                        key={gap}
+                                        type="button"
+                                        onClick={() => updateActiveTableBlock({ marginBottom: gap })}
+                                        className={`px-2 py-0.5 rounded text-xxs font-mono font-medium transition-colors border ${
+                                          (activeTableBlock.marginBottom ?? 6) === gap
+                                            ? "bg-primary text-primary-foreground border-primary shadow-2xs"
+                                            : "bg-card text-muted-foreground hover:text-foreground border-border"
+                                        }`}
+                                      >
+                                        {gap}px
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
+                      )}
+                    </Card>
+
+                    {/* Columns Architecture & Properties Card */}
+                    <Card className="border shadow-xs bg-card">
+                      <CardHeader className="py-3 px-4 border-b bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 space-y-0">
+                        <div>
+                          <CardTitle className="text-xs font-bold flex items-center gap-2">
+                            <TableIcon className="w-3.5 h-3.5 text-primary" />
+                            Column Architecture & Formula Rules
+                          </CardTitle>
+                          <CardDescription className="text-tiny">
+                            Define column identifiers, math formulas, decimal precisions, custom widths, and alignments
+                          </CardDescription>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleAutoCalculateWidths(activeTableBlock.id)}
+                            className="h-8 text-xs gap-1.5 font-semibold text-primary border-primary/30 hover:bg-primary/5"
+                          >
+                            <Wand2 className="w-3.5 h-3.5" />
+                            Auto-Fit Widths
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={handleAddColumnToActiveTable}
+                            className="h-8 text-xs gap-1.5 font-semibold shadow-xs"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            Add Column
+                          </Button>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="p-0 overflow-x-auto">
+                        <table className="w-full text-xs text-left min-w-[1250px]">
+                          <thead className="bg-muted/40 text-muted-foreground font-semibold border-b text-tiny">
+                            <tr>
+                              <th className="py-2.5 px-3 w-10 text-center">#</th>
+                              <th className="py-2.5 px-3 w-44 min-w-[140px]">Column Header</th>
+                              <th className="py-2.5 px-3 w-36 min-w-[120px]">Key / Identifier</th>
+                              <th className="py-2.5 px-3 w-32">Type</th>
+                              <th className="py-2.5 px-3 w-28">Decimals</th>
+                              <th className="py-2.5 px-3 min-w-[340px]">Formula Expression</th>
+                              <th className="py-2.5 px-3 w-44 min-w-[160px]">Width (px)</th>
+                              <th className="py-2.5 px-3 w-24 text-center">Align</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Pass/Fail</th>
+                              <th className="py-2.5 px-3 w-14 text-center">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {(activeTableBlock.columns || []).map((col, idx) => {
+                              const colIdentifier = col.id || col.key || `col_${idx + 1}`;
+                              const parsedWidth = typeof col.width === "number"
+                                ? col.width
+                                : typeof col.width === "string" && col.width.endsWith("%")
+                                ? Math.round((parseFloat(col.width) / 100) * 1100)
+                                : parseInt(String(col.width || 110), 10) || 110;
+
+                              return (
+                                <tr key={colIdentifier} className="hover:bg-muted/20 transition-colors">
+                                  <td className="py-2 px-3 text-center text-muted-foreground font-mono text-xxs">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <Input
+                                      value={col.label || ""}
+                                      onChange={(e) => handleUpdateColumnInActiveTable(colIdentifier, { label: e.target.value })}
+                                      placeholder="Header Name"
+                                      className="h-7 text-xs font-semibold"
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <code
+                                      className="px-2 py-0.5 rounded bg-muted text-tiny font-mono text-foreground font-semibold cursor-pointer hover:bg-primary/10 hover:text-primary transition-colors"
+                                      title="Click to copy key token"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(col.key || col.id);
+                                        toast.success(`Copied "${col.key || col.id}"`);
+                                      }}
+                                    >
+                                      {col.key || col.id}
+                                    </code>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <Select
+                                      value={col.type === "formula" ? "formula" : (col.type || "number")}
+                                      onValueChange={(val: any) => {
+                                        let defFormula = col.formula;
+                                        if (val === "formula" && !defFormula) defFormula = "reading - nominal";
+                                        if (val === "status" && !defFormula) defFormula = "IF(ABS(error)<=tolerance,'PASS','FAIL')";
+                                        handleUpdateColumnInActiveTable(colIdentifier, { type: val, formula: defFormula });
+                                      }}
+                                    >
+                                      <SelectTrigger className="h-7 text-xs">
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="nominal">Nominal / Spec</SelectItem>
+                                        <SelectItem value="reading">Reading / Observed</SelectItem>
+                                        <SelectItem value="trial">Trial (t1, t2..)</SelectItem>
+                                        <SelectItem value="formula">Formula (fx)</SelectItem>
+                                        <SelectItem value="tolerance">Tolerance (±)</SelectItem>
+                                        <SelectItem value="status">Status / Pass-Fail</SelectItem>
+                                        <SelectItem value="number">Numeric</SelectItem>
+                                        <SelectItem value="text">Text</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    {col.type === "text" || col.type === "status" ? (
+                                      <span className="text-muted-foreground text-xxs italic">N/A</span>
+                                    ) : (
+                                      <Select
+                                        value={
+                                          col.decimal_places !== undefined
+                                            ? String(col.decimal_places)
+                                            : col.decimalPrecision !== undefined
+                                            ? String(col.decimalPrecision)
+                                            : "inherit"
+                                        }
+                                        onValueChange={(val: string) => {
+                                          const newDec = val === "inherit" ? undefined : parseInt(val, 10);
+                                          handleUpdateColumnInActiveTable(colIdentifier, {
+                                            decimal_places: newDec,
+                                            decimalPrecision: newDec,
+                                          });
+                                        }}
+                                      >
+                                        <SelectTrigger className="h-7 text-xs">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="inherit">Inherit ({activeTableBlock.decimal_places ?? decimalPlaces ?? 4})</SelectItem>
+                                          <SelectItem value="0">0 (Integer)</SelectItem>
+                                          <SelectItem value="1">1 Dec (.0)</SelectItem>
+                                          <SelectItem value="2">2 Dec (.00)</SelectItem>
+                                          <SelectItem value="3">3 Dec (.000)</SelectItem>
+                                          <SelectItem value="4">4 Dec (.0000)</SelectItem>
+                                          <SelectItem value="5">5 Dec (.00000)</SelectItem>
+                                          <SelectItem value="6">6 Dec (.000000)</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    {col.type === "formula" || col.type === "status" || Boolean(col.formula) ? (
+                                      <div className="space-y-1">
+                                        <Input
+                                          value={col.formula || ""}
+                                          onChange={(e) => handleUpdateColumnInActiveTable(colIdentifier, { formula: e.target.value })}
+                                          placeholder="e.g. ABS(reading - nominal)"
+                                          className="h-7 text-xs font-mono bg-blue-500/[0.04] border-blue-400/40 text-blue-700 dark:text-blue-300 font-medium w-full min-w-[320px]"
+                                        />
+                                        <span className="text-xxs text-muted-foreground flex items-center gap-1 font-mono">
+                                          <CheckCircle2 className="w-2.5 h-2.5 text-emerald-500" />
+                                          Live AST verified
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground text-tiny italic">Direct user input</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3">
+                                    <div className="space-y-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <input
+                                          type="range"
+                                          min={50}
+                                          max={300}
+                                          step={5}
+                                          value={parsedWidth}
+                                          onChange={(e) => handleUpdateColumnInActiveTable(colIdentifier, { width: parseInt(e.target.value, 10) || 100 })}
+                                          className="w-20 h-1.5 bg-muted rounded appearance-none cursor-pointer accent-primary"
+                                        />
+                                        <Input
+                                          type="number"
+                                          value={parsedWidth}
+                                          onChange={(e) => handleUpdateColumnInActiveTable(colIdentifier, { width: parseInt(e.target.value, 10) || 80 })}
+                                          className="h-7 text-xs font-mono w-16 px-1.5 text-center"
+                                        />
+                                        <span className="text-xxs text-muted-foreground">px</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        {[
+                                          { label: "Sm", w: 70 },
+                                          { label: "Md", w: 110 },
+                                          { label: "Lg", w: 160 },
+                                        ].map((p) => (
+                                          <button
+                                            key={p.label}
+                                            type="button"
+                                            onClick={() => handleUpdateColumnInActiveTable(colIdentifier, { width: p.w })}
+                                            className={`px-1.5 py-0.2 text-[9px] rounded border font-mono transition-colors ${
+                                              parsedWidth === p.w
+                                                ? "bg-primary text-primary-foreground border-primary font-bold"
+                                                : "bg-muted/40 text-muted-foreground hover:text-foreground border-border"
+                                            }`}
+                                          >
+                                            {p.label}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <div className="inline-flex items-center rounded-md border p-0.5 bg-muted/40">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateColumnInActiveTable(colIdentifier, { align: "left" })}
+                                        className={`p-1 rounded ${col.align === "left" ? "bg-card text-foreground shadow-xs font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                                        title="Align Left"
+                                      >
+                                        <AlignLeft className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateColumnInActiveTable(colIdentifier, { align: "center" })}
+                                        className={`p-1 rounded ${col.align === "center" ? "bg-card text-foreground shadow-xs font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                                        title="Align Center"
+                                      >
+                                        <AlignCenter className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateColumnInActiveTable(colIdentifier, { align: "right" })}
+                                        className={`p-1 rounded ${(!col.align || col.align === "right") ? "bg-card text-foreground shadow-xs font-bold" : "text-muted-foreground hover:text-foreground"}`}
+                                        title="Align Right"
+                                      >
+                                        <AlignRight className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Checkbox
+                                      checked={!!col.isPassFail || col.type === "status"}
+                                      onCheckedChange={(c) => handleUpdateColumnInActiveTable(colIdentifier, { isPassFail: !!c })}
+                                    />
+                                  </td>
+                                  <td className="py-2 px-3 text-center">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => handleDeleteColumnFromActiveTable(colIdentifier)}
+                                      className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-md"
+                                      title="Delete Column"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center bg-card border rounded-xl">
+                    <p className="text-xs text-muted-foreground">No table blocks found in current canvas layout.</p>
+                  </div>
+                )}
+
+                {/* Formula AST Reference Engine Callout */}
+                <div className="p-4 rounded-xl border bg-primary/5 border-primary/20 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-primary">
+                    <Sparkles className="w-4 h-4" />
+                    <span>Formula AST & Expression Engine Guidelines</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Formulas are verified via AST compiler before certificate compilation. You can reference any column key in this table directly.
+                  </p>
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <span className="text-tiny font-semibold text-foreground">Available Column Tokens:</span>
+                    {(activeTableBlock?.columns || []).map((col, idx) => {
+                      const token = col.key || col.id || `col_${idx + 1}`;
+                      return (
+                        <code
+                          key={token}
+                          className="px-2 py-0.5 rounded-md bg-card border text-tiny font-mono text-primary font-bold shadow-xs cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all"
+                          onClick={() => {
+                            navigator.clipboard.writeText(token);
+                            toast.success(`Copied "${token}" to clipboard!`);
+                          }}
+                          title="Click to copy key"
+                        >
+                          {token}
+                        </code>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* Single Grid Table Configuration */
+              <Card className="border shadow-xs bg-card p-6 text-center space-y-3">
+                <p className="text-xs text-muted-foreground">
+                  You are currently in Single Grid Mode. Columns and formulas can be configured directly on the data grid.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setActiveNavTab("canvas")}
+                  className="text-xs"
+                >
+                  Edit Points in Single Grid
+                </Button>
+              </Card>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: Specifications & Evaluation Rules */}
+      {activeNavTab === "specifications" && (
+        <ErrorBoundary fallbackTitle="Error loading Specifications tab">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="w-full max-w-[1900px] mx-auto px-1 sm:px-2 space-y-5">
+            {/* Header Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border bg-card shadow-xs">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Target className="w-5 h-5 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Instrument Specifications & Evaluation Rules</h2>
+                  <Badge variant="outline" className="text-xs bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
+                    ISO/IEC 17025 Compliant
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Define instrument categories, nominal tolerances, decimal precision, and acceptance criteria (MPE)
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setActiveNavTab("canvas")}
+                className="gap-1.5 text-xs h-8 shrink-0"
+              >
+                <Layers className="w-3.5 h-3.5 text-primary" />
+                Return to Canvas View
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Instrument Profile Card */}
+              <Card className="border shadow-xs bg-card">
+                <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                  <CardTitle className="text-xs font-bold flex items-center gap-2">
+                    <Target className="w-3.5 h-3.5 text-primary" />
+                    Instrument Profile & Units
+                  </CardTitle>
+                  <CardDescription className="text-tiny">
+                    Define instrument classification, measurement unit, and numerical resolution
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 space-y-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Instrument Type / Category</Label>
+                    <Input
+                      value={instrumentType || ""}
+                      onChange={(e) => { setInstrumentType(e.target.value); markDirty(); }}
+                      placeholder="e.g. Dial Indicator (0.001 mm), Vernier Caliper"
+                      className="text-xs h-8"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Calibration Discipline</Label>
+                    <Select value={calibrationType || "dimensional"} onValueChange={(val) => { setCalibrationType(val); markDirty(); }}>
+                      <SelectTrigger className="text-xs h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CALIBRATION_TYPES.map((t) => (
+                          <SelectItem key={t.type} value={t.type}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Default Measurement Unit</Label>
+                      <Select value={defaultUnit || "mm"} onValueChange={(val) => { setDefaultUnit(val); markDirty(); }}>
+                        <SelectTrigger className="text-xs h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="mm">mm (Millimeter)</SelectItem>
+                          <SelectItem value="µm">µm (Micrometer)</SelectItem>
+                          <SelectItem value="inch">inch (Inches)</SelectItem>
+                          <SelectItem value="deg">deg (Degrees)</SelectItem>
+                          <SelectItem value="bar">bar (Pressure)</SelectItem>
+                          <SelectItem value="psi">psi (Pressure)</SelectItem>
+                          <SelectItem value="°C">°C (Temperature)</SelectItem>
+                          <SelectItem value="kg">kg (Mass)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Decimal Places</Label>
+                      <Select
+                        value={String(decimalPlaces ?? 4)}
+                        onValueChange={(val) => { setDecimalPlaces(parseInt(val, 10) || 0); markDirty(); }}
+                      >
+                        <SelectTrigger className="text-xs h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">0 (e.g. 10)</SelectItem>
+                          <SelectItem value="1">1 (e.g. 10.0)</SelectItem>
+                          <SelectItem value="2">2 (e.g. 10.00)</SelectItem>
+                          <SelectItem value="3">3 (e.g. 10.000)</SelectItem>
+                          <SelectItem value="4">4 (e.g. 10.0000)</SelectItem>
+                          <SelectItem value="5">5 (e.g. 10.00000)</SelectItem>
+                          <SelectItem value="6">6 (e.g. 10.000000)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Default Nominal Tolerance (±)</Label>
+                    <div className="relative">
+                      <Input
+                        type="number"
+                        step="any"
+                        value={defaultTolerance ?? ""}
+                        onChange={(e) => {
+                          setDefaultTolerance(e.target.value === "" ? "" : parseFloat(e.target.value));
+                          markDirty();
+                        }}
+                        placeholder="0.001"
+                        className="text-xs h-8 pr-12 font-mono font-bold"
+                      />
+                      <span className="absolute right-3 top-2 text-xxs text-muted-foreground font-mono">
+                        {defaultUnit || "mm"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Live resolution preview */}
+                  <div className="p-3 rounded-lg bg-muted/40 border flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Preview Reading:</span>
+                    <span className="font-mono font-bold text-foreground">
+                      {(10.000001).toFixed(decimalPlaces ?? 4)} {defaultUnit || "mm"} (±{(typeof defaultTolerance === 'number' ? defaultTolerance : 0).toFixed(decimalPlaces ?? 4)})
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Acceptance Criteria & Evaluation Rules */}
+              <div className="space-y-6">
+                <Card className="border shadow-xs bg-card">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                    <CardTitle className="text-xs font-bold flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      Acceptance Criteria (MPE)
+                    </CardTitle>
+                    <CardDescription className="text-tiny">
+                      Maximum Permissible Error threshold enforcement for PASS/FAIL verdicts
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-4">
+                    <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="mpe_toggle" className="text-xs font-bold cursor-pointer">
+                          Enforce Acceptance Criteria (MPE)
+                        </Label>
+                        <p className="text-tiny text-muted-foreground">
+                          Evaluate measurement errors automatically against MPE limits
+                        </p>
+                      </div>
+                      <Checkbox
+                        id="mpe_toggle"
+                        checked={enableAcceptance}
+                        onCheckedChange={(c) => { setEnableAcceptance(!!c); markDirty(); }}
+                      />
+                    </div>
+
+                    {enableAcceptance && (
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold">Criteria Limit</Label>
+                          <Input
+                            type="number"
+                            step="any"
+                            value={acceptanceValue ?? ""}
+                            onChange={(e) => {
+                              setAcceptanceValue(e.target.value === "" ? "" : parseFloat(e.target.value));
+                              markDirty();
+                            }}
+                            placeholder="2"
+                            className="text-xs h-8 font-mono font-bold"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold">Limit Unit Type</Label>
+                          <Select
+                            value={acceptanceType || "percentage"}
+                            onValueChange={(val: any) => { setAcceptanceType(val); markDirty(); }}
+                          >
+                            <SelectTrigger className="text-xs h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="percentage">% Percentage</SelectItem>
+                              <SelectItem value="absolute">± Absolute Unit ({defaultUnit || "mm"})</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Overall Verdict Strategy */}
+                <Card className="border shadow-xs bg-card">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                    <CardTitle className="text-xs font-bold flex items-center gap-2">
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+                      Pass / Fail Evaluation Engine
+                    </CardTitle>
+                    <CardDescription className="text-tiny">
+                      Algorithm used to compute certificate final PASS/FAIL status
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Evaluation Logic</Label>
+                      <Select
+                        value={statusRuleType || "default"}
+                        onValueChange={(val: any) => { setStatusRuleType(val); markDirty(); }}
+                      >
+                        <SelectTrigger className="text-xs h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Standard (All points must PASS)</SelectItem>
+                          <SelectItem value="custom_formula">Custom Mathematical Formula</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {statusRuleType === "custom_formula" && (
+                      <div className="space-y-1.5 pt-1">
+                        <Label className="text-xs font-semibold">Custom Formula Expression</Label>
+                        <Input
+                          value={statusFormula || ""}
+                          onChange={(e) => { setStatusFormula(e.target.value); markDirty(); }}
+                          placeholder="e.g. error <= tolerance ? 'PASS' : 'FAIL'"
+                          className="text-xs font-mono h-8"
+                        />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+        </ErrorBoundary>
+      )}
+
+      {/* TAB: Certificate Layout & Technical Diagram */}
+      {activeNavTab === "certificateLayout" && (
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="w-full max-w-[1900px] mx-auto px-1 sm:px-2 space-y-5">
+            {/* Header Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border bg-card shadow-xs">
+              <div>
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Certificate Layout & Technical Diagram</h2>
+                  <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-600 border-blue-500/30">
+                    Document Control & ISO 17025
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Manage ISO document headers, calibration SOP references, and gauge schematic diagram embedding
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setShowCertPreviewModal(true)}
+                  className="gap-1.5 text-xs h-8 bg-primary text-primary-foreground font-semibold shadow-xs"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  Open Live Certificate Preview
+                </Button>
+              </div>
+            </div>
+
+            {/* Document Control Cards Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Card 1: Document Control */}
+              <Card className="border shadow-xs bg-card">
+                <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
+                  <CardTitle className="text-xs font-bold flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-primary" />
+                    Document Control
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3.5 space-y-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Document Number</Label>
+                    <Input
+                      value={docNo}
+                      onChange={(e) => { setDocNo(e.target.value); markDirty(); }}
+                      placeholder="e.g. DOC-CAL-001"
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Rev No.</Label>
+                      <Input
+                        value={docRev}
+                        onChange={(e) => { setDocRev(e.target.value); markDirty(); }}
+                        placeholder="01"
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Issue Date</Label>
+                      <Input
+                        type="date"
+                        value={docDate}
+                        onChange={(e) => { setDocDate(e.target.value); markDirty(); }}
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="pt-1">
+                    <span className="text-xxs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold inline-block">
+                      ✓ ISO/IEC 17025 Accredited
+                    </span>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Card 2: Calibration SOP Reference */}
+              <Card className="border shadow-xs bg-card">
+                <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
+                  <CardTitle className="text-xs font-bold flex items-center gap-2">
+                    <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
+                    Calibration Procedure (SOP)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3.5 space-y-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Procedure Ref / Code</Label>
+                    <Input
+                      value={procedureReference}
+                      onChange={(e) => { setProcedureReference(e.target.value); markDirty(); }}
+                      placeholder="e.g. AE/CAL-SOP/01"
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Procedure Name</Label>
+                    <Input
+                      value={procedureName}
+                      onChange={(e) => { setProcedureName(e.target.value); markDirty(); }}
+                      placeholder="e.g. SOP for Dial Gauges"
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Doc No</Label>
+                      <Input
+                        value={procedureNo}
+                        onChange={(e) => { setProcedureNo(e.target.value); markDirty(); }}
+                        placeholder="SOP-01"
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Rev</Label>
+                      <Input
+                        value={procedureRev}
+                        onChange={(e) => { setProcedureRev(e.target.value); markDirty(); }}
+                        placeholder="00"
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Date</Label>
+                    <Input
+                      type="date"
+                      value={procedureDate}
+                      onChange={(e) => { setProcedureDate(e.target.value); markDirty(); }}
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Card 3: Acceptance Reference */}
+              <Card className="border shadow-xs bg-card">
+                <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
+                  <CardTitle className="text-xs font-bold flex items-center gap-2">
+                    <FileCheck2 className="w-3.5 h-3.5 text-amber-500" />
+                    Acceptance Criteria Reference
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-3.5 space-y-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Criteria Doc No.</Label>
+                    <Input
+                      value={acceptanceCriteriaDocNo}
+                      onChange={(e) => { setAcceptanceCriteriaDocNo(e.target.value); markDirty(); }}
+                      placeholder="e.g. IS 3651 / QA-SPEC-02"
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Rev</Label>
+                      <Input
+                        value={acceptanceCriteriaRev}
+                        onChange={(e) => { setAcceptanceCriteriaRev(e.target.value); markDirty(); }}
+                        placeholder="02"
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-tiny">Date</Label>
+                      <Input
+                        type="date"
+                        value={acceptanceCriteriaDate}
+                        onChange={(e) => { setAcceptanceCriteriaDate(e.target.value); markDirty(); }}
+                        className="text-xs h-7.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-tiny">Reference Description</Label>
+                    <Input
+                      value={acceptanceCriteriaReference}
+                      onChange={(e) => { setAcceptanceCriteriaReference(e.target.value); markDirty(); }}
+                      placeholder="e.g. Table 1 Permissible Deviations"
+                      className="text-xs h-7.5"
+                    />
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Technical Diagram / Schematic Card */}
+            <Card className="border shadow-xs bg-card">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                <CardTitle className="text-xs font-bold flex items-center gap-2">
+                  <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                  Gauge Technical Diagram / Schematic
+                </CardTitle>
+                <CardDescription className="text-tiny">
+                  Attach a technical drawing, CAD diagram, or gauge schematic to be displayed in the official certificate
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4 space-y-4">
+                {!diagramImage ? (
+                  <div
+                    tabIndex={0}
+                    onPaste={handleContainerPaste}
+                    onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                    onDragLeave={() => setIsDragOverDiagram(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragOverDiagram(false);
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) processImageFile(file);
+                    }}
+                    className={`border-2 border-dashed rounded-xl p-8 text-center transition-all focus:outline-none focus:ring-2 focus:ring-primary/40 ${
+                      isDragOverDiagram ? "border-primary bg-primary/5" : "border-border hover:border-primary/50"
+                    }`}
+                  >
+                    <input
+                      type="file"
+                      id="diagram-upload-full"
+                      accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) processImageFile(file);
+                      }}
+                    />
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <Upload className="w-6 h-6" />
+                      </div>
+                      <div className="flex items-center gap-2 text-sm font-semibold">
+                        <label htmlFor="diagram-upload-full" className="text-primary hover:underline cursor-pointer">
+                          Upload Diagram File
+                        </label>
+                        <span className="text-muted-foreground">•</span>
+                        <button
+                          type="button"
+                          onClick={handlePasteFromClipboard}
+                          className="text-primary hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <ClipboardPaste className="w-3.5 h-3.5" />
+                          Paste from Clipboard
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground max-w-sm">
+                        Drag and drop your gauge image here or press <kbd className="px-1.5 py-0.5 rounded bg-muted border text-xxs font-mono">Ctrl+V</kbd> anywhere on this box
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Live Preview Container */}
+                    <div className="border rounded-xl bg-slate-50 dark:bg-slate-900 p-4 flex flex-col items-center justify-center min-h-[140px] max-h-[260px] overflow-hidden">
+                      <img
+                        src={diagramImage}
+                        alt="Schematic Diagram Preview"
+                        style={{
+                          width: `${diagramWidth}px`,
+                          maxHeight: `${diagramHeight}px`,
+                          objectFit: "contain",
+                        }}
+                        className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
+                      />
+                      <span className="text-xxs font-mono text-muted-foreground mt-2">
+                        Display Size: {diagramWidth}px × {diagramHeight}px • Alignment: {diagramAlignment}
+                      </span>
+                    </div>
+
+                    {/* Sliders & Controls */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <Label className="text-xs text-muted-foreground">Width: <span className="font-bold text-foreground">{diagramWidth}px</span></Label>
+                        </div>
+                        <input
+                          type="range"
+                          min={80}
+                          max={540}
+                          step={5}
+                          value={diagramWidth}
+                          onChange={(e) => { setDiagramWidth(parseInt(e.target.value, 10)); markDirty(); }}
+                          className="w-full accent-primary h-2 cursor-pointer"
+                        />
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-1">
+                          <Label className="text-xs text-muted-foreground">Max Height: <span className="font-bold text-foreground">{diagramHeight}px</span></Label>
+                        </div>
+                        <input
+                          type="range"
+                          min={40}
+                          max={280}
+                          step={5}
+                          value={diagramHeight}
+                          onChange={(e) => { setDiagramHeight(parseInt(e.target.value, 10)); markDirty(); }}
+                          className="w-full accent-primary h-2 cursor-pointer"
+                        />
+                      </div>
+
+                      <div>
+                        <Label className="text-xs text-muted-foreground mb-1 block">Alignment</Label>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant={diagramAlignment === "left" ? "default" : "outline"}
+                            size="sm"
+                            className="flex-1 h-8 text-xs gap-1"
+                            onClick={() => { setDiagramAlignment("left"); markDirty(); }}
+                          >
+                            <AlignLeft className="w-3.5 h-3.5" /> Left
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={diagramAlignment === "center" ? "default" : "outline"}
+                            size="sm"
+                            className="flex-1 h-8 text-xs gap-1"
+                            onClick={() => { setDiagramAlignment("center"); markDirty(); }}
+                          >
+                            <AlignCenter className="w-3.5 h-3.5" /> Center
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={diagramAlignment === "right" ? "default" : "outline"}
+                            size="sm"
+                            className="flex-1 h-8 text-xs gap-1"
+                            onClick={() => { setDiagramAlignment("right"); markDirty(); }}
+                          >
+                            <AlignRight className="w-3.5 h-3.5" /> Right
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs gap-1"
+                          onClick={handleCopyImageToClipboard}
+                        >
+                          <Copy className="w-3 h-3" /> Copy Image
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 text-xs gap-1"
+                          onClick={handlePasteFromClipboard}
+                        >
+                          <ClipboardPaste className="w-3 h-3" /> Paste New
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs text-destructive hover:bg-destructive/10 gap-1"
+                        onClick={() => {
+                          setDiagramImage(null);
+                          markDirty();
+                          toast.info("Diagram image removed");
+                        }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Remove Diagram
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: Settings & Quality Control */}
+      {activeNavTab === "settings" && (
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5 bg-slate-50/50 dark:bg-slate-950/40">
+          <div className="w-full max-w-[1900px] mx-auto px-1 sm:px-2 space-y-5">
+            {/* Header Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl border bg-card shadow-xs">
+              <div>
+                <div className="flex items-center gap-2">
+                  <SettingsIcon className="w-5 h-5 text-primary" />
+                  <h2 className="text-base font-bold text-foreground">Template Settings & Quality Control</h2>
+                  <Badge variant="outline" className="text-xs bg-primary/5 text-primary border-primary/30">
+                    QA Readiness & Validation
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Environmental standard room conditions, thermal soaking duration, SOP remarks, and pre-save audit
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  onClick={() => handleSave()}
+                  disabled={saving || isNameDuplicate || !name.trim()}
+                  className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  {saving ? "Saving..." : templateId ? "Update Template" : "Save Template"}
+                </Button>
+              </div>
+            </div>
+
+            {/* General Template Information Card */}
+            <Card className="border shadow-xs bg-card">
+              <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                <CardTitle className="text-xs font-bold flex items-center gap-2">
+                  <FileText className="w-3.5 h-3.5 text-primary" />
+                  Template Information & Classification
+                </CardTitle>
+                <CardDescription className="text-tiny">
+                  Master template identification, description, and instrument discipline
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-4 space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">
+                      Template Name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      value={name}
+                      onChange={(e) => { setName(e.target.value); markDirty(); }}
+                      placeholder="e.g. Vernier Caliper Standard (IS 3651)"
+                      className={`text-xs h-8 ${!name.trim() ? "border-amber-400" : isNameDuplicate ? "border-destructive" : ""}`}
+                    />
+                    {isNameDuplicate && (
+                      <p className="text-xxs text-destructive">A template with this name already exists.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">
+                      Target Instrument Type / Category <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      value={instrumentType}
+                      onChange={(e) => { setInstrumentType(e.target.value); markDirty(); }}
+                      placeholder="e.g. Vernier Caliper (0-300 mm)"
+                      className="text-xs h-8"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Calibration Discipline</Label>
+                    <Select value={calibrationType} onValueChange={(val) => { setCalibrationType(val); markDirty(); }}>
+                      <SelectTrigger className="text-xs h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CALIBRATION_TYPES.map((t) => (
+                          <SelectItem key={t.type} value={t.type}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Template Description</Label>
+                    <Input
+                      value={description}
+                      onChange={(e) => { setDescription(e.target.value); markDirty(); }}
+                      placeholder="e.g. Standard calibration for 0-300mm calipers with 5-trial readings"
+                      className="text-xs h-8"
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Environmental Conditions Card */}
+              <Card className="border shadow-xs bg-card">
+                <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                  <CardTitle className="text-xs font-bold flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-primary" />
+                    Standard Environmental Conditions
+                  </CardTitle>
+                  <CardDescription className="text-tiny">
+                    Ambient conditions and thermal stabilization per ISO/IEC 17025
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-4 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Temperature</Label>
+                      <div className="relative">
+                        <Input
+                          value={envTemp}
+                          onChange={(e) => { setEnvTemp(e.target.value); markDirty(); }}
+                          placeholder="20"
+                          className="text-xs h-8 pr-12 font-mono font-bold"
+                        />
+                        <span className="absolute right-3 top-2 text-xxs text-muted-foreground font-mono">
+                          °C (±2°C)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Relative Humidity</Label>
+                      <div className="relative">
+                        <Input
+                          value={envHumidity}
+                          onChange={(e) => { setEnvHumidity(e.target.value); markDirty(); }}
+                          placeholder="55"
+                          className="text-xs h-8 pr-12 font-mono font-bold"
+                        />
+                        <span className="absolute right-3 top-2 text-xxs text-muted-foreground font-mono">
+                          %RH (±10%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t space-y-3">
+                    <Label className="text-xs font-semibold flex items-center justify-between">
+                      <span>Thermal Soaking Stabilization</span>
+                      {envSoakingTime && (
+                        <Badge variant="secondary" className="font-mono text-xxs">
+                          Duration: {envSoakingTime}
+                        </Badge>
+                      )}
+                    </Label>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label className="text-xxs text-muted-foreground">Start Time</Label>
+                        <TimePicker
+                          value={envSoakingStartTime}
+                          onChange={handleSoakingStartChange}
+                          withSeconds={true}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xxs text-muted-foreground">End Time</Label>
+                        <TimePicker
+                          value={envSoakingEndTime}
+                          onChange={handleSoakingEndChange}
+                          withSeconds={true}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-xxs text-muted-foreground">Soaking Time Display</Label>
+                      <Input
+                        value={envSoakingTime}
+                        onChange={(e) => { setEnvSoakingTime(e.target.value); markDirty(); }}
+                        placeholder="e.g. Min 2hr or 02:00:00"
+                        className="text-xs h-8 font-mono"
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Remarks and Pre-Save Audit Card */}
+              <div className="space-y-6">
+                <Card className="border shadow-xs bg-card">
+                  <CardHeader className="py-3 px-4 border-b bg-muted/20">
+                    <CardTitle className="text-xs font-bold flex items-center gap-2">
+                      <FileCheck2 className="w-3.5 h-3.5 text-primary" />
+                      Notes & Standard Reference
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Standard Reference Remarks</Label>
+                      <Input
+                        value={standardReference}
+                        onChange={(e) => { setStandardReference(e.target.value); markDirty(); }}
+                        placeholder="Standard calibration per ISO/IEC 17025"
+                        className="text-xs h-8"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">General Template Remarks</Label>
+                      <Textarea
+                        value={remarks}
+                        onChange={(e) => { setRemarks(e.target.value); markDirty(); }}
+                        rows={3}
+                        className="text-xs resize-none"
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Quality Validation Gate Card */}
+                <Card className="border shadow-xs bg-emerald-500/[0.03] border-emerald-500/20">
+                  <CardHeader className="py-3 px-4 border-b bg-emerald-500/10">
+                    <CardTitle className="text-xs font-bold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4" />
+                      Quality Gate & Pre-Save Validator
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="grid grid-cols-3 gap-2 text-center">
+                      <div className="p-2 rounded-lg bg-card border">
+                        <div className="text-base font-bold font-mono text-foreground">{totalPointsCount}</div>
+                        <div className="text-xxs text-muted-foreground">Total Points</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-card border">
+                        <div className="text-base font-bold font-mono text-foreground">
+                          {isCanvasMode ? allTableBlocks.length : 1}
+                        </div>
+                        <div className="text-xxs text-muted-foreground">Data Tables</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-card border">
+                        <div className="text-base font-bold font-mono text-foreground">
+                          {diagramImage ? "Embedded" : "None"}
+                        </div>
+                        <div className="text-xxs text-muted-foreground">Diagram</div>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowPreSaveModal(true)}
+                      className="w-full text-xs font-semibold gap-2 border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 h-8"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Run Full Pre-Save Audit Gate
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Unsaved Changes Confirmation Modal */}
       <Dialog open={showUnsavedModal} onOpenChange={setShowUnsavedModal}>
@@ -1684,7 +3512,7 @@ export default function TemplateBuilderForm() {
           </div>
 
           <DialogFooter className="pt-3 border-t shrink-0 flex flex-row items-center justify-between sm:justify-between">
-            <div className="text-[11px] text-muted-foreground">
+            <div className="text-tiny text-muted-foreground">
               {diagramImage ? (
                 <span className="text-emerald-700 dark:text-emerald-400 font-medium">
                   ✓ Diagram Schematic embedded: {diagramWidth}px × {diagramHeight}px ({diagramAlignment})

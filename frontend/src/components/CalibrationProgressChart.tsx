@@ -43,7 +43,7 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
       type: 'bar',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+      fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
       animations: {
         enabled: true,
         easing: 'easeinout',
@@ -120,7 +120,7 @@ export function CalibrationProgressChart({ weeklyData, dailyData }: CalibrationP
       type: 'area',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+      fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
       animations: {
         enabled: true,
         easing: 'easeinout',

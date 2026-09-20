@@ -424,7 +424,7 @@ export function AppHeader() {
                   role="combobox"
                   aria-expanded={searchOpen && suggestions.length > 0}
                   aria-autocomplete="list"
-                  className="pl-9 pr-14 h-9 text-xs bg-muted/40 hover:bg-muted/60 focus:bg-background transition-all border-border/70 rounded-lg font-medium shadow-xs"
+                  className="pl-9 pr-14 h-9 text-sm bg-muted/40 hover:bg-muted/60 focus:bg-background transition-all border-border/70 rounded-lg font-medium shadow-xs"
                   onKeyDown={(e) => {
                     if (e.key === 'ArrowDown') {
                       e.preventDefault();

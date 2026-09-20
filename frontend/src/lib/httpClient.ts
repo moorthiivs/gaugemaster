@@ -1,6 +1,8 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
-export const API_URL = import.meta.env.VITE_API_URL || "/api";
+export const API_URL =
+  (typeof import.meta !== "undefined" && typeof import.meta.env !== "undefined" && import.meta.env?.VITE_API_URL) ||
+  "/api";
 
 export const TOKEN_KEY = "auth_token";
 export const REFRESH_TOKEN_KEY = "refresh_token";

@@ -107,5 +107,12 @@ export class Setting {
         frequency: string; // 'daily' | 'weekly' | 'monthly'
         managementRecipients?: string[];
     };
+
+    @Column({ type: "jsonb", nullable: true })
+    aiConfig: {
+        apiKey?: string;
+        defaultModel?: string;
+        enabled?: boolean;
+    };
 }
 

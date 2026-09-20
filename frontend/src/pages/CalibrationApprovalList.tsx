@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getRoleName } from "@/lib/utils";
@@ -20,6 +20,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { CertificatePreview, formatUncertainty } from "@/components/calibration/CertificatePreview";
 import { useNavigate } from "react-router-dom";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import {
   CheckCircle2,
   XCircle,
@@ -47,6 +49,8 @@ export default function CalibrationApprovalList() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilterTab, setStatusFilterTab] = useState("Pending Approval");
   const [reviewTab, setReviewTab] = useState("readings");
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Dialog & Detail states
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
@@ -235,6 +239,134 @@ export default function CalibrationApprovalList() {
     );
   };
 
+  useEffect(() => {
+    setPageIndex(1);
+  }, [statusFilterTab, searchQuery]);
+
+  const pageCount = Math.ceil(filteredCalibrations.length / pageSize) || 1;
+  const paginatedCalibrations = useMemo(() => {
+    return filteredCalibrations.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+  }, [filteredCalibrations, pageIndex, pageSize]);
+
+  const columns = useMemo<ColumnDef<any>[]>(
+    () => [
+      {
+        accessorKey: "certificate_number",
+        header: "Certificate No",
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div>
+              <div className="font-semibold text-primary tabular-nums">
+                {cal.certificate_number}
+              </div>
+              {cal.ulr_number && (
+                <div className="text-[10px] text-muted-foreground tracking-tight tabular-nums">
+                  {cal.ulr_number}
+                </div>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "instrument",
+        header: "Instrument",
+        cell: ({ row }) => {
+          const inst = row.original.instrument;
+          return (
+            <div>
+              <div className="font-medium text-foreground">{inst?.name || "Unknown Instrument"}</div>
+              <div className="text-[10px] text-muted-foreground tracking-tight">{inst?.id_code}</div>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "calibrated_by",
+        header: "Calibrated By",
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium text-foreground">{row.original.calibrated_by || "Calibration Engineer"}</div>
+            <div className="text-[10px] text-muted-foreground">Engineer</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "calibration_date",
+        header: "Cal. Date",
+        cell: ({ row }) => (
+          <span className="text-muted-foreground tabular-nums font-medium">
+            {row.original.calibration_date
+              ? new Date(row.original.calibration_date).toLocaleDateString("en-IN", {
+                  day: "2-digit",
+                  month: "short",
+                  year: "numeric",
+                })
+              : "-"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "verdict",
+        header: "Verdict",
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className={
+              row.original.verdict === "PASS"
+                ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30"
+                : "bg-red-500/10 text-red-700 border-red-500/30"
+            }
+          >
+            {row.original.verdict || "PASS"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "approval_status",
+        header: "Approval Status",
+        cell: ({ row }) => renderStatusBadge(row.original.approval_status || "Calibration Completed"),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div className="flex items-center justify-end gap-2">
+              {canAccess("calibrations", "edit") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                  onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                  <span>Edit</span>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+                onClick={() => {
+                  setSelectedRecord(cal);
+                  setReviewDialogOpen(true);
+                }}
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>Review</span>
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [canAccess, navigate]
+  );
+
   return (
     <div className="space-y-6 pb-12">
       {/* Header */}
@@ -337,122 +469,26 @@ export default function CalibrationApprovalList() {
       </div>
 
       {/* Calibrations Approval List Table */}
-      <div className="border rounded-xl bg-card overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-left">
-            <thead className="bg-muted/50 text-muted-foreground uppercase text-[10px] font-semibold border-b">
-              <tr>
-                <th className="px-4 py-3">Certificate No</th>
-                <th className="px-4 py-3">Instrument</th>
-                <th className="px-4 py-3">Calibrated By</th>
-                <th className="px-4 py-3">Cal. Date</th>
-                <th className="px-4 py-3">Verdict</th>
-                <th className="px-4 py-3">Approval Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-12 text-muted-foreground">
-                    <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-primary" />
-                    <span>Loading calibration approvals...</span>
-                  </td>
-                </tr>
-              ) : filteredCalibrations.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-12 text-muted-foreground">
-                    <FileCheck className="w-8 h-8 mx-auto mb-2 opacity-40" />
-                    <p className="font-medium text-sm text-foreground">No Calibration Records Found</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {statusFilterTab === "Pending Approval"
-                        ? "All completed calibrations have been reviewed and processed."
-                        : "No matching records found for your filter."}
-                    </p>
-                  </td>
-                </tr>
-              ) : (
-                filteredCalibrations.map((cal) => {
-                  const status = cal.approval_status || "Calibration Completed";
-                  const inst = cal.instrument;
-
-                  return (
-                    <tr key={cal.id} className="hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3 font-semibold text-primary">
-                        {cal.certificate_number}
-                        {cal.ulr_number && (
-                          <div className="text-[10px] text-muted-foreground font-mono">
-                            {cal.ulr_number}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-foreground">{inst?.name || "Unknown Instrument"}</div>
-                        <div className="text-[10px] text-muted-foreground font-mono">{inst?.id_code}</div>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-foreground">{cal.calibrated_by || "Calibration Engineer"}</div>
-                        <div className="text-[10px] text-muted-foreground">Engineer</div>
-                      </td>
-
-                      <td className="px-4 py-3 font-mono">
-                        {cal.calibration_date
-                          ? new Date(cal.calibration_date).toLocaleDateString("en-IN")
-                          : "-"}
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            cal.verdict === "PASS"
-                              ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30"
-                              : "bg-red-500/10 text-red-700 border-red-500/30"
-                          }
-                        >
-                          {cal.verdict || "PASS"}
-                        </Badge>
-                      </td>
-
-                      <td className="px-4 py-3">{renderStatusBadge(status)}</td>
-
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {canAccess("calibrations", "edit") && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 text-xs gap-1.5 text-amber-600 hover:text-amber-700 hover:bg-amber-50"
-                              onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                              <span>Edit</span>
-                            </Button>
-                          )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 text-xs gap-1.5"
-                            onClick={() => {
-                              setSelectedRecord(cal);
-                              setReviewDialogOpen(true);
-                            }}
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Review</span>
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable
+        columns={columns}
+        data={paginatedCalibrations}
+        loading={loading}
+        pageCount={pageCount}
+        pageIndex={pageIndex}
+        pageSize={pageSize}
+        totalItems={filteredCalibrations.length}
+        onPageChange={setPageIndex}
+        onPageSizeChange={(s) => { setPageSize(s); setPageIndex(1); }}
+        hideSearch={true}
+        hideColumnToggle={false}
+        emptyTitle="No Calibration Records Found"
+        emptyDescription={
+          statusFilterTab === "Pending Approval"
+            ? "All completed calibrations have been reviewed and processed."
+            : "No matching records found for your filter."
+        }
+        emptyIcon={FileCheck}
+      />
 
       {/* Main Review & Approval Modal */}
       {selectedRecord && (
@@ -503,7 +539,11 @@ export default function CalibrationApprovalList() {
 
                   const calibratedBy = selectedRecord.calibrated_by || selectedRecord.created_by?.name || selectedRecord.created_by?.email || "N/A";
                   const calDate = selectedRecord.calibration_date
-                    ? new Date(selectedRecord.calibration_date).toLocaleDateString("en-IN")
+                    ? new Date(selectedRecord.calibration_date).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })
                     : "N/A";
 
                   const envTemp = selectedRecord.environmental_conditions?.temperature ?? "20";
@@ -604,7 +644,7 @@ export default function CalibrationApprovalList() {
                         </div>
                         <div>
                           <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Calibration Date</span>
-                          <span className="font-mono text-foreground">{calDate}</span>
+                          <span className="font-medium text-foreground tabular-nums">{calDate}</span>
                         </div>
                         <div>
                           <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Temperature / Humidity</span>

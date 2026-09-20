@@ -1,5 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { useSEO } from "@/hooks/useSEO";
@@ -293,6 +295,185 @@ export default function GaugeDiagrams() {
     }
   };
 
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  const paginatedDiagrams = useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return diagrams.slice(start, start + pageSize);
+  }, [diagrams, pageIndex, pageSize]);
+
+  const gaugeDiagramColumns = useMemo<ColumnDef<GaugeDiagram>[]>(
+    () => [
+      {
+        id: "sno",
+        header: () => <div className="text-center font-semibold">S.No</div>,
+        cell: ({ row }) => (
+          <div className="text-center font-mono text-xs text-muted-foreground">
+            {(pageIndex - 1) * pageSize + row.index + 1}
+          </div>
+        ),
+        size: 60,
+      },
+      {
+        accessorKey: "gauge_name",
+        header: () => <span className="font-semibold min-w-[200px]">Gauge Name</span>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-foreground">
+                {diag.gauge_name}
+              </span>
+              {diag.description && (
+                <span className="text-xs text-muted-foreground line-clamp-1">
+                  {diag.description}
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "id_code",
+        header: () => <span className="font-semibold">ID Code / IMTE</span>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          return diag.id_code ? (
+            <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
+              <Hash className="h-3 w-3 text-muted-foreground" />
+              <span>{diag.id_code}</span>
+            </Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: "part_name",
+        header: () => <span className="font-semibold">Part Name</span>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          return diag.part_name ? (
+            <div className="flex items-center gap-1 text-xs font-medium text-foreground">
+              <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span>{diag.part_name}</span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+      },
+      {
+        accessorKey: "document_name",
+        header: () => <span className="font-semibold">Diagram File</span>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          const isPdf =
+            diag.file_type?.toLowerCase().includes("pdf") ||
+            diag.document_name?.toLowerCase().endsWith(".pdf");
+
+          return diag.document_name ? (
+            <div className="flex items-center gap-2">
+              {isPdf ? (
+                <FileText className="h-4 w-4 text-red-500 shrink-0" />
+              ) : (
+                <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+              )}
+              <span className="text-xs font-medium truncate max-w-[180px]" title={diag.document_name}>
+                {diag.document_name}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">No file</span>
+          );
+        },
+      },
+      {
+        accessorKey: "version",
+        header: () => <div className="text-center font-semibold">Version</div>,
+        cell: ({ row }) => (
+          <div className="text-center">
+            <Badge variant="secondary" className="font-mono text-[11px] font-bold">
+              v{row.original.version}
+            </Badge>
+          </div>
+        ),
+        size: 80,
+      },
+      {
+        accessorKey: "updated_at",
+        header: () => <span className="font-semibold">Last Updated</span>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          return (
+            <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+              <span className="text-foreground font-medium flex items-center gap-1">
+                <User className="h-3 w-3 text-muted-foreground" />
+                {diag.updated_by_name || diag.created_by_name || "User"}
+              </span>
+              <span className="flex items-center gap-1 text-[11px]">
+                <Clock className="h-2.5 w-2.5" />
+                {diag.updated_at ? format(new Date(diag.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right font-semibold pr-4">Action</div>,
+        cell: ({ row }) => {
+          const diag = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
+                onClick={() => handleView(diag)}
+                disabled={!diag.file_path}
+                title="View Diagram"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">View</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
+                onClick={() => handleOpenEdit(diag)}
+                title="Edit Diagram"
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Edit</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
+                onClick={() => handleOpenHistory(diag)}
+                title="Revision History"
+              >
+                <History className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
+                onClick={() => setDeletingId(diag.id)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize]
+  );
+
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
@@ -348,167 +529,26 @@ export default function GaugeDiagrams() {
           </div>
         </CardHeader>
 
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow>
-                <TableHead className="w-14 text-center font-semibold">S.No</TableHead>
-                <TableHead className="font-semibold min-w-[200px]">Gauge Name</TableHead>
-                <TableHead className="font-semibold w-40">ID Code / IMTE</TableHead>
-                <TableHead className="font-semibold min-w-[150px]">Part Name</TableHead>
-                <TableHead className="font-semibold">Diagram File</TableHead>
-                <TableHead className="font-semibold w-24 text-center">Version</TableHead>
-                <TableHead className="font-semibold">Last Updated</TableHead>
-                <TableHead className="text-right font-semibold pr-6">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex items-center justify-center gap-2">
-                      <RefreshCw className="h-4 w-4 animate-spin text-primary" />
-                      <span>Loading gauge diagrams...</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : diagrams.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={8} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Compass className="h-8 w-8 text-muted-foreground/50" />
-                      <p className="font-medium text-foreground">No gauge diagrams found</p>
-                      <p className="text-xs text-muted-foreground">
-                        Click "Create Gauge Diagram" to select gauges from the master list and link engineering schematics.
-                      </p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                diagrams.map((diag, index) => {
-                  const isPdf =
-                    diag.file_type?.toLowerCase().includes("pdf") ||
-                    diag.document_name?.toLowerCase().endsWith(".pdf");
-
-                  return (
-                    <TableRow key={diag.id} className="hover:bg-muted/30 transition-colors">
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-foreground">
-                            {diag.gauge_name}
-                          </span>
-                          {diag.description && (
-                            <span className="text-xs text-muted-foreground line-clamp-1">
-                              {diag.description}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {diag.id_code ? (
-                          <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
-                            <Hash className="h-3 w-3 text-muted-foreground" />
-                            <span>{diag.id_code}</span>
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {diag.part_name ? (
-                          <div className="flex items-center gap-1 text-xs font-medium text-foreground">
-                            <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span>{diag.part_name}</span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {diag.document_name ? (
-                          <div className="flex items-center gap-2">
-                            {isPdf ? (
-                              <FileText className="h-4 w-4 text-red-500 shrink-0" />
-                            ) : (
-                              <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
-                            )}
-                            <span className="text-xs font-medium truncate max-w-[180px]" title={diag.document_name}>
-                              {diag.document_name}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">No file</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary" className="font-mono text-[11px] font-bold">
-                          v{diag.version}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-foreground font-medium flex items-center gap-1">
-                            <User className="h-3 w-3 text-muted-foreground" />
-                            {diag.updated_by_name || diag.created_by_name || "User"}
-                          </span>
-                          <span className="flex items-center gap-1 text-[11px]">
-                            <Clock className="h-2.5 w-2.5" />
-                            {diag.updated_at ? format(new Date(diag.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right pr-4">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
-                            onClick={() => handleView(diag)}
-                            disabled={!diag.file_path}
-                            title="View Diagram"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">View</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
-                            onClick={() => handleOpenEdit(diag)}
-                            title="Edit Diagram"
-                          >
-                            <Edit2 className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Edit</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
-                            onClick={() => handleOpenHistory(diag)}
-                            title="Revision History"
-                          >
-                            <History className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
-                            onClick={() => setDeletingId(diag.id)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+        <CardContent className="p-4">
+          <DataTable
+            columns={gaugeDiagramColumns}
+            data={paginatedDiagrams}
+            loading={loading}
+            pageIndex={pageIndex}
+            pageSize={pageSize}
+            pageCount={Math.max(1, Math.ceil(diagrams.length / pageSize))}
+            totalItems={diagrams.length}
+            onPageChange={setPageIndex}
+            onPageSizeChange={(s) => {
+              setPageSize(s);
+              setPageIndex(1);
+            }}
+            hideSearch={true}
+            hideColumnToggle={false}
+            emptyTitle="No gauge diagrams found"
+            emptyDescription='Click "Create Gauge Diagram" to select gauges from the master list and link engineering schematics.'
+            emptyIcon={<Compass className="h-8 w-8 text-muted-foreground/50" />}
+          />
         </CardContent>
       </Card>
 

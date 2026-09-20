@@ -1496,6 +1496,25 @@ export default function CalibrationWizard() {
     if (!targetTbl || !targetTbl.rows) return;
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
+
+    // Clean stale sibling aliases if editing a trial/reading column
+    const trialMatch = String(colId).match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        row[a] = val;
+      });
+    }
+
+    // Clean phantom reading fields if not in table columns
+    if (!targetTbl.columns.some((c: any) => c.id === "actual")) delete row.actual;
+    if (!targetTbl.columns.some((c: any) => c.id === "actual_dimension")) delete row.actual_dimension;
+    if (!targetTbl.columns.some((c: any) => c.id === "reading")) delete row.reading;
+
     const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
@@ -1544,8 +1563,9 @@ export default function CalibrationWizard() {
                       {col.label}
                     </td>
                     {tbl.rows.map((row: any, rIdx: number) => {
+                      const colDec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? 3;
                       if (col.type === "nominal") {
-                        const val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                        const val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
                         return (
                           <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
                             {val}
@@ -1559,25 +1579,47 @@ export default function CalibrationWizard() {
                           </td>
                         );
                       }
-                      if (col.type === "trial" || col.type === "reading") {
+                      if (
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.role === "READING" ||
+                        col.dataType === "MEASUREMENT" ||
+                        (col.role as string) === "MEASUREMENT" ||
+                        col.semanticRole === "READING" ||
+                        col.semanticRole === "TRIAL" ||
+                        /actual|reading|trial|observed/i.test(col.id) ||
+                        /actual|reading|trial|observed/i.test(col.label || "")
+                      ) {
                         return (
                           <td key={rIdx} className="p-0.5 min-w-[52px]">
                             <Input
-                              type="number"
-                              step="any"
+                              type="text"
+                              inputMode="decimal"
                               value={row[col.id] ?? ""}
-                              onChange={(e) =>
-                                handleWizardCanvasCellChange(
-                                  bIdx,
-                                  isSplit,
-                                  cIdx,
-                                  rIdx,
-                                  col.id,
-                                  e.target.value
-                                )
-                              }
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                  handleWizardCanvasCellChange(
+                                    bIdx,
+                                    isSplit,
+                                    cIdx,
+                                    rIdx,
+                                    col.id,
+                                    v
+                                  );
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const raw = e.target.value.trim();
+                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                const parsed = parseFloat(raw);
+                                if (!isNaN(parsed)) {
+                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                  handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                }
+                              }}
                               className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1 w-full min-w-[48px]"
-                              placeholder="0.000"
+                              placeholder={colDec === 0 ? "0" : (0).toFixed(colDec)}
                             />
                           </td>
                         );
@@ -1665,9 +1707,9 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
+                    const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
                     if (col.type === "nominal") {
-                      const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-                      const val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : (row[col.id] ?? "-");
+                      const val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : (row[col.id] ?? "-");
                       return (
                         <td key={col.id} className="py-0.5 px-1.5 font-bold text-foreground text-[11px]">
                           {val}
@@ -1681,25 +1723,47 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    if (col.type === "trial" || col.type === "reading") {
+                    if (
+                      col.type === "trial" ||
+                      col.type === "reading" ||
+                      col.role === "READING" ||
+                      col.dataType === "MEASUREMENT" ||
+                      (col.role as string) === "MEASUREMENT" ||
+                      col.semanticRole === "READING" ||
+                      col.semanticRole === "TRIAL" ||
+                      /actual|reading|trial|observed/i.test(col.id) ||
+                      /actual|reading|trial|observed/i.test(col.label || "")
+                    ) {
                       return (
                         <td key={col.id} className="p-0.5">
                           <Input
-                            type="number"
-                            step="any"
+                            type="text"
+                            inputMode="decimal"
                             value={row[col.id] ?? ""}
-                            onChange={(e) =>
-                              handleWizardCanvasCellChange(
-                                bIdx,
-                                isSplit,
-                                cIdx,
-                                rIdx,
-                                col.id,
-                                e.target.value
-                              )
-                            }
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  v
+                                );
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim();
+                              if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                              const parsed = parseFloat(raw);
+                              if (!isNaN(parsed)) {
+                                const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                              }
+                            }}
                             className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
-                            placeholder="0.000"
+                            placeholder={colDec === 0 ? "0" : (0).toFixed(colDec)}
                           />
                         </td>
                       );

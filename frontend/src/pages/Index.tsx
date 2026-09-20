@@ -321,7 +321,10 @@ const KPICard = ({
       >
         {/* Top Header Row */}
         <div className="flex items-center justify-between gap-1.5 pt-0.5 z-10">
-          <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground truncate">
+          <span
+            className="text-tiny font-extrabold uppercase tracking-wider text-muted-foreground truncate"
+            title={title}
+          >
             {title}
           </span>
           <div
@@ -1101,14 +1104,11 @@ const Index = () => {
       <section
         aria-label="Key performance indicators"
         className={cn(
-          "grid gap-3 grid-cols-2 md:grid-cols-3",
-          visibleWidgetCount >= 7 && "xl:grid-cols-7",
-          visibleWidgetCount === 6 && "xl:grid-cols-6",
-          visibleWidgetCount === 5 && "xl:grid-cols-5",
-          visibleWidgetCount === 4 && "xl:grid-cols-4",
-          visibleWidgetCount === 3 && "xl:grid-cols-3",
-          visibleWidgetCount === 2 && "xl:grid-cols-2",
-          visibleWidgetCount === 1 && "xl:grid-cols-1"
+          "grid gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7",
+          visibleWidgetCount <= 4 && "2xl:grid-cols-4",
+          visibleWidgetCount <= 3 && "2xl:grid-cols-3",
+          visibleWidgetCount <= 2 && "2xl:grid-cols-2",
+          visibleWidgetCount === 1 && "2xl:grid-cols-1"
         )}
       >
         {/* 1. Calibration Overall Progress KPI Card */}

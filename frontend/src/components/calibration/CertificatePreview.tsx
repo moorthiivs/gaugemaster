@@ -314,13 +314,23 @@ export function CertificatePreview({
                         {col.label}
                       </td>
                       {tbl.rows.map((row: any, rIdx: number) => {
+                        const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
                         let val: any = row[col.id];
                         if (col.type === "nominal") {
-                          val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                          val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
                         } else if (col.type === "text") {
                           val = row.description || row[col.id] || "-";
                         } else if (col.type === "formula" || col.type === "status") {
-                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places ?? 3);
+                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, colDec);
+                        } else if (col.type === "reading" || col.type === "trial" || col.type === "number") {
+                          if (val !== undefined && val !== null && val !== "" && val !== "-") {
+                            const p = parseFloat(String(val));
+                            if (!isNaN(p)) {
+                              val = colDec === 0 ? String(Math.round(p)) : p.toFixed(colDec);
+                            }
+                          } else {
+                            val = "-";
+                          }
                         } else if (val === undefined || val === null || val === "") {
                           val = "-";
                         }
@@ -378,16 +388,25 @@ export function CertificatePreview({
                   <tr key={rIdx}>
                     {tbl.columns.map((col: any) => {
                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
                       let val: any = row[col.id];
                       if (isPointNo) {
                         val = row.point_number ?? row[col.id] ?? (rIdx + 1);
                       } else if (col.type === "nominal") {
-                        const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-                        val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : "-";
+                        val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
                       } else if (col.type === "text") {
                         val = row.description || row[col.id] || "-";
                       } else if (col.type === "formula" || col.type === "status") {
-                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places ?? 3);
+                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, colDec);
+                      } else if (col.type === "reading" || col.type === "trial" || col.type === "number") {
+                        if (val !== undefined && val !== null && val !== "" && val !== "-") {
+                          const p = parseFloat(String(val));
+                          if (!isNaN(p)) {
+                            val = colDec === 0 ? String(Math.round(p)) : p.toFixed(colDec);
+                          }
+                        } else {
+                          val = "-";
+                        }
                       } else if (val === undefined || val === null || val === "") {
                         val = "-";
                       }

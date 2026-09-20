@@ -21,6 +21,13 @@ export default {
 		extend: {
 			fontFamily: {
 				sans: ['var(--font-sans)', 'sans-serif'],
+				mono: ['var(--font-mono)', 'monospace'],
+			},
+			fontSize: {
+				'3xs': ['0.5rem', { lineHeight: '0.75rem' }],
+				'2xs': ['0.5625rem', { lineHeight: '0.8125rem' }],
+				'xxs': ['0.625rem', { lineHeight: '0.875rem' }],
+				'tiny': ['0.6875rem', { lineHeight: '0.9375rem' }],
 			},
 			colors: {
 				border: 'hsl(var(--border))',

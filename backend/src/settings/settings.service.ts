@@ -36,22 +36,51 @@ export class SettingsService {
           ? { ...(existing.certificateConfig || {}), ...createSettingDto.certificateConfig }
           : existing.certificateConfig;
 
+        let mergedAiConfig = existing.aiConfig;
+        if (createSettingDto.aiConfig) {
+          const newKey = createSettingDto.aiConfig.apiKey?.trim();
+          // If the new key is omitted or is a masked string, keep the existing key
+          const isMaskedOrEmpty = !newKey || newKey.includes('•') || newKey.includes('*');
+          mergedAiConfig = {
+            ...(existing.aiConfig || {}),
+            ...createSettingDto.aiConfig,
+            apiKey: isMaskedOrEmpty ? existing.aiConfig?.apiKey : newKey,
+          };
+        }
+
         const updatePayload = {
           ...createSettingDto,
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
+          ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
         };
 
         await this.settingsRepository.update(existing.id, updatePayload);
-        return await this.settingsRepository.findOne({ where: { id: existing.id } });
+        const updated = await this.settingsRepository.findOne({ where: { id: existing.id } });
+        return this.sanitizeSetting(updated);
       }
 
       const newSetting = this.settingsRepository.create(createSettingDto);
       const saved = await this.settingsRepository.save(newSetting);
-      return saved;
+      return this.sanitizeSetting(saved);
 
     } catch (error) {
       console.log(error);
     }
+  }
+
+  private sanitizeSetting(setting: Setting | null): Setting | null {
+    if (!setting) return null;
+    if (setting.aiConfig?.apiKey) {
+      const raw = setting.aiConfig.apiKey;
+      const masked = raw.length > 8
+        ? `${raw.slice(0, 6)}•••••••••••••••${raw.slice(-4)}`
+        : '••••••••••••••••';
+      setting.aiConfig = {
+        ...setting.aiConfig,
+        apiKey: masked,
+      };
+    }
+    return setting;
   }
 
   async findOne(userId: string, companyId: string) {
@@ -62,11 +91,20 @@ export class SettingsService {
     if (!setting && userId) {
       setting = await this.settingsRepository.findOne({ where: { userId } });
     }
-    return setting;
+    return this.sanitizeSetting(setting);
   }
 
-  findOneByUserId(userId: string) {
-    return this.settingsRepository.findOne({ where: { userId } });
+  async findOneByUserId(userId: string) {
+    const setting = await this.settingsRepository.findOne({ where: { userId } });
+    return this.sanitizeSetting(setting);
+  }
+
+  /**
+   * Internal method used exclusively by AiService to retrieve raw (unmasked) API key.
+   */
+  async findRawForAi(companyId: string): Promise<Setting | null> {
+    if (!companyId) return null;
+    return this.settingsRepository.findOne({ where: { companyId } });
   }
 
   // Location-to-Email Mapping methods

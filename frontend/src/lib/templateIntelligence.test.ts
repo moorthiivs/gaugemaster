@@ -499,8 +499,8 @@ const cyclicTable: TableGridBlock = {
   type: "table_grid",
   title: "Cyclic Table",
   columns: [
-    { id: "a", label: "A", formula: "b + 1" },
-    { id: "b", label: "B", formula: "a + 1" }
+    { id: "a", label: "A", type: "formula", formula: "b + 1" },
+    { id: "b", label: "B", type: "formula", formula: "a + 1" }
   ],
   rows: []
 };

@@ -135,6 +135,25 @@ export function TrialRunModal({
     if (!targetTbl || !targetTbl.rows) return;
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
+
+    // Clean stale sibling aliases if editing a trial/reading column
+    const trialMatch = colId.match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        row[a] = val;
+      });
+    }
+
+    // Clean phantom reading fields if not in table columns
+    if (!targetTbl.columns.some((c) => c.id === "actual")) delete row.actual;
+    if (!targetTbl.columns.some((c) => c.id === "actual_dimension")) delete row.actual_dimension;
+    if (!targetTbl.columns.some((c) => c.id === "reading")) delete row.reading;
+
     const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? defaultTolerance)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (decimalPlaces || 3);
 
@@ -179,7 +198,8 @@ export function TrialRunModal({
             if (
               c.type === "reading" ||
               c.role === "READING" ||
-              c.role === "MEASUREMENT" ||
+              c.dataType === "MEASUREMENT" ||
+              (c.role as string) === "MEASUREMENT" ||
               cId === "reading" ||
               cId === "actual" ||
               cId === "actual_dimension" ||
@@ -441,12 +461,13 @@ export function TrialRunModal({
                                       {col.type === "formula" && <span className="text-[9px] text-primary ml-1 font-normal">(fx)</span>}
                                     </td>
                                     {tbl.rows.map((row, rIdx) => {
-                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+                                      const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
+                                        const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
                                         return (
                                           <td key={rIdx} className="py-1 px-1.5 font-bold font-mono text-foreground">
-                                            {typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}
+                                            {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
                                           </td>
                                         );
                                       }
@@ -454,18 +475,34 @@ export function TrialRunModal({
                                         col.type === "reading" ||
                                         col.type === "trial" ||
                                         col.role === "READING" ||
-                                        col.role === "MEASUREMENT" ||
+                                        col.dataType === "MEASUREMENT" ||
+                                        (col.role as string) === "MEASUREMENT" ||
                                         /actual|reading|trial|observed/i.test(col.id) ||
                                         /actual|reading|trial|observed/i.test(col.label)
                                       ) {
                                         return (
                                           <td key={rIdx} className="p-1">
                                             <Input
-                                              type="number"
-                                              step="any"
+                                              type="text"
+                                              inputMode="decimal"
                                               value={row[col.id] ?? ""}
-                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
+                                              onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleCellChange(bIdx, rIdx, col.id, v);
+                                                }
+                                              }}
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+                                                  handleCellChange(bIdx, rIdx, col.id, formatted);
+                                                }
+                                              }}
                                               className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                              placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
                                             />
                                           </td>
                                         );
@@ -519,30 +556,51 @@ export function TrialRunModal({
                                 {tbl.rows.map((row, rIdx) => (
                                   <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
                                     {tbl.columns.map((col) => {
-                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+                                      const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
                                       if (col.id === "point_number" || col.id === "sl_no") {
                                         return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
                                       }
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
-                                        return <td key={col.id} className="py-1 px-2 font-bold font-mono">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
+                                        const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
+                                        return (
+                                          <td key={col.id} className="py-1 px-2 font-bold font-mono">
+                                            {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
+                                          </td>
+                                        );
                                       }
                                       if (
                                         col.type === "reading" ||
                                         col.type === "trial" ||
                                         col.role === "READING" ||
-                                        col.role === "MEASUREMENT" ||
+                                        col.dataType === "MEASUREMENT" ||
+                                        (col.role as string) === "MEASUREMENT" ||
                                         /actual|reading|trial|observed/i.test(col.id) ||
                                         /actual|reading|trial|observed/i.test(col.label)
                                       ) {
                                         return (
                                           <td key={col.id} className="p-1">
                                             <Input
-                                              type="number"
-                                              step="any"
+                                              type="text"
+                                              inputMode="decimal"
                                               value={row[col.id] ?? ""}
-                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
+                                              onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleCellChange(bIdx, rIdx, col.id, v);
+                                                }
+                                              }}
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+                                                  handleCellChange(bIdx, rIdx, col.id, formatted);
+                                                }
+                                              }}
                                               className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                              placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
                                             />
                                           </td>
                                         );

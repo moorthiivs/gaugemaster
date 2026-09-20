@@ -11,9 +11,9 @@ process.env.TZ = 'UTC';
 async function bootstrap() { 
   const app = await NestFactory.create(AppModule);
 
-  // Increase payload limit for bulk uploads
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ limit: '10mb', extended: true }));
+  // Increase payload limit for bulk uploads and multimodal certificate processing
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Enable CORS
   app.enableCors({

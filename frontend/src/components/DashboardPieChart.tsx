@@ -103,7 +103,7 @@ export function DashboardPieChart({
     const options: ApexOptions = {
         chart: {
             type: 'donut',
-            fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+            fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
             background: 'transparent',
             animations: {
                 enabled: true,
@@ -134,7 +134,7 @@ export function DashboardPieChart({
                             color: isDark ? '#f8fafc' : '#0f172a',
                             fontSize: '26px',
                             fontWeight: 800,
-                            fontFamily: "'Plus Jakarta Sans', monospace",
+                            fontFamily: "'Geist Mono', 'Plus Jakarta Sans', monospace",
                         },
                         total: {
                             show: true,

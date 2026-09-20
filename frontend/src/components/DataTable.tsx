@@ -56,10 +56,12 @@ interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
   loading?: boolean
+  isLoading?: boolean
   pageCount: number
   pageIndex: number
   pageSize?: number
   totalItems?: number
+  totalCount?: number
   onPageChange: (index: number) => void
   onPageSizeChange?: (size: number) => void
   onRowClick?: (row: TData) => void
@@ -70,21 +72,28 @@ interface DataTableProps<TData, TValue> {
   columnFilters?: ColumnFiltersState
   onColumnFiltersChange?: (filters: ColumnFiltersState) => void
   headerActions?: React.ReactNode
+  searchKey?: string
   searchPlaceholder?: string
   searchTooltip?: string
   hideSearch?: boolean
   hideColumnToggle?: boolean
   getRowClassName?: (row: TData) => string
+  emptyTitle?: string
+  emptyDescription?: string
+  emptyAction?: React.ReactNode
+  emptyIcon?: React.ElementType | React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
-  loading,
+  loading: propLoading,
+  isLoading,
   pageCount,
   pageIndex,
   pageSize = 10,
-  totalItems,
+  totalItems: propTotalItems,
+  totalCount,
   onPageChange,
   onPageSizeChange,
   onRowClick,
@@ -100,7 +109,13 @@ export function DataTable<TData, TValue>({
   hideSearch = false,
   hideColumnToggle = false,
   getRowClassName,
+  emptyTitle = "No records found",
+  emptyDescription = "We couldn't find any records matching your current filters.",
+  emptyAction,
+  emptyIcon: EmptyIcon,
 }: DataTableProps<TData, TValue>) {
+  const loading = propLoading ?? isLoading ?? false;
+  const totalItems = propTotalItems ?? totalCount;
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [localColumnVisibility, setLocalColumnVisibility] = React.useState<VisibilityState>({})
   const [localRowSelection, setLocalRowSelection] = React.useState({})
@@ -420,15 +435,27 @@ export function DataTable<TData, TValue>({
                   <TableCell colSpan={columns.length} className="h-60 text-center">
                     <div className="flex flex-col items-center justify-center space-y-4 animate-in fade-in zoom-in duration-500">
                       <div className="bg-muted/30 p-6 rounded-full">
-                        <Settings2 className="h-12 w-12 text-muted-foreground/40" />
+                        {React.isValidElement(EmptyIcon) ? (
+                          EmptyIcon
+                        ) : typeof EmptyIcon === "function" || (typeof EmptyIcon === "object" && EmptyIcon !== null) ? (
+                          React.createElement(EmptyIcon as React.ComponentType<{ className?: string }>, {
+                            className: "h-12 w-12 text-muted-foreground/40",
+                          })
+                        ) : (
+                          <Settings2 className="h-12 w-12 text-muted-foreground/40" />
+                        )}
                       </div>
                       <div className="space-y-1">
-                        <p className="text-xl font-semibold text-muted-foreground">No records found</p>
-                        <p className="text-sm text-muted-foreground/60 max-w-[250px] mx-auto">We couldn't find any instruments matching your current filters.</p>
+                        <p className="text-xl font-semibold text-muted-foreground">{emptyTitle}</p>
+                        <p className="text-sm text-muted-foreground/60 max-w-[320px] mx-auto">{emptyDescription}</p>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => onPageChange(1)}>
-                        Clear all filters
-                      </Button>
+                      {emptyAction ? (
+                        emptyAction
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={() => onPageChange(1)}>
+                          Clear all filters
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

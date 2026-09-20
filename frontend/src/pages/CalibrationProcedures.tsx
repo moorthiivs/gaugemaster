@@ -1,15 +1,16 @@
-import { useState, useEffect, useId } from "react";
+import { useState, useEffect, useId, useMemo } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
 import { useSEO } from "@/hooks/useSEO";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import {
   Dialog,
   DialogContent,
@@ -81,6 +82,8 @@ export default function CalibrationProcedures() {
   const [procedures, setProcedures] = useState<CalibrationProcedure[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -294,6 +297,150 @@ export default function CalibrationProcedures() {
     }
   };
 
+  const pageCount = Math.max(1, Math.ceil(procedures.length / pageSize));
+  const paginatedProcedures = useMemo(() => {
+    return procedures.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+  }, [procedures, pageIndex, pageSize]);
+
+  const procedureColumns = useMemo<ColumnDef<CalibrationProcedure>[]>(
+    () => [
+      {
+        id: "sno",
+        header: "S.No",
+        cell: ({ row }) => (
+          <span className="text-center font-mono text-xs text-muted-foreground block">
+            {(pageIndex - 1) * pageSize + row.index + 1}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "process",
+        header: "Process",
+        cell: ({ row }) => {
+          const proc = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-foreground">
+                {proc.process}
+              </span>
+              {proc.description && (
+                <span className="text-xs text-muted-foreground line-clamp-1">
+                  {proc.description}
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "document_name",
+        header: "Document",
+        cell: ({ row }) => {
+          const proc = row.original;
+          const isPdf =
+            proc.file_type?.toLowerCase().includes("pdf") ||
+            proc.document_name?.toLowerCase().endsWith(".pdf");
+          return proc.document_name ? (
+            <div className="flex items-center gap-2">
+              {isPdf ? (
+                <FileText className="h-4 w-4 text-red-500 shrink-0" />
+              ) : (
+                <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+              )}
+              <span className="text-xs font-medium truncate max-w-[180px]" title={proc.document_name}>
+                {proc.document_name}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">No document</span>
+          );
+        },
+      },
+      {
+        accessorKey: "version",
+        header: "Version",
+        cell: ({ row }) => (
+          <div className="text-center">
+            <Badge variant="secondary" className="font-mono text-[11px] font-bold">
+              v{row.original.version}
+            </Badge>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "updated_at",
+        header: "Last Updated",
+        cell: ({ row }) => {
+          const proc = row.original;
+          return (
+            <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+              <span className="text-foreground font-medium flex items-center gap-1">
+                <User className="h-3 w-3 text-muted-foreground" />
+                {proc.updated_by_name || proc.created_by_name || "User"}
+              </span>
+              <span className="flex items-center gap-1 text-[11px]">
+                <Clock className="h-2.5 w-2.5" />
+                {proc.updated_at ? format(new Date(proc.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Action",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const proc = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
+                onClick={() => handleView(proc)}
+                disabled={!proc.file_path}
+                title="View Document"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">View</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
+                onClick={() => handleOpenEdit(proc)}
+                title="Edit Procedure"
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Edit</span>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
+                onClick={() => handleOpenHistory(proc)}
+                title="Revision History"
+              >
+                <History className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
+                onClick={() => setDeletingId(proc.id)}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize]
+  );
+
   return (
     <div className="space-y-6">
       {/* Top Header Card */}
@@ -341,145 +488,23 @@ export default function CalibrationProcedures() {
           </div>
         </CardHeader>
 
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-muted/30">
-              <TableRow>
-                <TableHead className="w-16 text-center font-semibold">S.No</TableHead>
-                <TableHead className="font-semibold min-w-[220px]">Process</TableHead>
-                <TableHead className="font-semibold">Document</TableHead>
-                <TableHead className="font-semibold w-24 text-center">Version</TableHead>
-                <TableHead className="font-semibold">Last Updated</TableHead>
-                <TableHead className="text-right font-semibold pr-6">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex items-center justify-center gap-2">
-                      <RefreshCw className="h-4 w-4 animate-spin text-primary" />
-                      <span>Loading calibration procedures...</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : procedures.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="h-40 text-center text-muted-foreground text-sm">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <FileText className="h-8 w-8 text-muted-foreground/50" />
-                      <p className="font-medium text-foreground">No calibration procedures found</p>
-                      <p className="text-xs text-muted-foreground">
-                        Click "Create Calibration Procedure" to add your first procedure document.
-                      </p>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ) : (
-                procedures.map((proc, index) => {
-                  const isPdf =
-                    proc.file_type?.toLowerCase().includes("pdf") ||
-                    proc.document_name?.toLowerCase().endsWith(".pdf");
-
-                  return (
-                    <TableRow key={proc.id} className="hover:bg-muted/30 transition-colors">
-                      <TableCell className="text-center font-mono text-xs text-muted-foreground">
-                        {index + 1}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-foreground">
-                            {proc.process}
-                          </span>
-                          {proc.description && (
-                            <span className="text-xs text-muted-foreground line-clamp-1">
-                              {proc.description}
-                            </span>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {proc.document_name ? (
-                          <div className="flex items-center gap-2">
-                            {isPdf ? (
-                              <FileText className="h-4 w-4 text-red-500 shrink-0" />
-                            ) : (
-                              <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
-                            )}
-                            <span className="text-xs font-medium truncate max-w-[180px]" title={proc.document_name}>
-                              {proc.document_name}
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground italic">No document</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <Badge variant="secondary" className="font-mono text-[11px] font-bold">
-                          v{proc.version}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-foreground font-medium flex items-center gap-1">
-                            <User className="h-3 w-3 text-muted-foreground" />
-                            {proc.updated_by_name || proc.created_by_name || "User"}
-                          </span>
-                          <span className="flex items-center gap-1 text-[11px]">
-                            <Clock className="h-2.5 w-2.5" />
-                            {proc.updated_at ? format(new Date(proc.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right pr-4">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
-                            onClick={() => handleView(proc)}
-                            disabled={!proc.file_path}
-                            title="View Document"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">View</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
-                            onClick={() => handleOpenEdit(proc)}
-                            title="Edit Procedure"
-                          >
-                            <Edit2 className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Edit</span>
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
-                            onClick={() => handleOpenHistory(proc)}
-                            title="Revision History"
-                          >
-                            <History className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
-                            onClick={() => setDeletingId(proc.id)}
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
+        <CardContent className="p-4">
+          <DataTable
+            columns={procedureColumns}
+            data={paginatedProcedures}
+            loading={loading}
+            pageCount={pageCount}
+            pageIndex={pageIndex}
+            pageSize={pageSize}
+            totalItems={procedures.length}
+            onPageChange={setPageIndex}
+            onPageSizeChange={(s) => { setPageSize(s); setPageIndex(1); }}
+            hideSearch={true}
+            hideColumnToggle={false}
+            emptyTitle="No calibration procedures found"
+            emptyDescription='Click "Create Calibration Procedure" to add your first procedure document.'
+            emptyIcon={FileText}
+          />
         </CardContent>
       </Card>
 

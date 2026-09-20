@@ -16,7 +16,7 @@ export type ThemeSettingsType = {
   animations: boolean;
   highContrast: boolean;
   reducedMotion: boolean;
-  fontFamily?: "Inter" | "Plus Jakarta Sans" | "System";
+  fontFamily?: "Geist" | "Inter" | "Plus Jakarta Sans" | "System";
   primaryColor?: string;
   sidebarColor?: string;
   accentColor?: string;
@@ -100,7 +100,7 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     animations: true,
     highContrast: false,
     reducedMotion: false,
-    fontFamily: "Inter",
+    fontFamily: "Geist",
     lightTheme: defaultLightTheme,
     darkTheme: defaultDarkTheme,
   });
@@ -113,9 +113,15 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
         const res = await httpClient.get(`/settings/${user.id}/${user.companyId}`);
         if (res.data?.themeSettings) {
           const loaded = res.data.themeSettings;
+          // Default to Geist if unset or previously on old Plus Jakarta Sans default
+          const activeFont = (!loaded.fontFamily || loaded.fontFamily === "Plus Jakarta Sans")
+            ? "Geist"
+            : loaded.fontFamily;
+
           setThemeSettings(prev => ({
             ...prev,
             ...loaded,
+            fontFamily: activeFont,
             lightTheme: { ...defaultLightTheme, ...(loaded.lightTheme || {}) },
             darkTheme: { ...defaultDarkTheme, ...(loaded.darkTheme || {}) },
           }));
@@ -202,13 +208,19 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     // Font Family
-    if (themeSettings.fontFamily) {
-      let fontStack = "";
-      if (themeSettings.fontFamily === "Inter") fontStack = "'Inter', ui-sans-serif, system-ui, sans-serif";
-      else if (themeSettings.fontFamily === "Plus Jakarta Sans") fontStack = "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif";
-      else fontStack = "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
-      root.style.setProperty("--font-sans", fontStack);
+    const activeFont = themeSettings.fontFamily || "Geist";
+    let fontStack = "";
+    if (activeFont === "Geist") {
+      fontStack = "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif";
+    } else if (activeFont === "Inter") {
+      fontStack = "'Inter', ui-sans-serif, system-ui, sans-serif";
+    } else if (activeFont === "Plus Jakarta Sans") {
+      fontStack = "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif";
+    } else {
+      fontStack = "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif";
     }
+    root.style.setProperty("--font-sans", fontStack);
+    document.body.style.fontFamily = fontStack;
 
     // Font Scaling
     root.style.fontSize =

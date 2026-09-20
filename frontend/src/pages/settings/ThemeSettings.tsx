@@ -248,15 +248,16 @@ export default function ThemeSettings() {
             <div className="space-y-3">
               <Label className="text-sm font-medium">Font Family</Label>
               <Select
-                value={themeSettings.fontFamily || "Inter"}
+                value={themeSettings.fontFamily || "Geist"}
                 onValueChange={(value) => handleSettingChange("fontFamily", value)}
               >
                 <SelectTrigger className="bg-background/50 h-11">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Inter">Inter (Clean & Corporate)</SelectItem>
+                  <SelectItem value="Geist">Geist (Modern Precision & Tech)</SelectItem>
                   <SelectItem value="Plus Jakarta Sans">Plus Jakarta Sans (Modern & Friendly)</SelectItem>
+                  <SelectItem value="Inter">Inter (Clean & Corporate)</SelectItem>
                   <SelectItem value="System">System Default</SelectItem>
                 </SelectContent>
               </Select>

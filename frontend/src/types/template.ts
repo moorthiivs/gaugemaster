@@ -63,6 +63,7 @@ export type CalibrationCalculationModel =
 
 export interface CanvasColumnDef {
   id: string;
+  key?: string;
   name?: string;
   label: string;
   type: "nominal" | "reading" | "trial" | "formula" | "text" | "status" | "tolerance" | "number";
@@ -85,7 +86,9 @@ export interface CanvasColumnDef {
   aiConfidence?: "HIGH" | "MEDIUM" | "LOW";
   aiTimestamp?: string;
   groupName?: string; // Multi-level grouped headers (e.g. "Calibration of external jaws" or "Observations")
-  width?: string;
+  width?: string | number;
+  align?: "left" | "center" | "right";
+  isPassFail?: boolean;
   readOnly?: boolean;
   editable?: boolean;
   unit?: string;
@@ -97,7 +100,7 @@ export interface CanvasColumnDef {
 }
 
 export interface CanvasRowData {
-  point_number: number;
+  point_number?: number;
   nominal?: number;
   description?: string;
   tolerance?: number;

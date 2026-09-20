@@ -743,19 +743,32 @@ export const ColumnFormulaInspector: React.FC<ColumnFormulaInspectorProps> = ({
           <div className="space-y-1">
             <Label className="text-[10.5px] text-muted-foreground font-semibold">Precision Override</Label>
             <Select
-              value={String(column.decimal_places ?? tableDecimalPlaces ?? 3)}
-              onValueChange={(val) => onUpdateColumn({ ...column, decimal_places: parseInt(val, 10) })}
+              value={
+                column.decimal_places !== undefined
+                  ? String(column.decimal_places)
+                  : column.decimalPrecision !== undefined
+                  ? String(column.decimalPrecision)
+                  : "inherit"
+              }
+              onValueChange={(val) => {
+                const newDec = val === "inherit" ? undefined : parseInt(val, 10);
+                onUpdateColumn({ ...column, decimal_places: newDec, decimalPrecision: newDec });
+              }}
             >
               <SelectTrigger className="h-7 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="inherit">Inherit Table ({tableDecimalPlaces ?? 3} Dec)</SelectItem>
+                <SelectItem value="0">0 (Integer — no decimal)</SelectItem>
                 <SelectItem value="1">1 (0.0)</SelectItem>
                 <SelectItem value="2">2 (0.00)</SelectItem>
                 <SelectItem value="3">3 (0.000)</SelectItem>
                 <SelectItem value="4">4 (0.0000)</SelectItem>
                 <SelectItem value="5">5 (0.00000)</SelectItem>
                 <SelectItem value="6">6 (0.000000)</SelectItem>
+                <SelectItem value="7">7 (0.0000000)</SelectItem>
+                <SelectItem value="8">8 (0.00000000)</SelectItem>
               </SelectContent>
             </Select>
           </div>
