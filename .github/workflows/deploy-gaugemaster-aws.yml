@@ -124,22 +124,33 @@ jobs:
       # 10. Upload package to AWS
       # --------------------------------------------------
       - name: Upload deployment package
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
         run: |
+          set -e
+
+          PACKAGE="gaugemaster-${{ github.sha }}.tar.gz"
+          ls -lh "$PACKAGE"
+
           scp \
             -i ~/.ssh/github_actions \
             -o StrictHostKeyChecking=yes \
-            gaugemaster-${{ github.sha }}.tar.gz \
-            ${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }}:/tmp/
+            "$PACKAGE" \
+            "${AWS_USER}@${AWS_HOST}:/tmp/"
 
       # --------------------------------------------------
       # 11. Deploy on AWS
       # --------------------------------------------------
       - name: Deploy on AWS
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
         run: |
           ssh \
             -i ~/.ssh/github_actions \
             -o StrictHostKeyChecking=yes \
-            ${{ secrets.AWS_USER }}@${{ secrets.AWS_HOST }} \
+            "${AWS_USER}@${AWS_HOST}" \
             "GITHUB_SHA=${{ github.sha }} bash -s" <<'REMOTE_SCRIPT'
 
           set -e
