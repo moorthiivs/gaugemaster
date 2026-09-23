@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { useNavigate, useLocation } from "react-router-dom"
+import { useNavigate, useLocation, Link } from "react-router-dom"
 import { useGoogleLogin, GoogleOAuthProvider } from "@react-oauth/google"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -214,9 +214,9 @@ export function LoginForm() {
             {showRegistration && (
                 <div className="text-center text-sm">
                     Don&apos;t have an account?{" "}
-                    <a href="/register" className="underline underline-offset-4">
+                    <Link to="/register" className="underline underline-offset-4">
                         Sign up
-                    </a>
+                    </Link>
                 </div>
             )}
         </form >

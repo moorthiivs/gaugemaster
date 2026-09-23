@@ -39,7 +39,7 @@ const googleClientId =
   "27326771006-tcipg9h80l5af7m59ibd9tp1llmieggk.apps.googleusercontent.com";
 
 const App = () => (
-  <BrowserRouter>
+  <BrowserRouter basename={import.meta.env.BASE_URL}>
     <GoogleOAuthProvider clientId={googleClientId}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
