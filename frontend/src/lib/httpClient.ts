@@ -1,6 +1,14 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
-export const API_URL = import.meta.env.VITE_API_URL || "/api";
+const rawApiBase =
+  (typeof import.meta !== "undefined" &&
+    typeof import.meta.env !== "undefined" &&
+    (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL)) ||
+  (typeof import.meta !== "undefined" && import.meta.env?.PROD ? "/gaugemaster/api" : "/api");
+
+// Normalize: remove trailing slash to avoid double slashes when appending endpoints
+export const API_BASE_URL = rawApiBase.replace(/\/+$/, "");
+export const API_URL = API_BASE_URL;
 
 export const TOKEN_KEY = "auth_token";
 export const REFRESH_TOKEN_KEY = "refresh_token";
@@ -9,7 +17,7 @@ export const SETUP_KEY = "setupCompleted";
 export const INSPECTED_COMPANY_KEY = "inspected_company";
 
 const httpClient = axios.create({
-  baseURL: API_URL,
+  baseURL: API_BASE_URL,
   withCredentials: true,
 });
 

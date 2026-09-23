@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { CalibrationRecord } from "@/types/calibration";
 import { format } from "date-fns";
-import httpClient from "@/lib/httpClient";
+import httpClient, { API_URL } from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
 import { toPng } from "html-to-image";
 import { saveAs } from "file-saver";
@@ -896,7 +896,7 @@ export function CertificatePreview({
               (headerDisplayMode === "logo" ||
                 headerDisplayMode === "both") && (
                 <img
-                  src={`${import.meta.env.VITE_API_BASE_URL || ""}${companyLogoPath}`}
+                  src={`${(import.meta.env.VITE_API_BASE_URL || API_URL || "").replace(/\/api\/?$/, "")}${companyLogoPath}`}
                   alt="Logo"
                   className="max-h-8 w-auto object-contain"
                   onError={(e) => {

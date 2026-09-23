@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
+import { API_URL } from "@/lib/httpClient";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ import relativeTime from "dayjs/plugin/relativeTime";
 
 dayjs.extend(relativeTime);
 
-const API = "/api";
+const API = API_URL;
 
 /** Parse a UTC timestamp from the API and return a dayjs in local timezone */
 function toLocal(dateStr: string) {
