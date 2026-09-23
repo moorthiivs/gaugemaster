@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuth } from "@/lib/auth"
 import { useToast } from "@/hooks/use-toast"
+import { API_URL } from "@/lib/httpClient"
 import axios from "axios"
 
 function CustomGoogleButton({ onToken, loading }: { onToken: (token: string) => Promise<void>; loading: boolean }) {
@@ -96,7 +97,7 @@ export function LoginForm() {
     }, [location.search, toast]);
 
     useEffect(() => {
-        axios.get(`/api/auth/config`)
+        axios.get(`${API_URL}/auth/config`)
             .then(res => setAuthConfig(res.data))
             .catch(() => {
                 // Fallback: assume no Google, no registration
