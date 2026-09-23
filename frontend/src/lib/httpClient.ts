@@ -1,10 +1,14 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
+const rawBaseUrl = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+const normalizedSubpath = rawBaseUrl.endsWith("/") ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
+const defaultSubpathApi = normalizedSubpath ? `${normalizedSubpath}/api` : "/api";
+
 const rawApiBase =
   (typeof import.meta !== "undefined" &&
     typeof import.meta.env !== "undefined" &&
     (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL)) ||
-  (typeof import.meta !== "undefined" && import.meta.env?.PROD ? "/gaugemaster/api" : "/api");
+  (typeof import.meta !== "undefined" && import.meta.env?.PROD ? defaultSubpathApi : "/api");
 
 // Normalize: remove trailing slash to avoid double slashes when appending endpoints
 export const API_BASE_URL = rawApiBase.replace(/\/+$/, "");
