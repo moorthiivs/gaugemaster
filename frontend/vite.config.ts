@@ -5,6 +5,7 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  base: '/gaugemaster/',
   server: {
     host: "::",
     port: 8080,
@@ -12,6 +13,11 @@ export default defineConfig(({ mode }) => ({
       ignored: ['**/*.xlsx', '**/*.xls', '**/*.csv', '**/*.log', '**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.tmp', '**/*.~tmp', '**/Certificate-*']
     },
     proxy: {
+      '/gaugemaster/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gaugemaster/, ''),
+      },
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,

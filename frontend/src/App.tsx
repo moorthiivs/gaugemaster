@@ -45,7 +45,7 @@ export const queryClient = new QueryClient();
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 const App = () => (
-  <BrowserRouter>
+  <BrowserRouter basename={import.meta.env.BASE_URL}>
     <GoogleOAuthProvider clientId={googleClientId}>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>

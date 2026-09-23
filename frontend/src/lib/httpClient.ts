@@ -49,8 +49,19 @@ export const handleSessionExpired = () => {
 
     // If not already on login or public landing page, redirect to login using replace to avoid history loops
     const currentPath = window.location.pathname;
-    if (currentPath !== "/login" && currentPath !== "/" && currentPath !== "/register") {
-      window.location.replace(`/login?session_expired=true&redirect=${encodeURIComponent(currentPath)}`);
+    const baseUrl = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+    const normalizedBase = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    const loginPath = `${normalizedBase}/login`;
+    const rootPath = normalizedBase || "/";
+    const registerPath = `${normalizedBase}/register`;
+
+    if (
+      currentPath !== loginPath &&
+      currentPath !== rootPath &&
+      currentPath !== registerPath &&
+      currentPath !== `${rootPath}/`
+    ) {
+      window.location.replace(`${loginPath}?session_expired=true&redirect=${encodeURIComponent(currentPath)}`);
     }
   }
 };
