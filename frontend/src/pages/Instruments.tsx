@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import httpClient from "@/lib/httpClient";
+import httpClient, { API_URL } from "@/lib/httpClient";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -96,7 +96,7 @@ const getInitialSelectedObjects = (): Record<string, Instrument> => {
 };
 
 const pageSize = 10;
-const BASE_URL = (httpClient.defaults.baseURL || "http://localhost:5000/api").replace(/\/api$/, "");
+const BASE_URL = (httpClient.defaults.baseURL || API_URL || "/api").replace(/\/api\/?$/, "");
 
 export default function Instruments() {
   useSEO({ title: "Instruments — Calibration Alerts", description: "Browse, filter, and manage instruments." });

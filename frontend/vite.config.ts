@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/gaugemaster/, ''),
       },
+      '/gaugemaster/uploads': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/gaugemaster/, ''),
+      },
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,

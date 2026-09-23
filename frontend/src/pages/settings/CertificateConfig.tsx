@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Save, FileText, ShieldCheck, Loader2, Palette, Upload, Image as ImageIcon, X } from "lucide-react";
-import httpClient from "@/lib/httpClient";
+import httpClient, { API_URL } from "@/lib/httpClient";
 
 interface CertConfig {
   certPrefix: string;
@@ -471,7 +471,7 @@ export default function CertificateConfig() {
                 <div className="flex items-center gap-4">
                   <div className="relative w-24 h-24 rounded-lg border border-border bg-muted/30 flex items-center justify-center overflow-hidden">
                     <img
-                      src={`${import.meta.env.VITE_API_BASE_URL || ''}${config.companyLogoPath}`}
+                      src={`${(import.meta.env.VITE_API_BASE_URL || API_URL || '').replace(/\/api\/?$/, '')}${config.companyLogoPath}`}
                       alt="Company Logo"
                       className="max-w-full max-h-full object-contain"
                       onError={(e) => {
@@ -537,7 +537,7 @@ export default function CertificateConfig() {
                   {config.companyLogoPath && (config.headerDisplayMode === "logo" || config.headerDisplayMode === "both") && (
                     <div className="w-8 h-8 rounded bg-white/30 flex items-center justify-center overflow-hidden">
                       <img
-                        src={`${import.meta.env.VITE_API_BASE_URL || ''}${config.companyLogoPath}`}
+                        src={`${(import.meta.env.VITE_API_BASE_URL || API_URL || '').replace(/\/api\/?$/, '')}${config.companyLogoPath}`}
                         alt=""
                         className="max-w-full max-h-full object-contain"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

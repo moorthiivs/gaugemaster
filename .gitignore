@@ -1,5 +1,7 @@
 .env
 .env.*
+!frontend/.env.production
+!frontend/.env.development
 backend/.env
 backend/dist
 dist
