@@ -16,8 +16,24 @@ async function bootstrap() {
   app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // Enable CORS
+  const allowedOrigins = [
+    'https://gaugemaster.iviewsense.com',
+    'http://localhost:8080',
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'http://localhost:5000',
+    ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
+  ];
+
   app.enableCors({
-    origin: ['http://localhost:8080', '*'],
+    origin: (origin, callback) => {
+      // Allow same-origin, curl, server-to-server requests with no origin header
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
     credentials: true,
   });
 
