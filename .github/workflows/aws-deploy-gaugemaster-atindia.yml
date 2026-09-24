@@ -164,7 +164,7 @@ jobs:
           set -e
 
           APP_NAME="gaugemaster-atindia"
-          APP_DIR="/srv/apps/gaugemaster-atindia"
+          APP_DIR="/srv/customer/gaugemaster-atindia"
           RELEASE_DIR="$APP_DIR/releases/$GITHUB_SHA"
           PACKAGE="/tmp/gaugemaster-atindia-$GITHUB_SHA.tar.gz"
 
