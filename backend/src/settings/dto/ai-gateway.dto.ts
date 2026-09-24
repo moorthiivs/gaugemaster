@@ -16,6 +16,11 @@ export class SaveAiConfigDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+
+  @ApiProperty({ description: 'Whether the Global Floating Copilot Mini-Bot is enabled', default: true, required: false })
+  @IsOptional()
+  @IsBoolean()
+  floatingBotEnabled?: boolean;
 }
 
 export class TestAiConnectionDto {
@@ -31,6 +36,21 @@ export class TestAiConnectionDto {
 }
 
 export class CopilotPromptDto {
+  @ApiProperty({ description: 'Conversation ID for multi-turn chat session', required: false })
+  @IsOptional()
+  @IsString()
+  conversationId?: string;
+
+  @ApiProperty({ description: 'Active UI screen context (e.g. template_builder, calibration_wizard, instruments, dashboard)', required: false })
+  @IsOptional()
+  @IsString()
+  screenContext?: string;
+
+  @ApiProperty({ description: 'Associated entity ID (e.g. template ID or instrument ID)', required: false })
+  @IsOptional()
+  @IsString()
+  entityId?: string;
+
   @ApiProperty({ description: 'The engineer prompt/command' })
   @IsString()
   prompt: string;

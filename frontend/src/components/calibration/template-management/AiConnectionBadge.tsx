@@ -92,14 +92,16 @@ export const AiConnectionBadge: React.FC<AiConnectionBadgeProps> = ({
   const isConfigured = status?.configured && status?.enabled;
 
   if (isConfigured) {
-    const modelLabel =
-      status.defaultModel === "gemini-3.5-flash-lite"
-        ? "Gemini 3.5 Flash Lite"
-        : status.defaultModel === "gemini-3.1-flash-lite"
-        ? "Gemini 3.1 Flash Lite"
-        : status.defaultModel === "gemini-3.8-flash"
-        ? "Gemini 3.8 Flash"
-        : status.defaultModel || "Gemini Cloud AI";
+    const friendlyModelMap: Record<string, string> = {
+      "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
+      "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
+      "gemini-3.5-flash-lite": "Gemini 3.5 Flash Lite",
+      "gemini-3-flash-preview": "Gemini 3 Flash",
+      "gemini-3.6-flash": "Gemini 3.6 Flash",
+      "gemini-3.5-flash": "Gemini 3.5 Flash",
+      "gemini-3.8-flash": "Gemini 3.8 Flash",
+    };
+    const modelLabel = friendlyModelMap[status.defaultModel] || status.defaultModel || "Gemini Cloud AI";
 
     return (
       <TooltipProvider>

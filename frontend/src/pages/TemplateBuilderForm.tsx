@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy, FileText, Sliders, FileCheck2, Target, Settings as SettingsIcon, ShieldCheck, CheckCircle2, Table as TableIcon, Wand2, FlaskConical, MoreVertical, Bot } from "lucide-react";
+import { ArrowLeft, Save, Layers, Loader2, Plus, Sparkles, AlertTriangle, Maximize2, Minimize2, Image as ImageIcon, Upload, Trash2, AlignLeft, AlignCenter, AlignRight, Eye, Clock, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, PanelLeftClose, PanelLeftOpen, ClipboardPaste, ClipboardCopy, Copy, FileText, Sliders, FileCheck2, Target, Settings as SettingsIcon, ShieldCheck, CheckCircle2, Table as TableIcon, Wand2, FlaskConical, MoreVertical, Bot, BookOpen } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -20,6 +20,12 @@ import { CalibrationTemplate, CanvasBlock, TableGridBlock, CanvasColumnDef } fro
 import { getTemplate, getTemplates, createTemplate, updateTemplate } from "@/lib/templateActions";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
 import { CanvasTemplateEditor, CANVAS_PRESETS, CanvasEditorActions } from "@/components/calibration/CanvasTemplateEditor";
+import { GaugemasterTemplateAssistant } from "@/components/calibration/template-management/GaugemasterTemplateAssistant";
+import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
+import { TrialRunModal } from "@/components/calibration/template-management/TrialRunModal";
+import { TableAuditModal } from "@/components/calibration/template-management/TableAuditModal";
+import { GeneratedTemplateResult } from "@/lib/geminiService";
+import { CanvasRowData, SplitRowBlock } from "@/types/template";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { SlidersHorizontal, LayoutGrid } from "lucide-react";
@@ -92,6 +98,18 @@ export default function TemplateBuilderForm() {
   const [isPropertiesCollapsed, setIsPropertiesCollapsed] = useState(true);
   const [isMetrologyPropertiesCollapsed, setIsMetrologyPropertiesCollapsed] = useState(false);
   const canvasActionsRef = useRef<CanvasEditorActions | null>(null);
+
+  // Dedicated Full-Height Copilot State matching reference smple.png
+  const [showAssistant, setShowAssistant] = useState(true);
+  const [isAssistantDocked, setIsAssistantDocked] = useState(true);
+  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
+
+  // Studio Modals State
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [showTrialRun, setShowTrialRun] = useState(false);
+  const [showTableAuditModal, setShowTableAuditModal] = useState(false);
+  const [auditTargetTable, setAuditTargetTable] = useState<TableGridBlock | null>(null);
 
   // Environmental Defaults
   const [envTemp, setEnvTemp] = useState("20");
@@ -201,9 +219,16 @@ export default function TemplateBuilderForm() {
 
   const activeTableBlock = useMemo<TableGridBlock | null>(() => {
     if (!allTableBlocks.length) return null;
-    const found = allTableBlocks.find((item) => item.block.id === selectedTableBlockId);
-    return found ? found.block : allTableBlocks[0].block;
-  }, [allTableBlocks, selectedTableBlockId]);
+    if (selectedBlockId) {
+      const found = allTableBlocks.find((item) => item.block.id === selectedBlockId);
+      if (found) return found.block;
+    }
+    if (selectedTableBlockId) {
+      const found = allTableBlocks.find((item) => item.block.id === selectedTableBlockId);
+      if (found) return found.block;
+    }
+    return allTableBlocks[0].block;
+  }, [allTableBlocks, selectedBlockId, selectedTableBlockId]);
 
   const updateActiveTableBlock = (updates: Partial<TableGridBlock>) => {
     if (!activeTableBlock) return;
@@ -425,6 +450,227 @@ export default function TemplateBuilderForm() {
       window.removeEventListener("mouseup", onMouseUp);
     };
   }, [isResizingProps]);
+
+  // Table Mutation Handlers for AI Copilot
+  const handleApplyTableFixes = (tableId: string, updatedColumns: CanvasColumnDef[]) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return { ...b, columns: updatedColumns };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return { ...c, columns: updatedColumns };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+    toast.success("AI audited formulas applied to table!");
+  };
+
+  const handleUpdateTableBlock = (tableId: string, updatedFields: Partial<TableGridBlock>) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return { ...b, ...updatedFields };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return { ...c, ...updatedFields };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+    toast.success("Updated table properties successfully");
+  };
+
+  const handleAddTableColumn = (tableId: string, newColumn: CanvasColumnDef) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return { ...b, columns: [...(b.columns || []), newColumn] };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return { ...c, columns: [...(c.columns || []), newColumn] };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+    toast.success(`Added column "${newColumn.label}" successfully`);
+  };
+
+  const handleDeleteTableColumn = (tableId: string, columnId: string) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return { ...b, columns: (b.columns || []).filter((c) => c.id !== columnId && (c as any).field !== columnId) };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return { ...c, columns: (c.columns || []).filter((col: any) => col.id !== columnId && col.field !== columnId) };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+    toast.success("Removed column from table");
+  };
+
+  const handleAddTableBlock = (tableData?: Partial<TableGridBlock>) => {
+    const newBlockId = tableData?.id || `table_${Date.now()}`;
+    const newBlock: TableGridBlock = {
+      id: newBlockId,
+      type: "table_grid",
+      title: tableData?.title || "New Calibration Table",
+      width: tableData?.width || "100%",
+      unit: tableData?.unit || defaultUnit,
+      tolerance: tableData?.tolerance || (typeof defaultTolerance === "number" ? defaultTolerance : 0.01),
+      decimal_places: tableData?.decimal_places ?? decimalPlaces,
+      columns: tableData?.columns || [
+        { id: "point_number", label: "Sl.No.", type: "nominal", width: "8%" },
+        { id: "nominal", label: "Std. Spec", type: "nominal", width: "22%" },
+        { id: "reading", label: "Actual Reading", type: "reading", width: "25%" },
+        { id: "deviation", label: "Deviation", type: "formula", formula: "reading - nominal", width: "25%" },
+        { id: "status", label: "Judgement", type: "status", formula: "IF(ABS(deviation)<=tolerance,'PASS','FAIL')", width: "20%" },
+      ],
+      rows: tableData?.rows || [
+        { point_number: 1, nominal: 10.0, unit: defaultUnit },
+        { point_number: 2, nominal: 20.0, unit: defaultUnit },
+        { point_number: 3, nominal: 50.0, unit: defaultUnit },
+      ],
+    };
+    setLayoutBlocks((prev) => [...prev, newBlock]);
+    setSelectedBlockId(newBlockId);
+    setSelectedTableBlockId(newBlockId);
+    markDirty();
+    toast.success(`Created table "${newBlock.title}"`);
+  };
+
+  const handleDeleteTableBlock = (tableId: string) => {
+    const newBlocks = layoutBlocks.filter((b) => b.id !== tableId);
+    setLayoutBlocks(newBlocks);
+    if (selectedBlockId === tableId) {
+      setSelectedBlockId(newBlocks[0]?.id || null);
+    }
+    markDirty();
+    toast.info("Deleted table block from template");
+  };
+
+  const handleUpdateTableRows = (tableId: string, updatedRows: CanvasRowData[]) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return { ...b, rows: updatedRows };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return { ...c, rows: updatedRows };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+    toast.success("Updated table rows successfully");
+  };
+
+  const handleRestoreTableState = (
+    tableId: string,
+    previousState: {
+      columns?: CanvasColumnDef[];
+      tableSettings?: Partial<TableGridBlock>;
+      rows?: CanvasRowData[];
+    }
+  ) => {
+    setLayoutBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type === "table_grid" && b.id === tableId) {
+          return {
+            ...b,
+            ...(previousState.columns ? { columns: previousState.columns } : {}),
+            ...(previousState.tableSettings || {}),
+            ...(previousState.rows ? { rows: previousState.rows } : {}),
+          };
+        }
+        if (b.type === "split_row" && (b as any).children) {
+          const newChildren = (b as any).children.map((c: any) => {
+            if (c.type === "table_grid" && c.id === tableId) {
+              return {
+                ...c,
+                ...(previousState.columns ? { columns: previousState.columns } : {}),
+                ...(previousState.tableSettings || {}),
+                ...(previousState.rows ? { rows: previousState.rows } : {}),
+              };
+            }
+            return c;
+          });
+          return { ...b, children: newChildren };
+        }
+        return b;
+      })
+    );
+    markDirty();
+  };
+
+  const handleApplyAiGenerated = (result: GeneratedTemplateResult) => {
+    if (result.name && (!templateId || name === "New Template" || !name.trim())) {
+      setName(result.name);
+    }
+    if (result.description) {
+      setDescription(result.description);
+    }
+    if (result.instrumentType) {
+      setInstrumentType(result.instrumentType);
+    }
+    if (result.defaultTolerance !== undefined) {
+      setDefaultTolerance(result.defaultTolerance);
+    }
+    if (result.defaultUnit) {
+      setDefaultUnit(result.defaultUnit);
+    }
+    if (result.decimalPlaces !== undefined) {
+      setDecimalPlaces(result.decimalPlaces);
+    }
+    if (result.acceptanceCriteria) {
+      setEnableAcceptance(result.acceptanceCriteria.enabled);
+      setAcceptanceType(result.acceptanceCriteria.type);
+      setAcceptanceValue(result.acceptanceCriteria.value);
+    }
+    if (result.blocks && result.blocks.length > 0) {
+      setLayoutBlocks(result.blocks);
+      setSelectedBlockId(result.blocks[0]?.id || null);
+    }
+    markDirty();
+    toast.success(`Loaded "${result.name}" with ${result.blocks.length} blocks!`);
+  };
 
   // Global window paste listener when not typing in text fields
   useEffect(() => {
@@ -714,91 +960,156 @@ export default function TemplateBuilderForm() {
   }
 
   return (
-    <div className={isFullWindowPage ? "fixed inset-0 z-50 bg-background flex flex-col h-screen w-screen overflow-hidden" : "min-h-[calc(100vh-4rem)] p-4 max-w-[1700px] mx-auto flex flex-col h-[calc(100vh-4rem)] overflow-hidden space-y-3"}>
-      {/* 3-Tier Studio Header matching reference design */}
+    <div
+      className={
+        isFullWindowPage
+          ? "fixed inset-0 z-50 bg-background flex flex-row h-screen w-screen overflow-hidden"
+          : "min-h-[calc(100vh-4rem)] p-4 max-w-[1920px] mx-auto flex flex-row h-[calc(100vh-4rem)] overflow-hidden gap-3"
+      }
+    >
+      {/* Left Column: Full Template Builder Studio (Header + Canvas/Tabs Workspace) */}
+      <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
+        {/* 3-Tier Studio Header matching reference design */}
       <div className="border-b bg-card shrink-0 z-20">
-        {/* Tier 1: Action Bar (Back + Badge | Segmented View | Action Buttons) */}
-        <div className="px-4 sm:px-6 py-2.5 flex items-center justify-between border-b border-border/60 flex-wrap gap-2">
-          {/* Left: Edit Template + Calibration Template Badge */}
-          <div className="flex items-center gap-2.5">
+        {/* Tier 1: Responsive Single-Row Action Bar (Back | Mode Switch | Quick Presets & AI | Save & Copilot) */}
+        <div className="px-3 sm:px-5 py-2 flex items-center justify-between border-b border-border/60 gap-2 shrink-0 overflow-x-auto scrollbar-none min-h-[48px]">
+          {/* Left: Navigation & Mode Switch */}
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="ghost"
               size="sm"
               onClick={handleBackNavigation}
-              className="h-8 gap-1.5 text-foreground hover:text-primary font-semibold px-2 rounded-lg"
+              className="h-8 gap-1.5 text-foreground hover:text-primary font-semibold px-2 rounded-lg shrink-0"
               title="Go back to templates list"
             >
               <ArrowLeft className="w-4 h-4" />
-              <span>{templateId ? "Edit Template" : "New Template"}</span>
+              <span className="hidden sm:inline">{templateId ? "Edit Template" : "New Template"}</span>
             </Button>
-            <Badge variant="outline" className="text-xs font-normal bg-muted/60 text-muted-foreground px-2.5 py-0.5 rounded-full border-border">
-              {templateId ? "Calibration Template" : "New Calibration Template"}
-            </Badge>
-          </div>
 
-          {/* Center: Segmented View Switch */}
-          <div className="flex items-center bg-muted/70 p-1 rounded-lg border shadow-2xs">
-            <button
-              type="button"
-              onClick={() => {
-                setIsCanvasMode(true);
-                setActiveNavTab("canvas");
-                markDirty();
-                if (layoutBlocks.length === 0) {
-                  setLayoutBlocks(JSON.parse(JSON.stringify(CANVAS_PRESETS[0].blocks)));
-                }
-              }}
-              className={`px-3.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                isCanvasMode
-                  ? "bg-primary text-primary-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              <span>Visual Canvas</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsCanvasMode(false);
-                setActiveNavTab("canvas");
-                markDirty();
-              }}
-              className={`px-3.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                !isCanvasMode
-                  ? "bg-primary text-primary-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>Single Grid</span>
-            </button>
+            <div className="h-4 w-px bg-border/80 hidden sm:block shrink-0" />
+
+            {/* Segmented View Switch */}
+            <div className="flex items-center bg-muted/70 p-0.5 rounded-lg border shadow-2xs shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCanvasMode(true);
+                  setActiveNavTab("canvas");
+                  markDirty();
+                  if (layoutBlocks.length === 0) {
+                    setLayoutBlocks(JSON.parse(JSON.stringify(CANVAS_PRESETS[0].blocks)));
+                  }
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                  isCanvasMode
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Switch to Visual Canvas Layout"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Visual Canvas</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCanvasMode(false);
+                  setActiveNavTab("canvas");
+                  markDirty();
+                }}
+                className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
+                  !isCanvasMode
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Switch to Single Grid Table Layout"
+              >
+                <SlidersHorizontal className="w-3 h-3" />
+                <span>Single Grid</span>
+              </button>
+            </div>
+
             <Button
               type="button"
               variant={!isPropertiesCollapsed ? "secondary" : "outline"}
               size="sm"
               onClick={() => setIsPropertiesCollapsed(!isPropertiesCollapsed)}
-              className={`gap-1.5 text-xs h-8 px-3 font-medium rounded-lg transition-colors ${
+              className={`gap-1.5 text-xs h-8 px-2.5 font-medium rounded-lg transition-colors shrink-0 ${
                 !isPropertiesCollapsed
                   ? "bg-primary/10 text-primary border-primary/30 font-semibold"
-                  : "hover:bg-muted"
+                  : "hover:bg-muted text-muted-foreground"
               }`}
               title="Toggle Template Properties (Document Control, SOP, Environment)"
             >
               <Layers className="w-3.5 h-3.5 text-primary" />
-              <span>Properties</span>
+              <span className="hidden md:inline">Properties</span>
             </Button>
           </div>
 
-          {/* Right: Actions */}
-          <div className="flex items-center gap-2">
+          {/* Right: Actions & Tools */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Standard Metrology Presets Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs h-8 px-2.5 font-medium border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg shadow-2xs shrink-0"
+                  title="Load Standard Metrology Template Preset"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="hidden sm:inline">Presets</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80 max-h-80 overflow-y-auto">
+                {CANVAS_PRESETS.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset.id}
+                    onClick={() => {
+                      setLayoutBlocks(JSON.parse(JSON.stringify(preset.blocks)));
+                      if (!templateId || name === "New Template" || !name.trim()) {
+                        setName(preset.name);
+                      }
+                      if (preset.instrumentType) {
+                        setInstrumentType(preset.instrumentType);
+                      }
+                      if (preset.defaultTolerance !== undefined) {
+                        setDefaultTolerance(preset.defaultTolerance);
+                      }
+                      if (preset.defaultUnit) {
+                        setDefaultUnit(preset.defaultUnit);
+                      }
+                      markDirty();
+                      toast.success(`Loaded "${preset.name}" preset!`);
+                    }}
+                    className="flex flex-col items-start gap-0.5 cursor-pointer py-2"
+                  >
+                    <span className="font-semibold text-xs text-foreground">{preset.name}</span>
+                    <span className="text-xxs text-muted-foreground line-clamp-1">{preset.description}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* AI Smart Generate */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAiModal(true)}
+              className="gap-1.5 text-xs h-8 px-2.5 font-medium border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs shrink-0"
+              title="AI Smart Template Generator from drawing, PDF or Excel"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span className="hidden sm:inline">AI Generate</span>
+            </Button>
+
+            {/* Wide Screen Simulation & Audit Shortcuts (visible on ultra-wide screens >= 1700px) */}
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                canvasActionsRef.current?.openTrialRun();
-              }}
-              className="gap-1.5 text-xs h-8 px-3 font-medium rounded-lg hover:bg-muted"
+              onClick={() => setShowTrialRun(true)}
+              className="hidden min-[1700px]:inline-flex gap-1.5 text-xs h-8 px-2.5 font-medium rounded-lg hover:bg-muted shrink-0"
               title="Trial Run Simulation"
             >
               <FlaskConical className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
@@ -809,65 +1120,81 @@ export default function TemplateBuilderForm() {
               variant="outline"
               size="sm"
               onClick={() => {
-                canvasActionsRef.current?.openTableAudit();
+                setAuditTargetTable(activeTableBlock);
+                setShowTableAuditModal(true);
               }}
-              className="gap-1.5 text-xs h-8 px-3 font-medium rounded-lg hover:bg-muted"
+              className="hidden min-[1700px]:inline-flex gap-1.5 text-xs h-8 px-2.5 font-medium rounded-lg hover:bg-muted shrink-0"
               title="AI Audit Table Formulas & Tolerances"
             >
               <ShieldCheck className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-              <span>AI Audit Table</span>
+              <span>AI Audit</span>
             </Button>
 
+            {/* Dedicated AI Copilot Toggle Button */}
             <Button
               type="button"
-              variant="outline"
+              variant={showAssistant ? "secondary" : "outline"}
               size="sm"
               onClick={() => {
-                canvasActionsRef.current?.openAiGenerator();
+                setShowAssistant(!showAssistant);
+                setIsAssistantDocked(true);
               }}
-              className="gap-1.5 text-xs h-8 px-3 font-medium border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs"
-              title="AI Smart Template Generator"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span>AI Smart Generate</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                canvasActionsRef.current?.toggleAssistant();
-              }}
-              className="gap-1.5 text-xs h-8 px-3 font-semibold border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg shadow-2xs"
-              title="Toggle Gaugemaster Template Copilot"
+              className={`gap-1.5 text-xs h-8 px-3 font-semibold rounded-lg shadow-2xs transition-colors shrink-0 ${
+                showAssistant
+                  ? "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/50"
+                  : "border-indigo-500/40 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30"
+              }`}
+              title="Toggle Full-Height Gaugemaster Template Copilot"
             >
               <Bot className="w-3.5 h-3.5 text-indigo-500" />
               <span>AI Copilot</span>
+              {showAssistant && (
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse ml-0.5" />
+              )}
             </Button>
 
+            {/* Primary Save Template Button */}
             <Button
               size="sm"
               onClick={() => handleSave()}
               disabled={saving || isNameDuplicate || !name.trim()}
-              className="gap-1.5 h-8 px-4 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs"
+              className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs shrink-0"
             >
               <Save className="w-3.5 h-3.5" />
-              {saving ? "Saving..." : templateId ? "Update Template" : "Save Template"}
+              <span>{saving ? "Saving..." : templateId ? "Update" : "Save"}</span>
             </Button>
 
+            {/* More Options Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg"
-                  title="More Options"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground rounded-lg shrink-0"
+                  title="More Studio Tools & Actions"
                 >
                   <MoreVertical className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 text-xs">
+              <DropdownMenuContent align="end" className="w-52 text-xs">
+                <DropdownMenuItem
+                  onClick={() => setShowTrialRun(true)}
+                  className="gap-2 cursor-pointer"
+                >
+                  <FlaskConical className="w-3.5 h-3.5 text-cyan-600" />
+                  <span>Trial Run Simulation</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setAuditTargetTable(activeTableBlock);
+                    setShowTableAuditModal(true);
+                  }}
+                  className="gap-2 cursor-pointer"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+                  <span>AI Audit Table (ISO 17025)</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setShowCertPreviewModal(true)}
                   className="gap-2 cursor-pointer"
@@ -891,20 +1218,13 @@ export default function TemplateBuilderForm() {
                     </>
                   )}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => canvasActionsRef.current?.toggleAssistant()}
-                  className="gap-2 cursor-pointer"
-                >
-                  <Bot className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Toggle Copilot</span>
-                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={handleBackNavigation}
                   className="gap-2 cursor-pointer text-muted-foreground"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Cancel / Exit</span>
+                  <span>Exit Studio</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1729,13 +2049,21 @@ export default function TemplateBuilderForm() {
 
         {/* Right Column: Interactive Canvas or Single Grid Data Table */}
         {isCanvasMode ? (
-          <div className="flex-1 min-w-0 overflow-y-auto">
+          <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
             <CanvasTemplateEditor
               blocks={layoutBlocks}
               onChange={(newBlocks) => {
                 setLayoutBlocks(newBlocks);
                 markDirty();
               }}
+              hideCopilotInside={true}
+              selectedBlockId={selectedBlockId}
+              onSelectBlockId={(id) => {
+                setSelectedBlockId(id);
+                if (id) setSelectedTableBlockId(id);
+              }}
+              selectedColumnId={selectedColumnId}
+              onSelectColumnId={setSelectedColumnId}
               onRegisterActions={(actions) => {
                 canvasActionsRef.current = actions;
               }}
@@ -1756,35 +2084,7 @@ export default function TemplateBuilderForm() {
                 markDirty();
                 toast.success(`Loaded "${preset.name}" preset layout and properties!`);
               }}
-              onApplyGeneratedTemplate={(result) => {
-                if (result.name && (!templateId || name === "New Template" || !name.trim())) {
-                  setName(result.name);
-                }
-                if (result.description) {
-                  setDescription(result.description);
-                }
-                if (result.instrumentType) {
-                  setInstrumentType(result.instrumentType);
-                }
-                if (result.defaultTolerance !== undefined) {
-                  setDefaultTolerance(result.defaultTolerance);
-                }
-                if (result.defaultUnit) {
-                  setDefaultUnit(result.defaultUnit);
-                }
-                if (result.decimalPlaces !== undefined) {
-                  setDecimalPlaces(result.decimalPlaces);
-                }
-                if (result.acceptanceCriteria) {
-                  setEnableAcceptance(result.acceptanceCriteria.enabled);
-                  setAcceptanceType(result.acceptanceCriteria.type);
-                  setAcceptanceValue(result.acceptanceCriteria.value);
-                }
-                if (result.blocks && result.blocks.length > 0) {
-                  setLayoutBlocks(result.blocks);
-                }
-                markDirty();
-              }}
+              onApplyGeneratedTemplate={handleApplyAiGenerated}
               defaultUnit={defaultUnit}
               defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
               decimalPlaces={decimalPlaces}
@@ -3374,6 +3674,110 @@ export default function TemplateBuilderForm() {
           </div>
         </div>
       )}
+      </div>
+
+      {/* Right Column: Full-Height Dedicated Copilot Dock matching reference smple.png */}
+      {showAssistant && isAssistantDocked && (
+        <aside
+          aria-label="Calibration Template AI Copilot"
+          className="w-[420px] xl:w-[460px] 2xl:w-[500px] shrink-0 h-full flex flex-col border-l border-border bg-background z-30 shadow-xl transition-all duration-300 animate-in slide-in-from-right-4"
+        >
+          <GaugemasterTemplateAssistant
+            open={showAssistant}
+            onClose={() => setShowAssistant(false)}
+            templateName={name || "Visual Canvas Template"}
+            instrumentType={instrumentType || "Calibration Instrument"}
+            calibrationType={calibrationType || "dimensional"}
+            blocks={layoutBlocks}
+            selectedTable={auditTargetTable || activeTableBlock}
+            selectedColumnId={selectedColumnId}
+            onUpdateTableColumns={handleApplyTableFixes}
+            onUpdateTableBlock={handleUpdateTableBlock}
+            onAddTableColumn={handleAddTableColumn}
+            onUpdateTableRows={handleUpdateTableRows}
+            onRestoreTableState={handleRestoreTableState}
+            onOpenTrialRun={() => setShowTrialRun(true)}
+            onOpenTableAuditModal={() => {
+              if (activeTableBlock) {
+                setAuditTargetTable(activeTableBlock);
+                setShowTableAuditModal(true);
+              }
+            }}
+            onOpenPreSaveModal={() => setShowPreSaveModal(true)}
+            onNavigateToColumn={(columnId) => setSelectedColumnId(columnId)}
+            onNavigateToTable={(tableId) => {
+              setSelectedBlockId(tableId);
+              setSelectedTableBlockId(tableId);
+            }}
+            onDeleteTableColumn={handleDeleteTableColumn}
+            onAddTableBlock={handleAddTableBlock}
+            onDeleteTableBlock={handleDeleteTableBlock}
+            docked={true}
+            onToggleDock={() => setIsAssistantDocked(false)}
+          />
+        </aside>
+      )}
+
+      {/* Floating Copilot Modal/Window (when undocked) */}
+      {showAssistant && !isAssistantDocked && (
+        <GaugemasterTemplateAssistant
+          open={showAssistant}
+          onClose={() => setShowAssistant(false)}
+          templateName={name || "Visual Canvas Template"}
+          instrumentType={instrumentType || "Calibration Instrument"}
+          calibrationType={calibrationType || "dimensional"}
+          blocks={layoutBlocks}
+          selectedTable={auditTargetTable || activeTableBlock}
+          selectedColumnId={selectedColumnId}
+          onUpdateTableColumns={handleApplyTableFixes}
+          onUpdateTableBlock={handleUpdateTableBlock}
+          onAddTableColumn={handleAddTableColumn}
+          onUpdateTableRows={handleUpdateTableRows}
+          onRestoreTableState={handleRestoreTableState}
+          onOpenTrialRun={() => setShowTrialRun(true)}
+          onOpenTableAuditModal={() => {
+            if (activeTableBlock) {
+              setAuditTargetTable(activeTableBlock);
+              setShowTableAuditModal(true);
+            }
+          }}
+          onOpenPreSaveModal={() => setShowPreSaveModal(true)}
+          onNavigateToColumn={(columnId) => setSelectedColumnId(columnId)}
+          onNavigateToTable={(tableId) => {
+            setSelectedBlockId(tableId);
+            setSelectedTableBlockId(tableId);
+          }}
+          onDeleteTableColumn={handleDeleteTableColumn}
+          onAddTableBlock={handleAddTableBlock}
+          onDeleteTableBlock={handleDeleteTableBlock}
+          docked={false}
+          onToggleDock={() => setIsAssistantDocked(true)}
+        />
+      )}
+
+      {/* Floating Trigger Pill (when assistant is closed) */}
+      {!showAssistant && (
+        <div className="fixed bottom-6 right-6 z-40">
+          <Button
+            type="button"
+            onClick={() => {
+              setShowAssistant(true);
+              setIsAssistantDocked(true);
+            }}
+            className="h-10 px-4 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs flex items-center gap-2 border-2 border-indigo-400/30 animate-in fade-in zoom-in duration-200"
+          >
+            <div className="relative flex items-center justify-center">
+              <Bot className="w-4 h-4" />
+              <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+            </div>
+            <span>Template Copilot</span>
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+          </Button>
+        </div>
+      )}
 
       {/* Unsaved Changes Confirmation Modal */}
       <Dialog open={showUnsavedModal} onOpenChange={setShowUnsavedModal}>
@@ -3534,6 +3938,48 @@ export default function TemplateBuilderForm() {
         onOpenChange={setShowPreSaveModal}
         blocks={layoutBlocks}
         onConfirmSave={() => handleSave({ force: true, navigateOnSave: true })}
+      />
+
+      {/* AI Template Generator Modal */}
+      <AiTemplateGeneratorModal
+        open={showAiModal}
+        onOpenChange={setShowAiModal}
+        onApplyTemplate={handleApplyAiGenerated}
+      />
+
+      {/* Trial Run Modal */}
+      <TrialRunModal
+        open={showTrialRun}
+        onOpenChange={setShowTrialRun}
+        blocks={layoutBlocks}
+        templateName={name || "Calibration Template"}
+        diagramImage={diagramImage}
+        diagramImageWidth={diagramWidth}
+        diagramImageHeight={diagramHeight}
+        diagramImageAlignment={diagramAlignment}
+        defaultUnit={defaultUnit}
+        defaultTolerance={typeof defaultTolerance === "number" ? defaultTolerance : 0.01}
+        decimalPlaces={decimalPlaces}
+        docNo={docNo}
+        docDate={docDate}
+        docRev={docRev}
+        procedureReference={procedureReference}
+        procedureNo={procedureNo}
+        procedureName={procedureName}
+        procedureDate={procedureDate}
+        procedureRev={procedureRev}
+        acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
+        acceptanceCriteriaDate={acceptanceCriteriaDate}
+        acceptanceCriteriaRev={acceptanceCriteriaRev}
+        acceptanceCriteriaReference={acceptanceCriteriaReference}
+      />
+
+      {/* Table Audit Modal */}
+      <TableAuditModal
+        open={showTableAuditModal}
+        onOpenChange={setShowTableAuditModal}
+        table={auditTargetTable || activeTableBlock}
+        onApplyFixes={handleApplyTableFixes}
       />
     </div>
   );

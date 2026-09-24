@@ -110,9 +110,25 @@ httpClient.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    const errorMsg = (error.response?.data as any)?.message || "";
+    const isAiEndpoint = requestUrl.includes("/ai/") || requestUrl.includes("/ai");
+    const isAiExternalAuth =
+      typeof errorMsg === "string" &&
+      (errorMsg.toLowerCase().includes("gemini") ||
+        errorMsg.toLowerCase().includes("google") ||
+        errorMsg.toLowerCase().includes("copilot") ||
+        errorMsg.toLowerCase().includes("api key"));
+
+    // Third-party external AI provider credentials or model errors must NEVER log out the user
+    if (isAiExternalAuth) {
+      return Promise.reject(error);
+    }
+
     // If the request was already retried once, don't retry again
     if (originalRequest._retry) {
-      handleSessionExpired();
+      if (!isAiEndpoint) {
+        handleSessionExpired();
+      }
       return Promise.reject(error);
     }
 
@@ -137,7 +153,9 @@ httpClient.interceptors.response.use(
 
     if (!refreshToken) {
       isRefreshing = false;
-      handleSessionExpired();
+      if (!isAiEndpoint) {
+        handleSessionExpired();
+      }
       return Promise.reject(error);
     }
 
@@ -181,7 +199,9 @@ httpClient.interceptors.response.use(
       return httpClient(originalRequest);
     } catch (refreshError) {
       processQueue(refreshError, null);
-      handleSessionExpired();
+      if (!isAiEndpoint) {
+        handleSessionExpired();
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;
@@ -189,5 +209,6 @@ httpClient.interceptors.response.use(
   }
 );
 
+export { httpClient };
 export default httpClient;
 

@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -22,6 +22,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
+import { parseSpecification } from "@/lib/specificationParser";
+import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { getInstrument } from "@/lib/instrumentActions";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
@@ -170,6 +172,16 @@ export default function CalibrationWizard() {
   const [acceptanceCriteriaRev, setAcceptanceCriteriaRev] = useState("");
   const [acceptanceCriteriaReference, setAcceptanceCriteriaReference] = useState("");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
+  const [receiptCondition, setReceiptCondition] = useState<string>("NO DENT & DAMAGE (OK)");
+  const [customReceiptCondition, setCustomReceiptCondition] = useState<string>("");
+  const effectiveReceiptCondition = receiptCondition === "CUSTOM" ? customReceiptCondition.trim() : receiptCondition;
+
+  // Helper: check if a text string is a receipt condition / visual damage note rather than a calibration measurement specification
+  const isReceiptRow = (text: string) => {
+    const t = (text || "").trim().toLowerCase();
+    return !t || t.includes("dent") || t.includes("damage") || t.includes("receipt condition") || t.includes("receipt inspection");
+  };
+
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
   const [calUnit, setCalUnit] = useState("");
   const [calTolerance, setCalTolerance] = useState(0);
@@ -295,7 +307,7 @@ export default function CalibrationWizard() {
       if (cp.doc_properties.acceptance_criteria_reference) setAcceptanceCriteriaReference(cp.doc_properties.acceptance_criteria_reference);
     }
 
-    // 3. Environmental Defaults
+    // 3. Environmental Defaults & Receipt Condition
     if (cp.environmental_defaults) {
       if (cp.environmental_defaults.temperature) setEnvTemp(cp.environmental_defaults.temperature);
       if (cp.environmental_defaults.humidity) setEnvHumidity(cp.environmental_defaults.humidity);
@@ -303,22 +315,64 @@ export default function CalibrationWizard() {
       if (cp.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(cp.environmental_defaults.soaking_start_time);
       if (cp.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(cp.environmental_defaults.soaking_end_time);
     }
+    const savedReceipt = cp.receipt_condition || cp.environmental_defaults?.receipt_condition;
+    if (savedReceipt) {
+      if (["NO DENT & DAMAGE (OK)", "SATISFACTORY", "DENT & DAMAGE OBSERVED"].includes(savedReceipt)) {
+        setReceiptCondition(savedReceipt);
+      } else {
+        setReceiptCondition("CUSTOM");
+        setCustomReceiptCondition(savedReceipt);
+      }
+    }
 
-    // 4. Specifications auto-merge into calPoints
-    if (cp.specifications && Array.isArray(cp.specifications) && cp.specifications.length > 0) {
-      const mergedPoints: CalibrationPoint[] = cp.specifications.map((spec: any, idx: number) => ({
-        point_number: spec.point_number || idx + 1,
-        description: spec.description || `Point ${idx + 1}`,
-        nominal: spec.nominal !== undefined ? Number(spec.nominal) : 0,
-        ascending_reading: spec.ascending_reading !== undefined ? Number(spec.ascending_reading) : (spec.nominal !== undefined ? Number(spec.nominal) : 0),
-        descending_reading: spec.descending_reading !== undefined ? Number(spec.descending_reading) : undefined,
-        error: spec.error !== undefined ? Number(spec.error) : 0,
-        unit: spec.unit || calUnit || "mm",
-        tolerance: spec.tolerance !== undefined ? Number(spec.tolerance) : calTolerance,
-        status: spec.status || "PASS",
-        customFields: spec.customFields || {},
-      }));
-      setCalPoints(mergedPoints);
+    // 4. Specifications auto-merge into calPoints and wizardLayoutBlocks (strictly exclude receipt condition notes)
+    if (cp.specifications && Array.isArray(cp.specifications)) {
+      const validSpecs = cp.specifications.filter((s: any) => !isReceiptRow(s.required_dimension || s.description || s.parameter_name || ""));
+      if (validSpecs.length > 0) {
+        const mergedPoints: CalibrationPoint[] = validSpecs.map((spec: any, idx: number) => ({
+          point_number: spec.point_number || idx + 1,
+          description: spec.description || spec.required_dimension || `Point ${idx + 1}`,
+          nominal: spec.nominal !== undefined ? Number(spec.nominal) : 0,
+          ascending_reading: spec.ascending_reading !== undefined ? Number(spec.ascending_reading) : (spec.nominal !== undefined ? Number(spec.nominal) : 0),
+          descending_reading: spec.descending_reading !== undefined ? Number(spec.descending_reading) : undefined,
+          error: spec.error !== undefined ? Number(spec.error) : 0,
+          unit: spec.unit || calUnit || "mm",
+          tolerance: spec.tolerance !== undefined ? Number(spec.tolerance) : calTolerance,
+          status: spec.status || "PASS",
+          customFields: spec.customFields || {},
+        }));
+        setCalPoints(mergedPoints);
+
+        // Also merge into active canvas blocks if in canvas mode
+        setWizardLayoutBlocks((prevBlocks: any[]) => {
+          if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
+          const newBlocks = JSON.parse(JSON.stringify(prevBlocks));
+          const primaryTable = newBlocks.find((b: any) => b.type === "table_grid");
+          if (primaryTable) {
+            const dec = primaryTable.decimal_places ?? wizardDecimalPlaces ?? 3;
+            const tol = primaryTable.tolerance ?? calTolerance ?? 0.02;
+            primaryTable.rows = validSpecs.map((s: any, idx: number) => {
+              const specText = s.required_dimension || s.description || "";
+              const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || "mm", tol, dec) : null;
+              const r: any = {
+                point_number: s.point_number || idx + 1,
+                required_dimension: specText,
+                description: specText,
+                nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+                lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+                upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+                lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+                upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+                tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+                unit: s.unit || primaryTable.unit || "mm",
+                actual: s.actual ?? "",
+              };
+              return evaluateCanvasRowFormulas(r, primaryTable.columns, tol, dec);
+            });
+          }
+          return newBlocks;
+        });
+      }
     }
   };
 
@@ -407,14 +461,39 @@ export default function CalibrationWizard() {
           soaking_start_time: envSoakingStartTime || undefined,
           soaking_end_time: envSoakingEndTime || undefined,
         },
-        specifications: calPoints.map(p => ({
-          point_number: p.point_number,
-          description: p.description,
-          nominal: p.nominal,
-          unit: p.unit,
-          tolerance: p.tolerance,
-          customFields: p.customFields,
-        })),
+        receipt_condition: effectiveReceiptCondition,
+        specifications: wizardIsCanvas && wizardLayoutBlocks.length > 0
+          ? (() => {
+              const primaryTable = wizardLayoutBlocks.find((b: any) => b.type === "table_grid");
+              if (primaryTable && Array.isArray(primaryTable.rows)) {
+                return primaryTable.rows
+                  .filter((r: any) => !isReceiptRow(r.required_dimension || r.description || ""))
+                  .map((r: any, idx: number) => ({
+                    point_number: r.point_number ?? (idx + 1),
+                    required_dimension: r.required_dimension || r.description || "",
+                    description: r.description || r.required_dimension || "",
+                    nominal: r.nominal,
+                    tolerance: r.tolerance ?? primaryTable.tolerance,
+                    lower_tolerance: r.lower_tolerance,
+                    upper_tolerance: r.upper_tolerance,
+                    lower_limit: r.lower_limit,
+                    upper_limit: r.upper_limit,
+                    unit: r.unit || primaryTable.unit || calUnit || "mm",
+                    actual: r.actual,
+                  }));
+              }
+              return [];
+            })()
+          : calPoints
+              .filter(p => !isReceiptRow(p.description || ""))
+              .map(p => ({
+                point_number: p.point_number,
+                description: p.description,
+                nominal: p.nominal,
+                unit: p.unit,
+                tolerance: p.tolerance,
+                customFields: p.customFields,
+              })),
       };
 
       await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
@@ -841,7 +920,49 @@ export default function CalibrationWizard() {
     // Check if canvas template
     if (tpl.is_canvas_template || (tpl.layout_blocks && tpl.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
-      setWizardLayoutBlocks(JSON.parse(JSON.stringify(tpl.layout_blocks || [])));
+      const clonedBlocks = JSON.parse(JSON.stringify(tpl.layout_blocks || []));
+
+      // SMART BINDING: If the selected instrument has its own saved specifications,
+      // use the template's table structure/columns/formulas but populate with the instrument's specifications!
+      const rawInstSpecs = selectedInstrument?.custom_parameters?.specifications;
+      const validInstSpecs = Array.isArray(rawInstSpecs)
+        ? rawInstSpecs.filter((s: any) => !isReceiptRow(s.required_dimension || s.description || s.parameter_name || ""))
+        : [];
+
+      if (!isEdit && validInstSpecs.length > 0) {
+        const primaryTable = clonedBlocks.find((b: any) => b.type === "table_grid");
+        if (primaryTable) {
+          const dec = primaryTable.decimal_places ?? tpl.decimal_places ?? 3;
+          const tol = primaryTable.tolerance ?? tpl.default_tolerance ?? 0.02;
+          primaryTable.rows = validInstSpecs.map((s: any, idx: number) => {
+            const specText = s.required_dimension || s.description || "";
+            const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || "mm", tol, dec) : null;
+            const rowObj: any = {
+              point_number: s.point_number || idx + 1,
+              required_dimension: specText,
+              description: specText,
+              nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+              lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+              upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+              lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+              upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+              tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+              unit: s.unit || primaryTable.unit || tpl.default_unit || "mm",
+              actual: s.actual ?? "",
+            };
+            return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
+          });
+        }
+      }
+
+      // Ensure no obsolete receipt condition rows remain inside clonedBlocks
+      clonedBlocks.forEach((b: any) => {
+        if (b.type === "table_grid" && Array.isArray(b.rows)) {
+          b.rows = b.rows.filter((r: any) => !isReceiptRow(r.required_dimension || r.description || ""));
+        }
+      });
+
+      setWizardLayoutBlocks(clonedBlocks);
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
@@ -879,10 +1000,31 @@ export default function CalibrationWizard() {
     }
   };
 
+  // Apply Standard Preset helper
+  const applyPresetAsTemplate = (preset: CanvasTemplatePreset) => {
+    const fakeTpl: any = {
+      id: preset.id,
+      name: preset.name,
+      description: preset.description,
+      instrument_type: preset.instrumentType,
+      default_unit: preset.defaultUnit,
+      default_tolerance: preset.defaultTolerance,
+      is_canvas_template: true,
+      layout_blocks: preset.blocks,
+    };
+    applyTemplateObject(fakeTpl, false);
+  };
+
   // Apply Calibration Template helper
   const handleApplyTemplate = (tplId: string) => {
     if (tplId === "none") {
       handleClearTemplate();
+      return;
+    }
+    const presetMatch = CANVAS_PRESETS.find((p) => p.id === tplId);
+    if (presetMatch) {
+      applyPresetAsTemplate(presetMatch);
+      toast.success(`Applied standard preset "${presetMatch.name}"`);
       return;
     }
     const tpl = availableTemplates.find((t) => t.id === tplId);
@@ -1004,6 +1146,17 @@ export default function CalibrationWizard() {
           if (cal.environmental_conditions.soaking_start_time) setEnvSoakingStartTime(cal.environmental_conditions.soaking_start_time);
           if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
         }
+        const savedReceipt = (cal.environmental_conditions as any)?.receipt_condition || (cal as any).receipt_condition || cal.instrument?.custom_parameters?.receipt_condition;
+        if (savedReceipt) {
+          if (["NO DENT & DAMAGE (OK)", "SATISFACTORY", "DENT & DAMAGE OBSERVED"].includes(savedReceipt)) {
+            setReceiptCondition(savedReceipt);
+          } else {
+            setReceiptCondition("CUSTOM");
+            setCustomReceiptCondition(savedReceipt);
+          }
+        } else {
+          setReceiptCondition("NO DENT & DAMAGE (OK)");
+        }
         if (cal.doc_no) {
           setDocNo(cal.doc_no);
         }
@@ -1037,7 +1190,22 @@ export default function CalibrationWizard() {
 
         if ((cal as any).is_canvas_template || ((cal as any).layout_blocks && (cal as any).layout_blocks.length > 0)) {
           setWizardIsCanvas(true);
-          setWizardLayoutBlocks((cal as any).layout_blocks || []);
+          const rawBlocks = (cal as any).layout_blocks || [];
+          const sanitizedBlocks = rawBlocks
+            .filter((b: any) => {
+              const title = (b.title || b.content || "").toLowerCase();
+              return !title.includes("receipt condition");
+            })
+            .map((b: any) => {
+              if (b.type === "table_grid" && Array.isArray(b.rows)) {
+                return {
+                  ...b,
+                  rows: b.rows.filter((r: any) => !isReceiptRow(r.required_dimension || r.description || "")),
+                };
+              }
+              return b;
+            });
+          setWizardLayoutBlocks(sanitizedBlocks);
         }
 
         setUncertainty(cal.uncertainty || "");
@@ -1100,6 +1268,8 @@ export default function CalibrationWizard() {
         envSoakingEndTime,
         docNo,
         procedureReference,
+        receiptCondition,
+        customReceiptCondition,
         calPoints,
         wizardCustomColumns,
         wizardStandardColumnConfigs,
@@ -1132,6 +1302,7 @@ export default function CalibrationWizard() {
     return () => clearTimeout(timeout);
   }, [
     step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envSoakingTime, envSoakingStartTime, envSoakingEndTime, docNo, procedureReference,
+    receiptCondition, customReceiptCondition,
     calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
@@ -1157,6 +1328,8 @@ export default function CalibrationWizard() {
           setEnvSoakingEndTime(d.envSoakingEndTime || "");
           setDocNo(d.docNo || "");
           setProcedureReference(d.procedureReference || "");
+          if (d.receiptCondition) setReceiptCondition(d.receiptCondition);
+          if (d.customReceiptCondition) setCustomReceiptCondition(d.customReceiptCondition);
           setCalPoints(d.calPoints || []);
           setWizardCustomColumns(d.wizardCustomColumns || []);
           setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
@@ -1341,6 +1514,11 @@ export default function CalibrationWizard() {
       return;
     }
 
+    if (!effectiveReceiptCondition) {
+      toast.error("Gauge Receipt Condition is mandatory. Please select or enter a condition.");
+      return;
+    }
+
     setSaving(true);
     try {
       const data = {
@@ -1355,7 +1533,9 @@ export default function CalibrationWizard() {
           soaking_time: envSoakingTime || undefined,
           soaking_start_time: envSoakingStartTime || undefined,
           soaking_end_time: envSoakingEndTime || undefined,
+          receipt_condition: effectiveReceiptCondition,
         },
+        receipt_condition: effectiveReceiptCondition,
         doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
         doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
         doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
@@ -1429,6 +1609,47 @@ export default function CalibrationWizard() {
         toast.success("Calibration saved successfully!");
       }
 
+      // Auto-persist specifications to Instrument Master for seamless future calibration reuse
+      if (selectedInstrument) {
+        let gaugeSpecs: any[] = [];
+        if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+          const primaryTable = wizardLayoutBlocks.find((b: any) => b.type === "table_grid");
+          if (primaryTable && Array.isArray(primaryTable.rows) && primaryTable.rows.length > 0) {
+            gaugeSpecs = primaryTable.rows.map((r: any, idx: number) => ({
+              point_number: r.point_number ?? (idx + 1),
+              required_dimension: r.required_dimension || r.description || "",
+              description: r.description || r.required_dimension || "",
+              nominal: r.nominal,
+              tolerance: r.tolerance ?? primaryTable.tolerance,
+              lower_tolerance: r.lower_tolerance,
+              upper_tolerance: r.upper_tolerance,
+              lower_limit: r.lower_limit,
+              upper_limit: r.upper_limit,
+              unit: r.unit || primaryTable.unit || calUnit || "mm",
+            }));
+          }
+        } else if (calPoints.length > 0) {
+          gaugeSpecs = calPoints.map((p: any) => ({
+            point_number: p.point_number,
+            description: p.description,
+            nominal: p.nominal,
+            unit: p.unit,
+            tolerance: p.tolerance,
+            customFields: p.customFields,
+          }));
+        }
+
+        if (gaugeSpecs.length > 0) {
+          const updatedCustomParams = {
+            ...(selectedInstrument.custom_parameters || {}),
+            specifications: gaugeSpecs,
+          };
+          httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+            custom_parameters: updatedCustomParams,
+          }).catch(() => {});
+        }
+      }
+
       setCertificateGenerated(false);
       
       // Delete draft after successful save
@@ -1497,6 +1718,24 @@ export default function CalibrationWizard() {
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
 
+    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
+    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
+
+    // If editing a specification / required_dimension, dynamically parse nominal & tolerance limits
+    if (colId === "required_dimension" || colId === "specification" || colId === "description" || colId === "nominal") {
+      const specText = String(val ?? "").trim();
+      const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
+      if (parsed.isValid) {
+        row.nominal = parsed.nominal;
+        row.lower_tolerance = parsed.lowerTolerance;
+        row.upper_tolerance = parsed.upperTolerance;
+        row.lower_limit = parsed.lowerLimit;
+        row.upper_limit = parsed.upperLimit;
+        row.lowerLimit = parsed.lowerLimit;
+        row.upperLimit = parsed.upperLimit;
+      }
+    }
+
     // Clean stale sibling aliases if editing a trial/reading column
     const trialMatch = String(colId).match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
     if (trialMatch) {
@@ -1515,14 +1754,73 @@ export default function CalibrationWizard() {
     if (!targetTbl.columns.some((c: any) => c.id === "actual_dimension")) delete row.actual_dimension;
     if (!targetTbl.columns.some((c: any) => c.id === "reading")) delete row.reading;
 
-    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
-    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
-
     // Deterministic formula evaluation (topological order, formula string parsing, blank propagation)
     const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
     targetTbl.rows[rowIndex] = evaluatedRow;
     setWizardLayoutBlocks(updatedBlocks);
+  };
+
+  const handleWizardCanvasAddRow = (
+    blockIndex: number,
+    isSplit: boolean = false,
+    childIndex: number = 0
+  ) => {
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[blockIndex].children[childIndex];
+    } else {
+      targetTbl = updatedBlocks[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows) return;
+
+    const newPointNum = targetTbl.rows.length + 1;
+    const newRow: any = {
+      point_number: newPointNum,
+      required_dimension: "",
+      description: `Point ${newPointNum}`,
+      nominal: 0,
+      unit: targetTbl.unit || calUnit || "mm",
+      tolerance: targetTbl.tolerance ?? calTolerance ?? 0.02,
+      actual: "",
+      reading: "",
+      deviation: "-",
+      error: undefined,
+      status: "-",
+      judgement: "-",
+    };
+
+    targetTbl.rows.push(newRow);
+    setWizardLayoutBlocks(updatedBlocks);
+    toast.success(`Added parameter row ${newPointNum}`);
+  };
+
+  const handleWizardCanvasDeleteRow = (
+    blockIndex: number,
+    isSplit: boolean = false,
+    childIndex: number = 0,
+    rowIndex: number = 0
+  ) => {
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[blockIndex].children[childIndex];
+    } else {
+      targetTbl = updatedBlocks[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows || targetTbl.rows.length <= 1) {
+      toast.error("Table must have at least 1 specification row");
+      return;
+    }
+
+    targetTbl.rows.splice(rowIndex, 1);
+    targetTbl.rows.forEach((r: any, idx: number) => {
+      r.point_number = idx + 1;
+    });
+
+    setWizardLayoutBlocks(updatedBlocks);
+    toast.info(`Deleted row ${rowIndex + 1}`);
   };
 
   const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
@@ -1693,6 +1991,7 @@ export default function CalibrationWizard() {
                     {col.label}
                   </th>
                 ))}
+                <th className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y font-mono text-xs">
@@ -1717,6 +2016,29 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (col.type === "text") {
+                      const isSpecCol = col.id === "required_dimension" || col.id === "description" || col.id === "specification" || col.id === "spec" || /spec|dimension/i.test(col.label || "");
+                      if (isSpecCol) {
+                        return (
+                          <td key={col.id} className="p-0.5 min-w-[130px]">
+                            <Textarea
+                              value={row[col.id] || row.required_dimension || row.description || ""}
+                              onChange={(e) => {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  e.target.value
+                                );
+                              }}
+                              rows={String(row[col.id] || row.required_dimension || "").includes("\n") ? 2 : 1}
+                              className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/50 hover:bg-background focus:bg-background transition-colors text-left w-full"
+                              placeholder="e.g. 55.10-0.025"
+                            />
+                          </td>
+                        );
+                      }
                       return (
                         <td key={col.id} className="py-0.5 px-1.5 font-medium text-left pl-2 text-[11px]">
                           {row.description || row[col.id] || (row.point_number ?? (rIdx + 1))}
@@ -1799,10 +2121,37 @@ export default function CalibrationWizard() {
                     }
                     return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] || "-"}</td>;
                   })}
+                  <td className="p-0.5 text-center">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleWizardCanvasDeleteRow(bIdx, isSplit, cIdx, rIdx)}
+                      title="Delete parameter row"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="bg-muted/30 px-3 py-1.5 border-t flex items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5 font-medium border-dashed border-primary/40 hover:bg-primary/5 text-primary"
+            onClick={() => handleWizardCanvasAddRow(bIdx, isSplit, cIdx)}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add Parameter Row ({tbl.rows.length + 1})
+          </Button>
+          <span className="text-[10px] text-muted-foreground">
+            {tbl.rows.length} parameter {tbl.rows.length === 1 ? "point" : "points"} configured for this gauge
+          </span>
         </div>
         {tbl.footerNote && (
           <div className="p-1.5 text-[10px] italic bg-muted/20 border-t text-center text-muted-foreground">
@@ -1817,7 +2166,11 @@ export default function CalibrationWizard() {
     switch (step) {
       case 0: return !!selectedInstrument && !!selectedType;
       case 1: return true; // Reference standard is optional
-      case 2: return wizardIsCanvas ? wizardLayoutBlocks.length > 0 : calPoints.length > 0;
+      case 2: {
+        const hasPoints = wizardIsCanvas ? wizardLayoutBlocks.length > 0 : calPoints.length > 0;
+        const hasReceipt = receiptCondition === "CUSTOM" ? !!customReceiptCondition.trim() : !!receiptCondition;
+        return hasPoints && hasReceipt;
+      }
       case 3: return true;
       default: return true;
     }
@@ -2462,6 +2815,41 @@ export default function CalibrationWizard() {
                             </div>
                           );
                         })}
+
+                      {/* Standard System Presets (LF Gauge Standard, Micrometer, Caliper, etc.) */}
+                      <div className="bg-muted/60 px-2.5 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider border-t">
+                        Standard System Presets
+                      </div>
+                      {CANVAS_PRESETS
+                        .filter(p => !templateSearchQuery || p.name.toLowerCase().includes(templateSearchQuery.toLowerCase()) || p.instrumentType.toLowerCase().includes(templateSearchQuery.toLowerCase()))
+                        .map((preset) => {
+                          const isSelected = selectedTemplateId === preset.id;
+                          return (
+                            <div
+                              key={preset.id}
+                              onClick={() => {
+                                handleApplyTemplate(preset.id);
+                                setTemplatePopoverOpen(false);
+                                setTemplateSearchQuery("");
+                              }}
+                              className={cn(
+                                "p-2.5 text-xs cursor-pointer hover:bg-primary/5 transition-colors flex items-center justify-between",
+                                isSelected && "bg-primary/10 font-bold text-primary"
+                              )}
+                            >
+                              <div>
+                                <p className="font-semibold text-foreground flex items-center gap-1.5">
+                                  <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                                  <span>{preset.name}</span>
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-mono">
+                                  {preset.instrumentType} • {preset.blocks.length} sections
+                                </p>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                            </div>
+                          );
+                        })}
                     </div>
                   </PopoverContent>
                 </Popover>
@@ -2473,6 +2861,33 @@ export default function CalibrationWizard() {
                     <Label className="text-xs font-semibold">Standard Reference</Label>
                     <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
                   </div>
+                  <div className="space-y-1.5 min-w-[210px]">
+                    <Label className="text-xs font-semibold flex items-center gap-1">
+                      Gauge Receipt Condition <span className="text-rose-500">*</span>
+                    </Label>
+                    <Select value={receiptCondition} onValueChange={(val) => setReceiptCondition(val)}>
+                      <SelectTrigger className="text-xs font-medium bg-background h-9">
+                        <SelectValue placeholder="Select Condition" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NO DENT & DAMAGE (OK)">NO DENT & DAMAGE (OK)</SelectItem>
+                        <SelectItem value="SATISFACTORY">SATISFACTORY</SelectItem>
+                        <SelectItem value="DENT & DAMAGE OBSERVED">DENT & DAMAGE OBSERVED</SelectItem>
+                        <SelectItem value="CUSTOM">CUSTOM (Enter Condition...)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {receiptCondition === "CUSTOM" && (
+                    <div className="space-y-1.5 min-w-[220px] flex-1">
+                      <Label className="text-xs font-semibold text-foreground">Custom Receipt Condition <span className="text-rose-500">*</span></Label>
+                      <Input
+                        value={customReceiptCondition}
+                        onChange={(e) => setCustomReceiptCondition(e.target.value)}
+                        placeholder="e.g., No dent, measuring face OK"
+                        className="text-xs font-medium h-9"
+                      />
+                    </div>
+                  )}
                   <div className="space-y-1.5 w-36">
                     <Label className="text-xs font-semibold">Template Doc No</Label>
                     <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
@@ -3434,7 +3849,9 @@ export default function CalibrationWizard() {
                   soaking_time: envSoakingTime || undefined,
                   soaking_start_time: envSoakingStartTime || undefined,
                   soaking_end_time: envSoakingEndTime || undefined,
+                  receipt_condition: effectiveReceiptCondition,
                 },
+                receipt_condition: effectiveReceiptCondition,
                 doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
                 doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
                 doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,

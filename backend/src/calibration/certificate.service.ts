@@ -1287,7 +1287,7 @@ export class CertificateService {
               const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
               val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : '-';
             } else if (col.type === 'text') {
-              val = row.description || row[col.id] || '-';
+              val = row[col.id] || row.required_dimension || row.description || '-';
             } else if (col.type === 'formula' || col.type === 'status') {
               val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance, tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
             } else if (val === undefined || val === null || val === '') {
@@ -2290,6 +2290,13 @@ export class CertificateService {
                               .filter(Boolean)
                               .join('  |  '),
                           },
+                        ]
+                      : []),
+                    ...((env as any).receipt_condition || (calibration as any).receipt_condition
+                      ? [
+                          { text: '   |   ', bold: true },
+                          { text: 'Receipt Condition : ', bold: true },
+                          { text: String((env as any).receipt_condition || (calibration as any).receipt_condition) },
                         ]
                       : []),
                   ],

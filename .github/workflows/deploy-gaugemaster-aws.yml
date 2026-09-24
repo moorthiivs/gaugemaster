@@ -1,0 +1,255 @@
+name: Deploy Gaugemaster to AWS
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+concurrency:
+  group: gaugemaster-production
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy Gaugemaster
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # 2. Node.js
+      # --------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      # --------------------------------------------------
+      # 3. Build frontend
+      # --------------------------------------------------
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --legacy-peer-deps
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      # --------------------------------------------------
+      # 4. Copy frontend into backend public
+      # --------------------------------------------------
+      - name: Copy frontend build to backend public
+        run: |
+          rm -rf backend/src/public
+          mkdir -p backend/src/public
+          cp -R frontend/dist/. backend/src/public/
+
+      # --------------------------------------------------
+      # 5. Build backend
+      # --------------------------------------------------
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --legacy-peer-deps
+
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      # --------------------------------------------------
+      # 6. Remove development dependencies
+      # --------------------------------------------------
+      - name: Prepare production backend
+        working-directory: backend
+        run: npm prune --omit=dev
+
+      # --------------------------------------------------
+      # 7. Verify deployment package
+      # --------------------------------------------------
+      - name: Verify build
+        run: |
+          test -f backend/dist/main.js
+          test -f backend/src/public/index.html
+
+          echo "Backend build:"
+          ls -lh backend/dist/main.js
+
+          echo "Frontend build:"
+          ls -lh backend/src/public/index.html
+
+      # --------------------------------------------------
+      # 8. Create deployment archive
+      # --------------------------------------------------
+      - name: Create deployment package
+        run: |
+          tar \
+            --exclude='backend/.env' \
+            --exclude='backend/.env.*' \
+            --exclude='backend/test' \
+            --exclude='backend/src' \
+            -czf gaugemaster-${{ github.sha }}.tar.gz \
+            -C backend \
+            dist package.json package-lock.json node_modules
+
+      # --------------------------------------------------
+      # 9. Configure SSH
+      # --------------------------------------------------
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${{ secrets.AWS_SSH_KEY }}" \
+            > ~/.ssh/github_actions
+
+          chmod 600 ~/.ssh/github_actions
+
+          printf '%s\n' "${{ secrets.AWS_KNOWN_HOSTS }}" \
+            > ~/.ssh/known_hosts
+
+          chmod 644 ~/.ssh/known_hosts
+
+      # --------------------------------------------------
+      # 10. Upload package to AWS
+      # --------------------------------------------------
+      - name: Upload deployment package
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
+        run: |
+          set -e
+
+          PACKAGE="gaugemaster-${{ github.sha }}.tar.gz"
+          ls -lh "$PACKAGE"
+
+          scp \
+            -i ~/.ssh/github_actions \
+            -o StrictHostKeyChecking=yes \
+            "$PACKAGE" \
+            "${AWS_USER}@${AWS_HOST}:/tmp/"
+
+      # --------------------------------------------------
+      # 11. Deploy on AWS
+      # --------------------------------------------------
+      - name: Deploy on AWS
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/github_actions \
+            -o StrictHostKeyChecking=yes \
+            "${AWS_USER}@${AWS_HOST}" \
+            "GITHUB_SHA=${{ github.sha }} bash -s" <<'REMOTE_SCRIPT'
+
+          set -e
+
+          APP_NAME="gaugemaster"
+          APP_DIR="/srv/apps/gaugemaster"
+          RELEASE_DIR="$APP_DIR/releases/$GITHUB_SHA"
+          PACKAGE="/tmp/gaugemaster-$GITHUB_SHA.tar.gz"
+
+          echo "======================================"
+          echo "Deploying Gaugemaster"
+          echo "Commit: $GITHUB_SHA"
+          echo "======================================"
+
+          # -----------------------------------------
+          # Create release directory
+          # -----------------------------------------
+          mkdir -p "$RELEASE_DIR"
+
+          # -----------------------------------------
+          # Extract deployment
+          # -----------------------------------------
+          tar -xzf "$PACKAGE" -C "$RELEASE_DIR"
+
+          # -----------------------------------------
+          # Validate deployment
+          # -----------------------------------------
+          test -f "$RELEASE_DIR/dist/main.js"
+          test -f "$RELEASE_DIR/package.json"
+
+          # -----------------------------------------
+          # Connect production environment
+          # -----------------------------------------
+          ln -sfn \
+            "$APP_DIR/shared/.env" \
+            "$RELEASE_DIR/.env"
+
+          # -----------------------------------------
+          # Update current symlink
+          # -----------------------------------------
+          ln -sfn \
+            "$RELEASE_DIR" \
+            "$APP_DIR/current"
+
+          # -----------------------------------------
+          # Load production environment
+          # -----------------------------------------
+          set -a
+          source "$APP_DIR/shared/.env"
+          set +a
+
+          # -----------------------------------------
+          # Start / restart PM2
+          # -----------------------------------------
+          cd "$APP_DIR/current"
+
+          if pm2 describe gaugemaster-api > /dev/null 2>&1; then
+            echo "Restarting Gaugemaster API..."
+
+            pm2 restart gaugemaster-api --update-env
+          else
+            echo "Starting Gaugemaster API..."
+
+            pm2 start dist/main.js \
+              --name gaugemaster-api \
+              --cwd "$APP_DIR/current"
+          fi
+
+          # -----------------------------------------
+          # Save PM2 process list
+          # -----------------------------------------
+          pm2 save
+
+          # -----------------------------------------
+          # Cleanup uploaded package
+          # -----------------------------------------
+          rm -f "$PACKAGE"
+
+          # -----------------------------------------
+          # Keep latest 5 releases
+          # -----------------------------------------
+          cd "$APP_DIR/releases"
+
+          ls -1dt */ 2>/dev/null \
+            | tail -n +6 \
+            | xargs -r rm -rf
+
+          # -----------------------------------------
+          # Deployment verification
+          # -----------------------------------------
+          echo ""
+          echo "PM2 status:"
+          pm2 status
+
+          echo ""
+          echo "Current release:"
+          readlink -f "$APP_DIR/current"
+
+          echo ""
+          echo "Deployment completed successfully."
+
+          REMOTE_SCRIPT

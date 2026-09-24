@@ -89,6 +89,10 @@ CRITICAL EXTRACTION & FIDELITY RULES:
      * If the document provides specification strings like "13±0.01" or "Ø35.035-0.02/-0.01", store the full specification in description/specification column and parse nominal and tolerances into numeric fields!
 6. REFERENCE STANDARDS & METADATA:
    - Extract reference standards used and environmental conditions into notes or table_grid blocks.
+7. SKIP RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
+   - DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
+   - In Gaugemaster, Receipt Condition is managed through a dedicated calibration workflow selection field, NOT as template canvas tables or rows.
+   - ONLY focus on extracting the actual calibration measurement points, nominal dimensions, tolerances, trial readings, formulas, and acceptance criteria.
 
 OUTPUT JSON SCHEMA:
 {

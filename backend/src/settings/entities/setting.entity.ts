@@ -113,6 +113,7 @@ export class Setting {
         apiKey?: string;
         defaultModel?: string;
         enabled?: boolean;
+        floatingBotEnabled?: boolean;
     };
 }
 

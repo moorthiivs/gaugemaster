@@ -52,7 +52,15 @@ import {
   Wand2,
   Grid2X2,
   SeparatorHorizontal,
+  PanelRightClose,
+  PanelRight,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
@@ -106,6 +114,11 @@ export interface CanvasTemplateEditorProps {
   acceptanceCriteriaDate?: string;
   acceptanceCriteriaRev?: string;
   acceptanceCriteriaReference?: string;
+  hideCopilotInside?: boolean;
+  selectedBlockId?: string | null;
+  onSelectBlockId?: (id: string | null) => void;
+  selectedColumnId?: string | null;
+  onSelectColumnId?: (id: string | null) => void;
 }
 
 export function CanvasTemplateEditor({
@@ -135,8 +148,26 @@ export function CanvasTemplateEditor({
   acceptanceCriteriaDate,
   acceptanceCriteriaRev,
   acceptanceCriteriaReference,
+  hideCopilotInside = false,
+  selectedBlockId: propSelectedBlockId,
+  onSelectBlockId,
+  selectedColumnId: propSelectedColId,
+  onSelectColumnId,
 }: CanvasTemplateEditorProps) {
-  const [selectedBlockId, setSelectedBlockId] = useState<string | null>(() => blocks[0]?.id || null);
+  const [internalSelectedBlockId, setInternalSelectedBlockId] = useState<string | null>(() => blocks[0]?.id || null);
+  const selectedBlockId = propSelectedBlockId !== undefined ? propSelectedBlockId : internalSelectedBlockId;
+  const setSelectedBlockId = (id: string | null) => {
+    setInternalSelectedBlockId(id);
+    if (onSelectBlockId) onSelectBlockId(id);
+  };
+
+  const [internalSelectedColId, setInternalSelectedColId] = useState<string | null>(null);
+  const selectedColumnId = propSelectedColId !== undefined ? propSelectedColId : internalSelectedColId;
+  const setSelectedColumnId = (id: string | null) => {
+    setInternalSelectedColId(id);
+    if (onSelectColumnId) onSelectColumnId(id);
+  };
+
   const [selectedChildTableId, setSelectedChildTableId] = useState<string | null>(null);
   const [showAiModal, setShowAiModal] = useState(false);
   const [showTrialRun, setShowTrialRun] = useState(false);
@@ -144,7 +175,6 @@ export function CanvasTemplateEditor({
   const [showTableAuditModal, setShowTableAuditModal] = useState(false);
   const [auditTargetTable, setAuditTargetTable] = useState<TableGridBlock | null>(null);
   const [showAssistant, setShowAssistant] = useState(true);
-  const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
   const [showPreSaveModal, setShowPreSaveModal] = useState(false);
   const [isBannerCollapsed, setIsBannerCollapsed] = useState(true);
   const [isToolboxCollapsed, setIsToolboxCollapsed] = useState(false);
@@ -917,12 +947,96 @@ export function CanvasTemplateEditor({
   };
 
   return (
-    <div className="space-y-4">
-      {/* 3-COLUMN WORKSPACE: LEFT TOOLBOX + CANVAS BLOCKS + RIGHT COPILOT */}
-      <div className="flex flex-col lg:flex-row gap-4 items-start w-full">
+    <div className="h-full w-full flex flex-col overflow-hidden bg-background">
+      {/* Canvas Top Bar: Presets, Quick Actions, and AI Copilot Dock Toggle (Shown when standalone) */}
+      {!hideCopilotInside && (
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 dark:border-slate-800 bg-card shrink-0 gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5 text-primary" />
+              <span>Canvas Blocks ({blocks.length})</span>
+            </span>
+            <Badge variant="outline" className="text-[10px] font-mono py-0 px-1.5 bg-muted">
+              {canvasWidthMode === "fit" ? "Full Width (100%)" : canvasWidthMode === "wide" ? "Wide (1240px)" : "A4 Standard (860px)"}
+            </Badge>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {/* Standard Metrology System Presets Dropdown */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs font-medium gap-1.5 border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg shadow-2xs"
+                  title="Select Standard Metrology Template Preset"
+                >
+                  <BookOpen className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Standard Presets</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80 max-h-80 overflow-y-auto">
+                {CANVAS_PRESETS.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset.id}
+                    onClick={() => {
+                      if (onSelectPreset) {
+                        onSelectPreset(preset);
+                      } else {
+                        markChanged(JSON.parse(JSON.stringify(preset.blocks)));
+                        toast.success(`Loaded "${preset.name}" preset!`);
+                      }
+                    }}
+                    className="flex flex-col items-start gap-0.5 cursor-pointer py-2"
+                  >
+                    <span className="font-semibold text-xs text-foreground">{preset.name}</span>
+                    <span className="text-xxs text-muted-foreground line-clamp-1">{preset.description}</span>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* AI Generator button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAiModal(true)}
+              className="h-7 px-2.5 text-xs font-medium gap-1.5 border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs"
+              title="AI Smart Template Generator"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span>AI Smart Generate</span>
+            </Button>
+
+            {/* AI Copilot Antigravity Dock Toggle Button */}
+            <Button
+              type="button"
+              variant={showAssistant ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => {
+                setShowAssistant(!showAssistant);
+                setIsAssistantDocked(true);
+              }}
+              className={`h-7 px-2.5 text-xs font-semibold gap-1.5 rounded-lg border transition-all ${
+                showAssistant
+                  ? "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-800"
+                  : "text-slate-700 dark:text-slate-300 hover:bg-muted"
+              }`}
+              title={showAssistant ? "Hide AI Copilot (Full Screen View)" : "Show AI Copilot Dock"}
+            >
+              {showAssistant ? <PanelRightClose className="w-3.5 h-3.5 text-indigo-600" /> : <PanelRight className="w-3.5 h-3.5 text-indigo-500" />}
+              <span>{showAssistant ? "Hide Copilot" : "AI Copilot"}</span>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Main 3-Column Antigravity Workspace: Toolbox (Left) + Independent Center Scroll (Center) + Docked Copilot (Right) */}
+      <div className="flex-1 flex flex-row min-h-0 w-full overflow-hidden relative">
         {/* MODULAR BLOCKS TOOLBOX (MATCHES USER DESIGN) */}
         {isToolboxCollapsed ? (
-          <div className="w-11 shrink-0 bg-card border border-slate-200 dark:border-slate-800 rounded-xl p-1.5 flex flex-col items-center gap-2 shadow-xs py-3 mt-5">
+          <div className="w-11 shrink-0 h-full bg-card border-r border-slate-200 dark:border-slate-800 p-1.5 flex flex-col items-center gap-2 shadow-xs py-3 overflow-y-auto">
             <Button
               type="button"
               variant="ghost"
@@ -986,7 +1100,7 @@ export function CanvasTemplateEditor({
             </Button>
           </div>
         ) : (
-          <div className="w-full lg:w-[240px] xl:w-[260px] shrink-0 space-y-4 mt-5">
+          <div className="w-[220px] xl:w-[250px] shrink-0 h-full border-r border-slate-200 dark:border-slate-800 bg-card/60 p-3 space-y-4 overflow-y-auto">
             {/* Add Modular Blocks Card matching user image */}
             <div className="bg-card border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs space-y-3">
               <div className="flex items-center justify-between pb-0.5">
@@ -1061,18 +1175,18 @@ export function CanvasTemplateEditor({
           </div>
         )}
 
-        {/* MIDDLE COLUMN: CALIBRATION DATA & CANVAS BLOCKS */}
-        <div className="flex-1 min-w-0 space-y-6 w-full pt-5 px-1">
+        {/* MIDDLE COLUMN: CALIBRATION DATA & CANVAS BLOCKS (Independent Scroll!) */}
+        <div className="flex-1 h-full min-w-0 overflow-y-auto px-4 py-4 space-y-6 bg-slate-50/50 dark:bg-slate-950/30">
           {blocks.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3 shadow-xs">
               <Table className="w-8 h-8 mx-auto text-muted-foreground/40" />
               <div className="space-y-1">
                 <h4 className="font-bold text-xs text-foreground">Your Certificate Canvas is Empty</h4>
                 <p className="text-tiny text-muted-foreground">
-                  Click below to add a table or use <strong>AI Smart Generate</strong> to build your template.
+                  Click below to add a table, load a standard metrology preset, or use <strong>AI Smart Generate</strong> to build your template.
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-2 pt-2">
+              <div className="flex items-center justify-center gap-2 pt-2 flex-wrap">
                 <Button
                   type="button"
                   size="sm"
@@ -1082,6 +1196,39 @@ export function CanvasTemplateEditor({
                   <Plus className="w-3.5 h-3.5" />
                   Add Calibration Table
                 </Button>
+                {/* Standard Presets dropdown button */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-xs font-semibold gap-1.5 text-blue-600 border-blue-500/40 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+                    >
+                      <BookOpen className="w-3.5 h-3.5 text-blue-500" />
+                      Standard Presets
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center" className="w-80 max-h-80 overflow-y-auto">
+                    {CANVAS_PRESETS.map((preset) => (
+                      <DropdownMenuItem
+                        key={preset.id}
+                        onClick={() => {
+                          if (onSelectPreset) {
+                            onSelectPreset(preset);
+                          } else {
+                            markChanged(JSON.parse(JSON.stringify(preset.blocks)));
+                            toast.success(`Loaded "${preset.name}" preset!`);
+                          }
+                        }}
+                        className="flex flex-col items-start gap-0.5 cursor-pointer py-2"
+                      >
+                        <span className="font-semibold text-xs text-foreground">{preset.name}</span>
+                        <span className="text-xxs text-muted-foreground line-clamp-1">{preset.description}</span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   type="button"
                   size="sm"
@@ -1938,10 +2085,10 @@ export function CanvasTemplateEditor({
           </div>
 
         {/* ========================================================================= */}
-        {/* RIGHT COLUMN: DOCKED COPILOT                                             */}
+        {/* RIGHT COLUMN: DOCKED COPILOT (Only rendered when standalone)              */}
         {/* ========================================================================= */}
-        {showAssistant && isAssistantDocked && (
-          <div className="w-full lg:w-[420px] xl:w-[460px] 2xl:w-[500px] shrink-0 sticky top-3 h-[calc(100vh-190px)] min-h-[680px]">
+        {!hideCopilotInside && showAssistant && isAssistantDocked && (
+          <div className="w-[420px] xl:w-[460px] 2xl:w-[500px] shrink-0 h-full flex flex-col border-l border-slate-200 dark:border-slate-800 bg-background z-20 shadow-md">
             <GaugemasterTemplateAssistant
               open={showAssistant}
               onClose={() => setShowAssistant(false)}
@@ -1974,7 +2121,7 @@ export function CanvasTemplateEditor({
       </div>
 
       {/* FLOATING COPILOT (WHEN UNDOCKED / FLOATING) */}
-      {showAssistant && !isAssistantDocked && (
+      {!hideCopilotInside && showAssistant && !isAssistantDocked && (
         <GaugemasterTemplateAssistant
           open={showAssistant}
           onClose={() => setShowAssistant(false)}
@@ -2005,7 +2152,7 @@ export function CanvasTemplateEditor({
       )}
 
       {/* FLOATING ACTION PILL TRIGGER WHEN COPILOT IS CLOSED */}
-      {!showAssistant && (
+      {!hideCopilotInside && !showAssistant && (
         <div className="fixed bottom-6 right-6 z-40 animate-in fade-in slide-in-from-bottom-4 duration-300">
           <Button
             type="button"

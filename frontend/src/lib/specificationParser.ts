@@ -53,11 +53,25 @@ export function parseSpecification(
   }
 
   const rawText = specText.trim();
-  const normalized = rawText
+
+  // Extract primary line for metrological evaluation, ignoring secondary component notes in parentheses or brackets
+  const rawLines = rawText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  let primaryTarget = rawLines[0] || rawText;
+  for (const line of rawLines) {
+    if (!line.startsWith("(") && !line.startsWith("[")) {
+      primaryTarget = line;
+      break;
+    }
+  }
+
+  // Also remove trailing parenthetical/bracketed notes on the same line if any (e.g. "55.10-0.025 (58.9-0.025)")
+  const cleanTarget = primaryTarget.replace(/\s*[\(\[].*?[\)\]]\s*$/, "").trim() || primaryTarget;
+
+  const normalized = cleanTarget
     .replace(/[–—]/g, "-")
     .replace(/\s+/g, " ");
 
-  // 1. PATTERN A: Symmetric tolerance: e.g. "Shaft Dist 13±0.01", "50.0±0.005", "SR43.414±0.005"
+  // 1. PATTERN A: Symmetric tolerance: e.g. "Shaft Dist 13±0.01", "50.0±0.005", "SR43.414±0.005", "Ø35±0.01"
   const symRegex = /^(?:(.+?)\s+)?(?:[ØRSR\s]*)(-?\d+(?:\.\d+)?)\s*±\s*(\d+(?:\.\d+)?)$/i;
   const symMatch = normalized.match(symRegex);
   if (symMatch) {
