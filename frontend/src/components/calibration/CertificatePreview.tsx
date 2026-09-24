@@ -395,7 +395,7 @@ export function CertificatePreview({
                       } else if (col.type === "nominal") {
                         val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
                       } else if (col.type === "text") {
-                        val = row.description || row[col.id] || "-";
+                        val = row[col.id] || row.required_dimension || row.description || "-";
                       } else if (col.type === "formula" || col.type === "status") {
                         val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, colDec);
                       } else if (col.type === "reading" || col.type === "trial" || col.type === "number") {
@@ -417,7 +417,7 @@ export function CertificatePreview({
                       return (
                         <td
                           key={col.id}
-                          className={`py-1 px-1 border border-black leading-snug ${
+                          className={`py-1 px-1 border border-black leading-snug whitespace-pre-line ${
                             isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : "text-black"
                           }`}
                         >
@@ -1222,6 +1222,11 @@ export function CertificatePreview({
                       | <span className="font-bold">Soaking Details:</span> {env.soaking_start_time && `Start: ${env.soaking_start_time} `}
                       {env.soaking_end_time && `| End: ${env.soaking_end_time} `}
                       {env.soaking_time && `| Soaking Time: ${env.soaking_time}`}
+                    </span>
+                  )}
+                  {Boolean((env as any).receipt_condition || (calibration as any).receipt_condition) && (
+                    <span className="ml-3">
+                      | <span className="font-bold">Receipt Condition:</span> {String((env as any).receipt_condition || (calibration as any).receipt_condition)}
                     </span>
                   )}
                 </td>

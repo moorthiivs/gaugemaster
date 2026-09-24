@@ -1460,7 +1460,7 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
       style={getContainerStyle()}
       className={
         docked
-          ? "w-full h-full flex flex-col bg-white dark:bg-slate-900 border-2 border-slate-300 dark:border-slate-800 rounded-xl shadow-lg overflow-hidden relative"
+          ? "w-full h-full flex flex-col bg-card border-none rounded-none overflow-hidden relative"
           : `fixed z-50 ${
               !position ? "bottom-4 right-4" : ""
             } ${
@@ -1702,7 +1702,7 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className="flex-1 overflow-y-auto p-4 space-y-3.5 text-xs bg-slate-50/40 dark:bg-slate-950/20 relative"
+            className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5 text-xs bg-slate-50/40 dark:bg-slate-950/20 relative"
           >
             {isDragging && (
               <div className="absolute inset-0 z-50 bg-primary/10 backdrop-blur-xs border-2 border-dashed border-primary rounded-xl flex flex-col items-center justify-center p-6 pointer-events-none">

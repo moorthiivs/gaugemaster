@@ -146,6 +146,85 @@ function runTests() {
         { actual: 12.010, expDev: "+0.001", expStatus: "PASS" },
         { actual: 12.020, expDev: "+0.011", expStatus: "FAIL" },
       ],
+    },
+    // ── Tests from Screenshot 1 (LF Gauge 1) ──
+    {
+      name: "LF1-1: 55.10-0.025 with note (58.9-0.025)",
+      spec: "55.10-0.025\n(58.9-0.025)",
+      expNom: 55.10,
+      expLowerTol: -0.025,
+      expUpperTol: 0,
+      readings: [
+        { actual: 55.080, expDev: "-0.020", expStatus: "PASS" },
+        { actual: 55.070, expDev: "-0.030", expStatus: "FAIL" },
+      ],
+    },
+    {
+      name: "LF1-2: 54.6+0.025 with note (59.4-0.025)",
+      spec: "54.6+0.025\n(59.4-0.025)",
+      expNom: 54.60,
+      expLowerTol: 0,
+      expUpperTol: 0.025,
+      readings: [
+        { actual: 54.620, expDev: "+0.020", expStatus: "PASS" },
+        { actual: 54.630, expDev: "+0.030", expStatus: "FAIL" },
+      ],
+    },
+    {
+      name: "LF1-3: Ø18-0.01/-0.015",
+      spec: "Ø18-0.01/-0.015",
+      expNom: 18.00,
+      expLowerTol: -0.015,
+      expUpperTol: -0.01,
+      readings: [
+        { actual: 17.988, expDev: "-0.012", expStatus: "PASS" },
+        { actual: 17.980, expDev: "-0.020", expStatus: "FAIL" },
+      ],
+    },
+    {
+      name: "LF1-4: Ø35.02+0.005",
+      spec: "Ø35.02+0.005",
+      expNom: 35.02,
+      expLowerTol: 0,
+      expUpperTol: 0.005,
+      readings: [
+        { actual: 35.023, expDev: "+0.003", expStatus: "PASS" },
+        { actual: 35.028, expDev: "+0.008", expStatus: "FAIL" },
+      ],
+    },
+    // ── Tests from Screenshot 2 (LF Gauge 2) ──
+    {
+      name: "LF2-1: 23.75-0.03 with note (31.05-0.04)",
+      spec: "23.75-0.03\n(31.05-0.04)",
+      expNom: 23.75,
+      expLowerTol: -0.03,
+      expUpperTol: 0,
+      readings: [
+        { actual: 23.743, expDev: "-0.007", expStatus: "PASS" },
+        { actual: 23.710, expDev: "-0.040", expStatus: "FAIL" },
+      ],
+    },
+    {
+      name: "LF2-2: 22.95+0.03 with notes (30.25+0.04) and [54]",
+      spec: "22.95+0.03\n(30.25+0.04)\n[54]",
+      expNom: 22.95,
+      expLowerTol: 0,
+      expUpperTol: 0.03,
+      readings: [
+        { actual: 22.955, expDev: "+0.005", expStatus: "PASS" },
+        { actual: 22.990, expDev: "+0.040", expStatus: "FAIL" },
+      ],
+    },
+    {
+      name: "LF2-3: Ø35±0.01",
+      spec: "Ø35±0.01",
+      expNom: 35.00,
+      expLowerTol: -0.01,
+      expUpperTol: 0.01,
+      readings: [
+        { actual: 35.006, expDev: "+0.006", expStatus: "PASS" },
+        { actual: 35.015, expDev: "+0.015", expStatus: "FAIL" },
+      ],
     }
   ];
 

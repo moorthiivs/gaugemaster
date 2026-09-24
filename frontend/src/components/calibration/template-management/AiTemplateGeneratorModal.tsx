@@ -825,7 +825,7 @@ export function AiTemplateGeneratorModal({
                   </Badge>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {CANVAS_PRESETS.slice(0, 5).map((preset) => (
+                  {CANVAS_PRESETS.map((preset) => (
                     <Button
                       key={preset.id}
                       type="button"

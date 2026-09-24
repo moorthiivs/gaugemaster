@@ -1,6 +1,7 @@
 import { HyperFormula } from "hyperformula";
 import { CalibrationPoint } from "@/types/calibration";
 import type { CalibrationCalculationModel } from "@/types/template";
+import { parseSpecification } from "./specificationParser";
 
 export interface CustomColumn {
   id: string;
@@ -53,6 +54,12 @@ export function extractBounds(val: any): { min: number; max: number; nom: number
   if (!val) return { min: 0, max: 0, nom: 0 };
   const str = String(val).trim();
   
+  // Try structured specification parser first for comprehensive metrological parsing
+  const parsed = parseSpecification(str);
+  if (parsed.isValid) {
+    return { min: parsed.lowerLimit, max: parsed.upperLimit, nom: parsed.nominal };
+  }
+
   // Match ± format: "35.990±0.002" or "35.990 ± 0.002"
   const pmMatch = str.match(/^(-?[\d.]+)\s*±\s*([\d.]+)$/);
   if (pmMatch) {
@@ -1622,8 +1629,6 @@ export function evaluateFormulaValue(
   }
 }
 
-import { parseSpecification } from "./specificationParser";
-
 /**
  * Checks whether a value is blank / empty / unset (undefined, null, "", or "-").
  * Crucially, numeric 0 and "0" are valid measurement readings, NOT blanks.
@@ -2467,7 +2472,10 @@ export function evaluateCanvasRowFormulas(
             : undefined);
         if (reading !== undefined) {
           const isPass = reading >= ctx.lowerLimit - 1e-9 && reading <= ctx.upperLimit + 1e-9;
-          newRow[colId] = isPass ? "PASS" : "FAIL";
+          const statusVal = isPass ? "PASS" : "FAIL";
+          const wantsOk = /OK/i.test(formula) || /judge|judgement/i.test(colLabel) || /judge|judgement/i.test(colId);
+          const finalStatus = wantsOk ? (isPass ? "OK" : "NOT OK") : statusVal;
+          newRow[colId] = finalStatus;
           newRow.status = newRow[colId];
           newRow.judgement = newRow[colId];
         } else {
