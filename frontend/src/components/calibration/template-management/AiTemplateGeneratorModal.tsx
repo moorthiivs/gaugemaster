@@ -44,6 +44,7 @@ import {
   getStoredGeminiApiKey,
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
+  isReceiptConditionBlockOrTitle,
 } from "@/lib/geminiService";
 import { extractDocxTextAndTables } from "@/lib/docxExtractor";
 import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
@@ -289,8 +290,13 @@ export function AiTemplateGeneratorModal({
         result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
       }
 
+      // Ensure any receipt condition blocks are strictly omitted from extracted blocks
+      result.blocks = (result.blocks || []).filter(
+        (b: any) => !isReceiptConditionBlockOrTitle(b.title || b.id || b.name)
+      );
+
       setExtractedResult(result);
-      toast.success(`Successfully extracted "${result.name}" template with ${result.blocks.length} blocks!`);
+      toast.success(`Successfully extracted "${result.name}" template with ${result.blocks.length} block${result.blocks.length === 1 ? "" : "s"}!`);
     } catch (err: any) {
       console.error("AI Generation Error", err);
       toast.error(err.message || "Failed to generate template from document.");
@@ -900,6 +906,16 @@ export function AiTemplateGeneratorModal({
                   <Button variant="ghost" size="sm" onClick={handleReset} className="h-7 text-xs gap-1">
                     <RotateCcw className="w-3 h-3" /> Re-upload
                   </Button>
+                </div>
+              </div>
+
+              {/* Standard Informative Notice: Receipt Condition is handled by default */}
+              <div className="bg-sky-500/10 border border-sky-500/30 text-sky-950 dark:text-sky-200 rounded-md px-3 py-1.5 text-[11px] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                  <span>
+                    <strong>Standard Calibration Template:</strong> Gauge receipt condition (visual dent & damage check) is automatically managed by default in Gaugemaster certificate headers, keeping your measurement tables clean.
+                  </span>
                 </div>
               </div>
 

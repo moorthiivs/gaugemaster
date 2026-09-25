@@ -64,6 +64,14 @@ Always include 2 to 4 proactive, contextual, clickable follow-up suggestions in 
 
 4. ATTACHED DOCUMENTS & QUESTIONS:
 If the user attached an image, PDF certificate, drawing, or spreadsheet, examine it thoroughly. If the user asks a question about the attachment (e.g. "What is the tolerance?", "Can you audit these readings?", "What is the instrument serial number?"), provide a direct, precise, metrologically accurate answer in the "reply" field.
+
+5. GAUGE RECEIPT CONDITION POLICY (STRICT - MUST FOLLOW):
+If the user asks (explicitly, accidentally, or casually) to add, generate, create, or include a "Gauge Receipt Condition", "Receipt Condition", "Visual Inspection", "Condition on Receipt", or "Dent & Damage" table or column:
+- STRICTLY DO NOT generate any table, column, or measurement block (set "action": "NONE", "actionPayload": {}).
+- In your "reply", explain politely and clearly:
+  "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It does not belong in calibration measurement grids."
+- Suggest valid calibration actions in "suggestions", such as:
+  ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
 `;
 
 
@@ -75,11 +83,15 @@ CRITICAL EXTRACTION RULES:
 1. PURE JSON OUTPUT: Return ONLY valid, pure JSON without any comments, markdown fences, or extraneous text.
 2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM:
    - Identify every calibration data table, test section, or parameter list in the certificate.
-   - For every table or test section, create a "table_grid" block in the "blocks" array.
-3. COLUMN SEMANTIC ROLES & FORMULAS:
+   - For every genuine measurement table or test section, create a "table_grid" block in the "blocks" array.
+3. MANDATORY EXCLUSION RULE - GAUGE RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
+   - STRICTLY DO NOT extract, generate, or create tables, blocks, rows, or callout notes for "GAUGE RECEIPT CONDITION", "Receipt Condition", "Visual Condition", "Condition on Receipt", or visual dent/damage checks (e.g. "NO DENT & DAMAGE", "Free from dents and damages").
+   - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as a measurement canvas grid.
+   - Even if user custom instructions explicitly ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
+4. COLUMN SEMANTIC ROLES & FORMULAS:
    - For every column, assign: "id" (snake_case), "label" (string), "role" (SPECIFICATION, NOMINAL, TOLERANCE, LOWER_LIMIT, UPPER_LIMIT, READING, CALCULATED, JUDGEMENT, METADATA), and "type" (nominal, reading, formula, status, tolerance, number, text).
    - For calculated columns like deviation/error, provide "formula": "actual_dimension - nominal".
-4. STRICT ROW-TO-COLUMN BINDING: For every row, bind exact numeric/text values matching column IDs.
+5. STRICT ROW-TO-COLUMN BINDING: For every row, bind exact numeric/text values matching column IDs.
 
 OUTPUT JSON SCHEMA:
 {
@@ -1099,16 +1111,36 @@ export class AiService {
     );
 
     // 6. Parse structured response for actions & proactive suggestions
+    let textOutputFinal = textOutput;
     let actionPayload: any = null;
     let suggestions: string[] = [];
     try {
       const parsed = JSON.parse(textOutput);
       if (parsed.actionPayload) actionPayload = parsed.actionPayload;
       if (Array.isArray(parsed.suggestions)) suggestions = parsed.suggestions;
+
+      // Intercept accidental or explicit requests for "Gauge Receipt Condition"
+      const isReceiptConditionQuery = /(?:gauge\s+)?receipt\s+condition|visual\s+condition|dent\s+(?:&|and)\s+damage/i.test(dto.prompt);
+      const isReceiptConditionAction = actionPayload?.newTable?.title && /(?:gauge\s+)?receipt\s+condition|visual\s+condition|dent\s+(?:&|and)\s+damage/i.test(actionPayload.newTable.title);
+
+      if (isReceiptConditionQuery || isReceiptConditionAction) {
+        parsed.action = 'NONE';
+        parsed.actionPayload = {};
+        parsed.reply =
+          "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.";
+        parsed.suggestions = [
+          "Configure measurement parameters",
+          "Audit calculation formulas",
+          "Verify nominal tolerances"
+        ];
+        actionPayload = null;
+        suggestions = parsed.suggestions;
+        textOutputFinal = JSON.stringify(parsed);
+      }
     } catch {}
 
     const promptTokens = usageMetadata?.promptTokenCount || Math.ceil(dto.prompt.length / 4);
-    const candidateTokens = usageMetadata?.candidatesTokenCount || Math.ceil(textOutput.length / 4);
+    const candidateTokens = usageMetadata?.candidatesTokenCount || Math.ceil(textOutputFinal.length / 4);
     const totalTokens = promptTokens + candidateTokens;
 
     // 7. Persist User Message
@@ -1131,7 +1163,7 @@ export class AiService {
       companyId,
       userId: safeUserId,
       role: 'assistant',
-      content: textOutput,
+      content: textOutputFinal,
       model: modelUsed,
       promptTokens,
       candidateTokens,
@@ -1149,7 +1181,7 @@ export class AiService {
     const updatedQuota = await this.getQuotaStatus(companyId, safeUserId);
 
     return {
-      rawText: textOutput,
+      rawText: textOutputFinal,
       modelUsed,
       requestedModel,
       isFallback,
@@ -1214,8 +1246,62 @@ export class AiService {
       defaultModel,
       requestBody,
     );
+
+    // Deterministic post-processing filter: Strictly strip GAUGE RECEIPT CONDITION tables/blocks
+    let sanitizedJson = textOutput;
+    try {
+      let cleaned = textOutput.trim();
+      if (cleaned.startsWith('```json')) cleaned = cleaned.replace(/^```json\s*/, '').replace(/```\s*$/, '');
+      else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```\s*/, '').replace(/```\s*$/, '');
+      const parsed = JSON.parse(cleaned);
+
+      const isReceiptConditionText = (t: string) => {
+        const s = (t || '').toLowerCase().trim();
+        return (
+          s.includes('receipt condition') ||
+          s.includes('condition on receipt') ||
+          s.includes('condition of item') ||
+          s.includes('condition of gauge') ||
+          s.includes('visual inspection') ||
+          s.includes('visual condition') ||
+          s.includes('dent & damage') ||
+          s.includes('dent and damage') ||
+          s.includes('no dent & damage') ||
+          s.includes('receipt inspection')
+        );
+      };
+
+      const filterBlock = (b: any): boolean => {
+        if (!b) return false;
+        if (isReceiptConditionText(b.title || b.id || b.name)) return false;
+        if (b.type === 'table_grid' && Array.isArray(b.rows)) {
+          const originalLength = b.rows.length;
+          const validRows = b.rows.filter((r: any) => {
+            const rowDesc = r.description || r.required_dimension || r.parameter_name || r.name || '';
+            const rowVal = r.actual || r.reading || r.actual_dimension || '';
+            return !isReceiptConditionText(rowDesc) && !isReceiptConditionText(rowVal);
+          });
+          b.rows = validRows;
+          if (validRows.length === 0 && originalLength > 0) return false;
+        }
+        return true;
+      };
+
+      if (Array.isArray(parsed.blocks)) {
+        parsed.blocks = parsed.blocks.filter(filterBlock);
+      } else if (Array.isArray(parsed.sections)) {
+        parsed.sections = parsed.sections.filter(filterBlock);
+      } else if (Array.isArray(parsed.tables)) {
+        parsed.tables = parsed.tables.filter(filterBlock);
+      }
+
+      sanitizedJson = JSON.stringify(parsed);
+    } catch (parseErr: any) {
+      this.logger.warn(`Could not post-filter template JSON: ${parseErr.message}`);
+    }
+
     return {
-      rawJson: textOutput,
+      rawJson: sanitizedJson,
       modelUsed,
       timestamp: new Date().toISOString(),
     };

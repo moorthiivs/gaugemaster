@@ -53,6 +53,44 @@ export function saveStoredGeminiApiKey(key: string): void {
   }
 }
 
+/**
+ * Helper to determine if a block title, id, or header text indicates a Receipt Condition / Visual Check.
+ */
+export function isReceiptConditionBlockOrTitle(titleOrText: string): boolean {
+  const s = (titleOrText || "").toLowerCase().trim();
+  return (
+    s.includes("receipt condition") ||
+    s.includes("condition on receipt") ||
+    s.includes("condition of item") ||
+    s.includes("condition of gauge") ||
+    s.includes("visual inspection") ||
+    s.includes("visual condition") ||
+    s.includes("dent & damage") ||
+    s.includes("dent and damage") ||
+    s.includes("no dent & damage") ||
+    s.includes("receipt inspection")
+  );
+}
+
+/**
+ * Helper to determine if a row is purely a visual check or receipt condition note.
+ */
+export function isReceiptConditionRow(row: any): boolean {
+  if (!row) return false;
+  const desc = String(row.description || row.required_dimension || row.parameter_name || row.spec || "").toLowerCase();
+  const actual = String(row.actual || row.reading || row.actual_dimension || "").toLowerCase();
+  return (
+    desc.includes("dent") ||
+    desc.includes("damage") ||
+    desc.includes("receipt condition") ||
+    desc.includes("receipt inspection") ||
+    desc.includes("visual check") ||
+    desc.includes("visual inspection") ||
+    actual.includes("no dent") ||
+    actual.includes("no damage")
+  );
+}
+
 const SYSTEM_PROMPT = `
 You are an expert Metrology and Calibration Template Designer for ISO/IEC 17025 accredited laboratories.
 Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and generate a complete, high-precision, production-ready Visual Canvas Template JSON according to the schema.
@@ -89,10 +127,11 @@ CRITICAL EXTRACTION & FIDELITY RULES:
      * If the document provides specification strings like "13±0.01" or "Ø35.035-0.02/-0.01", store the full specification in description/specification column and parse nominal and tolerances into numeric fields!
 6. REFERENCE STANDARDS & METADATA:
    - Extract reference standards used and environmental conditions into notes or table_grid blocks.
-7. SKIP RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
-   - DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
-   - In Gaugemaster, Receipt Condition is managed through a dedicated calibration workflow selection field, NOT as template canvas tables or rows.
-   - ONLY focus on extracting the actual calibration measurement points, nominal dimensions, tolerances, trial readings, formulas, and acceptance criteria.
+7. MANDATORY EXCLUSION RULE - GAUGE RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
+   - STRICTLY DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
+   - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as template canvas tables or rows.
+   - Even if user custom instructions explicitly or accidentally ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
+   - ONLY focus on extracting genuine calibration measurement points, nominal dimensions, tolerances, trial readings, formulas, and acceptance criteria.
 
 OUTPUT JSON SCHEMA:
 {
@@ -378,6 +417,14 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
   } else if (parsed.columns && parsed.rows) {
     rawBlocks = [{ ...parsed, type: "table_grid" }];
   }
+
+  // Strictly filter out any blocks for Gauge Receipt Condition or visual inspection
+  rawBlocks = rawBlocks.filter((b) => {
+    if (!b) return false;
+    const title = b.title || b.name || b.id || "";
+    if (isReceiptConditionBlockOrTitle(title)) return false;
+    return true;
+  });
 
   const name =
     parsed.name ||
@@ -675,6 +722,9 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
       return rowObj;
     });
 
+    // Strictly filter out rows that are purely visual damage / receipt condition checks
+    rows = rows.filter((r: any) => !isReceiptConditionRow(r));
+
     // If Parallelism table has 4 rows, ensure position column exists
     if (isParallelism && !cols.some((c) => c.id === "description")) {
       cols.unshift({
@@ -782,6 +832,24 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     }
 
     return { ...block, id: bId };
+  });
+
+  // Strictly filter processedBlocks to eliminate any empty tables or receipt condition remnants
+  processedBlocks = processedBlocks.filter((b: any) => {
+    if (!b) return false;
+    if (isReceiptConditionBlockOrTitle(b.title || b.id || b.name)) return false;
+    if (b.type === "table_grid") {
+      const tbl = b as TableGridBlock;
+      if (!tbl.rows || tbl.rows.length === 0) return false;
+    }
+    if (b.type === "split_row") {
+      const split = b as SplitRowBlock;
+      split.children = (split.children || []).filter(
+        (c: any) => !isReceiptConditionBlockOrTitle(c.title || c.id || c.name)
+      );
+      if (split.children.length === 0) return false;
+    }
+    return true;
   });
 
   // Heuristic A: Auto-bundle consecutive side-by-side tables (e.g. Flatness & Parallelism) into a split_row
@@ -928,6 +996,7 @@ export async function generateTemplateFromImage(
 
   const promptText = `
 Please inspect this calibration standard / drawing / test sheet image and generate a structured Visual Canvas Template.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE'). In Gaugemaster, receipt condition is handled by default in certificate headers.
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
 
@@ -1001,6 +1070,7 @@ ${excelContent}
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 
 Analyze the table columns, nominal test points, tolerances, units, formulas, and criteria, and convert them into the structured Visual Canvas Template JSON schema.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE'). In Gaugemaster, receipt condition is handled by default in certificate headers.
 `;
 
   const requestBody = {
@@ -1081,6 +1151,8 @@ STRICT ACCURACY RULES FOR THIS PDF CERTIFICATE:
    - If reference standards used are included, extract them into a table_grid block with their exact names, serial numbers, calibration validity dates, and traceability.
 5. INSTRUMENT DETAILS:
    - Set "name" to the instrument name (e.g. "132kV Current Transformer Calibration"), "instrumentType" (e.g. "Current Transformer"), "defaultUnit" ("%"), "defaultTolerance" (e.g. 0.2), and decimal places (e.g. 3).
+6. MANDATORY EXCLUSION RULE:
+   - Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE'). In Gaugemaster, receipt condition is handled by default in certificate headers.
 
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
@@ -1157,6 +1229,7 @@ ${wordContent}
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 
 Analyze the calibration document, tables, measurement trials, nominal values, tolerances, units, and criteria, and convert them into the structured Visual Canvas Template JSON schema.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE'). In Gaugemaster, receipt condition is handled by default in certificate headers.
 `;
 
   const requestBody = {
@@ -1353,6 +1426,23 @@ function _handleDeterministicLocalAssistantInternal(
     tolerance: 0.01,
     unit: "mm"
   };
+
+  // 0. Gauge Receipt Condition Policy:
+  // If the user asks (or accidentally asks) to add or create a "Gauge Receipt Condition" table or check, decline with default explanation.
+  const isReceiptConditionRequest = /(?:gauge\s+)?receipt\s+condition|visual\s+condition|dent\s+(?:&|and)\s+damage/i.test(q);
+  if (isReceiptConditionRequest) {
+    return {
+      reply:
+        "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+      action: "NONE",
+      actionPayload: {},
+      suggestions: [
+        "Configure measurement parameters",
+        "Audit calculation formulas",
+        "Verify nominal tolerances"
+      ]
+    };
+  }
 
   // 0A. Critical Confirmation Rule (Section 9)
   const isExplicitConfirmation =
@@ -2513,6 +2603,13 @@ CRITICAL METROLOGY RULES:
    - Judgement Verdict: "IF(AND(actual >= lower_limit, actual <= upper_limit), \\"PASS\\", \\"FAIL\\")"
 4. Blank readings must ALWAYS propagate '-' and NEVER produce false PASS.
 5. Numeric zero (0.000) is a valid measurement, not blank.
+6. GAUGE RECEIPT CONDITION POLICY (STRICT - MUST FOLLOW):
+   If the user asks (explicitly, accidentally, or casually) to add, generate, create, or include a "Gauge Receipt Condition", "Receipt Condition", "Visual Inspection", "Condition on Receipt", or "Dent & Damage" table or column:
+   - STRICTLY DO NOT generate any table, column, or measurement block (set "action": "NONE", "actionPayload": {}).
+   - In your "reply", explain politely and clearly:
+     "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It does not belong in calibration measurement grids."
+   - Suggest valid calibration actions in "suggestions", such as:
+     ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
 
 ALLOWED ACTIONS:
 - "FIX_FORMULA": Propose formula repair for a specific column.
@@ -2762,6 +2859,25 @@ You must respond in JSON with:
       }
     }
 
+    // Intercept accidental or explicit requests for "Gauge Receipt Condition"
+    if (
+      isReceiptConditionBlockOrTitle(userQuery) ||
+      isReceiptConditionBlockOrTitle(actionPayload?.newTable?.title || "") ||
+      isReceiptConditionBlockOrTitle(actionPayload?.newColumn?.label || "")
+    ) {
+      return {
+        reply:
+          "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+        action: "NONE",
+        actionPayload: {},
+        suggestions: [
+          "Configure measurement parameters",
+          "Audit calculation formulas",
+          "Verify nominal tolerances"
+        ]
+      };
+    }
+
     // Normalize CREATE_TABLE
     const isCreateTableIntent =
       action === "CREATE_TABLE" ||
@@ -2775,6 +2891,21 @@ You must respond in JSON with:
       action = "CREATE_TABLE";
 
       let newTbl: Partial<TableGridBlock> = actionPayload.newTable || {};
+
+      // If proposed table is receipt condition, intercept and decline
+      if (isReceiptConditionBlockOrTitle(newTbl.title || "")) {
+        return {
+          reply:
+            "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+          action: "NONE",
+          actionPayload: {},
+          suggestions: [
+            "Configure measurement parameters",
+            "Audit calculation formulas",
+            "Verify nominal tolerances"
+          ]
+        };
+      }
 
       // Check if Gemini provided real calibration columns (more than just generic 5 dummy cols)
       const hasRealAiColumns =

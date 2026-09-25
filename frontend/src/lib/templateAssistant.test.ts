@@ -329,7 +329,28 @@ Expanded uncertainty U = 0.0018 mm with coverage factor k=2.
   assert(!!deleteTableRes.canonicalProposal, "Attaches Canonical Change Proposal to DELETE_TABLE");
   assert(deleteTableRes.canonicalProposal?.changes[0].type === "DELETE_TABLE", "Proposal change type is DELETE_TABLE");
 
-  console.log("\n=== ALL 19 COPILOT TEST SUITES PASSED (0 FAILURES) ===");
+  // ==========================================
+  // SUITE 20: GAUGE RECEIPT CONDITION POLICY
+  // ==========================================
+  console.log("\n--- Suite 20: Gauge Receipt Condition Auto-Skip & Policy ---");
+  const receiptConditionRes = await askTemplateAssistant("Add a gauge receipt condition table", baseContext);
+  assert(receiptConditionRes.action === "NONE", "Declines creating gauge receipt condition table (action is NONE)");
+  assert(
+    receiptConditionRes.reply.includes("default in Gaugemaster") ||
+    receiptConditionRes.reply.includes("pre-calibration") ||
+    receiptConditionRes.reply.includes("certificate header"),
+    "Explains that receipt condition is managed by default in Gaugemaster"
+  );
+
+  const dentDamageRes = await askTemplateAssistant("Create dent & damage check table", baseContext);
+  assert(dentDamageRes.action === "NONE", "Declines creating dent & damage check table (action is NONE)");
+  assert(
+    dentDamageRes.reply.includes("default in Gaugemaster") ||
+    dentDamageRes.reply.includes("pre-calibration"),
+    "Explains that dent & damage inspection is managed by default"
+  );
+
+  console.log("\n=== ALL 20 COPILOT TEST SUITES PASSED (0 FAILURES) ===");
 }
 
 runCopilotTests().catch((err) => {
