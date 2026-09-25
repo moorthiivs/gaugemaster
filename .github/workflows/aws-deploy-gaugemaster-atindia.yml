@@ -1,4 +1,4 @@
-﻿name: Deploy Gaugemaster ATINDIA to AWS
+name: Deploy Gaugemaster ATINDIA to AWS
 
 on:
   push:

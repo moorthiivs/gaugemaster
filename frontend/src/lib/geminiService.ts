@@ -8,7 +8,18 @@ import { validateTemplatePreSave } from "./templatePreSaveValidator";
 import { AssistantAttachment, CanonicalChangeProposal } from "@/types/assistant";
 import httpClient from "./httpClient";
 
+export interface DocumentValidationAudit {
+  isValidCalibrationDocument: boolean;
+  hasCalibrationData: boolean;
+  hasMeasurementTables: boolean;
+  detectedDocumentType: string;
+  rejectionReason?: string | null;
+  metrologySummary?: string;
+}
+
 export interface GeneratedTemplateResult {
+  isValidCalibrationDocument?: boolean;
+  validationAudit?: DocumentValidationAudit;
   name: string;
   description: string;
   instrumentType: string;
@@ -53,14 +64,116 @@ export function saveStoredGeminiApiKey(key: string): void {
   }
 }
 
+/**
+ * Helper to determine if a block title, id, or header text indicates a Receipt Condition / Visual Check.
+ */
+export function isReceiptConditionBlockOrTitle(titleOrText: string): boolean {
+  const s = (titleOrText || "").toLowerCase().trim();
+  return (
+    s.includes("receipt condition") ||
+    s.includes("condition on receipt") ||
+    s.includes("condition of item") ||
+    s.includes("condition of gauge") ||
+    s.includes("visual inspection") ||
+    s.includes("visual condition") ||
+    s.includes("dent & damage") ||
+    s.includes("dent and damage") ||
+    s.includes("no dent & damage") ||
+    s.includes("receipt inspection")
+  );
+}
+
+/**
+ * Helper to determine if a row is purely a visual check or receipt condition note.
+ */
+export function isReceiptConditionRow(row: any): boolean {
+  if (!row) return false;
+  const desc = String(row.description || row.required_dimension || row.parameter_name || row.spec || "").toLowerCase();
+  const actual = String(row.actual || row.reading || row.actual_dimension || "").toLowerCase();
+  return (
+    desc.includes("dent") ||
+    desc.includes("damage") ||
+    desc.includes("receipt condition") ||
+    desc.includes("receipt inspection") ||
+    desc.includes("visual check") ||
+    desc.includes("visual inspection") ||
+    actual.includes("no dent") ||
+    actual.includes("no damage")
+  );
+}
+
+/**
+ * Helper to determine if a block title, id, or header text indicates Traceability of Masters / Standard Equipments Used.
+ */
+export function isMasterTraceabilityBlockOrTitle(titleOrText: string): boolean {
+  const s = (titleOrText || "").toLowerCase().trim();
+  return (
+    s.includes("traceability of master") ||
+    s.includes("traceability of masters") ||
+    s.includes("traceability") ||
+    s.includes("master used") ||
+    s.includes("masters used") ||
+    s.includes("master equipment") ||
+    s.includes("master equipments") ||
+    s.includes("master instrument") ||
+    s.includes("master instruments") ||
+    s.includes("master details") ||
+    s.includes("standard equipment") ||
+    s.includes("standard equipments") ||
+    s.includes("reference standard") ||
+    s.includes("reference standards") ||
+    s.includes("standards used") ||
+    s.includes("equipment used for calibration") ||
+    s.includes("standard used for calibration")
+  );
+}
+
+/**
+ * Helper to determine if a row is a master equipment / reference standard record.
+ */
+export function isMasterTraceabilityRow(row: any): boolean {
+  if (!row) return false;
+  const desc = String(row.description || row.required_dimension || row.parameter_name || row.spec || row.instrument_desc || "").toLowerCase();
+  const certNo = String(row.cert_no || row.certificate_no || row.cert_number || row.traceable_to || "").toLowerCase();
+  const validity = String(row.validity || row.due_date || row.valid_till || "").toLowerCase();
+  const agency = String(row.agency || row.cal_agency || row.calibration_agency || "").toLowerCase();
+  return (
+    desc.includes("master") ||
+    desc.includes("slip gauge") ||
+    desc.includes("reference standard") ||
+    desc.includes("standard equipment") ||
+    (certNo.length > 0 && validity.length > 0) ||
+    agency.includes("nabl")
+  );
+}
+
 const SYSTEM_PROMPT = `
-You are an expert Metrology and Calibration Template Designer for ISO/IEC 17025 accredited laboratories.
-Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and generate a complete, high-precision, production-ready Visual Canvas Template JSON according to the schema.
+You are an expert Metrology and Calibration Template Auditor & Designer for ISO/IEC 17025 accredited laboratories.
+Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and perform a strict two-step process:
+STEP 1: METROLOGY & DOCUMENT VALIDITY AUDIT (AUDIT BEFORE GENERATING)
+STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/INVALID, REJECT WITH DETAILED AUDIT REASON.
 
 CRITICAL EXTRACTION & FIDELITY RULES:
+0. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data.
+   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, or engineering drawings with explicit tolerance & measurement tables.
+   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, blank spreadsheets/documents, or non-calibration paperwork.
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT OR HAS NO CALIBRATION TABLES/TEST POINTS:
+     * Set "isValidCalibrationDocument": false
+     * Provide "validationAudit": {
+         "hasCalibrationData": false,
+         "hasMeasurementTables": false,
+         "detectedDocumentType": "<e.g. company_logo | unrelated_image | invoice | marketing_graphic | blank_document>",
+         "rejectionReason": "<Clear, polite, professional explanation why this file cannot be used. Example: 'The uploaded file appears to be a company logo or graphic. It does not contain any calibration measurement tables, nominal dimensions, tolerances, or test readings required to generate a calibration template.'>",
+         "metrologySummary": "No calibration measurement parameters or test tables detected."
+       }
+     * Set "name": "Invalid Calibration Document"
+     * Set "instrumentType": "Unknown"
+     * Set "blocks": []
+     * STRICTLY DO NOT hallucinate, invent, or manufacture dummy measurement tables, nominals, or columns for an invalid file!
 1. PURE JSON OUTPUT:
    - Return ONLY valid, pure JSON without any comments, markdown fences, explanations, or extraneous text.
-2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM:
+2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM (FOR VALID DOCUMENTS):
    - Accurately identify the core calibration results tables (e.g. Section 10 "Results" or error test tables).
    - In accredited certificates, test results may cover multiple serial numbers / units. Create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
 3. MULTI-DOMAIN SUPPORT (ELECTRICAL, PRESSURE, TEMPERATURE, METROLOGY, DIMENSIONAL):
@@ -87,15 +200,26 @@ CRITICAL EXTRACTION & FIDELITY RULES:
      * "point_number": 1, 2, 3...
      * A key matching EACH column's "id" with the EXACT numeric or string value from that row!
      * If the document provides specification strings like "13±0.01" or "Ø35.035-0.02/-0.01", store the full specification in description/specification column and parse nominal and tolerances into numeric fields!
-6. REFERENCE STANDARDS & METADATA:
-   - Extract reference standards used and environmental conditions into notes or table_grid blocks.
-7. SKIP RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
-   - DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
-   - In Gaugemaster, Receipt Condition is managed through a dedicated calibration workflow selection field, NOT as template canvas tables or rows.
-   - ONLY focus on extracting the actual calibration measurement points, nominal dimensions, tolerances, trial readings, formulas, and acceptance criteria.
+6. MANDATORY EXCLUSION RULE - GAUGE RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
+   - STRICTLY DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
+   - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as template canvas tables or rows.
+   - Even if user custom instructions explicitly or accidentally ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
+7. MANDATORY EXCLUSION RULE - TRACEABILITY OF MASTERS & REFERENCE STANDARDS:
+   - STRICTLY DO NOT generate blocks, tables, rows, or callout notes for 'TRACEABILITY OF MASTER USED', 'Traceability of Masters', 'Standard Equipments used for calibration', 'Reference Standards Used', 'Master Details', or calibration validity.
+   - In Gaugemaster, Master Equipments and Traceability are managed through a standard built-in calibration workflow step (Step 2: Reference Standard) and standard certificate header section, NOT as template canvas tables or rows.
+   - Even if user custom instructions explicitly or accidentally ask for "Traceability of Masters" or standard equipment tables, SKIP it and only extract actual calibration measurement points.
+   - ONLY focus on extracting genuine calibration measurement points, nominal dimensions, tolerances, trial readings, formulas, and acceptance criteria.
 
 OUTPUT JSON SCHEMA:
 {
+  "isValidCalibrationDocument": true,
+  "validationAudit": {
+    "hasCalibrationData": true,
+    "hasMeasurementTables": true,
+    "detectedDocumentType": "calibration_certificate",
+    "rejectionReason": null,
+    "metrologySummary": "Calibration certificate containing measurement test points with nominals and tolerances."
+  },
   "name": "Instrument / Test Name (e.g. LF Gauge Calibration)",
   "description": "Concise description of calibration procedure and standard",
   "instrumentType": "Identified Instrument Type (e.g. Plug Gauge / Micrometer)",
@@ -379,6 +503,64 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     rawBlocks = [{ ...parsed, type: "table_grid" }];
   }
 
+  // Audit validity check
+  let isValidDoc = parsed.isValidCalibrationDocument !== false;
+  let validationAudit: DocumentValidationAudit | undefined = parsed.validationAudit;
+
+  if (parsed.isValidCalibrationDocument === false) {
+    isValidDoc = false;
+    if (!validationAudit) {
+      validationAudit = {
+        isValidCalibrationDocument: false,
+        hasCalibrationData: false,
+        hasMeasurementTables: false,
+        detectedDocumentType: "unrelated_document",
+        rejectionReason: "The uploaded file does not contain any calibration measurement tables, nominals, or test points.",
+        metrologySummary: "No calibration measurement parameters or test tables detected.",
+      };
+    }
+  } else if (validationAudit && (!validationAudit.hasCalibrationData && !validationAudit.hasMeasurementTables)) {
+    isValidDoc = false;
+  }
+
+  // Strictly filter out any blocks for Gauge Receipt Condition or Master Traceability
+  rawBlocks = rawBlocks.filter((b) => {
+    if (!b) return false;
+    const title = b.title || b.name || b.id || "";
+    if (isReceiptConditionBlockOrTitle(title)) return false;
+    if (isMasterTraceabilityBlockOrTitle(title)) return false;
+    return true;
+  });
+
+  if (rawBlocks.length === 0) {
+    isValidDoc = false;
+    if (!validationAudit) {
+      validationAudit = {
+        isValidCalibrationDocument: false,
+        hasCalibrationData: false,
+        hasMeasurementTables: false,
+        detectedDocumentType: "unrelated_document",
+        rejectionReason: "No calibration measurement tables or test parameters were found in the uploaded file.",
+        metrologySummary: "Zero measurement tables extracted.",
+      };
+    }
+  }
+
+  // Short-circuit if document audit failed
+  if (!isValidDoc) {
+    return {
+      isValidCalibrationDocument: false,
+      validationAudit,
+      name: parsed.name || "Invalid Document",
+      description: parsed.description || "The uploaded file does not contain calibration measurement tables.",
+      instrumentType: parsed.instrumentType || "Unknown",
+      defaultUnit: "mm",
+      defaultTolerance: 0.005,
+      decimalPlaces: 3,
+      blocks: [],
+    };
+  }
+
   const name =
     parsed.name ||
     parsed.template_info?.name ||
@@ -399,6 +581,8 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     "Standard Instrument";
 
   const result: GeneratedTemplateResult = {
+    isValidCalibrationDocument: true,
+    validationAudit,
     name,
     description,
     instrumentType,
@@ -675,6 +859,9 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
       return rowObj;
     });
 
+    // Strictly filter out rows that are purely visual damage / receipt condition checks or master standard metadata
+    rows = rows.filter((r: any) => !isReceiptConditionRow(r) && !isMasterTraceabilityRow(r));
+
     // If Parallelism table has 4 rows, ensure position column exists
     if (isParallelism && !cols.some((c) => c.id === "description")) {
       cols.unshift({
@@ -782,6 +969,38 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     }
 
     return { ...block, id: bId };
+  });
+
+  // Strictly filter processedBlocks to eliminate any empty tables, receipt condition remnants, or master traceability tables
+  processedBlocks = processedBlocks.filter((b: any) => {
+    if (!b) return false;
+    if (isReceiptConditionBlockOrTitle(b.title || b.id || b.name)) return false;
+    if (isMasterTraceabilityBlockOrTitle(b.title || b.id || b.name)) return false;
+    if (b.type === "table_grid") {
+      const tbl = b as TableGridBlock;
+      if (!tbl.rows || tbl.rows.length === 0) return false;
+      // Check if table columns indicate Master Traceability metadata table
+      if (Array.isArray(tbl.columns)) {
+        const colText = tbl.columns.map((c: any) => (c.id || c.label || "").toLowerCase()).join(" ");
+        if (
+          (colText.includes("cert_no") || colText.includes("certificate") || colText.includes("traceab")) &&
+          (colText.includes("validity") || colText.includes("due_date")) &&
+          (colText.includes("master") || colText.includes("agency") || colText.includes("standard"))
+        ) {
+          return false;
+        }
+      }
+    }
+    if (b.type === "split_row") {
+      const split = b as SplitRowBlock;
+      split.children = (split.children || []).filter(
+        (c: any) =>
+          !isReceiptConditionBlockOrTitle(c.title || c.id || c.name) &&
+          !isMasterTraceabilityBlockOrTitle(c.title || c.id || c.name)
+      );
+      if (split.children.length === 0) return false;
+    }
+    return true;
   });
 
   // Heuristic A: Auto-bundle consecutive side-by-side tables (e.g. Flatness & Parallelism) into a split_row
@@ -906,7 +1125,14 @@ export async function generateTemplateFromImage(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     // If backend reports unconfigured key or specific error, check if override key provided
@@ -928,6 +1154,7 @@ export async function generateTemplateFromImage(
 
   const promptText = `
 Please inspect this calibration standard / drawing / test sheet image and generate a structured Visual Canvas Template.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', visual dent/damage checks, 'Traceability of Masters', or 'Standard Equipments Used'. In Gaugemaster, receipt condition and master traceability are handled by default in calibration workflows and certificate headers.
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
 
@@ -972,7 +1199,14 @@ export async function generateTemplateFromExcel(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
@@ -1001,6 +1235,7 @@ ${excelContent}
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 
 Analyze the table columns, nominal test points, tolerances, units, formulas, and criteria, and convert them into the structured Visual Canvas Template JSON schema.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', visual dent/damage checks, 'Traceability of Masters', or 'Standard Equipments Used'. In Gaugemaster, receipt condition and master traceability are handled by default in calibration workflows and certificate headers.
 `;
 
   const requestBody = {
@@ -1039,7 +1274,14 @@ export async function generateTemplateFromPdf(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
@@ -1077,10 +1319,12 @@ STRICT ACCURACY RULES FOR THIS PDF CERTIFICATE:
      * "text" for burden ratings ("100 % 10VA", "25 % 2.5VA"), reference standards, coverage factor labels, or non-numeric strings.
 3. PRESERVE ALL ORIGINAL TABLE ROW DATA (DO NOT USE ZEROES OR PLACEHOLDERS):
    - For every single row in the calibration table, populate the row object with the real values from the document using the column IDs as keys!
-4. REFERENCE STANDARDS:
-   - If reference standards used are included, extract them into a table_grid block with their exact names, serial numbers, calibration validity dates, and traceability.
+4. MANDATORY EXCLUSION RULE - TRACEABILITY OF MASTERS & REFERENCE STANDARDS:
+   - Strictly omit any tables, blocks, or rows for 'TRACEABILITY OF MASTER USED', 'Standard Equipments Used', 'Reference Standards Used', or master calibration validity. In Gaugemaster, master equipment traceability is managed by default in Step 2: Reference Standard and certificate headers.
 5. INSTRUMENT DETAILS:
    - Set "name" to the instrument name (e.g. "132kV Current Transformer Calibration"), "instrumentType" (e.g. "Current Transformer"), "defaultUnit" ("%"), "defaultTolerance" (e.g. 0.2), and decimal places (e.g. 3).
+6. MANDATORY EXCLUSION RULE - RECEIPT CONDITION:
+   - Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE'). In Gaugemaster, receipt condition is handled by default in certificate headers.
 
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
@@ -1128,7 +1372,14 @@ export async function generateTemplateFromWord(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
@@ -1157,6 +1408,7 @@ ${wordContent}
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 
 Analyze the calibration document, tables, measurement trials, nominal values, tolerances, units, and criteria, and convert them into the structured Visual Canvas Template JSON schema.
+NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', visual dent/damage checks, 'Traceability of Masters', or 'Standard Equipments Used'. In Gaugemaster, receipt condition and master traceability are handled by default in calibration workflows and certificate headers.
 `;
 
   const requestBody = {
@@ -1353,6 +1605,41 @@ function _handleDeterministicLocalAssistantInternal(
     tolerance: 0.01,
     unit: "mm"
   };
+
+  // 0. Gauge Receipt Condition Policy:
+  // If the user asks (or accidentally asks) to add or create a "Gauge Receipt Condition" table or check, decline with default explanation.
+  const isReceiptConditionRequest = /(?:gauge\s+)?receipt\s+condition|visual\s+condition|dent\s+(?:&|and)\s+damage/i.test(q);
+  if (isReceiptConditionRequest) {
+    return {
+      reply:
+        "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+      action: "NONE",
+      actionPayload: {},
+      suggestions: [
+        "Configure measurement parameters",
+        "Audit calculation formulas",
+        "Verify nominal tolerances"
+      ]
+    };
+  }
+
+  // 0B. Traceability of Masters & Standard Equipments Policy:
+  // If the user asks (or accidentally asks) to add or create a "Traceability of Masters" or "Standard Equipments" table or check, decline with default explanation.
+  const isMasterTraceabilityRequest =
+    /(?:traceability(?:\s+of)?\s+masters?|standard\s+equipments?(?:\s+used)?|master\s+(?:equipments?|instruments?|standards?|details?)|reference\s+standards?|masters?\s+used)/i.test(q);
+  if (isMasterTraceabilityRequest) {
+    return {
+      reply:
+        "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It is intentionally excluded from calibration measurement grids.",
+      action: "NONE",
+      actionPayload: {},
+      suggestions: [
+        "Configure measurement parameters",
+        "Audit calculation formulas",
+        "Verify nominal tolerances"
+      ]
+    };
+  }
 
   // 0A. Critical Confirmation Rule (Section 9)
   const isExplicitConfirmation =
@@ -2513,6 +2800,20 @@ CRITICAL METROLOGY RULES:
    - Judgement Verdict: "IF(AND(actual >= lower_limit, actual <= upper_limit), \\"PASS\\", \\"FAIL\\")"
 4. Blank readings must ALWAYS propagate '-' and NEVER produce false PASS.
 5. Numeric zero (0.000) is a valid measurement, not blank.
+6. GAUGE RECEIPT CONDITION POLICY (STRICT - MUST FOLLOW):
+   If the user asks (explicitly, accidentally, or casually) to add, generate, create, or include a "Gauge Receipt Condition", "Receipt Condition", "Visual Inspection", "Condition on Receipt", or "Dent & Damage" table or column:
+   - STRICTLY DO NOT generate any table, column, or measurement block (set "action": "NONE", "actionPayload": {}).
+   - In your "reply", explain politely and clearly:
+     "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It does not belong in calibration measurement grids."
+   - Suggest valid calibration actions in "suggestions", such as:
+     ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
+7. TRACEABILITY OF MASTERS & STANDARD EQUIPMENTS POLICY (STRICT - MUST FOLLOW):
+   If the user asks (explicitly, accidentally, or casually) to add, generate, create, or include a "Traceability of Masters", "Master Equipment", "Standard Equipment used for calibration", "Reference Standards", or "Equipment Used" table or column:
+   - STRICTLY DO NOT generate any table, column, or measurement block (set "action": "NONE", "actionPayload": {}).
+   - In your "reply", explain politely and clearly:
+     "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It does not belong in calibration measurement grids."
+   - Suggest valid calibration actions in "suggestions", such as:
+     ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
 
 ALLOWED ACTIONS:
 - "FIX_FORMULA": Propose formula repair for a specific column.
@@ -2762,6 +3063,44 @@ You must respond in JSON with:
       }
     }
 
+    // Intercept accidental or explicit requests for "Gauge Receipt Condition"
+    if (
+      isReceiptConditionBlockOrTitle(userQuery) ||
+      isReceiptConditionBlockOrTitle(actionPayload?.newTable?.title || "") ||
+      isReceiptConditionBlockOrTitle(actionPayload?.newColumn?.label || "")
+    ) {
+      return {
+        reply:
+          "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+        action: "NONE",
+        actionPayload: {},
+        suggestions: [
+          "Configure measurement parameters",
+          "Audit calculation formulas",
+          "Verify nominal tolerances"
+        ]
+      };
+    }
+
+    // Intercept accidental or explicit requests for "Traceability of Masters" / "Standard Equipments"
+    if (
+      isMasterTraceabilityBlockOrTitle(userQuery) ||
+      isMasterTraceabilityBlockOrTitle(actionPayload?.newTable?.title || "") ||
+      isMasterTraceabilityBlockOrTitle(actionPayload?.newColumn?.label || "")
+    ) {
+      return {
+        reply:
+          "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It is intentionally excluded from calibration measurement grids.",
+        action: "NONE",
+        actionPayload: {},
+        suggestions: [
+          "Configure measurement parameters",
+          "Audit calculation formulas",
+          "Verify nominal tolerances"
+        ]
+      };
+    }
+
     // Normalize CREATE_TABLE
     const isCreateTableIntent =
       action === "CREATE_TABLE" ||
@@ -2775,6 +3114,36 @@ You must respond in JSON with:
       action = "CREATE_TABLE";
 
       let newTbl: Partial<TableGridBlock> = actionPayload.newTable || {};
+
+      // If proposed table is receipt condition, intercept and decline
+      if (isReceiptConditionBlockOrTitle(newTbl.title || "")) {
+        return {
+          reply:
+            "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It is intentionally excluded from calibration measurement grids.",
+          action: "NONE",
+          actionPayload: {},
+          suggestions: [
+            "Configure measurement parameters",
+            "Audit calculation formulas",
+            "Verify nominal tolerances"
+          ]
+        };
+      }
+
+      // If proposed table is master traceability, intercept and decline
+      if (isMasterTraceabilityBlockOrTitle(newTbl.title || "")) {
+        return {
+          reply:
+            "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It is intentionally excluded from calibration measurement grids.",
+          action: "NONE",
+          actionPayload: {},
+          suggestions: [
+            "Configure measurement parameters",
+            "Audit calculation formulas",
+            "Verify nominal tolerances"
+          ]
+        };
+      }
 
       // Check if Gemini provided real calibration columns (more than just generic 5 dummy cols)
       const hasRealAiColumns =

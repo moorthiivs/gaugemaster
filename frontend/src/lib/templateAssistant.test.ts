@@ -329,7 +329,58 @@ Expanded uncertainty U = 0.0018 mm with coverage factor k=2.
   assert(!!deleteTableRes.canonicalProposal, "Attaches Canonical Change Proposal to DELETE_TABLE");
   assert(deleteTableRes.canonicalProposal?.changes[0].type === "DELETE_TABLE", "Proposal change type is DELETE_TABLE");
 
-  console.log("\n=== ALL 19 COPILOT TEST SUITES PASSED (0 FAILURES) ===");
+  // ==========================================
+  // SUITE 20: GAUGE RECEIPT CONDITION POLICY
+  // ==========================================
+  console.log("\n--- Suite 20: Gauge Receipt Condition Auto-Skip & Policy ---");
+  const receiptConditionRes = await askTemplateAssistant("Add a gauge receipt condition table", baseContext);
+  assert(receiptConditionRes.action === "NONE", "Declines creating gauge receipt condition table (action is NONE)");
+  assert(
+    receiptConditionRes.reply.includes("default in Gaugemaster") ||
+    receiptConditionRes.reply.includes("pre-calibration") ||
+    receiptConditionRes.reply.includes("certificate header"),
+    "Explains that receipt condition is managed by default in Gaugemaster"
+  );
+
+  const dentDamageRes = await askTemplateAssistant("Create dent & damage check table", baseContext);
+  assert(dentDamageRes.action === "NONE", "Declines creating dent & damage check table (action is NONE)");
+  assert(
+    dentDamageRes.reply.includes("default in Gaugemaster") ||
+    dentDamageRes.reply.includes("pre-calibration"),
+    "Explains that dent & damage inspection is managed by default"
+  );
+
+  // ==========================================
+  // SUITE 21: TRACEABILITY OF MASTERS POLICY
+  // ==========================================
+  console.log("\n--- Suite 21: Traceability of Masters & Standard Equipments Auto-Skip & Policy ---");
+  const masterTraceabilityRes = await askTemplateAssistant("Add a traceability of masters table", baseContext);
+  assert(masterTraceabilityRes.action === "NONE", "Declines creating traceability of masters table (action is NONE)");
+  assert(
+    masterTraceabilityRes.reply.includes("default in Gaugemaster") ||
+    masterTraceabilityRes.reply.includes("Reference Standard") ||
+    masterTraceabilityRes.reply.includes("certificate header"),
+    "Explains that traceability of masters is managed by default in Gaugemaster"
+  );
+
+  const standardEquipRes = await askTemplateAssistant("Create standard equipments used table", baseContext);
+  assert(standardEquipRes.action === "NONE", "Declines creating standard equipments used table (action is NONE)");
+  assert(
+    standardEquipRes.reply.includes("default in Gaugemaster") ||
+    standardEquipRes.reply.includes("Reference Standard") ||
+    standardEquipRes.reply.includes("certificate header"),
+    "Explains that standard equipments used is managed by default"
+  );
+
+  const refStandardsRes = await askTemplateAssistant("Add reference standards check table", baseContext);
+  assert(refStandardsRes.action === "NONE", "Declines creating reference standards check table (action is NONE)");
+  assert(
+    refStandardsRes.reply.includes("default in Gaugemaster") ||
+    refStandardsRes.reply.includes("Reference Standard"),
+    "Explains that reference standards are managed by default"
+  );
+
+  console.log("\n=== ALL 21 COPILOT TEST SUITES PASSED (0 FAILURES) ===");
 }
 
 runCopilotTests().catch((err) => {
