@@ -21,6 +21,7 @@ import {
   Key,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Eye,
   ArrowRight,
@@ -44,6 +45,7 @@ import {
   getStoredGeminiApiKey,
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
+  DocumentValidationAudit,
   isReceiptConditionBlockOrTitle,
   isMasterTraceabilityBlockOrTitle,
 } from "@/lib/geminiService";
@@ -91,6 +93,7 @@ export function AiTemplateGeneratorModal({
   // Loading & Generation State
   const [isProcessing, setIsProcessing] = useState(false);
   const [extractedResult, setExtractedResult] = useState<GeneratedTemplateResult | null>(null);
+  const [validationError, setValidationError] = useState<DocumentValidationAudit | null>(null);
 
   const handleSaveApiKey = () => {
     saveStoredGeminiApiKey(apiKey);
@@ -104,6 +107,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid image file (PNG, JPG, WebP)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setImageFile(file);
     const reader = new FileReader();
     reader.onload = () => {
@@ -118,6 +123,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid PDF file (.pdf)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setPdfFile(file);
     toast.success(`Loaded PDF document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
   };
@@ -129,6 +136,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid Word document (.docx, .doc)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setWordFile(file);
 
     try {
@@ -154,6 +163,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid Excel or CSV file (.xlsx, .xls, .csv)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setExcelFile(file);
 
     try {
@@ -275,6 +286,7 @@ export function AiTemplateGeneratorModal({
 
     setIsProcessing(true);
     setExtractedResult(null);
+    setValidationError(null);
 
     try {
       const keyToUse = apiKey?.trim() || undefined;
@@ -291,12 +303,41 @@ export function AiTemplateGeneratorModal({
         result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
       }
 
+      // Strict Document Validity Audit Check
+      if (result.isValidCalibrationDocument === false || !result.blocks || result.blocks.length === 0) {
+        const audit: DocumentValidationAudit = result.validationAudit || {
+          isValidCalibrationDocument: false,
+          hasCalibrationData: false,
+          hasMeasurementTables: false,
+          detectedDocumentType: "unrelated_document",
+          rejectionReason: "The uploaded file does not contain any calibration measurement tables, nominal test points, or tolerance specifications.",
+          metrologySummary: "Zero calibration measurement tables detected.",
+        };
+        setValidationError(audit);
+        toast.error(audit.rejectionReason || "Uploaded file is not a valid calibration document.");
+        return;
+      }
+
       // Ensure any receipt condition or master traceability blocks are strictly omitted from extracted blocks
       result.blocks = (result.blocks || []).filter(
         (b: any) =>
           !isReceiptConditionBlockOrTitle(b.title || b.id || b.name) &&
           !isMasterTraceabilityBlockOrTitle(b.title || b.id || b.name)
       );
+
+      if (result.blocks.length === 0) {
+        const audit: DocumentValidationAudit = {
+          isValidCalibrationDocument: false,
+          hasCalibrationData: false,
+          hasMeasurementTables: false,
+          detectedDocumentType: "non_calibration_document",
+          rejectionReason: "No calibration measurement tables or test parameters were found in the uploaded file.",
+          metrologySummary: "Zero calibration measurement tables extracted.",
+        };
+        setValidationError(audit);
+        toast.error(audit.rejectionReason);
+        return;
+      }
 
       setExtractedResult(result);
       toast.success(`Successfully extracted "${result.name}" template with ${result.blocks.length} block${result.blocks.length === 1 ? "" : "s"}!`);
@@ -324,9 +365,11 @@ export function AiTemplateGeneratorModal({
     setExcelFile(null);
     setExcelSummary(null);
     setExtractedResult(null);
+    setValidationError(null);
   };
 
   const handleLoadPreset = (preset: CanvasTemplatePreset) => {
+    setValidationError(null);
     setExtractedResult({
       name: preset.name,
       description: preset.description,
@@ -591,10 +634,65 @@ export function AiTemplateGeneratorModal({
 
         {/* Content Body */}
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+          {validationError && (
+            <div className="p-4 rounded-xl border border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 text-rose-950 dark:text-rose-200 space-y-3 shadow-xs animate-in fade-in-50 duration-200">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                      Invalid Calibration Document
+                    </h4>
+                    {validationError.detectedDocumentType && (
+                      <Badge variant="outline" className="text-[10px] uppercase font-mono border-rose-300 text-rose-700 dark:text-rose-300 bg-white/80 dark:bg-rose-950/80">
+                        Detected: {validationError.detectedDocumentType.replace(/_/g, " ")}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-rose-900 dark:text-rose-200 font-medium leading-relaxed">
+                    {validationError.rejectionReason || "The uploaded file does not contain any calibration measurement tables, nominals, or test points."}
+                  </p>
+                  {validationError.metrologySummary && (
+                    <p className="text-[11px] text-rose-800/80 dark:text-rose-300/80">
+                      Metrology Audit: {validationError.metrologySummary}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-rose-200 dark:border-rose-900/50 flex items-center justify-between flex-wrap gap-2 text-[11px]">
+                <span className="text-muted-foreground">
+                  <strong>Expected:</strong> Calibration certificate, inspection report, or drawing with tolerance test tables.
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setValidationError(null);
+                    handleReset();
+                  }}
+                  className="h-6 text-[11px] text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40 px-2 font-medium"
+                >
+                  <RotateCcw className="w-3 h-3 inline mr-1" />
+                  Clear & Choose Another File
+                </Button>
+              </div>
+            </div>
+          )}
+
           {!extractedResult ? (
             <>
               {/* Tabs for Upload Method */}
-              <Tabs value={activeTab} onValueChange={(val: any) => setActiveTab(val)}>
+              <Tabs
+                value={activeTab}
+                onValueChange={(val: any) => {
+                  setActiveTab(val);
+                  setValidationError(null);
+                }}
+              >
                 <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 gap-1">
                   <TabsTrigger value="pdf" className="text-xs gap-1.5 py-2">
                     <FileText className="w-4 h-4 text-rose-500" />

@@ -8,7 +8,18 @@ import { validateTemplatePreSave } from "./templatePreSaveValidator";
 import { AssistantAttachment, CanonicalChangeProposal } from "@/types/assistant";
 import httpClient from "./httpClient";
 
+export interface DocumentValidationAudit {
+  isValidCalibrationDocument: boolean;
+  hasCalibrationData: boolean;
+  hasMeasurementTables: boolean;
+  detectedDocumentType: string;
+  rejectionReason?: string | null;
+  metrologySummary?: string;
+}
+
 export interface GeneratedTemplateResult {
+  isValidCalibrationDocument?: boolean;
+  validationAudit?: DocumentValidationAudit;
   name: string;
   description: string;
   instrumentType: string;
@@ -137,13 +148,32 @@ export function isMasterTraceabilityRow(row: any): boolean {
 }
 
 const SYSTEM_PROMPT = `
-You are an expert Metrology and Calibration Template Designer for ISO/IEC 17025 accredited laboratories.
-Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and generate a complete, high-precision, production-ready Visual Canvas Template JSON according to the schema.
+You are an expert Metrology and Calibration Template Auditor & Designer for ISO/IEC 17025 accredited laboratories.
+Your task is to analyze the provided calibration document (PDF certificate, Word format, Excel sheet, or Image/Drawing) and perform a strict two-step process:
+STEP 1: METROLOGY & DOCUMENT VALIDITY AUDIT (AUDIT BEFORE GENERATING)
+STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/INVALID, REJECT WITH DETAILED AUDIT REASON.
 
 CRITICAL EXTRACTION & FIDELITY RULES:
+0. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data.
+   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, or engineering drawings with explicit tolerance & measurement tables.
+   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, blank spreadsheets/documents, or non-calibration paperwork.
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT OR HAS NO CALIBRATION TABLES/TEST POINTS:
+     * Set "isValidCalibrationDocument": false
+     * Provide "validationAudit": {
+         "hasCalibrationData": false,
+         "hasMeasurementTables": false,
+         "detectedDocumentType": "<e.g. company_logo | unrelated_image | invoice | marketing_graphic | blank_document>",
+         "rejectionReason": "<Clear, polite, professional explanation why this file cannot be used. Example: 'The uploaded file appears to be a company logo or graphic. It does not contain any calibration measurement tables, nominal dimensions, tolerances, or test readings required to generate a calibration template.'>",
+         "metrologySummary": "No calibration measurement parameters or test tables detected."
+       }
+     * Set "name": "Invalid Calibration Document"
+     * Set "instrumentType": "Unknown"
+     * Set "blocks": []
+     * STRICTLY DO NOT hallucinate, invent, or manufacture dummy measurement tables, nominals, or columns for an invalid file!
 1. PURE JSON OUTPUT:
    - Return ONLY valid, pure JSON without any comments, markdown fences, explanations, or extraneous text.
-2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM:
+2. EXTRACT ALL ORIGINAL CALIBRATION DATA TABLES VERBATIM (FOR VALID DOCUMENTS):
    - Accurately identify the core calibration results tables (e.g. Section 10 "Results" or error test tables).
    - In accredited certificates, test results may cover multiple serial numbers / units. Create a separate "table_grid" block for EACH unit / serial number, and include the Serial Number in the table title!
 3. MULTI-DOMAIN SUPPORT (ELECTRICAL, PRESSURE, TEMPERATURE, METROLOGY, DIMENSIONAL):
@@ -182,6 +212,14 @@ CRITICAL EXTRACTION & FIDELITY RULES:
 
 OUTPUT JSON SCHEMA:
 {
+  "isValidCalibrationDocument": true,
+  "validationAudit": {
+    "hasCalibrationData": true,
+    "hasMeasurementTables": true,
+    "detectedDocumentType": "calibration_certificate",
+    "rejectionReason": null,
+    "metrologySummary": "Calibration certificate containing measurement test points with nominals and tolerances."
+  },
   "name": "Instrument / Test Name (e.g. LF Gauge Calibration)",
   "description": "Concise description of calibration procedure and standard",
   "instrumentType": "Identified Instrument Type (e.g. Plug Gauge / Micrometer)",
@@ -465,6 +503,26 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     rawBlocks = [{ ...parsed, type: "table_grid" }];
   }
 
+  // Audit validity check
+  let isValidDoc = parsed.isValidCalibrationDocument !== false;
+  let validationAudit: DocumentValidationAudit | undefined = parsed.validationAudit;
+
+  if (parsed.isValidCalibrationDocument === false) {
+    isValidDoc = false;
+    if (!validationAudit) {
+      validationAudit = {
+        isValidCalibrationDocument: false,
+        hasCalibrationData: false,
+        hasMeasurementTables: false,
+        detectedDocumentType: "unrelated_document",
+        rejectionReason: "The uploaded file does not contain any calibration measurement tables, nominals, or test points.",
+        metrologySummary: "No calibration measurement parameters or test tables detected.",
+      };
+    }
+  } else if (validationAudit && (!validationAudit.hasCalibrationData && !validationAudit.hasMeasurementTables)) {
+    isValidDoc = false;
+  }
+
   // Strictly filter out any blocks for Gauge Receipt Condition or Master Traceability
   rawBlocks = rawBlocks.filter((b) => {
     if (!b) return false;
@@ -473,6 +531,35 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     if (isMasterTraceabilityBlockOrTitle(title)) return false;
     return true;
   });
+
+  if (rawBlocks.length === 0) {
+    isValidDoc = false;
+    if (!validationAudit) {
+      validationAudit = {
+        isValidCalibrationDocument: false,
+        hasCalibrationData: false,
+        hasMeasurementTables: false,
+        detectedDocumentType: "unrelated_document",
+        rejectionReason: "No calibration measurement tables or test parameters were found in the uploaded file.",
+        metrologySummary: "Zero measurement tables extracted.",
+      };
+    }
+  }
+
+  // Short-circuit if document audit failed
+  if (!isValidDoc) {
+    return {
+      isValidCalibrationDocument: false,
+      validationAudit,
+      name: parsed.name || "Invalid Document",
+      description: parsed.description || "The uploaded file does not contain calibration measurement tables.",
+      instrumentType: parsed.instrumentType || "Unknown",
+      defaultUnit: "mm",
+      defaultTolerance: 0.005,
+      decimalPlaces: 3,
+      blocks: [],
+    };
+  }
 
   const name =
     parsed.name ||
@@ -494,6 +581,8 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     "Standard Instrument";
 
   const result: GeneratedTemplateResult = {
+    isValidCalibrationDocument: true,
+    validationAudit,
     name,
     description,
     instrumentType,
@@ -1036,7 +1125,14 @@ export async function generateTemplateFromImage(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     // If backend reports unconfigured key or specific error, check if override key provided
@@ -1103,7 +1199,14 @@ export async function generateTemplateFromExcel(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
@@ -1171,7 +1274,14 @@ export async function generateTemplateFromPdf(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
@@ -1262,7 +1372,14 @@ export async function generateTemplateFromWord(
       userInstructions,
     });
     if (res.data?.rawJson) {
-      return cleanAndParseJson(res.data.rawJson);
+      const parsed = cleanAndParseJson(res.data.rawJson);
+      if (res.data.isValidCalibrationDocument !== undefined) {
+        parsed.isValidCalibrationDocument = res.data.isValidCalibrationDocument;
+      }
+      if (res.data.validationAudit) {
+        parsed.validationAudit = res.data.validationAudit;
+      }
+      return parsed;
     }
   } catch (gatewayErr: any) {
     const apiKey = apiKeyOverride?.trim() || getStoredGeminiApiKey();
