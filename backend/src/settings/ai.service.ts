@@ -72,6 +72,14 @@ If the user asks (explicitly, accidentally, or casually) to add, generate, creat
   "Gauge Receipt Condition (such as visual inspection, dent & damage, and cleanliness checks) is already available by default in Gaugemaster as a standard pre-calibration inspection workflow and certificate header field. It does not belong in calibration measurement grids."
 - Suggest valid calibration actions in "suggestions", such as:
   ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
+
+6. TRACEABILITY OF MASTERS & STANDARD EQUIPMENTS POLICY (STRICT - MUST FOLLOW):
+If the user asks (explicitly, accidentally, or casually) to add, generate, create, or include a "Traceability of Masters", "Master Equipment", "Standard Equipment used for calibration", "Reference Standards", or "Equipment Used" table, block, or column:
+- STRICTLY DO NOT generate any table, column, or measurement block (set "action": "NONE", "actionPayload": {}).
+- In your "reply", explain politely and clearly:
+  "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It does not belong in calibration measurement grids."
+- Suggest valid calibration actions in "suggestions", such as:
+  ["Configure measurement parameters", "Audit calculation formulas", "Verify nominal tolerances"]
 `;
 
 
@@ -88,10 +96,14 @@ CRITICAL EXTRACTION RULES:
    - STRICTLY DO NOT extract, generate, or create tables, blocks, rows, or callout notes for "GAUGE RECEIPT CONDITION", "Receipt Condition", "Visual Condition", "Condition on Receipt", or visual dent/damage checks (e.g. "NO DENT & DAMAGE", "Free from dents and damages").
    - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as a measurement canvas grid.
    - Even if user custom instructions explicitly ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
-4. COLUMN SEMANTIC ROLES & FORMULAS:
+4. MANDATORY EXCLUSION RULE - TRACEABILITY OF MASTERS / STANDARD EQUIPMENTS USED:
+   - STRICTLY DO NOT extract, generate, or create tables, blocks, rows, or notes for "TRACEABILITY OF MASTER USED", "Master Equipments", "Standard Equipments Used for Calibration", "Reference Standards Used", or master calibration validity.
+   - In Gaugemaster, Master Equipment Traceability is automatically managed through Step 2: Reference Standard and rendered in the official certificate header, NOT as a canvas template grid.
+   - Even if user custom instructions or uploaded documents explicitly contain master traceability tables, SKIP them and extract ONLY the actual unit-under-calibration measurement parameters.
+5. COLUMN SEMANTIC ROLES & FORMULAS:
    - For every column, assign: "id" (snake_case), "label" (string), "role" (SPECIFICATION, NOMINAL, TOLERANCE, LOWER_LIMIT, UPPER_LIMIT, READING, CALCULATED, JUDGEMENT, METADATA), and "type" (nominal, reading, formula, status, tolerance, number, text).
    - For calculated columns like deviation/error, provide "formula": "actual_dimension - nominal".
-5. STRICT ROW-TO-COLUMN BINDING: For every row, bind exact numeric/text values matching column IDs.
+6. STRICT ROW-TO-COLUMN BINDING: For every row, bind exact numeric/text values matching column IDs.
 
 OUTPUT JSON SCHEMA:
 {
@@ -1137,6 +1149,28 @@ export class AiService {
         suggestions = parsed.suggestions;
         textOutputFinal = JSON.stringify(parsed);
       }
+
+      // Intercept accidental or explicit requests for "Traceability of Masters" / "Standard Equipments Used"
+      const isMasterTraceabilityQuery =
+        /(?:traceability(?:\s+of)?\s+masters?|standard\s+equipments?(?:\s+used)?|master\s+(?:equipments?|instruments?|standards?|details?)|reference\s+standards?|masters?\s+used)/i.test(dto.prompt);
+      const isMasterTraceabilityAction =
+        actionPayload?.newTable?.title &&
+        /(?:traceability(?:\s+of)?\s+masters?|standard\s+equipments?(?:\s+used)?|master\s+(?:equipments?|instruments?|standards?|details?)|reference\s+standards?|masters?\s+used)/i.test(actionPayload.newTable.title);
+
+      if (isMasterTraceabilityQuery || isMasterTraceabilityAction) {
+        parsed.action = 'NONE';
+        parsed.actionPayload = {};
+        parsed.reply =
+          "Traceability of Masters (Standard Equipments used for calibration, including Master Instrument Name, Make, Serial/ID No., Certificate No., Validity Date, and Calibration Agency) is already available by default in Gaugemaster as a standard calibration workflow step (Step 2: Reference Standard) and standard certificate header section. It is intentionally excluded from calibration measurement grids.";
+        parsed.suggestions = [
+          "Configure measurement parameters",
+          "Audit calculation formulas",
+          "Verify nominal tolerances"
+        ];
+        actionPayload = null;
+        suggestions = parsed.suggestions;
+        textOutputFinal = JSON.stringify(parsed);
+      }
     } catch {}
 
     const promptTokens = usageMetadata?.promptTokenCount || Math.ceil(dto.prompt.length / 4);
@@ -1255,9 +1289,10 @@ export class AiService {
       else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```\s*/, '').replace(/```\s*$/, '');
       const parsed = JSON.parse(cleaned);
 
-      const isReceiptConditionText = (t: string) => {
+      const isOmittedDefaultSectionText = (t: string) => {
         const s = (t || '').toLowerCase().trim();
         return (
+          // Receipt condition
           s.includes('receipt condition') ||
           s.includes('condition on receipt') ||
           s.includes('condition of item') ||
@@ -1267,19 +1302,48 @@ export class AiService {
           s.includes('dent & damage') ||
           s.includes('dent and damage') ||
           s.includes('no dent & damage') ||
-          s.includes('receipt inspection')
+          s.includes('receipt inspection') ||
+          // Master equipment & traceability
+          s.includes('traceability of master') ||
+          s.includes('traceability of masters') ||
+          s.includes('traceability') ||
+          s.includes('master used') ||
+          s.includes('masters used') ||
+          s.includes('master equipment') ||
+          s.includes('master equipments') ||
+          s.includes('master instrument') ||
+          s.includes('master instruments') ||
+          s.includes('master details') ||
+          s.includes('standard equipment') ||
+          s.includes('standard equipments') ||
+          s.includes('reference standard') ||
+          s.includes('reference standards') ||
+          s.includes('standards used') ||
+          s.includes('equipment used for calibration') ||
+          s.includes('standard used for calibration')
         );
       };
 
       const filterBlock = (b: any): boolean => {
         if (!b) return false;
-        if (isReceiptConditionText(b.title || b.id || b.name)) return false;
+        if (isOmittedDefaultSectionText(b.title || b.id || b.name)) return false;
+        // Check if table columns represent Master Traceability metadata (e.g. cert_no, validity, cal_agency)
+        if (b.type === 'table_grid' && Array.isArray(b.columns)) {
+          const colIdsOrLabels = b.columns.map((c: any) => (c.id || c.label || '').toLowerCase()).join(' ');
+          if (
+            (colIdsOrLabels.includes('cert_no') || colIdsOrLabels.includes('certificate') || colIdsOrLabels.includes('traceab')) &&
+            (colIdsOrLabels.includes('validity') || colIdsOrLabels.includes('due_date')) &&
+            (colIdsOrLabels.includes('master') || colIdsOrLabels.includes('agency') || colIdsOrLabels.includes('standard'))
+          ) {
+            return false;
+          }
+        }
         if (b.type === 'table_grid' && Array.isArray(b.rows)) {
           const originalLength = b.rows.length;
           const validRows = b.rows.filter((r: any) => {
             const rowDesc = r.description || r.required_dimension || r.parameter_name || r.name || '';
             const rowVal = r.actual || r.reading || r.actual_dimension || '';
-            return !isReceiptConditionText(rowDesc) && !isReceiptConditionText(rowVal);
+            return !isOmittedDefaultSectionText(rowDesc) && !isOmittedDefaultSectionText(rowVal);
           });
           b.rows = validRows;
           if (validRows.length === 0 && originalLength > 0) return false;

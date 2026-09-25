@@ -45,6 +45,7 @@ import {
   saveStoredGeminiApiKey,
   GeneratedTemplateResult,
   isReceiptConditionBlockOrTitle,
+  isMasterTraceabilityBlockOrTitle,
 } from "@/lib/geminiService";
 import { extractDocxTextAndTables } from "@/lib/docxExtractor";
 import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
@@ -290,9 +291,11 @@ export function AiTemplateGeneratorModal({
         result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
       }
 
-      // Ensure any receipt condition blocks are strictly omitted from extracted blocks
+      // Ensure any receipt condition or master traceability blocks are strictly omitted from extracted blocks
       result.blocks = (result.blocks || []).filter(
-        (b: any) => !isReceiptConditionBlockOrTitle(b.title || b.id || b.name)
+        (b: any) =>
+          !isReceiptConditionBlockOrTitle(b.title || b.id || b.name) &&
+          !isMasterTraceabilityBlockOrTitle(b.title || b.id || b.name)
       );
 
       setExtractedResult(result);
@@ -909,12 +912,12 @@ export function AiTemplateGeneratorModal({
                 </div>
               </div>
 
-              {/* Standard Informative Notice: Receipt Condition is handled by default */}
+              {/* Standard Informative Notice: Receipt Condition & Master Traceability are handled by default */}
               <div className="bg-sky-500/10 border border-sky-500/30 text-sky-950 dark:text-sky-200 rounded-md px-3 py-1.5 text-[11px] flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                   <span>
-                    <strong>Standard Calibration Template:</strong> Gauge receipt condition (visual dent & damage check) is automatically managed by default in Gaugemaster certificate headers, keeping your measurement tables clean.
+                    <strong>Standard Calibration Template:</strong> Gauge receipt condition (visual check) and Traceability of Masters (standard equipments used) are automatically managed by default in Gaugemaster calibration workflows and certificate headers, keeping your measurement tables clean.
                   </span>
                 </div>
               </div>

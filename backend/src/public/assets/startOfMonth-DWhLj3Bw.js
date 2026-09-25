@@ -1,1 +1,0 @@
-import{a_ as o}from"./index-CWIR0iws.js";function r(e){const t=o(e),n=t.getMonth();return t.setFullYear(t.getFullYear(),n+1,0),t.setHours(23,59,59,999),t}function a(e){const t=o(e);return t.setDate(1),t.setHours(0,0,0,0),t}export{r as e,a as s};
