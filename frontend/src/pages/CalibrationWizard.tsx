@@ -179,7 +179,8 @@ export default function CalibrationWizard() {
   // Helper: check if a text string is a receipt condition / visual damage note rather than a calibration measurement specification
   const isReceiptRow = (text: string) => {
     const t = (text || "").trim().toLowerCase();
-    return !t || t.includes("dent") || t.includes("damage") || t.includes("receipt condition") || t.includes("receipt inspection");
+    if (!t) return false;
+    return t.includes("dent") || t.includes("damage") || t.includes("receipt condition") || t.includes("receipt inspection");
   };
 
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
@@ -347,7 +348,7 @@ export default function CalibrationWizard() {
         setWizardLayoutBlocks((prevBlocks: any[]) => {
           if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
           const newBlocks = JSON.parse(JSON.stringify(prevBlocks));
-          const primaryTable = newBlocks.find((b: any) => b.type === "table_grid");
+          const primaryTable = newBlocks.find((b: any) => b.type === "table_grid" && !((b.title || "").toLowerCase().includes("receipt condition")));
           if (primaryTable) {
             const dec = primaryTable.decimal_places ?? wizardDecimalPlaces ?? 3;
             const tol = primaryTable.tolerance ?? calTolerance ?? 0.02;
@@ -464,7 +465,7 @@ export default function CalibrationWizard() {
         receipt_condition: effectiveReceiptCondition,
         specifications: wizardIsCanvas && wizardLayoutBlocks.length > 0
           ? (() => {
-              const primaryTable = wizardLayoutBlocks.find((b: any) => b.type === "table_grid");
+              const primaryTable = wizardLayoutBlocks.find((b: any) => b.type === "table_grid" && !((b.title || "").toLowerCase().includes("receipt condition")));
               if (primaryTable && Array.isArray(primaryTable.rows)) {
                 return primaryTable.rows
                   .filter((r: any) => !isReceiptRow(r.required_dimension || r.description || ""))
@@ -929,8 +930,14 @@ export default function CalibrationWizard() {
         ? rawInstSpecs.filter((s: any) => !isReceiptRow(s.required_dimension || s.description || s.parameter_name || ""))
         : [];
 
+      // Only ignore the table of INSTRUMENT RECEIPT CONDITION from canvas layout blocks (not all tables)
+      const sanitizedBlocks = clonedBlocks.filter((b: any) => {
+        const title = (b.title || b.content || "").toLowerCase();
+        return !title.includes("receipt condition");
+      });
+
       if (!isEdit && validInstSpecs.length > 0) {
-        const primaryTable = clonedBlocks.find((b: any) => b.type === "table_grid");
+        const primaryTable = sanitizedBlocks.find((b: any) => b.type === "table_grid");
         if (primaryTable) {
           const dec = primaryTable.decimal_places ?? tpl.decimal_places ?? 3;
           const tol = primaryTable.tolerance ?? tpl.default_tolerance ?? 0.02;
@@ -955,14 +962,14 @@ export default function CalibrationWizard() {
         }
       }
 
-      // Ensure no obsolete receipt condition rows remain inside clonedBlocks
-      clonedBlocks.forEach((b: any) => {
+      // Ensure no obsolete receipt condition rows remain inside sanitizedBlocks
+      sanitizedBlocks.forEach((b: any) => {
         if (b.type === "table_grid" && Array.isArray(b.rows)) {
           b.rows = b.rows.filter((r: any) => !isReceiptRow(r.required_dimension || r.description || ""));
         }
       });
 
-      setWizardLayoutBlocks(clonedBlocks);
+      setWizardLayoutBlocks(sanitizedBlocks);
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
