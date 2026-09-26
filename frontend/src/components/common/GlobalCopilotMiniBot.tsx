@@ -149,6 +149,204 @@ export const GlobalCopilotMiniBot: React.FC = () => {
     startPosY: number;
   } | null>(null);
 
+  // Draggable Floating Trigger & Minimized Mini-Bot State
+  const [triggerPosition, setTriggerPosition] = useState<{ x: number; y: number } | null>(() => {
+    try {
+      const saved = localStorage.getItem('gm_copilot_trigger_position');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.x === 'number' && typeof parsed.y === 'number') return parsed;
+      }
+    } catch {}
+    return null; // default to bottom-right anchoring
+  });
+
+  const [isTriggerDragging, setIsTriggerDragging] = useState(false);
+  const triggerDragRef = useRef<{
+    startX: number;
+    startY: number;
+    startPosX: number;
+    startPosY: number;
+    hasMoved: boolean;
+  } | null>(null);
+  const justDraggedRef = useRef<boolean>(false);
+  const triggerRafRef = useRef<number | null>(null);
+  const dragTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const triggerButtonRef = useRef<HTMLDivElement>(null);
+  const minimizedBarRef = useRef<HTMLDivElement>(null);
+
+  // Trigger Drag start (mouse & touch)
+  const handleStartTriggerDrag = (
+    e: React.MouseEvent | React.TouchEvent,
+    targetRef: React.RefObject<HTMLDivElement | null>
+  ) => {
+    if ('button' in e && e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button:not([data-drag-handle="true"])')) return;
+
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+    const el = targetRef.current;
+    const rect = el ? el.getBoundingClientRect() : null;
+    const currentX = rect ? rect.left : (triggerPosition ? triggerPosition.x : window.innerWidth - 180);
+    const currentY = rect ? rect.top : (triggerPosition ? triggerPosition.y : window.innerHeight - 60);
+
+    triggerDragRef.current = {
+      startX: clientX,
+      startY: clientY,
+      startPosX: currentX,
+      startPosY: currentY,
+      hasMoved: false,
+    };
+  };
+
+  useEffect(() => {
+    const handleTriggerMove = (e: MouseEvent | TouchEvent) => {
+      if (!triggerDragRef.current) return;
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
+      const dx = clientX - triggerDragRef.current.startX;
+      const dy = clientY - triggerDragRef.current.startY;
+
+      // Distinguish drag from click (4px movement threshold)
+      if (!triggerDragRef.current.hasMoved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        triggerDragRef.current.hasMoved = true;
+        justDraggedRef.current = true;
+        setIsTriggerDragging(true);
+      }
+
+      if (triggerDragRef.current.hasMoved) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+
+        const startPosX = triggerDragRef.current.startPosX;
+        const startPosY = triggerDragRef.current.startPosY;
+
+        if (triggerRafRef.current !== null) {
+          cancelAnimationFrame(triggerRafRef.current);
+        }
+
+        triggerRafRef.current = requestAnimationFrame(() => {
+          const el = !isOpen ? triggerButtonRef.current : minimizedBarRef.current;
+          const w = el?.offsetWidth || 180;
+          const h = el?.offsetHeight || 48;
+
+          const minX = 8;
+          const maxX = Math.max(8, window.innerWidth - w - 8);
+          const minY = 8;
+          const maxY = Math.max(8, window.innerHeight - h - 8);
+
+          const newX = Math.min(Math.max(minX, startPosX + dx), maxX);
+          const newY = Math.min(Math.max(minY, startPosY + dy), maxY);
+
+          setTriggerPosition({ x: newX, y: newY });
+        });
+      }
+    };
+
+    const handleTriggerUp = () => {
+      if (triggerRafRef.current !== null) {
+        cancelAnimationFrame(triggerRafRef.current);
+        triggerRafRef.current = null;
+      }
+
+      if (triggerDragRef.current) {
+        if (triggerDragRef.current.hasMoved) {
+          justDraggedRef.current = true;
+          setIsTriggerDragging(false);
+
+          if (dragTimeoutRef.current) clearTimeout(dragTimeoutRef.current);
+          dragTimeoutRef.current = setTimeout(() => {
+            justDraggedRef.current = false;
+          }, 300);
+        }
+        triggerDragRef.current = null;
+      }
+    };
+
+    window.addEventListener('mousemove', handleTriggerMove, { passive: false });
+    window.addEventListener('mouseup', handleTriggerUp);
+    window.addEventListener('touchmove', handleTriggerMove, { passive: false });
+    window.addEventListener('touchend', handleTriggerUp);
+    return () => {
+      if (triggerRafRef.current !== null) {
+        cancelAnimationFrame(triggerRafRef.current);
+      }
+      if (dragTimeoutRef.current) {
+        clearTimeout(dragTimeoutRef.current);
+      }
+      window.removeEventListener('mousemove', handleTriggerMove);
+      window.removeEventListener('mouseup', handleTriggerUp);
+      window.removeEventListener('touchmove', handleTriggerMove);
+      window.removeEventListener('touchend', handleTriggerUp);
+    };
+  }, [isOpen]);
+
+  // Keep cursor and user selection responsive during trigger drag
+  useEffect(() => {
+    if (isTriggerDragging) {
+      const originalUserSelect = document.body.style.userSelect;
+      const originalCursor = document.body.style.cursor;
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'grabbing';
+      return () => {
+        document.body.style.userSelect = originalUserSelect;
+        document.body.style.cursor = originalCursor;
+      };
+    }
+  }, [isTriggerDragging]);
+
+  // Persist triggerPosition to localStorage only when drag completes (prevents 60fps I/O stutter)
+  useEffect(() => {
+    if (isTriggerDragging) return;
+    if (triggerPosition) {
+      localStorage.setItem('gm_copilot_trigger_position', JSON.stringify(triggerPosition));
+    } else {
+      localStorage.removeItem('gm_copilot_trigger_position');
+    }
+  }, [triggerPosition, isTriggerDragging]);
+
+  // Clamp trigger position on window resize
+  useEffect(() => {
+    const handleResize = () => {
+      setTriggerPosition((prev) => {
+        if (!prev) return null;
+        const w = 180;
+        const h = 48;
+        return {
+          x: Math.min(prev.x, Math.max(8, window.innerWidth - w - 8)),
+          y: Math.min(prev.y, Math.max(8, window.innerHeight - h - 8)),
+        };
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const handleTriggerClick = (e: React.MouseEvent) => {
+    if (justDraggedRef.current || triggerDragRef.current?.hasMoved || isTriggerDragging) {
+      e.preventDefault();
+      e.stopPropagation();
+      justDraggedRef.current = false;
+      return;
+    }
+    setIsOpen(true);
+    setIsMinimized(false);
+  };
+
+  const handleMinimizedClick = (e: React.MouseEvent) => {
+    if (justDraggedRef.current || triggerDragRef.current?.hasMoved || isTriggerDragging) {
+      e.preventDefault();
+      e.stopPropagation();
+      justDraggedRef.current = false;
+      return;
+    }
+    setIsMinimized(false);
+  };
+
   const handleStartDrag = (e: React.MouseEvent) => {
     // Only drag with primary mouse button
     if (e.button !== 0) return;
@@ -208,17 +406,21 @@ export const GlobalCopilotMiniBot: React.FC = () => {
     };
   }, [isDragging, isMaximized, size.width, size.height]);
 
-  // Persist position when changed
+  // Persist position when changed (only when not actively dragging to avoid frame drops)
   useEffect(() => {
+    if (isDragging) return;
     if (position) {
       localStorage.setItem('gm_copilot_minibot_position', JSON.stringify(position));
     } else {
       localStorage.removeItem('gm_copilot_minibot_position');
     }
-  }, [position]);
+  }, [position, isDragging]);
 
   const handleResetPosition = () => {
     setPosition(null);
+    setTriggerPosition(null);
+    localStorage.removeItem('gm_copilot_minibot_position');
+    localStorage.removeItem('gm_copilot_trigger_position');
     toast.success('Copilot position reset to bottom-right');
   };
 
@@ -907,11 +1109,20 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
           bottom: '24px',
         }),
     userSelect: isDragging || isResizing ? 'none' : 'auto',
+    transition: isDragging || isResizing ? 'none' : 'box-shadow 0.2s ease',
+    willChange: isDragging || isResizing ? 'left, top, width, height' : 'auto',
   };
 
   const closedTriggerStyle: React.CSSProperties = {
     zIndex: 9999,
-    ...(isPositioned
+    ...(triggerPosition
+      ? {
+          left: `${triggerPosition.x}px`,
+          top: `${triggerPosition.y}px`,
+          right: 'auto',
+          bottom: 'auto',
+        }
+      : isPositioned
       ? {
           left: `${Math.min(position.x, Math.max(12, window.innerWidth - 180))}px`,
           top: `${Math.min(position.y + size.height - 48, Math.max(12, window.innerHeight - 60))}px`,
@@ -922,11 +1133,22 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
           right: '24px',
           bottom: '24px',
         }),
+    userSelect: isTriggerDragging ? 'none' : 'auto',
+    touchAction: 'none',
+    transition: isTriggerDragging ? 'none' : 'box-shadow 0.2s ease, opacity 0.2s ease',
+    willChange: isTriggerDragging ? 'left, top' : 'auto',
   };
 
   const minimizedStyle: React.CSSProperties = {
     zIndex: 9999,
-    ...(isPositioned
+    ...(triggerPosition
+      ? {
+          left: `${Math.min(triggerPosition.x, Math.max(12, window.innerWidth - 380))}px`,
+          top: `${triggerPosition.y}px`,
+          right: 'auto',
+          bottom: 'auto',
+        }
+      : isPositioned
       ? {
           left: `${Math.min(position.x, Math.max(12, window.innerWidth - 380))}px`,
           top: `${Math.min(position.y, Math.max(12, window.innerHeight - 60))}px`,
@@ -937,24 +1159,50 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
           right: '24px',
           bottom: '24px',
         }),
+    userSelect: isTriggerDragging ? 'none' : 'auto',
+    touchAction: 'none',
+    transition: isTriggerDragging ? 'none' : 'box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease',
+    willChange: isTriggerDragging ? 'left, top' : 'auto',
   };
 
   return (
     <>
 
-      {/* Closed State: Floating Trigger Button */}
+      {/* Closed State: Floating Trigger Button (Draggable) */}
       {!isOpen && (
-        <div style={closedTriggerStyle} className="fixed flex items-center gap-2 group">
-          <button
-            type="button"
-            onClick={() => {
-              setIsOpen(true);
-              setIsMinimized(false);
-            }}
-            className="flex items-center gap-2.5 px-4 py-3 bg-gradient-to-r from-primary to-indigo-600 hover:from-primary/95 hover:to-indigo-500 text-primary-foreground font-semibold text-xs rounded-full shadow-xl hover:shadow-2xl hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer border border-white/20 dark:border-slate-700/50 backdrop-blur-md"
-            title="Open Gaugemaster Metrology Copilot"
+        <div
+          ref={triggerButtonRef}
+          style={closedTriggerStyle}
+          onMouseDown={(e) => handleStartTriggerDrag(e, triggerButtonRef)}
+          onTouchStart={(e) => handleStartTriggerDrag(e, triggerButtonRef)}
+          onClickCapture={(e) => {
+            if (justDraggedRef.current || isTriggerDragging) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          className={`fixed flex items-center gap-2 group select-none ${
+            isTriggerDragging ? 'cursor-grabbing opacity-95' : 'cursor-grab'
+          }`}
+        >
+          <div
+            onClick={handleTriggerClick}
+            className={`flex items-center gap-2 pl-2.5 pr-4 py-2.5 bg-gradient-to-r from-primary to-indigo-600 hover:from-primary/95 hover:to-indigo-500 text-primary-foreground font-semibold text-xs rounded-full shadow-xl hover:shadow-2xl border border-white/20 dark:border-slate-700/50 backdrop-blur-md ${
+              isTriggerDragging
+                ? 'scale-105 shadow-2xl ring-2 ring-primary/40'
+                : 'hover:scale-105 active:scale-95 transition-all duration-200'
+            }`}
+            title="Drag to move • Click to open Metrology Copilot"
             aria-label="Open Gaugemaster Metrology Copilot"
           >
+            {/* Drag Handle Grip Icon */}
+            <div
+              className="text-white/60 hover:text-white flex items-center justify-center -ml-0.5 cursor-grab active:cursor-grabbing p-0.5 pointer-events-none"
+              title="Drag to move anywhere"
+            >
+              <GripVertical className="w-3.5 h-3.5 opacity-70 group-hover:opacity-100 transition-opacity" />
+            </div>
+
             <div className="relative">
               <Bot className="w-4 h-4 text-white animate-pulse" />
               <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full ring-2 ring-background" />
@@ -965,20 +1213,36 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
                 {quota.remaining} left
               </span>
             )}
-          </button>
+          </div>
         </div>
       )}
 
-      {/* Requirement 3: Minimized State (Redesigned with TypeUI Fundamentals) */}
+      {/* Requirement 3: Minimized State (Draggable) */}
       {isOpen && isMinimized && (
         <div
+          ref={minimizedBarRef}
           style={minimizedStyle}
-          onClick={() => setIsMinimized(false)}
-          className="fixed h-12 px-3.5 rounded-full bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white shadow-2xl border border-white/20 backdrop-blur-xl flex items-center justify-between gap-3 cursor-pointer hover:shadow-primary/20 hover:border-primary/40 transition-all select-none group min-w-[320px] max-w-[440px]"
-          title="Click to expand Metrology Copilot"
+          onMouseDown={(e) => handleStartTriggerDrag(e, minimizedBarRef)}
+          onTouchStart={(e) => handleStartTriggerDrag(e, minimizedBarRef)}
+          onClickCapture={(e) => {
+            if (justDraggedRef.current || isTriggerDragging) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          onClick={handleMinimizedClick}
+          className={`fixed h-12 px-3.5 rounded-full bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white shadow-2xl border border-white/20 backdrop-blur-xl flex items-center justify-between gap-3 select-none group min-w-[320px] max-w-[440px] ${
+            isTriggerDragging
+              ? 'cursor-grabbing opacity-95 scale-102 ring-2 ring-primary/40'
+              : 'cursor-grab hover:shadow-primary/20 hover:border-primary/40'
+          }`}
+          title="Drag to move • Click to expand Metrology Copilot"
         >
-          {/* Left: Avatar + Full Legible Title + Screen Context Pill */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          {/* Left: Drag Handle + Avatar + Full Legible Title + Screen Context Pill */}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-white/50 hover:text-white cursor-grab active:cursor-grabbing p-0.5" title="Drag to move">
+              <GripVertical className="w-3.5 h-3.5" />
+            </div>
             <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-primary to-indigo-500 flex items-center justify-center shrink-0 shadow-xs relative">
               <Bot className="w-3.5 h-3.5 text-white" />
               <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-400 rounded-full ring-2 ring-slate-900" />
@@ -1008,6 +1272,7 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                if (justDraggedRef.current || isTriggerDragging) return;
                 setIsMinimized(false);
               }}
               className="h-7 w-7 text-slate-300 hover:text-white hover:bg-white/10 rounded-full flex items-center justify-center cursor-pointer transition-colors"
@@ -1021,6 +1286,7 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                if (justDraggedRef.current || isTriggerDragging) return;
                 setIsOpen(false);
               }}
               className="h-7 w-7 text-slate-300 hover:text-rose-400 hover:bg-rose-500/10 rounded-full flex items-center justify-center cursor-pointer transition-colors"
