@@ -82,11 +82,11 @@ export default function CalendarPage() {
 
   useEffect(() => {
     if (!user?.id) return;
-    getFilterParams(user.id).then((f) => {
+    getFilterParams(user.id, user?.companyId).then((f) => {
       setLocations(f.location || []);
       setItemStatuses(f.item_status || []);
     }).catch(() => {});
-  }, [user?.id]);
+  }, [user?.id, user?.companyId]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -107,13 +107,14 @@ export default function CalendarPage() {
     if (isRefParam) params.append("is_reference_standard", isRefParam);
     if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
     if (location && location !== "All") params.append("location", location);
+    if (user?.companyId) params.append("companyId", user.companyId);
 
     httpClient
       .get(`/instruments/calendar-due/${user.id}?${params.toString()}`)
       .then((res) => setData(res.data))
       .catch((err) => console.error("Calendar fetch error:", err))
       .finally(() => setLoading(false));
-  }, [user?.id, year, month, category, itemStatus, location]);
+  }, [user?.id, user?.companyId, year, month, category, itemStatus, location]);
 
   // Build calendar grid
   const firstDayOfMonth = new Date(year, month - 1, 1).getDay();

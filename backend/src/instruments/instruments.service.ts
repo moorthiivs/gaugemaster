@@ -57,17 +57,18 @@ export class InstrumentsService {
         private readonly statusNotificationService: StatusNotificationService,
     ) { }
 
-    private async getCompanyUserIds(userId?: string): Promise<string[]> {
-        if (!userId) return [];
-        const user = await this.userRepository.findOne({ where: { id: userId } });
-        if (user && user.companyId) {
+    private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+        const targetCompanyId = companyId || (userId ? (await this.userRepository.findOne({ where: { id: userId } }))?.companyId : undefined);
+        if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
-                where: { companyId: user.companyId },
+                where: { companyId: targetCompanyId },
                 select: ['id'],
             });
-            return companyUsers.map(u => u.id);
+            if (companyUsers.length > 0) {
+                return companyUsers.map(u => u.id);
+            }
         }
-        return [userId];
+        return userId ? [userId] : [];
     }
 
     /**
@@ -86,10 +87,25 @@ export class InstrumentsService {
         return maxSino + 1;
     }
 
-    async findFilterParams(createdById: string) {
-        const userIds = await this.getCompanyUserIds(createdById);
+    private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {
+        if (companyId) return companyId;
+        if (userId) {
+            const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'companyId'] });
+            if (user?.companyId) return user.companyId;
+        }
+        return undefined;
+    }
+
+    async findFilterParams(createdById: string, companyId?: string) {
+        const targetCompanyId = await this.resolveTargetCompanyId(createdById, companyId);
+        let whereCondition: any = {};
+        if (targetCompanyId) {
+            whereCondition = { companyId: targetCompanyId };
+        } else if (createdById) {
+            whereCondition = { created_by: { id: createdById } };
+        }
         const instruments = await this.instrumentRepository.find({
-            where: userIds.length > 0 ? { created_by: { id: In(userIds) } } : {},
+            where: whereCondition,
             select: ['status', 'item_status', 'frequency', 'location', 'calibration_source', 'device_type'],
         });
 
@@ -183,13 +199,11 @@ export class InstrumentsService {
                 baseWhere.module = Raw(alias => `TRIM(${alias}) ILIKE :mod`, { mod: module.trim() });
             }
         }
-        if (companyId) {
-            baseWhere.companyId = companyId;
+        const targetCompanyId = await this.resolveTargetCompanyId(createdBy, companyId);
+        if (targetCompanyId) {
+            baseWhere.companyId = targetCompanyId;
         } else if (createdBy) {
-            const userIds = await this.getCompanyUserIds(createdBy);
-            if (userIds.length > 0) {
-                baseWhere.created_by = { id: In(userIds) };
-            }
+            baseWhere.created_by = { id: createdBy };
         }
         
         if (due_date) {
@@ -317,12 +331,18 @@ export class InstrumentsService {
 
         // Step 1: Get distinct instrument IDs from calibration_history 
         // (matches dashboard's countHistoryCalibrations logic exactly)
-        const userIds = await this.getCompanyUserIds(createdBy);
+        const targetCompanyId = await this.resolveTargetCompanyId(createdBy, filters.companyId);
         const historyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
             .innerJoin('history.instrument', 'instrument')
-            .select('DISTINCT instrument.id', 'id')
-            .where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] })
-            .andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+            .select('DISTINCT instrument.id', 'id');
+
+        if (targetCompanyId) {
+            historyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            const userIds = await this.getCompanyUserIds(createdBy);
+            historyQuery.where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] });
+        }
+        historyQuery.andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
 
         if (item_status && item_status !== 'All') {
             historyQuery.andWhere('instrument.item_status ILIKE :item_status', { item_status });
@@ -761,14 +781,16 @@ export class InstrumentsService {
             isReferenceStandard?: string;
             itemStatus?: string;
             location?: string;
+            companyId?: string;
         },
     ) {
-        const userIds = await this.getCompanyUserIds(userId);
-        const targetUserIds = userIds.length > 0 ? userIds : [userId];
-
-        const whereCondition: any = {
-            created_by: { id: In(targetUserIds) },
-        };
+        const targetCompanyId = await this.resolveTargetCompanyId(userId, options?.companyId);
+        const whereCondition: any = {};
+        if (targetCompanyId) {
+            whereCondition.companyId = targetCompanyId;
+        } else if (userId) {
+            whereCondition.created_by = { id: userId };
+        }
 
         if (options?.itemStatus && options.itemStatus !== 'All') {
             whereCondition.item_status = ILike(options.itemStatus);

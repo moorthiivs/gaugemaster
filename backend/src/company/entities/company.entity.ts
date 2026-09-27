@@ -17,12 +17,12 @@ export class Company {
     @Column({ type: "varchar", length: 100, nullable: true })
     industry: string;
 
-    @ManyToOne(() => User, (user) => user.company, { onDelete: "CASCADE" })
+    @ManyToOne(() => User, (user) => user.company, { onDelete: "SET NULL", nullable: true })
     @JoinColumn({ name: "registeredUserId" })
-    registeredUser: User;
+    registeredUser?: User;
 
-    @Column()
-    registeredUserId: string;
+    @Column({ nullable: true })
+    registeredUserId?: string;
 
     @Column({ type: "varchar", length: 255, unique: true })
     registeredEmail: string;

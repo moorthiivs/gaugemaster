@@ -1,9 +1,9 @@
-import { Controller, Get, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { SuperAdminGuard } from '../auth/super-admin.guard';
 import { SuperAdminService } from './super-admin.service';
-import { UpdateCompanyAccessDto, UpdateCompanyDto, DeleteCompanyDto } from './dto/super-admin.dto';
+import { UpdateCompanyAccessDto, UpdateCompanyDto, DeleteCompanyDto, CreateCompanyByAdminDto } from './dto/super-admin.dto';
 
 @ApiTags('api/super-admin')
 @ApiBearerAuth()
@@ -11,6 +11,11 @@ import { UpdateCompanyAccessDto, UpdateCompanyDto, DeleteCompanyDto } from './dt
 @UseGuards(AuthGuard('jwt'), SuperAdminGuard)
 export class SuperAdminController {
   constructor(private readonly superAdminService: SuperAdminService) {}
+
+  @Post('companies')
+  createCompany(@Body() dto: CreateCompanyByAdminDto) {
+    return this.superAdminService.createCompany(dto);
+  }
 
   @Get('companies')
   listCompanies() {
@@ -39,6 +44,6 @@ export class SuperAdminController {
 
   @Delete('companies/:id')
   deleteCompany(@Param('id') id: string, @Body() dto: DeleteCompanyDto) {
-    return this.superAdminService.deleteCompany(id, dto.confirmationName);
+    return this.superAdminService.deleteCompany(id, dto?.confirmationName);
   }
 }

@@ -251,7 +251,7 @@ export class Calibration {
   @Column({ nullable: true })
   companyId: string;
 
-  @ManyToOne(() => User, { eager: true })
+  @ManyToOne(() => User, { eager: true, onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'created_by' })
   created_by?: User;
 

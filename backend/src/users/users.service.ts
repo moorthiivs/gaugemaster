@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { User } from './user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -164,7 +164,7 @@ export class UsersService {
     if (data.designation !== undefined) user.designation = data.designation;
     if (data.signature !== undefined) user.signature = data.signature;
     if (data.additionalEmails !== undefined) user.additionalEmails = data.additionalEmails;
-    if (data.companyId) user.companyId = data.companyId;
+    if (data.companyId && !user.isSuperAdmin) user.companyId = data.companyId;
 
     if (data.roleId !== undefined && data.roleId !== '') {
       const foundRole = await this.roleRepository.findOne({
@@ -188,6 +188,16 @@ export class UsersService {
 
   async removeUser(id: string): Promise<void> {
     const user = await this.findOne(id);
+    if (user.isSuperAdmin) {
+      throw new BadRequestException('Cannot delete Super Admin platform account');
+    }
+
+    // Safely clear registeredUserId reference on any company where this user was the registered contact
+    await this.companyRepository.update(
+      { registeredUserId: user.id },
+      { registeredUserId: null as any },
+    );
+
     await this.userRepository.remove(user);
   }
 
@@ -211,6 +221,10 @@ export class UsersService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (user.isSuperAdmin) {
+      throw new BadRequestException('Super Admin is a global platform user and cannot be bound to a specific company');
     }
 
     const company = await this.companyRepository.findOne({ where: { id: companyId } });

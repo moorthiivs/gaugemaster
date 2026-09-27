@@ -17,8 +17,17 @@ export class DashboardService {
         private readonly userRepository: Repository<User>,
     ) { }
 
+    private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {
+        if (companyId) return companyId;
+        if (userId) {
+            const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'companyId'] });
+            if (user?.companyId) return user.companyId;
+        }
+        return undefined;
+    }
+
     private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
-        const targetCompanyId = companyId || (userId ? (await this.userRepository.findOne({ where: { id: userId } }))?.companyId : undefined);
+        const targetCompanyId = await this.resolveTargetCompanyId(userId, companyId);
         if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
                 where: { companyId: targetCompanyId },
@@ -32,6 +41,7 @@ export class DashboardService {
     }
 
     async fetchDashboard(userid: string, companyId?: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string) {
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
         const userIds = await this.getCompanyUserIds(userid, companyId);
         const targetUserIds = userIds.length > 0 ? userIds : [userid];
 
@@ -58,7 +68,7 @@ export class DashboardService {
 
         // Helper to construct where filter with optional item_status, calibration status, and reference standard
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
-            created_by: { id: In(targetUserIds) },
+            ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
             ...(itemStatus && itemStatus !== 'All' ? { item_status: ILike(itemStatus) } : {}),
             ...(status && status !== 'All' ? { status: ILike(status) } : {}),
             ...(location && location !== 'All' ? { location: ILike(location) } : {}),
@@ -70,9 +80,14 @@ export class DashboardService {
         const countHistoryCalibrations = async (sDate: Date, eDate: Date) => {
             const q = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
-                .select('COUNT(DISTINCT instrument.id)', 'count')
-                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
-                .andWhere('history.created_at BETWEEN :sDate AND :eDate', { sDate, eDate });
+                .select('COUNT(DISTINCT instrument.id)', 'count');
+
+            if (targetCompanyId) {
+                q.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+            } else {
+                q.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            }
+            q.andWhere('history.created_at BETWEEN :sDate AND :eDate', { sDate, eDate });
 
             if (itemStatus && itemStatus !== 'All') {
                 q.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -107,8 +122,13 @@ export class DashboardService {
 
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon');
+
+        if (targetCompanyId) {
+            kpiQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            kpiQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
 
         const dueSoonEnd = new Date(now);
         dueSoonEnd.setDate(now.getDate() + 30);
@@ -204,9 +224,14 @@ export class DashboardService {
         const planQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
             .addSelect(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
-            .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
-            .andWhere('instrument.due_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            planQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            planQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        planQuery.andWhere('instrument.due_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
 
         if (itemStatus) {
             planQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -226,9 +251,14 @@ export class DashboardService {
             .innerJoin('history.instrument', 'instrument')
             .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
             .addSelect(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
-            .addSelect('COUNT(DISTINCT instrument.id)', 'count')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
-            .andWhere('history.created_at BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
+            .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+        if (targetCompanyId) {
+            actualQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            actualQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        actualQuery.andWhere('history.created_at BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
 
         if (itemStatus) {
             actualQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -329,14 +359,20 @@ export class DashboardService {
         const statusQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select('instrument.status', 'status')
-            .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            .addSelect('COUNT(*)', 'count');
 
         const itemStatusQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select('instrument.item_status', 'item_status')
-            .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            statusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+            itemStatusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            statusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            itemStatusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
 
         if (startDateStr && endDateStr) {
             statusQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
@@ -379,8 +415,13 @@ export class DashboardService {
         const moduleQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')", 'module_name')
-            .addSelect('COUNT(*)', 'count')
-            .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            moduleQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            moduleQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
 
         if (itemStatus && itemStatus !== 'All') {
             moduleQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -431,9 +472,14 @@ export class DashboardService {
                 .innerJoin('history.instrument', 'instrument')
                 .select(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
                 .addSelect(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
-                .addSelect('COUNT(DISTINCT instrument.id)', 'count')
-                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
-                .andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+                .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+            if (targetCompanyId) {
+                weeklyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+            } else {
+                weeklyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            }
+            weeklyQuery.andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
 
             if (itemStatus) {
                 weeklyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -483,9 +529,14 @@ export class DashboardService {
                 .innerJoin('history.instrument', 'instrument')
                 .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
                 .addSelect(`EXTRACT(DOW FROM history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
-                .addSelect('COUNT(DISTINCT instrument.id)', 'count')
-                .where('instrument.created_by IN (:...targetUserIds)', { targetUserIds })
-                .andWhere('history.created_at BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
+                .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+            if (targetCompanyId) {
+                dailyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+            } else {
+                dailyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            }
+            dailyQuery.andWhere('history.created_at BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
 
             if (itemStatus) {
                 dailyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -576,6 +627,7 @@ export class DashboardService {
         status?: string,
         location?: string
     ) {
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
         const userIds = await this.getCompanyUserIds(userid, companyId);
         const targetUserIds = userIds.length > 0 ? userIds : [userid];
 
@@ -601,7 +653,7 @@ export class DashboardService {
         }
 
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
-            created_by: { id: In(targetUserIds) },
+            ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
             ...(itemStatus ? { item_status: itemStatus } : {}),
             ...(status ? { status: status } : {}),
             ...(location ? { location: location } : {}),
@@ -640,8 +692,13 @@ export class DashboardService {
 
         if (listType === 'calibrated') {
             const query = this.calibrationHistoryRepository.createQueryBuilder('history')
-                .innerJoinAndSelect('history.instrument', 'instrument')
-                .where('instrument.created_by = :userid', { userid });
+                .innerJoinAndSelect('history.instrument', 'instrument');
+
+            if (targetCompanyId) {
+                query.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+            } else {
+                query.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+            }
 
             if (itemStatus) {
                 query.andWhere('instrument.item_status = :itemStatus', { itemStatus });
@@ -666,7 +723,7 @@ export class DashboardService {
             }
             return Array.from(instrumentsMap.values());
         }
-
         return [];
     }
 }
+

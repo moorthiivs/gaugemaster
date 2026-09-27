@@ -129,11 +129,11 @@ export class Instrument {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @ManyToOne(() => User, { eager: true })
+  @ManyToOne(() => User, { eager: true, onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'created_by' })
   created_by?: User;
 
-  @ManyToOne(() => User, { eager: true })
+  @ManyToOne(() => User, { eager: true, onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'updated_by' })
   updated_by?: User;
 

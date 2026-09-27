@@ -409,7 +409,8 @@ export default function Instruments() {
 
       const result = await listInstruments({
         ...filters,
-        createdBy: user.id
+        createdBy: user?.id,
+        companyId: user?.companyId,
       });
 
       setData({
@@ -437,7 +438,7 @@ export default function Instruments() {
   const handleRefresh = async () => {
     try {
       setRefreshing(true);
-      const filterData = await getFilterParams(user.id);
+      const filterData = await getFilterParams(user?.id, user?.companyId);
       setStatusFilter(["All", ...filterData.status]);
       setItemStatusFilter(["All", ...(filterData.item_status || [])]);
       setFrequencyFilter(["All", ...filterData.frequency]);
@@ -548,7 +549,7 @@ export default function Instruments() {
   useEffect(() => {
     if (localSearch.trim().length > 0) {
       const handler = setTimeout(() => {
-        listInstruments({ search: localSearch, page: 1, pageSize: 20, createdBy: user.id })
+        listInstruments({ search: localSearch, page: 1, pageSize: 20, createdBy: user?.id, companyId: user?.companyId })
           .then(res => {
             const lowerSearch = localSearch.toLowerCase();
             const results = new Set<string>();
@@ -583,10 +584,10 @@ export default function Instruments() {
     } else {
       setSuggestions([]);
     }
-  }, [localSearch, user.id]);
+  }, [localSearch, user?.id, user?.companyId]);
 
   useEffect(() => {
-    getFilterParams(user.id).then(data => {
+    getFilterParams(user?.id, user?.companyId).then(data => {
       setStatusFilter(["All", ...data.status]);
       setItemStatusFilter(["All", ...(data.item_status || [])]);
       setFrequencyFilter(["All", ...data.frequency]);
@@ -594,7 +595,7 @@ export default function Instruments() {
       setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
       setDeviceTypeFilter(data.device_type || []);
     });
-  }, [user]);
+  }, [user?.id, user?.companyId]);
 
   const handleRowSelectionChange = useCallback((
     updaterOrValue: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)
@@ -1471,7 +1472,7 @@ export default function Instruments() {
     <>
       <div className="space-y-6 animate-in fade-in duration-500">
         {/* ─── Header Banner (Industrial Precision + Subtle Glass) ─── */}
-        <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        {/* <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2.5">
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Instruments Inventory</h1>
@@ -1495,7 +1496,7 @@ export default function Instruments() {
               </Button>
             )}
           </div>
-        </header>
+        </header> */}
 
         {/* ─── Filter Inventory Section ─── */}
         <div className="bg-card/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-border/70 shadow-xs space-y-4">

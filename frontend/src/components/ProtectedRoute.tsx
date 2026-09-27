@@ -31,7 +31,10 @@ export default function ProtectedRoute({
 
   // Super Admin redirect to platform management if not inspecting a company
   if (user?.isSuperAdmin) {
-    if (!inspectedCompany && (location.pathname === "/dashboard" || location.pathname === "/onboarding")) {
+    const isPlatformRoute =
+      location.pathname.startsWith("/super-admin") ||
+      location.pathname === "/profile";
+    if (!inspectedCompany && !isPlatformRoute) {
       return <Navigate to="/super-admin/companies" replace />;
     }
   } else {

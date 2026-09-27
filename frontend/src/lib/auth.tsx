@@ -87,8 +87,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setInspectedCompanyState(company);
     if (company) {
       localStorage.setItem(INSPECTED_COMPANY_KEY, JSON.stringify(company));
+      setUser((prev) => (prev ? { ...prev, companyId: company.id } : null));
     } else {
       localStorage.removeItem(INSPECTED_COMPANY_KEY);
+      setUser((prev) => (prev ? { ...prev, companyId: null as any } : null));
     }
   };
 
@@ -133,6 +135,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       const authUser = response.data;
       if (authUser) {
+        let effectiveCompanyId = authUser.companyId;
+        if (authUser.isSuperAdmin) {
+          try {
+            const storedInspected = localStorage.getItem(INSPECTED_COMPANY_KEY);
+            if (storedInspected) {
+              const comp = JSON.parse(storedInspected);
+              effectiveCompanyId = comp.id || null;
+            } else {
+              effectiveCompanyId = null;
+            }
+          } catch {
+            effectiveCompanyId = null;
+          }
+        }
+
         const userObj: User = {
           id: authUser.sub || authUser.id,
           name: authUser.name,
@@ -142,7 +159,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           avatarUrl: authUser.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
           provider: "password",
           isNewCustomer: !authUser.onboarded,
-          companyId: authUser.companyId,
+          companyId: effectiveCompanyId,
           isSuperAdmin: authUser.isSuperAdmin || false,
           companyAccess: authUser.companyAccess || null,
         };
@@ -242,6 +259,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (isMounted) {
         if (activeToken && parsedUser) {
+          if (parsedUser.isSuperAdmin) {
+            try {
+              const storedInspected = localStorage.getItem(INSPECTED_COMPANY_KEY);
+              if (storedInspected) {
+                const comp = JSON.parse(storedInspected);
+                parsedUser.companyId = comp.id || null;
+              } else {
+                parsedUser.companyId = null as any;
+              }
+            } catch {
+              parsedUser.companyId = null as any;
+            }
+          }
           setToken(activeToken);
           setUser(parsedUser);
           setIsNewCustomer(parsedUser.isNewCustomer && setupCompleted !== "true");
@@ -405,6 +435,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
           const response = await axios.post(`${API_URL}/auth/login`, { email, password });
           const { accessToken, refreshToken, user: authUser } = response.data;
+
+          if (authUser.isSuperAdmin) {
+            localStorage.removeItem(INSPECTED_COMPANY_KEY);
+            setInspectedCompanyState(null);
+          }
 
           const userObj: User = {
             id: authUser.sub || authUser.id,

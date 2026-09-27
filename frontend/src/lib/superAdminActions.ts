@@ -54,6 +54,22 @@ export interface DeleteSummary {
   deleteSummary: Record<string, number>;
 }
 
+export interface CreateCompanyDto {
+  companyName: string;
+  registeredEmail: string;
+  companySize?: string;
+  industry?: string;
+  adminName?: string;
+  adminPassword?: string;
+  accessStatus?: "enabled" | "disabled" | "time_limited";
+  accessExpiryDate?: string;
+}
+
+export async function createCompany(data: CreateCompanyDto): Promise<any> {
+  const res = await httpClient.post("/super-admin/companies", data);
+  return res.data;
+}
+
 export async function listCompanies(): Promise<CompanyListItem[]> {
   const res = await httpClient.get("/super-admin/companies");
   return res.data;

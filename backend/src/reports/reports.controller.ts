@@ -16,6 +16,7 @@ export class ReportsController {
     @Query('templateId') templateId: string,
     @Query('status') status: string,
     @Query('location') location: string,
+    @Query('companyId') companyId: string,
     @Headers('authorization') authHeader: string,
     @Res() res: Response,
   ) {
@@ -31,9 +32,9 @@ export class ReportsController {
             }
         }
     }
-    console.log("Report Generation Request Query:", { from, to, format, userid, columns, templateId, status, location, finalUserId });
+    console.log("Report Generation Request Query:", { from, to, format, userid, columns, templateId, status, location, companyId, finalUserId });
 
-    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId, status, location);
+    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId, status, location, companyId);
 
     // Set response headers based on format
     const mimeType = format === 'html' ? 'text/html' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -61,12 +62,13 @@ export class ReportsController {
     @Query('location') location?: string,
     @Query('agency') agency?: string,
     @Query('status') status?: string,
+    @Query('companyId') companyId?: string,
   ) {
     const p = parseInt(page, 10) || 1;
     const ps = parseInt(pageSize, 10) || 10;
     
     const filters = { name, id_code, location, agency, status };
     
-    return this.reportsService.getReportData(from, to, userid, p, ps, filters);
+    return this.reportsService.getReportData(from, to, userid, p, ps, filters, companyId);
   }
 }

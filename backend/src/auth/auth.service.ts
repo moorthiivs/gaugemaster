@@ -90,6 +90,7 @@ export class AuthService {
     const roleName = user.role?.name || user.roleId || 'Admin';
     const payload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -114,16 +115,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Super Admin bypass — no company access check needed
+    // Super Admin bypass — no company access check needed, global platform authority
     if (user.isSuperAdmin) {
       const payload = {
         sub: user.id,
+        id: user.id,
         email: user.email,
         name: user.name,
         role: 'SuperAdmin',
+        userRole: null,
         isSuperAdmin: true,
         onboarded: true,
-        companyId: user.companyId || null,
+        companyId: null,
+        companyAccess: null,
       };
       return this.generateTokens(payload);
     }
@@ -163,6 +167,7 @@ export class AuthService {
     const roleName = userRole?.name || user.roleId || 'Admin';
     const payload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -247,6 +252,7 @@ export class AuthService {
     const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
     const jwtPayload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -302,16 +308,33 @@ export class AuthService {
       }
     }
 
-    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    if (user.isSuperAdmin) {
+      const newPayload = {
+        sub: user.id,
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: 'SuperAdmin',
+        userRole: null,
+        onboarded: true,
+        companyId: null,
+        isSuperAdmin: true,
+        companyAccess: null,
+      };
+      return this.generateTokens(newPayload);
+    }
+
+    const roleName = user.role?.name || user.roleId || 'Admin';
     const newPayload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
-      role: user.isSuperAdmin ? 'SuperAdmin' : roleName,
+      role: roleName,
       userRole: user.role,
       onboarded: user.onboarded,
       companyId: user.companyId || null,
-      isSuperAdmin: user.isSuperAdmin || false,
+      isSuperAdmin: false,
       companyAccess: user.company ? {
         status: user.company.accessStatus,
         startDate: user.company.accessStartDate,
@@ -346,17 +369,35 @@ export class AuthService {
       }
     }
 
-    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    if (user.isSuperAdmin) {
+      return {
+        sub: user.id,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'SuperAdmin',
+        userRole: null,
+        onboarded: true,
+        companyId: null,
+        isSuperAdmin: true,
+        designation: user.designation,
+        signature: user.signature,
+        avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+        companyAccess: null,
+      };
+    }
+
+    const roleName = user.role?.name || user.roleId || 'Admin';
     return {
       sub: user.id,
       id: user.id,
       name: user.name,
       email: user.email,
-      role: user.isSuperAdmin ? 'SuperAdmin' : roleName,
+      role: roleName,
       userRole: user.role,
       onboarded: user.onboarded,
       companyId: user.companyId || null,
-      isSuperAdmin: user.isSuperAdmin || false,
+      isSuperAdmin: false,
       designation: user.designation,
       signature: user.signature,
       avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,

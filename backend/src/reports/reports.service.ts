@@ -36,17 +36,27 @@ export class ReportsService {
         private readonly reportTemplatesService: ReportTemplatesService,
     ) { }
 
-    private async getCompanyUserIds(userId?: string): Promise<string[]> {
-        if (!userId) return [];
-        const user = await this.userRepository.findOne({ where: { id: userId } });
-        if (user && user.companyId) {
+    private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {
+        if (companyId) return companyId;
+        if (userId) {
+            const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'companyId'] });
+            if (user?.companyId) return user.companyId;
+        }
+        return undefined;
+    }
+
+    private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+        const targetCompanyId = await this.resolveTargetCompanyId(userId, companyId);
+        if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
-                where: { companyId: user.companyId },
+                where: { companyId: targetCompanyId },
                 select: ['id'],
             });
-            return companyUsers.map(u => u.id);
+            if (companyUsers.length > 0) {
+                return companyUsers.map(u => u.id);
+            }
         }
-        return [userId];
+        return userId ? [userId] : [];
     }
 
     private async generatePdfReport(
@@ -343,15 +353,21 @@ export class ReportsService {
         templateId?: string,
         status?: string,
         location?: string,
+        companyId?: string,
     ): Promise<Buffer> {
-        const userIds = await this.getCompanyUserIds(userid);
-        const targetUserIds = userIds.length > 0 ? userIds : [userid];
-
         const { ILike } = require('typeorm');
         const where: any = {
             due_date: Between(new Date(from), new Date(to)),
-            created_by: { id: In(targetUserIds) },
         };
+
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
+        if (targetCompanyId) {
+            where.companyId = targetCompanyId;
+        } else {
+            const userIds = await this.getCompanyUserIds(userid, companyId);
+            const targetUserIds = userIds.length > 0 ? userIds : [userid];
+            where.created_by = { id: In(targetUserIds) };
+        }
 
         if (status && status !== 'All') {
             where.status = ILike(`%${status}%`);
@@ -752,15 +768,21 @@ export class ReportsService {
         userid: string,
         page: number = 1,
         pageSize: number = 10,
-        filters: Record<string, string | undefined> = {}
+        filters: Record<string, string | undefined> = {},
+        companyId?: string,
     ): Promise<{ items: Instrument[], total: number }> {
-        const userIds = await this.getCompanyUserIds(userid);
-        const targetUserIds = userIds.length > 0 ? userIds : [userid];
-
         const where: any = {
             due_date: Between(new Date(from), new Date(to)),
-            created_by: { id: In(targetUserIds) },
         };
+
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
+        if (targetCompanyId) {
+            where.companyId = targetCompanyId;
+        } else {
+            const userIds = await this.getCompanyUserIds(userid, companyId);
+            const targetUserIds = userIds.length > 0 ? userIds : [userid];
+            where.created_by = { id: In(targetUserIds) };
+        }
 
         // Apply dynamic filters
         Object.keys(filters).forEach(key => {

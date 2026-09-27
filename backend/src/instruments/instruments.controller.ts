@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -44,9 +44,12 @@ export class InstrumentsController {
         @Query('companyId') companyId?: string,
         @Query('sortBy') sortBy?: string,
         @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
+        @Req() req?: any,
     ) {
         const pageNumber = parseInt(page, 10);
         const limit = parseInt(pageSize, 10);
+        const effectiveCompanyId = companyId || req?.user?.companyId;
+        const effectiveCreatedBy = createdBy || req?.user?.id;
 
         return this.instrumentsService.findAll({
             status,
@@ -68,16 +71,21 @@ export class InstrumentsController {
             device_type,
             page: pageNumber,
             pageSize: limit,
-            createdBy,
-            companyId,
+            createdBy: effectiveCreatedBy,
+            companyId: effectiveCompanyId,
             sortBy,
             sortOrder,
         });
     }
 
     @Get('filters/:createdById')
-    async getFilterParams(@Param('createdById') createdById: string) {
-        return this.instrumentsService.findFilterParams(createdById);
+    async getFilterParams(
+        @Param('createdById') createdById: string,
+        @Query('companyId') companyId?: string,
+        @Req() req?: any,
+    ) {
+        const effectiveCompanyId = companyId || req?.user?.companyId;
+        return this.instrumentsService.findFilterParams(createdById, effectiveCompanyId);
     }
 
 
@@ -164,13 +172,17 @@ export class InstrumentsController {
         @Query('is_reference_standard') isReferenceStandard?: string,
         @Query('item_status') itemStatus?: string,
         @Query('location') location?: string,
+        @Query('companyId') companyId?: string,
+        @Req() req?: any,
     ) {
+        const effectiveCompanyId = companyId || req?.user?.companyId;
         const y = parseInt(year, 10) || new Date().getFullYear();
         const m = parseInt(month, 10) || new Date().getMonth() + 1;
         return this.instrumentsService.getCalendarDue(userId, y, m, {
             isReferenceStandard,
             itemStatus,
             location,
+            companyId: effectiveCompanyId,
         });
     }
 

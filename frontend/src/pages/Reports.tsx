@@ -69,7 +69,9 @@ export default function Reports() {
         .catch((err) => console.error("Error fetching report templates", err));
 
       httpClient
-        .get(`/instruments/filters/${user.id}`)
+        .get(`/instruments/filters/${user.id}`, {
+          params: { companyId: user.companyId },
+        })
         .then((res) => setFilterOptions(res.data || { location: [], status: [] }))
         .catch((err) => console.error("Error fetching instrument filter options", err));
     }
