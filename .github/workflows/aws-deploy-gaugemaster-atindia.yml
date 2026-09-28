@@ -17,15 +17,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # --------------------------------------------------
+
+      # ==================================================
       # 1. Checkout
-      # --------------------------------------------------
+      # ==================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
+      # ==================================================
       # 2. Node.js
-      # --------------------------------------------------
+      # ==================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -35,20 +36,23 @@ jobs:
             frontend/package-lock.json
             backend/package-lock.json
 
-      # --------------------------------------------------
-      # 3. Build frontend
-      # --------------------------------------------------
+      # ==================================================
+      # 3. Frontend dependencies
+      # ==================================================
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm install --legacy-peer-deps
 
+      # ==================================================
+      # 4. Build frontend
+      # ==================================================
       - name: Build frontend
         working-directory: frontend
         run: npm run build
 
-      # --------------------------------------------------
-      # 4. Copy frontend into backend public
-      # --------------------------------------------------
+      # ==================================================
+      # 5. Copy frontend into backend public
+      # ==================================================
       - name: Copy frontend build to backend public
         run: |
           set -e
@@ -58,24 +62,30 @@ jobs:
 
           cp -R frontend/dist/. backend/src/public/
 
-      # --------------------------------------------------
-      # 5. Install backend dependencies
-      # --------------------------------------------------
+      # ==================================================
+      # 6. Backend dependencies
+      # ==================================================
       - name: Install backend dependencies
         working-directory: backend
         run: npm install --legacy-peer-deps
 
-      # --------------------------------------------------
-      # 6. Build backend
-      # --------------------------------------------------
+      # ==================================================
+      # 7. Build backend
+      # ==================================================
       - name: Build backend
         working-directory: backend
         run: npm run build
 
-      # --------------------------------------------------
-      # 7. Include certificate-generation fonts
-      # --------------------------------------------------
-      - name: Prepare certificate fonts
+      # ==================================================
+      # 8. Copy certificate fonts
+      #
+      # Source:
+      # backend/src/fonts
+      #
+      # Production:
+      # backend/dist/fonts
+      # ==================================================
+      - name: Copy certificate fonts
         run: |
           set -e
 
@@ -83,90 +93,90 @@ jobs:
           echo "Checking certificate fonts"
           echo "======================================"
 
-          # Preferred production location:
-          # backend/fonts/
-          if [ -d "backend/fonts" ]; then
-            echo "Found backend/fonts"
-
-            mkdir -p backend/dist/fonts
-            cp -R backend/fonts/. backend/dist/fonts/
-
-          # Fallback if fonts are currently under src/fonts
-          elif [ -d "backend/src/fonts" ]; then
-            echo "Found backend/src/fonts"
-
-            mkdir -p backend/dist/fonts
-            cp -R backend/src/fonts/. backend/dist/fonts/
-
-          else
-            echo "WARNING: No backend/fonts or backend/src/fonts directory found."
-            echo "Certificate generation may fail if fonts are required."
+          if [ ! -d "backend/src/fonts" ]; then
+            echo "ERROR: backend/src/fonts does not exist."
+            echo "Certificate generation fonts are required."
+            exit 1
           fi
+
+          echo "Source font directory:"
+          find backend/src/fonts -type f -print
+
+          rm -rf backend/dist/fonts
+          mkdir -p backend/dist/fonts
+
+          cp -R backend/src/fonts/. backend/dist/fonts/
 
           echo ""
-          echo "Fonts in production build:"
-          if [ -d "backend/dist/fonts" ]; then
-            find backend/dist/fonts -type f -maxdepth 2 -print
-          else
-            echo "No fonts directory in backend/dist"
+          echo "Production font directory:"
+          find backend/dist/fonts -type f -print
+
+          FONT_COUNT=$(find backend/dist/fonts -type f | wc -l)
+
+          echo ""
+          echo "Font file count: $FONT_COUNT"
+
+          if [ "$FONT_COUNT" -eq 0 ]; then
+            echo "ERROR: No font files were copied."
+            exit 1
           fi
 
-      # --------------------------------------------------
-      # 8. Remove development dependencies
-      # --------------------------------------------------
+      # ==================================================
+      # 9. Remove development dependencies
+      # ==================================================
       - name: Prepare production backend
         working-directory: backend
         run: npm prune --omit=dev
 
-      # --------------------------------------------------
-      # 9. Verify build
-      # --------------------------------------------------
+      # ==================================================
+      # 10. Verify production build
+      # ==================================================
       - name: Verify build
         run: |
           set -e
 
+          echo "======================================"
+          echo "Verifying ATINDIA build"
+          echo "======================================"
+
           test -f backend/dist/main.js
           test -f backend/src/public/index.html
+          test -d backend/dist/fonts
 
-          echo "======================================"
-          echo "ATINDIA Backend build"
-          echo "======================================"
+          echo ""
+          echo "Backend:"
           ls -lh backend/dist/main.js
 
           echo ""
-          echo "======================================"
-          echo "ATINDIA Frontend build"
-          echo "======================================"
+          echo "Frontend:"
           ls -lh backend/src/public/index.html
 
           echo ""
-          echo "======================================"
-          echo "Certificate fonts"
-          echo "======================================"
+          echo "Certificate fonts:"
+          find backend/dist/fonts -type f -print
 
-          if [ -d "backend/dist/fonts" ]; then
-            find backend/dist/fonts -type f -print
-          else
-            echo "WARNING: backend/dist/fonts does not exist"
-          fi
+          echo ""
+          echo "Font count:"
+          find backend/dist/fonts -type f | wc -l
 
-      # --------------------------------------------------
-      # 10. Create deployment archive
-      # --------------------------------------------------
+      # ==================================================
+      # 11. Create deployment package
+      # ==================================================
       - name: Create deployment package
         run: |
           set -e
 
           PACKAGE="gaugemaster-atindia-${{ github.sha }}.tar.gz"
 
-          echo "Creating deployment package: $PACKAGE"
+          echo "======================================"
+          echo "Creating deployment package"
+          echo "======================================"
 
           tar \
             --exclude='backend/.env' \
             --exclude='backend/.env.*' \
             --exclude='backend/test' \
             --exclude='backend/src' \
-            --exclude='backend/dist/public' \
             -czf "$PACKAGE" \
             -C backend \
             dist \
@@ -175,25 +185,25 @@ jobs:
             node_modules
 
           echo ""
-          echo "======================================"
-          echo "Deployment package"
-          echo "======================================"
-
+          echo "Package:"
           ls -lh "$PACKAGE"
 
           echo ""
-          echo "Checking package contents..."
-
-          tar -tzf "$PACKAGE" | grep -E '^dist/fonts/' || true
+          echo "Checking fonts inside package:"
+          tar -tzf "$PACKAGE" | grep '^dist/fonts/' | head -50
 
           echo ""
-          echo "IMPORTANT:"
-          echo "uploads are NOT included in the deployment package."
-          echo "Customer uploads remain in shared/uploads on AWS."
+          echo "Checking uploads are NOT inside package:"
+          if tar -tzf "$PACKAGE" | grep -q '^uploads/'; then
+            echo "ERROR: uploads directory found in deployment package."
+            exit 1
+          else
+            echo "OK: customer uploads are not included."
+          fi
 
-      # --------------------------------------------------
-      # 11. Configure SSH
-      # --------------------------------------------------
+      # ==================================================
+      # 12. Configure SSH
+      # ==================================================
       - name: Configure SSH
         shell: bash
         run: |
@@ -210,9 +220,9 @@ jobs:
 
           chmod 644 ~/.ssh/known_hosts
 
-      # --------------------------------------------------
-      # 12. Upload package to AWS
-      # --------------------------------------------------
+      # ==================================================
+      # 13. Upload deployment package
+      # ==================================================
       - name: Upload deployment package
         env:
           AWS_HOST: ${{ secrets.AWS_HOST }}
@@ -222,18 +232,15 @@ jobs:
 
           PACKAGE="gaugemaster-atindia-${{ github.sha }}.tar.gz"
 
-          echo "Deployment package:"
-          ls -lh "$PACKAGE"
-
           scp \
             -i ~/.ssh/github_actions \
             -o StrictHostKeyChecking=yes \
             "$PACKAGE" \
             "${AWS_USER}@${AWS_HOST}:/tmp/"
 
-      # --------------------------------------------------
-      # 13. Deploy on AWS
-      # --------------------------------------------------
+      # ==================================================
+      # 14. Deploy to AWS
+      # ==================================================
       - name: Deploy on AWS
         env:
           AWS_HOST: ${{ secrets.AWS_HOST }}
@@ -255,19 +262,17 @@ jobs:
           echo "======================================"
           echo "Deploying Gaugemaster ATINDIA"
           echo "Commit: $GITHUB_SHA"
-          echo "App: $APP_NAME"
-          echo "Directory: $APP_DIR"
           echo "======================================"
 
-          # ------------------------------------------------
-          # 1. Verify application directories
-          # ------------------------------------------------
+          # ==================================================
+          # 1. Prepare application directories
+          # ==================================================
           mkdir -p "$APP_DIR/releases"
           mkdir -p "$APP_DIR/shared"
 
-          # ------------------------------------------------
-          # 2. Create persistent upload directories
-          # ------------------------------------------------
+          # ==================================================
+          # 2. Persistent upload directories
+          # ==================================================
           echo ""
           echo "Preparing persistent upload storage..."
 
@@ -278,52 +283,72 @@ jobs:
           mkdir -p "$APP_DIR/shared/uploads/logos"
           mkdir -p "$APP_DIR/shared/uploads/work-instructions"
 
-          # ------------------------------------------------
-          # 3. Verify production environment
-          # ------------------------------------------------
+          # ==================================================
+          # 3. Verify production .env
+          # ==================================================
           if [ ! -f "$APP_DIR/shared/.env" ]; then
             echo "ERROR: Production .env not found:"
             echo "$APP_DIR/shared/.env"
             exit 1
           fi
 
-          # ------------------------------------------------
+          # ==================================================
           # 4. Verify deployment package
-          # ------------------------------------------------
+          # ==================================================
           if [ ! -f "$PACKAGE" ]; then
             echo "ERROR: Deployment package not found:"
             echo "$PACKAGE"
             exit 1
           fi
 
-          # ------------------------------------------------
+          # ==================================================
           # 5. Create release directory
-          # ------------------------------------------------
+          # ==================================================
           mkdir -p "$RELEASE_DIR"
 
-          # ------------------------------------------------
-          # 6. Extract deployment
-          # ------------------------------------------------
+          # ==================================================
+          # 6. Extract application
+          # ==================================================
           echo ""
           echo "Extracting release..."
 
           tar -xzf "$PACKAGE" -C "$RELEASE_DIR"
 
-          # ------------------------------------------------
+          # ==================================================
           # 7. Validate release
-          # ------------------------------------------------
+          # ==================================================
           test -f "$RELEASE_DIR/dist/main.js"
           test -f "$RELEASE_DIR/package.json"
 
+          # ==================================================
+          # 8. Verify certificate fonts
+          # ==================================================
           echo ""
-          echo "Release validated:"
-          echo "$RELEASE_DIR"
+          echo "Checking certificate fonts..."
 
-          # ------------------------------------------------
-          # 8. Protect customer uploads
+          if [ ! -d "$RELEASE_DIR/dist/fonts" ]; then
+            echo "ERROR: Certificate fonts missing:"
+            echo "$RELEASE_DIR/dist/fonts"
+            exit 1
+          fi
+
+          FONT_COUNT=$(find "$RELEASE_DIR/dist/fonts" -type f | wc -l)
+
+          echo "Certificate font count: $FONT_COUNT"
+
+          if [ "$FONT_COUNT" -eq 0 ]; then
+            echo "ERROR: No certificate font files found."
+            exit 1
+          fi
+
+          find "$RELEASE_DIR/dist/fonts" -type f -print
+
+          # ==================================================
+          # 9. Connect persistent uploads
           #
-          # NEVER store customer uploads inside releases.
-          # ------------------------------------------------
+          # IMPORTANT:
+          # Never keep real customer uploads in releases.
+          # ==================================================
           echo ""
           echo "Configuring persistent uploads..."
 
@@ -333,57 +358,30 @@ jobs:
             "$APP_DIR/shared/uploads" \
             "$RELEASE_DIR/uploads"
 
-          # ------------------------------------------------
-          # 9. Verify uploads symlink
-          # ------------------------------------------------
-          echo ""
-          echo "Uploads configuration:"
-
-          ls -lah "$RELEASE_DIR/uploads"
-
+          # ==================================================
+          # 10. Verify upload symlink
+          # ==================================================
           UPLOAD_TARGET=$(readlink -f "$RELEASE_DIR/uploads")
 
+          echo ""
+          echo "Uploads target:"
+          echo "$UPLOAD_TARGET"
+
           if [ "$UPLOAD_TARGET" != "$APP_DIR/shared/uploads" ]; then
-            echo "ERROR: uploads symlink is incorrect."
-            echo "Expected:"
-            echo "$APP_DIR/shared/uploads"
-            echo "Actual:"
-            echo "$UPLOAD_TARGET"
+            echo "ERROR: Upload symlink is incorrect."
             exit 1
           fi
 
-          echo "Uploads correctly mapped to:"
-          echo "$UPLOAD_TARGET"
-
-          # ------------------------------------------------
-          # 10. Connect production environment
-          # ------------------------------------------------
+          # ==================================================
+          # 11. Connect production environment
+          # ==================================================
           ln -sfn \
             "$APP_DIR/shared/.env" \
             "$RELEASE_DIR/.env"
 
-          # ------------------------------------------------
-          # 11. Verify certificate fonts
-          # ------------------------------------------------
-          echo ""
-          echo "Checking certificate fonts..."
-
-          if [ -d "$RELEASE_DIR/dist/fonts" ]; then
-            FONT_COUNT=$(find "$RELEASE_DIR/dist/fonts" -type f | wc -l)
-
-            echo "Certificate font files: $FONT_COUNT"
-
-            if [ "$FONT_COUNT" -eq 0 ]; then
-              echo "WARNING: dist/fonts exists but contains no files."
-            fi
-          else
-            echo "WARNING: $RELEASE_DIR/dist/fonts does not exist."
-            echo "Verify certificate font location in repository."
-          fi
-
-          # ------------------------------------------------
+          # ==================================================
           # 12. Load production environment
-          # ------------------------------------------------
+          # ==================================================
           set -a
           source "$APP_DIR/shared/.env"
           set +a
@@ -391,22 +389,57 @@ jobs:
           echo ""
           echo "ATINDIA PORT=$PORT"
 
-          # ------------------------------------------------
-          # 13. Update current ONLY after release is ready
-          # ------------------------------------------------
+          # ==================================================
+          # 13. Switch current only after validation
+          # ==================================================
           echo ""
-          echo "Updating current symlink..."
+          echo "Switching current release..."
 
           ln -sfn \
             "$RELEASE_DIR" \
             "$APP_DIR/current"
 
-          echo "Current release:"
-          readlink -f "$APP_DIR/current"
+          # ==================================================
+          # 14. Verify current release
+          # ==================================================
+          CURRENT_RELEASE=$(readlink -f "$APP_DIR/current")
 
-          # ------------------------------------------------
-          # 14. Start / restart PM2
-          # ------------------------------------------------
+          echo ""
+          echo "Current release:"
+          echo "$CURRENT_RELEASE"
+
+          if [ "$CURRENT_RELEASE" != "$RELEASE_DIR" ]; then
+            echo "ERROR: Current symlink is incorrect."
+            exit 1
+          fi
+
+          # ==================================================
+          # 15. Verify current uploads
+          # ==================================================
+          CURRENT_UPLOADS=$(readlink -f "$APP_DIR/current/uploads")
+
+          echo ""
+          echo "Current uploads:"
+          echo "$CURRENT_UPLOADS"
+
+          if [ "$CURRENT_UPLOADS" != "$APP_DIR/shared/uploads" ]; then
+            echo "ERROR: Current uploads path is incorrect."
+            exit 1
+          fi
+
+          # ==================================================
+          # 16. Verify current fonts
+          # ==================================================
+          echo ""
+          echo "Current certificate fonts:"
+
+          find "$APP_DIR/current/dist/fonts" \
+            -type f \
+            -print
+
+          # ==================================================
+          # 17. Restart / start PM2
+          # ==================================================
           cd "$APP_DIR/current"
 
           if pm2 describe gaugemaster-atindia-api > /dev/null 2>&1; then
@@ -427,35 +460,35 @@ jobs:
 
           fi
 
-          # ------------------------------------------------
-          # 15. Save PM2 process list
-          # ------------------------------------------------
+          # ==================================================
+          # 18. Save PM2
+          # ==================================================
           pm2 save
 
-          # ------------------------------------------------
-          # 16. Remove uploaded deployment package
-          # ------------------------------------------------
+          # ==================================================
+          # 19. Remove deployment package
+          # ==================================================
           rm -f "$PACKAGE"
 
-          # ------------------------------------------------
-          # 17. Keep latest 5 releases
-          # ------------------------------------------------
+          # ==================================================
+          # 20. Keep latest 5 releases
+          # ==================================================
           cd "$APP_DIR/releases"
 
           ls -1dt */ 2>/dev/null \
             | tail -n +6 \
             | xargs -r rm -rf
 
-          # ------------------------------------------------
-          # 18. Final deployment verification
-          # ------------------------------------------------
+          # ==================================================
+          # 21. Final verification
+          # ==================================================
           echo ""
           echo "======================================"
-          echo "Final deployment verification"
+          echo "FINAL DEPLOYMENT VERIFICATION"
           echo "======================================"
 
           echo ""
-          echo "PM2 status:"
+          echo "PM2:"
           pm2 status
 
           echo ""
@@ -463,7 +496,7 @@ jobs:
           readlink -f "$APP_DIR/current"
 
           echo ""
-          echo "Uploads target:"
+          echo "Uploads:"
           readlink -f "$APP_DIR/current/uploads"
 
           echo ""
@@ -474,16 +507,12 @@ jobs:
 
           echo ""
           echo "Certificate fonts:"
-
-          if [ -d "$APP_DIR/current/dist/fonts" ]; then
-            find "$APP_DIR/current/dist/fonts" -type f -maxdepth 2
-          else
-            echo "WARNING: certificate fonts directory not found"
-          fi
+          find "$APP_DIR/current/dist/fonts" \
+            -type f | wc -l
 
           echo ""
           echo "======================================"
-          echo "ATINDIA deployment completed successfully"
+          echo "ATINDIA DEPLOYMENT COMPLETED"
           echo "======================================"
 
           REMOTE_SCRIPT
