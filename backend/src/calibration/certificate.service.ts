@@ -95,14 +95,9 @@ async function removeWhiteBackground(fileBuffer: Buffer): Promise<Buffer> {
     }
   });
 }
-const fonts = {
-  Roboto: {
-    normal: 'src/fonts/Roboto-Regular.ttf',
-    bold: 'src/fonts/Roboto-Medium.ttf',
-    italics: 'src/fonts/Roboto-Italic.ttf',
-    bolditalics: 'src/fonts/Roboto-MediumItalic.ttf',
-  },
-};
+import { getPdfFonts } from '../lib/pdf-fonts';
+
+const fonts = getPdfFonts();
 
 /**
  * Generates professional calibration certificate PDFs using pdfmake.

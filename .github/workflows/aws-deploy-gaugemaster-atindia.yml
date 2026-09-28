@@ -343,6 +343,13 @@ jobs:
 
           find "$RELEASE_DIR/dist/fonts" -type f -print
 
+          # Create backward-compatibility symlinks for legacy paths (src/fonts and fonts)
+          mkdir -p "$RELEASE_DIR/src"
+          ln -sfn "$RELEASE_DIR/dist/fonts" "$RELEASE_DIR/src/fonts"
+          ln -sfn "$RELEASE_DIR/dist/fonts" "$RELEASE_DIR/fonts"
+
+          echo "Configured font compatibility symlinks: src/fonts -> dist/fonts, fonts -> dist/fonts"
+
           # ==================================================
           # 9. Connect persistent uploads
           #

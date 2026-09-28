@@ -9,15 +9,9 @@ import * as ExcelJS from 'exceljs';
 
 import { SettingsService } from '../settings/settings.service';
 import { ReportTemplatesService } from '../report-templates/report-templates.service';
+import { getPdfFonts } from '../lib/pdf-fonts';
 const { JSDOM } = require('jsdom');
-const fonts = {
-    Roboto: {
-        normal: 'src/fonts/Roboto-Regular.ttf',
-        bold: 'src/fonts/Roboto-Medium.ttf',
-        italics: 'src/fonts/Roboto-Italic.ttf',
-        bolditalics: 'src/fonts/Roboto-MediumItalic.ttf',
-    },
-};
+const fonts = getPdfFonts();
 
 
 import { User } from 'src/users/user.entity';
