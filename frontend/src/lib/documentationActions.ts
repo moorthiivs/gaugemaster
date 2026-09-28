@@ -50,7 +50,12 @@ export async function getCalibrationProcedureHistory(id: string): Promise<Calibr
 // 2. Gauge Diagrams
 // ==========================================
 
-export async function getGaugeDiagrams(params?: { companyId?: string; search?: string }): Promise<GaugeDiagram[]> {
+export async function getGaugeDiagrams(params?: {
+  companyId?: string;
+  search?: string;
+  id_code?: string;
+  part_name?: string;
+}): Promise<GaugeDiagram[]> {
   const response = await httpClient.get<GaugeDiagram[]>('/gauge-diagrams', { params });
   return response.data;
 }
@@ -88,7 +93,12 @@ export async function getGaugeDiagramHistory(id: string): Promise<GaugeDiagramHi
 // 3. Work Instructions
 // ==========================================
 
-export async function getWorkInstructions(params?: { companyId?: string; search?: string }): Promise<WorkInstruction[]> {
+export async function getWorkInstructions(params?: {
+  companyId?: string;
+  search?: string;
+  id_code?: string;
+  part_name?: string;
+}): Promise<WorkInstruction[]> {
   const response = await httpClient.get<WorkInstruction[]>('/work-instructions', { params });
   return response.data;
 }

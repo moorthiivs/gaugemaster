@@ -47,7 +47,10 @@ import {
   Compass,
   Hash,
   Cog,
+  Filter,
+  X,
 } from "lucide-react";
+import { DocumentationFilterCombobox } from "@/components/documentation/DocumentationFilterCombobox";
 import {
   GaugeDiagram,
   GaugeDiagramHistory,
@@ -74,6 +77,8 @@ export default function GaugeDiagrams() {
   const [diagrams, setDiagrams] = useState<GaugeDiagram[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIdCode, setSelectedIdCode] = useState("");
+  const [selectedPartName, setSelectedPartName] = useState("");
 
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -135,7 +140,6 @@ export default function GaugeDiagrams() {
     try {
       const data = await getGaugeDiagrams({
         companyId: user?.companyId,
-        search: searchQuery,
       });
       setDiagrams(data || []);
     } catch (err: any) {
@@ -151,7 +155,73 @@ export default function GaugeDiagrams() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    fetchDiagrams();
+  };
+
+  // Derive unique ID Codes and Part Names with item counts
+  const { uniqueIdCodes, idCodeCounts } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    diagrams.forEach((item) => {
+      const code = item.id_code?.trim();
+      if (code) {
+        counts[code] = (counts[code] || 0) + 1;
+      }
+    });
+    const unique = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+    return { uniqueIdCodes: unique, idCodeCounts: counts };
+  }, [diagrams]);
+
+  const { uniquePartNames, partNameCounts } = useMemo(() => {
+    const counts: Record<string, number> = {};
+    diagrams.forEach((item) => {
+      const part = item.part_name?.trim();
+      if (part) {
+        counts[part] = (counts[part] || 0) + 1;
+      }
+    });
+    const unique = Object.keys(counts).sort((a, b) => a.localeCompare(b));
+    return { uniquePartNames: unique, partNameCounts: counts };
+  }, [diagrams]);
+
+  // Combined client-side filtered data
+  const filteredDiagrams = useMemo(() => {
+    let result = diagrams;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      result = result.filter(
+        (item) =>
+          item.gauge_name?.toLowerCase().includes(q) ||
+          item.id_code?.toLowerCase().includes(q) ||
+          item.part_name?.toLowerCase().includes(q) ||
+          item.document_name?.toLowerCase().includes(q) ||
+          item.description?.toLowerCase().includes(q)
+      );
+    }
+
+    if (selectedIdCode.trim()) {
+      const targetCode = selectedIdCode.toLowerCase().trim();
+      result = result.filter(
+        (item) => item.id_code?.toLowerCase().trim() === targetCode
+      );
+    }
+
+    if (selectedPartName.trim()) {
+      const targetPart = selectedPartName.toLowerCase().trim();
+      result = result.filter(
+        (item) => item.part_name?.toLowerCase().trim() === targetPart
+      );
+    }
+
+    return result;
+  }, [diagrams, searchQuery, selectedIdCode, selectedPartName]);
+
+  const isFiltered = Boolean(selectedIdCode || selectedPartName || searchQuery.trim());
+
+  const handleClearFilters = () => {
+    setSelectedIdCode("");
+    setSelectedPartName("");
+    setSearchQuery("");
+    setPageIndex(1);
   };
 
   // Handle Create Submit
@@ -300,8 +370,8 @@ export default function GaugeDiagrams() {
 
   const paginatedDiagrams = useMemo(() => {
     const start = (pageIndex - 1) * pageSize;
-    return diagrams.slice(start, start + pageSize);
-  }, [diagrams, pageIndex, pageSize]);
+    return filteredDiagrams.slice(start, start + pageSize);
+  }, [filteredDiagrams, pageIndex, pageSize]);
 
   const gaugeDiagramColumns = useMemo<ColumnDef<GaugeDiagram>[]>(
     () => [
@@ -336,33 +406,39 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "id_code",
-        header: () => <span className="font-semibold">ID Code / IMTE</span>,
+        header: () => <span className="font-semibold whitespace-nowrap min-w-[140px]">ID Code / IMTE</span>,
         cell: ({ row }) => {
-          const diag = row.original;
-          return diag.id_code ? (
-            <Badge variant="outline" className="font-mono text-[11px] font-semibold bg-muted/40 gap-1">
-              <Hash className="h-3 w-3 text-muted-foreground" />
-              <span>{diag.id_code}</span>
+          const code = row.original.id_code;
+          return code ? (
+            <Badge
+              variant="outline"
+              className="font-mono text-xs font-semibold px-2.5 py-0.5 rounded-md whitespace-nowrap inline-flex items-center gap-1.5 bg-muted/40 border-border/80 text-foreground shadow-2xs hover:bg-muted/60 max-w-[220px]"
+              title={code}
+            >
+              <Hash className="h-3 w-3 text-primary/70 shrink-0" />
+              <span className="truncate">{code}</span>
             </Badge>
           ) : (
             <span className="text-xs text-muted-foreground italic">-</span>
           );
         },
+        size: 160,
       },
       {
         accessorKey: "part_name",
-        header: () => <span className="font-semibold">Part Name</span>,
+        header: () => <span className="font-semibold whitespace-nowrap min-w-[120px]">Part Name</span>,
         cell: ({ row }) => {
-          const diag = row.original;
-          return diag.part_name ? (
-            <div className="flex items-center gap-1 text-xs font-medium text-foreground">
+          const part = row.original.part_name;
+          return part ? (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground whitespace-nowrap truncate max-w-[180px]" title={part}>
               <Cog className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span>{diag.part_name}</span>
+              <span className="truncate">{part}</span>
             </div>
           ) : (
             <span className="text-xs text-muted-foreground italic">-</span>
           );
         },
+        size: 140,
       },
       {
         accessorKey: "document_name",
@@ -505,28 +581,158 @@ export default function GaugeDiagrams() {
 
       {/* Main Table Card */}
       <Card className="border shadow-xs">
-        <CardHeader className="p-4 border-b bg-muted/20">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <CardHeader className="p-4 border-b bg-muted/20 space-y-3">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+            {/* Left: Search Bar */}
             <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search gauge name, ID code / IMTE, or part..."
+                placeholder="Search gauge name, drawing, description..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9 text-sm bg-background"
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setPageIndex(1);
+                }}
+                className="pl-9 pr-8 h-9 text-sm bg-background"
               />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setPageIndex(1);
+                  }}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+                  title="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </form>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={fetchDiagrams}
-              className="gap-1.5 h-9 shrink-0"
-              title="Refresh list"
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-              <span>Refresh</span>
-            </Button>
+
+            {/* Right: Filters & Actions */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Filter 1: ID Code / IMTE */}
+              <DocumentationFilterCombobox
+                label="ID Code / IMTE"
+                placeholder="All ID Codes / IMTE"
+                searchPlaceholder="Search ID Code / IMTE..."
+                icon={Hash}
+                options={uniqueIdCodes}
+                value={selectedIdCode}
+                onChange={(val) => {
+                  setSelectedIdCode(val);
+                  setPageIndex(1);
+                }}
+                countMap={idCodeCounts}
+              />
+
+              {/* Filter 2: Part Name */}
+              <DocumentationFilterCombobox
+                label="Part Name"
+                placeholder="All Part Names"
+                searchPlaceholder="Search Part Name..."
+                icon={Cog}
+                options={uniquePartNames}
+                value={selectedPartName}
+                onChange={(val) => {
+                  setSelectedPartName(val);
+                  setPageIndex(1);
+                }}
+                countMap={partNameCounts}
+              />
+
+              {/* Clear Filters / Reset Button */}
+              {isFiltered && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearFilters}
+                  className="h-9 px-2.5 text-xs text-muted-foreground hover:text-foreground gap-1"
+                  title="Reset all filters"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  <span>Reset</span>
+                </Button>
+              )}
+
+              {/* Refresh Button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchDiagrams}
+                className="gap-1.5 h-9 shrink-0"
+                title="Refresh list"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+            </div>
           </div>
+
+          {/* Active Filter Badges Bar */}
+          {isFiltered && (
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/40 text-xs">
+              <span className="text-muted-foreground font-medium flex items-center gap-1 text-[11px]">
+                <Filter className="h-3 w-3 text-primary" />
+                Active Filters:
+              </span>
+              {selectedIdCode && (
+                <Badge variant="secondary" className="gap-1.5 pl-2 pr-1 py-0.5 font-mono text-[11px] bg-primary/10 text-primary border-primary/20 rounded-md whitespace-nowrap">
+                  <Hash className="h-3 w-3 text-primary" />
+                  <span>IMTE: {selectedIdCode}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedIdCode("");
+                      setPageIndex(1);
+                    }}
+                    className="hover:bg-primary/20 rounded p-0.5 text-primary"
+                    title="Remove filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              )}
+              {selectedPartName && (
+                <Badge variant="secondary" className="gap-1.5 pl-2 pr-1 py-0.5 text-[11px] bg-primary/10 text-primary border-primary/20 rounded-md whitespace-nowrap">
+                  <Cog className="h-3 w-3 text-primary" />
+                  <span>Part: {selectedPartName}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPartName("");
+                      setPageIndex(1);
+                    }}
+                    className="hover:bg-primary/20 rounded p-0.5 text-primary"
+                    title="Remove filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              )}
+              {searchQuery && (
+                <Badge variant="secondary" className="gap-1.5 pl-2 pr-1 py-0.5 text-[11px] rounded-md whitespace-nowrap">
+                  <Search className="h-3 w-3 text-muted-foreground" />
+                  <span>Search: "{searchQuery}"</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setPageIndex(1);
+                    }}
+                    className="hover:bg-muted rounded p-0.5 text-muted-foreground hover:text-foreground"
+                    title="Remove filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Badge>
+              )}
+              <span className="text-muted-foreground ml-auto text-[11px]">
+                Showing {filteredDiagrams.length} of {diagrams.length}
+              </span>
+            </div>
+          )}
         </CardHeader>
 
         <CardContent className="p-4">
@@ -536,8 +742,8 @@ export default function GaugeDiagrams() {
             loading={loading}
             pageIndex={pageIndex}
             pageSize={pageSize}
-            pageCount={Math.max(1, Math.ceil(diagrams.length / pageSize))}
-            totalItems={diagrams.length}
+            pageCount={Math.max(1, Math.ceil(filteredDiagrams.length / pageSize))}
+            totalItems={filteredDiagrams.length}
             onPageChange={setPageIndex}
             onPageSizeChange={(s) => {
               setPageSize(s);
@@ -545,8 +751,19 @@ export default function GaugeDiagrams() {
             }}
             hideSearch={true}
             hideColumnToggle={false}
-            emptyTitle="No gauge diagrams found"
-            emptyDescription='Click "Create Gauge Diagram" to select gauges from the master list and link engineering schematics.'
+            emptyTitle={isFiltered ? "No matching gauge diagrams" : "No gauge diagrams found"}
+            emptyDescription={
+              isFiltered
+                ? "Try adjusting or clearing your ID code or part name filters."
+                : 'Click "Create Gauge Diagram" to select gauges from the master list and link engineering schematics.'
+            }
+            emptyAction={
+              isFiltered ? (
+                <Button variant="outline" size="sm" onClick={handleClearFilters} className="mt-2 text-xs">
+                  Reset All Filters
+                </Button>
+              ) : undefined
+            }
             emptyIcon={<Compass className="h-8 w-8 text-muted-foreground/50" />}
           />
         </CardContent>

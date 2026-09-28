@@ -15,21 +15,32 @@ export class GaugeDiagramsService {
     private readonly historyRepo: Repository<GaugeDiagramHistory>,
   ) {}
 
-  async findAll(companyId?: string, search?: string) {
-    let where: any = {};
+  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string) {
+    const baseWhere: any = {};
+    if (companyId) {
+      baseWhere.companyId = companyId;
+    }
+    if (id_code && id_code.trim() && id_code !== 'all') {
+      baseWhere.id_code = ILike(`%${id_code.trim()}%`);
+    }
+    if (part_name && part_name.trim() && part_name !== 'all') {
+      baseWhere.part_name = ILike(`%${part_name.trim()}%`);
+    }
+
     if (search && search.trim()) {
       const pattern = ILike(`%${search.trim()}%`);
-      where = [
-        { ...(companyId ? { companyId } : {}), gauge_name: pattern },
-        { ...(companyId ? { companyId } : {}), id_code: pattern },
-        { ...(companyId ? { companyId } : {}), part_name: pattern },
-      ];
-    } else if (companyId) {
-      where.companyId = companyId;
+      return this.diagramRepo.find({
+        where: [
+          { ...baseWhere, gauge_name: pattern },
+          { ...baseWhere, id_code: pattern },
+          { ...baseWhere, part_name: pattern },
+        ],
+        order: { created_at: 'DESC' },
+      });
     }
 
     return this.diagramRepo.find({
-      where,
+      where: baseWhere,
       order: { created_at: 'DESC' },
     });
   }

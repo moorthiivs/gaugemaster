@@ -80,6 +80,7 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
         application_name: "default",
 
         host: config.get<string>("DB_HOST"),
+        port: parseInt(config.get<string>("DB_PORT") || "5432", 10),
         user: config.get<string>("DB_USERNAME"),
         password: config.get<string>("DB_PASSWORD"),
         database: config.get<string>("DB_NAME"),
@@ -99,3 +100,4 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
   ],
 })
 export class AppModule { }
+
