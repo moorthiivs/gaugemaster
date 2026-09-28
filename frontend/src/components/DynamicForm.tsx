@@ -18,6 +18,7 @@ import { CalendarPicker } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarIcon, Loader2, AlertCircle } from "lucide-react";
 import { format } from "date-fns";
+import { parseLocalDate } from "@/lib/dateUtils";
 
 export interface FormFieldConfig {
   name: string;
@@ -309,7 +310,7 @@ export default function DynamicForm({
                   control={control}
                   name={field.name}
                   render={({ field: dateField }) => {
-                    const dateValue = dateField.value ? new Date(dateField.value) : undefined;
+                    const dateValue = dateField.value ? parseLocalDate(dateField.value) : undefined;
                     return (
                       <Popover>
                         <PopoverTrigger asChild>

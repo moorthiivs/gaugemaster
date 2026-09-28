@@ -10,13 +10,11 @@ import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import DynamicForm, { FormFieldConfig } from "@/components/DynamicForm";
+import { computeNextDueDate, isDatePast } from "@/lib/dateUtils";
 
 const computeStatusOptions = (currentStatus: string, dueDate: string) => {
-  const today = new Date();
-  const due = new Date(dueDate);
-
   // 1. Overdue condition
-  if (due < today) {
+  if (dueDate && isDatePast(dueDate)) {
     return ["Overdue"];
   }
 
@@ -71,8 +69,8 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
   { name: "calibration_procedure", label: "Calibration Procedure", type: "textarea", col: 12 },
   { name: "remarks", label: "Remarks", type: "textarea", col: 12 },
   { name: "notes", label: "Notes", type: "textarea", col: 12 },
-  { name: "last_calibration_date", label: "Last Calibration Date", type: "date", col: 4, defaultValue: new Date().toISOString().slice(0, 10) },
-  { name: "due_date", label: "Due Date", type: "date", col: 4, defaultValue: new Date(new Date().setMonth(new Date().getMonth() + 12)).toISOString().slice(0, 10) },
+  { name: "last_calibration_date", label: "Last Calibration Date", type: "date", col: 4 },
+  { name: "due_date", label: "Due Date", type: "date", col: 4, placeholder: "Auto-calculated or pick a date" },
   { name: "gauge_issue_date", label: "Gauge Issue Date", type: "date", col: 4 },
   {
     name: "frequency",
@@ -109,6 +107,7 @@ export default function InstrumentForm() {
   
   const [isSaving, setIsSaving] = useState(false);
   const [validationRules, setValidationRules] = useState<any[]>([]);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
   const [instrumentData, setInstrumentData] = useState<any>(null);
   const [rawCustomParameters, setRawCustomParameters] = useState<Record<string, any>>({});
 
@@ -120,6 +119,9 @@ export default function InstrumentForm() {
         setValidationRules(res.data || []);
       } catch (err) {
         console.error("Failed to fetch rules", err);
+        setValidationRules([]);
+      } finally {
+        setRulesLoaded(true);
       }
     };
     fetchRules();
@@ -303,23 +305,53 @@ export default function InstrumentForm() {
     }
   };
 
-  // 4. Handle Side Effects when fields change (e.g. Due Date side-effects)
+  // 4. Handle Side Effects when fields change (Last Calibration Date, Frequency, Due Date)
   const onChangeEffects = (
     name: string,
     value: any,
     setValue: any,
     getValues: any
   ) => {
-    if (name === "due_date") {
-      const today = new Date();
-      const due = new Date(value);
-      if (due < today) {
-        setValue("status", "Overdue");
+    if (name === "last_calibration_date") {
+      const frequency = getValues("frequency") || "12 MONTH";
+      if (value && frequency) {
+        const nextDueDate = computeNextDueDate(value, frequency);
+        if (nextDueDate) {
+          setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
+
+          if (isDatePast(nextDueDate)) {
+            setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+          } else if (getValues("status") === "Overdue") {
+            setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+          }
+        }
+      }
+    } else if (name === "frequency") {
+      const lastCalDate = getValues("last_calibration_date");
+      if (lastCalDate && value) {
+        const nextDueDate = computeNextDueDate(lastCalDate, value);
+        if (nextDueDate) {
+          setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
+
+          if (isDatePast(nextDueDate)) {
+            setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+          } else if (getValues("status") === "Overdue") {
+            setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+          }
+        }
+      }
+    } else if (name === "due_date") {
+      if (value) {
+        if (isDatePast(value)) {
+          setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+        } else if (getValues("status") === "Overdue") {
+          setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+        }
       }
     }
   };
 
-  const isFormLoading = !instrumentData || validationRules.length === 0;
+  const isFormLoading = !instrumentData || !rulesLoaded;
 
   return (
     <div className="space-y-6">
