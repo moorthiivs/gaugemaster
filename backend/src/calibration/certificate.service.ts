@@ -107,6 +107,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
+import { DEFAULT_APPROVAL_SEAL_BASE64 } from '../assets/default-seal';
 
 @Injectable()
 export class CertificateService {
@@ -875,8 +876,15 @@ export class CertificateService {
     let sealDataUrl: string | null = null;
     const possibleSealPaths = [
       path.join(process.cwd(), 'src', 'assets', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'src', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'dist', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'src', 'assets', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'dist', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'src', 'public', 'Approved-seal1.png'),
       path.join(process.cwd(), 'public', 'Approved-seal1.png'),
       path.join(process.cwd(), '..', 'frontend', 'public', 'Approved-seal1.png'),
+      path.join(__dirname, '..', '..', 'public', 'Approved-seal1.png'),
+      path.join(__dirname, '..', 'public', 'Approved-seal1.png'),
       path.join(__dirname, '..', 'assets', 'Approved-seal1.png'),
       path.join(__dirname, 'assets', 'Approved-seal1.png'),
     ];
@@ -899,6 +907,10 @@ export class CertificateService {
           }
         } catch (e) {}
       }
+    }
+    // Fallback to embedded default approval seal base64 if not resolved from filesystem
+    if (!sealDataUrl) {
+      sealDataUrl = DEFAULT_APPROVAL_SEAL_BASE64;
     }
 
     // ── Resolve Diagram Image to base64 for pdfmake ──
