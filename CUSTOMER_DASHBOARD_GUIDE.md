@@ -1,0 +1,160 @@
+# GAUGEMASTER - CUSTOMER DASHBOARD & KPI GUIDE
+### A Simple, Plain English Guide for Plant Managers, Quality Heads, and Auditors
+
+---
+
+## 1. What is the Calibration Action Center?
+
+The **Calibration Action Center** is the central command screen of GaugeMaster.  
+It answers three fundamental questions for your quality and plant operations:
+1. **Are all our gauges and instruments safe and valid to use on the production floor right now?**
+2. **What is overdue or expiring soon that needs urgent calibration?**
+3. **Is our calibration team on schedule with this month's calibration plan?**
+
+---
+
+## 2. Top Filter Toolbar (How to Control What You See)
+
+Across the top of the dashboard is a row of quick filters. These allow you to adjust the numbers to see either the whole plant or specific departments:
+
+* **Category (Working Gauges vs. Reference Standards)**:
+  * **Working Gauges** *(Default)*: Instruments used daily on the shop floor to measure manufactured parts (e.g., Vernier Calipers, Micrometers, Height Gauges, Plug Gauges).
+  * **Reference Standards / Masters**: High-precision master standards kept in the Standards Room or Calibration Lab used to calibrate the working gauges (e.g., Gauge Block Sets, Master Ring Gauges).
+  * **All Inventory**: Shows working gauges and masters combined.
+
+* **Date Range & Quick Presets (This Month, Next 30 Days, This Quarter, This Year)**:
+  * Selects the time window for the workload plan.
+  * Defaults to **"This Month"** (e.g., 01 Sep 2026 to 30 Sep 2026), focusing on current monthly targets.
+
+* **Item Status Filter (Active Only vs. All Statuses)**:
+  * **Active Only** *(Default)*: Focuses strictly on instruments actively used in live production. Retired gauges, inactive spares, or items sitting in general storage do not skew your daily quality metrics.
+  * **All Statuses**: Shows every single physical piece registered in your system, including `Active`, `SPARE`, `STOCK`, and `Inactive`.
+  * You can also filter specifically for **SPARE**, **STOCK**, or **Inactive**.
+
+* **Plant / Location Filter**:
+  * Allows multi-plant or multi-department companies to view metrics for specific lines, shops, or facilities.
+
+---
+
+## 3. Today's Action Plan (Top Banner)
+
+Located at the very top of the dashboard, this banner highlights immediate daily priorities:
+
+* **Red Button: "Resolve Overdue (X)"**:
+  * Tells you immediately how many instruments have expired and require calibration right now.
+  * Clicking it takes you directly to the overdue list so you can issue call letters or send them for calibration.
+* **Purple Button: "View Pending (Y)"**:
+  * Shows how many instruments are scheduled for calibration during this period but have not yet been calibrated (e.g., *16 Pending out of 342 Planned*).
+  * Clicking it opens the list of pending instruments.
+
+---
+
+## 4. Understanding Every KPI Card in Simple Terms
+
+### 🔹 Card 1: CALIBRATION OVERALL (e.g., 326 / 2031 - 16.05% Completed)
+* **What it means**: How much of your **entire factory inventory** has been calibrated and is certified up-to-date across the full yearly cycle.
+* **Numerator (326)**: Number of instruments whose calibration is active and valid right now.
+* **Denominator (2031)**: Total registered instruments in the factory.
+* **How to explain to a customer**: *"Across our entire facility of 2,031 instruments, 326 have already completed calibration so far this cycle."*
+
+---
+
+### 🔹 Card 2: OVERDUE (e.g., 22 Overdue - 19 Gauges, 3 Masters)
+* **What it means**: Equipment whose calibration validity date has **expired** without a new calibration being performed.
+* **Why it matters**: **High Audit Risk.** Under ISO 9001 and IATF 16949, an overdue gauge should not be used on production parts.
+* **Breakdown**: Shows whether the expired items are shop-floor gauges (19) or lab masters (3). If a master is overdue, it must be calibrated before it can calibrate other gauges.
+* **Action**: Click the card to view the exact list, locate the gauges, and send them to the internal lab or external NABL agency.
+
+---
+
+### 🔹 Card 3: DUE TODAY (e.g., 0)
+* **What it means**: Instruments whose calibration deadline is **today**.
+* **Why it matters**: Gives your team a 1-day advance chance to calibrate or pull the instrument before it turns "Overdue" tomorrow morning.
+
+---
+
+### 🔹 Card 4: PERIOD PROGRESS (e.g., 326 / 342 - 95% Done)
+* **What it means**: **Monthly Performance Scorecard!**
+* **Difference between Card 1 and Card 4**:
+  * **Card 1 (Overall)** compares against the **whole year/all 2031 instruments**.
+  * **Card 4 (Period Progress)** looks **only at this month's schedule** (e.g., 342 instruments were planned for September: 326 are finished, 16 are still pending).
+* **Formula**:  
+  $$\text{Progress \%} = \frac{\text{Calibrations Done in Period}}{\text{Total Calibrations Planned in Period}} \times 100$$
+* **How to explain to a customer**: *"For this month of September, our plan was to calibrate 342 gauges. We have already completed 326 of them, which means our monthly calibration completion rate is 95%."*
+
+---
+
+### 🔹 Card 5: DUE SOON (e.g., 276 Gauges)
+* **What it means**: Instruments whose calibration will expire in the **next 30 days**.
+* **Why it matters**: Early warning radar. It allows production managers to plan tool room replacements and coordinate with calibration vendors in advance so production never stops.
+
+---
+
+### 🔹 Card 6: COMPLIANCE (e.g., 99% - 2009 of 2031 compliant)
+* **What it means**: The overall health and audit readiness of the plant's measuring equipment.
+* **Formula**:  
+  $$\text{Compliance \%} = \frac{\text{Total Instruments} - \text{Overdue Instruments}}{\text{Total Instruments}} \times 100$$
+* **Audit Benchmark**: World-class manufacturing plants maintain $\ge 98\%$ compliance.
+* **How to explain to a customer**: *"99% of our measuring equipment is 100% compliant with calibration standards and safe for production."*
+
+---
+
+### 🔹 Card 7: TOTAL MASTER (e.g., 2031 Total - 1986 Gauges, 45 Reference Standards)
+* **What it means**: The total asset inventory count.
+* **Breakdown**: Shows your split between regular inspection gauges (1986) and reference standards/masters (45).
+
+---
+
+## 5. Charts & Visual Graphs Explained
+
+### 📊 1. Calibration Workload Chart (Monthly Plan vs Actual)
+* **Blue Bar (Plan / Due)**: The number of instruments scheduled for calibration in each month according to their calibration frequency (e.g., 6-month or 1-year cycle).
+* **Green Bar (Actual / Completed)**: How many calibrations were actually executed and closed in that month.
+* **Auditor Value**: Shows auditors that you have a proactive, planned calibration system rather than reactive firefighting.
+
+### 🍩 2. Module Distribution (Donut Chart)
+* Shows where your measuring instruments live across different plant departments or production lines (e.g., CNC Shop, Assembly Line 1, Press Shop, Quality Lab, Tool Room).
+* Helps managers allocate calibration manpower to the departments with the largest gauge populations.
+
+### 📋 3. Due Soon & Action Table (Bottom Table)
+* Displays individual instruments due for calibration soon.
+* Shows ID Code, Instrument Name, Department, Due Date, and Status.
+* Clicking on any row lets engineers directly log calibration results, attach NABL certificates, and automatically calculate the next due date.
+
+---
+
+## 6. Frequently Asked Questions (FAQ) for Customers
+
+### Q1: Why does Period Progress show 342, but Total Master shows 2031?
+**Answer**:  
+* **2031** is the total number of gauges in your entire factory. Not every gauge needs calibration every month; many have 6-month, 1-year, or 2-year cycles.  
+* **342** is the subset of gauges whose turn came up specifically during this selected month.
+
+### Q2: What happens automatically when an instrument is calibrated?
+**Answer**:  
+When a user logs a calibration record or uploads a certificate:
+1. The instrument's **Last Calibration Date** is updated to the calibration date.
+2. The **Next Due Date** is automatically calculated based on its predefined calibration frequency (e.g., +12 months).
+3. The instrument moves from **Pending** to **Done** in Period Progress.
+4. If it was previously **Overdue**, it immediately clears from the Overdue count, and the plant **Compliance %** increases.
+
+### Q3: Why does the dashboard default to "Active Only"?
+**Answer**:  
+Gauges in storage (SPARE or STOCK) or retired (Inactive) do not measure live customer products. Defaulting to "Active Only" ensures quality teams focus on gauges directly impacting product quality. To see spare gauges or total physical assets, simply choose **"All Statuses"** from the status dropdown.
+
+---
+
+### Summary Cheatsheet for Customer Presentations
+
+| Card / Feature | Plain English Explanation | Target Goal |
+| :--- | :--- | :--- |
+| **Calibration Overall** | Portion of total plant inventory calibrated this cycle | Increases toward 100% annually |
+| **Overdue** | Equipment expired and not yet recalibrated | **Must be 0** |
+| **Due Today** | Equipment expiring before end of day today | Calibrate today |
+| **Period Progress** | Percentage of this month's scheduled work completed | **100% by month end** |
+| **Due Soon** | Advance warning for next 30 days workload | Schedule ahead |
+| **Compliance** | Overall audit readiness rate of equipment | **$\ge 98\%$** |
+| **Total Master** | Total registered measuring assets in facility | Complete inventory visibility |
+
+---
+*Document Version: 1.0 | Applicable for GaugeMaster Calibration Action Center*
