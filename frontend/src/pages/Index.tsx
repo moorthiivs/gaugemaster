@@ -496,7 +496,7 @@ const Index = () => {
     return new Date(now.getFullYear(), now.getMonth() + 1, 0);
   });
   const [activePreset, setActivePreset] = useState<string | null>("This Month");
-  const [itemStatus, setItemStatus] = useState<string | undefined>("Active");
+  const [itemStatus, setItemStatus] = useState<string>("Active");
   const [category, setCategory] = useState<string>("Working"); // Default to "Working" Gauges
   const [calibrationStatus, setCalibrationStatus] = useState<
     string | undefined
@@ -1016,21 +1016,21 @@ const Index = () => {
 
           {/* Item Status Filter */}
           <Select
-            value={itemStatus || "Active"}
+            value={itemStatus}
             onValueChange={(val) => {
-              setItemStatus(val === "All" ? undefined : val);
+              setItemStatus(val);
               setPage(1);
             }}
           >
             <SelectTrigger className="h-7 w-[130px] text-xs font-medium">
               <Activity className="h-3 w-3 mr-1 text-muted-foreground" />
-              <SelectValue placeholder="Active Only" />
+              <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="All">All Statuses</SelectItem>
               {itemStatuses.length > 0 ? (
                 itemStatuses
-                  .filter((s) => s && s.trim() !== "")
+                  .filter((s) => s && s.trim() !== "" && s.toLowerCase() !== "all")
                   .map((st) => (
                     <SelectItem key={st} value={st}>
                       {st === "Active" ? "Active Only" : st}
