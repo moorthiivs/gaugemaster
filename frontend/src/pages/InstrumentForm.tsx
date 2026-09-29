@@ -51,9 +51,8 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Device Type",
     type: "select",
     col: 4,
-    options: ["Instrument", "Gauge", "Master", "Reference Standard"]
+    options: ["Instrument", "Gauge", "Reference Standard"]
   },
-  { name: "is_reference_standard", label: "Is Reference Standard / Master Instrument?", type: "checkbox", col: 12 },
   { name: "make", label: "Item Make", type: "text", col: 4 },
   { name: "item_type", label: "Item Type", type: "text", col: 4 },
   { name: "part_no", label: "Part No", type: "text", col: 4 },
@@ -155,13 +154,18 @@ export default function InstrumentForm() {
           });
         }
 
+        let resolvedDeviceType = i.device_type ?? "Instrument";
+        if (resolvedDeviceType === "Master" || resolvedDeviceType === "MASTER" || i.is_reference_standard) {
+          resolvedDeviceType = "Reference Standard";
+        }
+
         setInstrumentData({
-          name: i.name || "",
-          id_code: i.id_code || "",
+          name: i.name ?? "",
+          id_code: i.id_code ?? "",
           range: i.range ?? "",
           serial_no: i.serial_no ?? "",
           least_count: i.least_count ?? "",
-          location: i.location || "",
+          location: i.location ?? "",
           frequency: i.frequency || "12 MONTH",
           last_calibration_date: i.last_calibration_date ? i.last_calibration_date.slice(0, 10) : "",
           due_date: i.due_date ? i.due_date.slice(0, 10) : "",
@@ -171,7 +175,7 @@ export default function InstrumentForm() {
           notes: i.notes ?? "",
           make: i.make ?? "",
           item_type: i.item_type ?? "",
-          device_type: i.device_type ?? "Instrument",
+          device_type: resolvedDeviceType,
           part_no: i.part_no ?? "",
           part_name: i.part_name ?? "",
           module: i.module ?? "",
@@ -186,33 +190,31 @@ export default function InstrumentForm() {
           gauges_issued_by: i.gauges_issued_by ?? "",
           calibration_procedure: i.calibration_procedure ?? "",
           traceable: i.traceable ?? "",
-          is_reference_standard: i.is_reference_standard || false,
           ...customValues,
         });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to load instrument details.",
-          variant: "destructive",
+        } catch (error) {
+          toast({
+            title: "Error",
+            description: "Failed to load instrument details.",
+            variant: "destructive",
+          });
+        }
+      };
+
+      if (params.id) {
+        fetchInstrument();
+      } else {
+        // Set default values for New Instrument Mode
+        setInstrumentData({
+          device_type: "Instrument",
+          frequency: "12 MONTH",
+          status: "OK",
+          item_status: "Active",
+          last_calibration_date: "",
+          due_date: "",
         });
       }
-    };
-
-    if (params.id) {
-      fetchInstrument();
-    } else {
-      // Set default values for New Instrument Mode
-      setInstrumentData({
-        device_type: "Instrument",
-        frequency: "12 MONTH",
-        status: "OK",
-        item_status: "Active",
-        last_calibration_date: "",
-        due_date: "",
-        is_reference_standard: false,
-      });
-    }
-  }, [params.id]);
+    }, [params.id]);
 
   // 3. Handle Form Submit
   const onSubmit = async (values: any) => {
@@ -277,7 +279,7 @@ export default function InstrumentForm() {
         created_by: user.id,
         updated_by: user.id,
         companyId: user.companyId,
-        is_reference_standard: values.is_reference_standard || false,
+        is_reference_standard: /reference|master/i.test(values.device_type || ""),
         custom_parameters,
       };
 

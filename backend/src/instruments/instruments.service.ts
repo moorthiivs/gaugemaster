@@ -137,13 +137,19 @@ export class InstrumentsService {
 
         const itemStatuses = instruments.map(i => this.normalizeItemStatus(i.item_status));
 
+        const deviceTypes = instruments.map(i => {
+            const dt = (i.device_type || '').trim();
+            if (/reference|master/i.test(dt)) return 'Reference Standard';
+            return dt;
+        });
+
         return {
             status: unique(instruments.map(i => i.status)),
             item_status: unique([...itemStatuses, 'Active', 'SPARE', 'Inactive', 'STOCK']),
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),
             calibration_source: unique(instruments.map(i => i.calibration_source)),
-            device_type: unique(instruments.map(i => i.device_type)),
+            device_type: unique([...deviceTypes, 'Instrument', 'Gauge', 'Reference Standard']),
         };
     }
 
@@ -169,7 +175,11 @@ export class InstrumentsService {
         const baseWhere: any = {};
 
         if (device_type && device_type !== 'All') {
-            baseWhere.device_type = ILike(device_type);
+            if (/reference|master/i.test(device_type)) {
+                baseWhere.device_type = Raw(alias => `LOWER(TRIM(${alias})) IN ('reference standard', 'master')`);
+            } else {
+                baseWhere.device_type = ILike(device_type);
+            }
         }
 
         if (status && status !== 'All') {
@@ -369,7 +379,11 @@ export class InstrumentsService {
             historyQuery.andWhere('instrument.location ILIKE :location', { location });
         }
         if (device_type && device_type !== 'All') {
-            historyQuery.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            if (/reference|master/i.test(device_type)) {
+                historyQuery.andWhere("LOWER(TRIM(instrument.device_type)) IN ('reference standard', 'master')");
+            } else {
+                historyQuery.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            }
         }
 
         const instrumentIds = await historyQuery.getRawMany();
@@ -390,7 +404,11 @@ export class InstrumentsService {
             .where('instrument.id IN (:...ids)', { ids });
 
         if (device_type && device_type !== 'All') {
-            query.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            if (/reference|master/i.test(device_type)) {
+                query.andWhere("LOWER(TRIM(instrument.device_type)) IN ('reference standard', 'master')");
+            } else {
+                query.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            }
         }
         if (frequency && frequency !== 'All') {
             query.andWhere('instrument.frequency ILIKE :frequency', { frequency });
@@ -482,8 +500,29 @@ export class InstrumentsService {
                 autoStatus = 'OK';
             }
 
+            // Enforce unified device_type / is_reference_standard consistency
+            let autoIsReferenceStandard = instrumentDto.is_reference_standard;
+            let normalizedDeviceType = instrumentDto.device_type;
+            if (instrumentDto.device_type) {
+                const dt = instrumentDto.device_type.trim();
+                if (/reference|master/i.test(dt)) {
+                    autoIsReferenceStandard = true;
+                    normalizedDeviceType = 'Reference Standard';
+                } else if (/instrument/i.test(dt)) {
+                    autoIsReferenceStandard = false;
+                    normalizedDeviceType = 'Instrument';
+                } else if (/gauge/i.test(dt)) {
+                    autoIsReferenceStandard = false;
+                    normalizedDeviceType = 'Gauge';
+                }
+            } else if (autoIsReferenceStandard) {
+                normalizedDeviceType = 'Reference Standard';
+            }
+
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
+                device_type: normalizedDeviceType,
+                is_reference_standard: autoIsReferenceStandard ?? false,
                 sino: sinoValue,
                 status: autoStatus,
                 item_status: autoItemStatus,
@@ -525,6 +564,24 @@ export class InstrumentsService {
             }
 
             const payload: any = { ...updateInstrumentDto };
+
+            if (payload.device_type !== undefined) {
+                const dt = (payload.device_type || '').trim();
+                if (/reference|master/i.test(dt)) {
+                    payload.is_reference_standard = true;
+                    payload.device_type = 'Reference Standard';
+                } else if (/instrument/i.test(dt)) {
+                    payload.is_reference_standard = false;
+                    payload.device_type = 'Instrument';
+                } else if (/gauge/i.test(dt)) {
+                    payload.is_reference_standard = false;
+                    payload.device_type = 'Gauge';
+                }
+            } else if (payload.is_reference_standard !== undefined) {
+                if (payload.is_reference_standard) {
+                    payload.device_type = 'Reference Standard';
+                }
+            }
 
             if (payload.item_status !== undefined) {
                 payload.item_status = this.normalizeItemStatus(payload.item_status);

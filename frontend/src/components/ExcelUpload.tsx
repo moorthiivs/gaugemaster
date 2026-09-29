@@ -102,7 +102,6 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
     "Calibration Source", "Customer", "Sector", "Criticality Level",
     "Cert. No.", "Remarks", "Gauge Issue Date", "Gauges Received By",
     "Gauges Issued By", "Calibration Procedure& Ref Std", "Traceable",
-    "Is Reference Standard",
     ...customHeaders
   ];
   const sampleRow = [
@@ -112,7 +111,7 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
     "Instrument", "Mitutoyo", "Mechanical", "PN-001", "Slide", "MOD1",
     "External", "Company Name", "Manufacturing", "High",
     "CERT-001", "Tested okay", "2024-01-01", "John Doe",
-    "Jane Doe", "ISO 9001", "NABL", "No",
+    "Jane Doe", "ISO 9001", "NABL",
     ...customHeaders.map(() => "Sample Value")
   ];
   ws.addRow(headers);
@@ -125,6 +124,13 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
     type: "list",
     allowBlank: true,
     formulae: ['"1 MONTH,2 MONTH,3 MONTH,6 MONTH,12 MONTH,24 MONTH,36 MONTH,48 MONTH,60 MONTH"'],
+  });
+
+  // Add dropdown validation for Device Type column (Column N)
+  (ws as any).dataValidations.add("N2:N999", {
+    type: "list",
+    allowBlank: true,
+    formulae: ['"Instrument,Gauge,Reference Standard"'],
   });
 
   const buf = await wb.xlsx.writeBuffer();

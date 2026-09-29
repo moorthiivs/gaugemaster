@@ -1467,12 +1467,8 @@ export default function Instruments() {
   ]);
 
   const availableDeviceTypes = useMemo(() => {
-    if (DeviceTypeFilter && DeviceTypeFilter.length > 0) {
-      const unique = Array.from(new Set(DeviceTypeFilter.map(d => d?.trim()).filter(Boolean)));
-      if (unique.length > 0) return unique;
-    }
     return ["Instruments", "Gauges", "Reference Standards"];
-  }, [DeviceTypeFilter]);
+  }, []);
 
   return (
     <>
@@ -1535,15 +1531,23 @@ export default function Instruments() {
                 All
               </button>
               {availableDeviceTypes.map((dt) => {
-                const isSelected = filters.device_type === dt || (dt.toLowerCase().includes("reference") && filters.is_reference_standard === "true");
+                const isRefTab = dt.toLowerCase().includes("reference") || dt.toLowerCase().includes("master");
+                const isGaugeTab = dt.toLowerCase().includes("gauge");
+                const isInstTab = dt.toLowerCase().includes("instrument");
+
+                const isSelected =
+                  (isRefTab && (filters.is_reference_standard === "true" || filters.device_type === "Reference Standard" || filters.device_type === "Master")) ||
+                  (isGaugeTab && filters.device_type === "Gauge" && filters.is_reference_standard !== "true") ||
+                  (isInstTab && filters.device_type === "Instrument" && filters.is_reference_standard !== "true");
+
                 return (
                   <button 
                     key={dt}
                     type="button"
                     onClick={() => setFilters(f => ({
                       ...f,
-                      device_type: dt,
-                      is_reference_standard: dt.toLowerCase().includes("reference") ? "true" : "All",
+                      device_type: isRefTab ? "Reference Standard" : isGaugeTab ? "Gauge" : "Instrument",
+                      is_reference_standard: isRefTab ? "true" : "false",
                       page: 1
                     }))}
                     className={`px-3 py-1 text-xs font-semibold rounded-md transition-all capitalize ${isSelected ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
@@ -2024,9 +2028,15 @@ export default function Instruments() {
                 item_type: getVal(["Item Type", "Type"]),
                 device_type: (() => {
                   const val = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"]);
-                  if (val) return val.toString().trim();
+                  if (val) {
+                    const str = val.toString().trim();
+                    if (/reference|master/i.test(str)) return "Reference Standard";
+                    if (/gauge/i.test(str)) return "Gauge";
+                    if (/instrument/i.test(str)) return "Instrument";
+                    return str;
+                  }
                   const isRef = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (isRef === "yes" || isRef === "true") return "Reference Standard";
+                  if (isRef === "yes" || isRef === "true" || isRef === "1") return "Reference Standard";
                   return "Instrument";
                 })(),
                 part_no: getVal(["Part No", "PART NO", "Part Number"]),
@@ -2047,8 +2057,8 @@ export default function Instruments() {
                 traceable: getVal(["Traceable", "Traceability"]),
                 is_reference_standard: (() => {
                   const val = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (val === "yes" || val === "true") return true;
-                  const devType = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device"])?.toString().toLowerCase();
+                  if (val === "yes" || val === "true" || val === "1") return true;
+                  const devType = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"])?.toString().toLowerCase();
                   if (devType && (devType.includes("reference") || devType.includes("master"))) return true;
                   return false;
                 })(),
