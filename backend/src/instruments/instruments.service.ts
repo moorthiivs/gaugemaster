@@ -370,7 +370,7 @@ export class InstrumentsService {
             const userIds = await this.getCompanyUserIds(createdBy);
             historyQuery.where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] });
         }
-        historyQuery.andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+        historyQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
 
         if (item_status && item_status !== 'All') {
             historyQuery.andWhere('instrument.item_status ILIKE :item_status', { item_status });
@@ -487,7 +487,12 @@ export class InstrumentsService {
                 autoStatus = 'OK';
             }
 
-            const parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
+            let parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
+            const parsedLastCal = this.parseDateSafe(instrumentDto.last_calibration_date);
+            if (!parsedDueDate && parsedLastCal) {
+                parsedDueDate = this.calculateDueDateFromFrequency(parsedLastCal, instrumentDto.frequency);
+            }
+
             if (parsedDueDate) {
                 const today = new Date();
                 today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
@@ -599,6 +604,17 @@ export class InstrumentsService {
             const companyId = instrument.companyId || updateInstrumentDto.companyId;
             if (companyId) {
                 await this.validationService.validateData(companyId, merged);
+            }
+
+            // Automatically update due_date if last_calibration_date is updated and due_date was omitted
+            if (payload.last_calibration_date !== undefined && (payload.due_date === undefined || payload.due_date === null)) {
+                const parsedLastCal = this.parseDateSafe(payload.last_calibration_date);
+                if (parsedLastCal) {
+                    payload.due_date = this.calculateDueDateFromFrequency(
+                        parsedLastCal,
+                        payload.frequency || instrument.frequency,
+                    );
+                }
             }
 
             // Automatically update status based on new due_date if not REJECTED
@@ -735,20 +751,83 @@ export class InstrumentsService {
         }
     }
 
-    private parseFrequencyMonths(frequencyStr?: string): number {
-        if (!frequencyStr) return 6;
-        const match = frequencyStr.match(/\d+/);
-        if (!match) return 6;
-        let val = parseInt(match[0], 10);
-        const normalized = frequencyStr.toLowerCase();
-        if (normalized.includes('year') || normalized.includes('yr')) {
-            val *= 12;
-        } else if (normalized.includes('day')) {
-            val = Math.max(1, Math.round(val / 30));
-        } else if (normalized.includes('week')) {
-            val = Math.max(1, Math.round((val * 7) / 30));
+    public parseFrequencyMonths(frequencyStr?: string): number {
+        if (!frequencyStr) return 12;
+        const normalized = frequencyStr.toLowerCase().trim();
+        if (normalized.includes('year') || normalized.includes('yr') || normalized.includes('annu')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return num * 12;
         }
-        return val > 0 ? val : 6;
+        if (normalized.includes('month') || normalized.includes('mo')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return num;
+        }
+        if (normalized.includes('week') || normalized.includes('wk')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return Math.max(1, Math.round((num * 7) / 30));
+        }
+        if (normalized.includes('day')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return Math.max(1, Math.round(num / 30));
+        }
+        const match = normalized.match(/\d+/);
+        if (match) {
+            const val = parseInt(match[0], 10);
+            return val > 0 ? val : 12;
+        }
+        return 12;
+    }
+
+    public calculateDueDateFromFrequency(baseDate: Date | string, frequencyStr?: string): Date {
+        const d = new Date(baseDate);
+        if (isNaN(d.getTime())) return new Date();
+
+        if (!frequencyStr) {
+            d.setFullYear(d.getFullYear() + 1);
+            return d;
+        }
+
+        const normalized = frequencyStr.toLowerCase().trim();
+        if (normalized.includes('year') || normalized.includes('yr') || normalized.includes('annu')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            d.setFullYear(d.getFullYear() + num);
+            return d;
+        }
+        if (normalized.includes('month') || normalized.includes('mo')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            d.setMonth(d.getMonth() + num);
+            return d;
+        }
+        if (normalized.includes('week') || normalized.includes('wk')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            d.setDate(d.getDate() + num * 7);
+            return d;
+        }
+        if (normalized.includes('day')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            d.setDate(d.getDate() + num);
+            return d;
+        }
+        const match = normalized.match(/\d+/);
+        if (match) {
+            const val = parseInt(match[0], 10);
+            if (val === 1 || val === 2) {
+                d.setFullYear(d.getFullYear() + val);
+            } else {
+                d.setMonth(d.getMonth() + val);
+            }
+            return d;
+        }
+        d.setFullYear(d.getFullYear() + 1);
+        return d;
     }
 
 

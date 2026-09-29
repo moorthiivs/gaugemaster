@@ -103,7 +103,7 @@ export class SummaryReportService {
         .innerJoin('h.instrument', 'i')
         .where('i.companyId = :companyId', { companyId: loc.companyId })
         .andWhere('i.location = :location', { location: loc.location })
-        .andWhere('h.created_at >= :thirtyDaysAgo', { thirtyDaysAgo })
+        .andWhere('h.last_calibration_date >= :thirtyDaysAgo', { thirtyDaysAgo })
         .getCount();
 
       const html = this.buildSummaryEmailHtml({
@@ -170,7 +170,7 @@ export class SummaryReportService {
         .createQueryBuilder('h')
         .innerJoin('h.instrument', 'i')
         .where('i.companyId = :companyId', { companyId: setting.companyId })
-        .andWhere('h.created_at >= :thirtyDaysAgo', { thirtyDaysAgo })
+        .andWhere('h.last_calibration_date >= :thirtyDaysAgo', { thirtyDaysAgo })
         .getCount();
 
       const html = this.buildSummaryEmailHtml({

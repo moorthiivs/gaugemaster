@@ -24,19 +24,41 @@ export function parseLocalDate(dateStr?: string | null): Date | undefined {
 export function parseFrequencyMonths(freq?: string): number {
   if (!freq || typeof freq !== "string") return 12;
   const normalized = freq.trim().toLowerCase();
-  const match = normalized.match(/(\d+)/);
-  if (!match) return 12;
 
-  let val = parseInt(match[1], 10);
-  if (normalized.includes("year") || normalized.includes("yr")) {
-    val *= 12;
-  } else if (normalized.includes("day")) {
-    val = Math.max(1, Math.round(val / 30));
-  } else if (normalized.includes("week")) {
-    val = Math.max(1, Math.round((val * 7) / 30));
+  if (normalized.includes("half") || normalized.includes("semi")) return 6;
+  if (normalized.includes("quarter")) return 3;
+
+  if (normalized.includes("year") || normalized.includes("yr") || normalized.includes("annu")) {
+    const match = normalized.match(/(\d+)/);
+    const num = match ? parseInt(match[1], 10) : 1;
+    return num * 12;
   }
 
-  return val > 0 ? val : 12;
+  if (normalized.includes("month") || normalized.includes("mo")) {
+    const match = normalized.match(/(\d+)/);
+    const num = match ? parseInt(match[1], 10) : 1;
+    return num;
+  }
+
+  if (normalized.includes("week") || normalized.includes("wk")) {
+    const match = normalized.match(/(\d+)/);
+    const num = match ? parseInt(match[1], 10) : 1;
+    return Math.max(1, Math.round((num * 7) / 30));
+  }
+
+  if (normalized.includes("day")) {
+    const match = normalized.match(/(\d+)/);
+    const num = match ? parseInt(match[1], 10) : 1;
+    return Math.max(1, Math.round(num / 30));
+  }
+
+  const match = normalized.match(/(\d+)/);
+  if (match) {
+    const val = parseInt(match[1], 10);
+    return val > 0 ? val : 12;
+  }
+
+  return 12;
 }
 
 /**

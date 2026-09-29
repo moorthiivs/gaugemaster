@@ -87,7 +87,7 @@ export class DashboardService {
             } else {
                 q.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
             }
-            q.andWhere('history.created_at BETWEEN :sDate AND :eDate', { sDate, eDate });
+            q.andWhere('history.last_calibration_date BETWEEN :sDate AND :eDate', { sDate, eDate });
 
             if (itemStatus && itemStatus !== 'All') {
                 q.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -153,12 +153,38 @@ export class DashboardService {
         // Calibrated count for selected range (from calibration history)
         const calibratedCount = await countHistoryCalibrations(startRange, endRange);
 
-        // Pending (due in range) count
-        const pendingCount = await this.instrumentRepository.count({
-            where: getBaseWhere({
-                due_date: Between(startRange, endRange),
-            }),
-        });
+        // Pending (due in range) count: instruments due in range excluding those already calibrated in this period
+        const pendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
+            .select('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            pendingQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            pendingQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        pendingQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
+        pendingQuery.andWhere(
+            'instrument.id NOT IN (SELECT DISTINCT h.instrument_id FROM calibration_history h WHERE h.last_calibration_date BETWEEN :startRange AND :endRange)',
+            { startRange, endRange },
+        );
+
+        if (itemStatus && itemStatus !== 'All') {
+            pendingQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            pendingQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            pendingQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            pendingQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            pendingQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+
+        const pendingRes = await pendingQuery.getRawOne();
+        const pendingCount = Number(pendingRes?.count || 0);
 
         const dueThisMonth = pendingCount + calibratedCount;
 
@@ -249,8 +275,8 @@ export class DashboardService {
         // Actual completed counts grouped by month — single query
         const actualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
             .innerJoin('history.instrument', 'instrument')
-            .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
-            .addSelect(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
+            .select(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
+            .addSelect(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
             .addSelect('COUNT(DISTINCT instrument.id)', 'count');
 
         if (targetCompanyId) {
@@ -258,7 +284,7 @@ export class DashboardService {
         } else {
             actualQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
         }
-        actualQuery.andWhere('history.created_at BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
+        actualQuery.andWhere('history.last_calibration_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
 
         if (itemStatus) {
             actualQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -470,8 +496,8 @@ export class DashboardService {
         {
             const weeklyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
-                .select(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
-                .addSelect(`TO_CHAR(DATE_TRUNC('week', history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
+                .select(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
+                .addSelect(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
                 .addSelect('COUNT(DISTINCT instrument.id)', 'count');
 
             if (targetCompanyId) {
@@ -479,7 +505,7 @@ export class DashboardService {
             } else {
                 weeklyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
             }
-            weeklyQuery.andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+            weeklyQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
 
             if (itemStatus) {
                 weeklyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -492,7 +518,7 @@ export class DashboardService {
             }
 
             weeklyQuery.groupBy('week_start').addGroupBy('week_end')
-                .orderBy('MIN(history.created_at)', 'ASC');
+                .orderBy('MIN(history.last_calibration_date)', 'ASC');
 
             const weeklyRows = await weeklyQuery.getRawMany();
             for (const row of weeklyRows) {
@@ -527,8 +553,8 @@ export class DashboardService {
 
             const dailyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
-                .select(`TO_CHAR(history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
-                .addSelect(`EXTRACT(DOW FROM history.created_at AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
+                .select(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
+                .addSelect(`EXTRACT(DOW FROM history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
                 .addSelect('COUNT(DISTINCT instrument.id)', 'count');
 
             if (targetCompanyId) {
@@ -536,7 +562,7 @@ export class DashboardService {
             } else {
                 dailyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
             }
-            dailyQuery.andWhere('history.created_at BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
+            dailyQuery.andWhere('history.last_calibration_date BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
 
             if (itemStatus) {
                 dailyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -710,8 +736,8 @@ export class DashboardService {
                 query.andWhere('instrument.location = :location', { location });
             }
 
-            query.andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange })
-                 .orderBy('history.created_at', 'DESC');
+            query.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange })
+                 .orderBy('history.last_calibration_date', 'DESC');
 
             const historyEntries = await query.getMany();
 

@@ -259,6 +259,24 @@ export class CalibrationService {
 
     const approval_status = dto.approval_status || 'Calibration Completed';
 
+    let computedNextCalDate = dto.next_calibration_date
+      ? new Date(dto.next_calibration_date)
+      : undefined;
+
+    if (!computedNextCalDate && dto.instrument_id && dto.calibration_date) {
+      try {
+        const inst = await this.instrumentsService.findOne(dto.instrument_id);
+        if (inst) {
+          computedNextCalDate = this.instrumentsService.calculateDueDateFromFrequency(
+            new Date(dto.calibration_date),
+            inst.frequency,
+          );
+        }
+      } catch (err) {
+        console.warn(`Could not compute next_calibration_date for instrument ${dto.instrument_id}:`, err);
+      }
+    }
+
     const calibration = this.calibrationRepository.create({
       ...dto,
       certificate_number,
@@ -274,9 +292,7 @@ export class CalibrationService {
       reference_standard_validity: dto.reference_standard_validity
         ? new Date(dto.reference_standard_validity)
         : undefined,
-      next_calibration_date: dto.next_calibration_date
-        ? new Date(dto.next_calibration_date)
-        : undefined,
+      next_calibration_date: computedNextCalDate,
       created_by: dto.created_by ? ({ id: dto.created_by } as any) : undefined,
     });
 
@@ -287,7 +303,7 @@ export class CalibrationService {
       try {
         await this.instrumentsService.update(dto.instrument_id, {
           last_calibration_date: savedCalibration.calibration_date as any,
-          due_date: savedCalibration.next_calibration_date as any,
+          due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
           status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
           calibration_source: 'In-House',
         } as any);
@@ -322,9 +338,19 @@ export class CalibrationService {
     // Update Instrument Master schedule now that it is Approved
     if (calibration.instrument_id) {
       try {
+        let finalDueDate = saved.next_calibration_date;
+        if (!finalDueDate && saved.calibration_date) {
+          const inst = await this.instrumentsService.findOne(calibration.instrument_id);
+          if (inst) {
+            finalDueDate = this.instrumentsService.calculateDueDateFromFrequency(
+              saved.calibration_date,
+              inst.frequency,
+            );
+          }
+        }
         await this.instrumentsService.update(calibration.instrument_id, {
           last_calibration_date: saved.calibration_date as any,
-          due_date: saved.next_calibration_date as any,
+          due_date: finalDueDate as any,
           status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
           calibration_source: 'In-House',
         } as any);
@@ -701,6 +727,18 @@ export class CalibrationService {
       existing.next_calibration_date = dto.next_calibration_date
         ? new Date(dto.next_calibration_date)
         : (undefined as any);
+    } else if (!existing.next_calibration_date && existing.calibration_date && existing.instrument_id) {
+      try {
+        const inst = await this.instrumentsService.findOne(existing.instrument_id);
+        if (inst) {
+          existing.next_calibration_date = this.instrumentsService.calculateDueDateFromFrequency(
+            existing.calibration_date,
+            inst.frequency,
+          );
+        }
+      } catch (e) {
+        console.warn('Could not compute next_calibration_date on update:', e);
+      }
     }
 
     const saved = await this.calibrationRepository.save(existing);

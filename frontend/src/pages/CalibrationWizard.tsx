@@ -36,6 +36,7 @@ import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn, getRoleName } from "@/lib/utils";
+import { computeNextDueDate, parseFrequencyMonths } from "@/lib/dateUtils";
 
 const STEPS = [
   "Select Instrument",
@@ -44,18 +45,6 @@ const STEPS = [
   "Results & Verdict",
   "Certificate",
 ];
-
-const parseFrequencyMonths = (freq?: string): number => {
-  if (!freq) return 6;
-  const normalized = freq.trim().toLowerCase();
-  const match = normalized.match(/(\d+)/);
-  if (!match) return 6;
-  let val = parseInt(match[1], 10);
-  if (normalized.includes("year")) {
-    val *= 12;
-  }
-  return val > 0 ? val : 6;
-};
 
 const toLocalYyyyMmDd = (d?: string | Date | null): string => {
   if (!d) return "";
@@ -77,17 +66,6 @@ const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-y
   } catch {
     return "-";
   }
-};
-
-const computeNextDueDate = (baseDateStr: string, frequencyStr?: string): string => {
-  if (!baseDateStr) return "";
-  const baseDate = parseISO(baseDateStr.includes("T") ? baseDateStr.split("T")[0] : baseDateStr);
-  if (isNaN(baseDate.getTime())) return "";
-  
-  const monthsToAdd = parseFrequencyMonths(frequencyStr);
-  const nextDate = addMonths(baseDate, monthsToAdd);
-  
-  return format(nextDate, "yyyy-MM-dd");
 };
 
 export default function CalibrationWizard() {
