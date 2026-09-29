@@ -55,14 +55,20 @@ export class CalibrationTemplatesService {
     const qb = this.repository.createQueryBuilder('template');
 
     if (companyId && userId) {
-      qb.where('(template.companyId = :companyId OR template.companyId IS NULL OR template.userId = :userId)', {
-        companyId,
-        userId,
-      });
+      qb.where(
+        '(template.companyId = :companyId OR (template.companyId IS NULL AND template.userId IS NULL) OR template.userId = :userId)',
+        { companyId, userId },
+      );
     } else if (companyId) {
-      qb.where('(template.companyId = :companyId OR template.companyId IS NULL)', { companyId });
+      qb.where(
+        '(template.companyId = :companyId OR (template.companyId IS NULL AND template.userId IS NULL))',
+        { companyId },
+      );
     } else if (userId) {
-      qb.where('(template.userId = :userId OR template.companyId IS NULL)', { userId });
+      qb.where(
+        '(template.userId = :userId OR (template.companyId IS NULL AND template.userId IS NULL))',
+        { userId },
+      );
     }
 
     if (calibrationType && calibrationType !== 'All') {
@@ -77,7 +83,10 @@ export class CalibrationTemplatesService {
       );
     }
 
-    qb.orderBy('template.createdAt', 'DESC');
+    qb.orderBy(
+      'CASE WHEN template.updatedAt IS NOT NULL AND template.updatedAt > template.createdAt THEN template.updatedAt ELSE template.createdAt END',
+      'DESC',
+    ).addOrderBy('template.createdAt', 'DESC');
 
     return qb.getMany();
   }
@@ -134,10 +143,17 @@ export class CalibrationTemplatesService {
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
     const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
+    const isAdmin =
+      isSuperAdmin ||
+      currentUser?.role === 'Admin' ||
+      currentUser?.role === 'admin' ||
+      currentUser?.role?.name?.toLowerCase() === 'admin' ||
+      currentUser?.userRole?.name?.toLowerCase() === 'admin';
 
     if (!isSuperAdmin) {
+      const templateCompanyId = template.companyId || template.user?.companyId;
       const isOwner = !!(currentUserId && template.userId === currentUserId);
-      const isSameCompany = !!(userCompanyId && template.companyId === userCompanyId);
+      const isSameCompany = !!(userCompanyId && templateCompanyId === userCompanyId);
 
       // Only true system templates (no creator user AND no company) cannot be deleted by non-superadmins
       if (!template.companyId && !template.userId) {
@@ -147,16 +163,16 @@ export class CalibrationTemplatesService {
       }
 
       // If template is assigned to an organization, check tenant isolation
-      if (template.companyId && userCompanyId && template.companyId !== userCompanyId && !isOwner) {
+      if (templateCompanyId && userCompanyId && templateCompanyId !== userCompanyId && !isOwner) {
         throw new ForbiddenException(
-          'You do not have permission to delete this template.',
+          'You do not have permission to delete calibration templates belonging to another organization.',
         );
       }
 
-      // If template has a specific owner and is not in user's company and user is not the owner
-      if (!isOwner && !isSameCompany && template.userId && currentUserId && currentUserId !== template.userId) {
+      // If user is not an Admin, they can only delete their own templates
+      if (!isAdmin && !isOwner) {
         throw new ForbiddenException(
-          'You do not have permission to delete this template.',
+          'You do not have permission to delete templates created by another user.',
         );
       }
     }
@@ -208,6 +224,12 @@ export class CalibrationTemplatesService {
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
     const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
+    const isAdmin =
+      isSuperAdmin ||
+      currentUser?.role === 'Admin' ||
+      currentUser?.role === 'admin' ||
+      currentUser?.role?.name?.toLowerCase() === 'admin' ||
+      currentUser?.userRole?.name?.toLowerCase() === 'admin';
 
     if (!isSuperAdmin) {
       // 1. System templates protection (true system default: neither companyId nor userId)
@@ -221,12 +243,14 @@ export class CalibrationTemplatesService {
 
       // 2. Multi-tenant isolation check
       if (userCompanyId) {
-        const foreignTemplates = templates.filter(
-          (t) =>
-            t.companyId &&
-            t.companyId !== userCompanyId &&
-            (!currentUserId || t.userId !== currentUserId),
-        );
+        const foreignTemplates = templates.filter((t) => {
+          const templateCompanyId = t.companyId || t.user?.companyId;
+          return (
+            templateCompanyId &&
+            templateCompanyId !== userCompanyId &&
+            (!currentUserId || t.userId !== currentUserId)
+          );
+        });
         if (foreignTemplates.length > 0) {
           throw new ForbiddenException(
             'You do not have permission to delete calibration templates belonging to another organization.',
@@ -234,18 +258,16 @@ export class CalibrationTemplatesService {
         }
       }
 
-      // 3. User ownership check for templates without companyId
-      const notOwnedTemplates = templates.filter(
-        (t) =>
-          !t.companyId &&
-          t.userId &&
-          currentUserId &&
-          t.userId !== currentUserId,
-      );
-      if (notOwnedTemplates.length > 0) {
-        throw new ForbiddenException(
-          'You do not have permission to delete templates created by another user.',
+      // 3. User ownership check for non-admins
+      if (!isAdmin) {
+        const notOwnedTemplates = templates.filter(
+          (t) => t.userId && currentUserId && t.userId !== currentUserId,
         );
+        if (notOwnedTemplates.length > 0) {
+          throw new ForbiddenException(
+            'You do not have permission to delete templates created by another user.',
+          );
+        }
       }
     }
 

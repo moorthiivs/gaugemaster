@@ -29,6 +29,9 @@ interface TemplateBulkDeleteModalProps {
   onOpenChange: (open: boolean) => void;
   selectedTemplates: CalibrationTemplate[];
   isSuperAdmin?: boolean;
+  isAdmin?: boolean;
+  currentUserId?: string;
+  userCompanyId?: string;
   onSuccess: () => void;
 }
 
@@ -37,6 +40,9 @@ export function TemplateBulkDeleteModal({
   onOpenChange,
   selectedTemplates,
   isSuperAdmin = false,
+  isAdmin = false,
+  currentUserId,
+  userCompanyId,
   onSuccess,
 }: TemplateBulkDeleteModalProps) {
   const [loading, setLoading] = useState(false);
@@ -52,15 +58,31 @@ export function TemplateBulkDeleteModal({
     const del: CalibrationTemplate[] = [];
 
     selectedTemplates.forEach((tpl) => {
-      if (!tpl.companyId && !tpl.userId && !isSuperAdmin) {
+      // 1. True system default templates (no company, no user) cannot be deleted unless SuperAdmin
+      const isSystem = !tpl.companyId && !tpl.userId;
+      if (isSystem && !isSuperAdmin) {
         sys.push(tpl);
-      } else {
-        del.push(tpl);
+        return;
       }
+
+      // 2. Foreign company templates cannot be deleted unless SuperAdmin
+      const tplCompanyId = tpl.companyId || (tpl as any).user?.companyId;
+      if (tplCompanyId && userCompanyId && tplCompanyId !== userCompanyId && !isSuperAdmin) {
+        sys.push(tpl);
+        return;
+      }
+
+      // 3. If not an Admin or SuperAdmin, user can only delete their own templates
+      if (!isSuperAdmin && !isAdmin && tpl.userId && currentUserId && tpl.userId !== currentUserId) {
+        sys.push(tpl);
+        return;
+      }
+
+      del.push(tpl);
     });
 
     return { systemTemplates: sys, deletableTemplates: del };
-  }, [selectedTemplates, isSuperAdmin]);
+  }, [selectedTemplates, isSuperAdmin, isAdmin, currentUserId, userCompanyId]);
 
   const handleDelete = async () => {
     if (deletableTemplates.length === 0) {

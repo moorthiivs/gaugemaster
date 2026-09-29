@@ -661,8 +661,17 @@ export default function CalibrationApprovalList() {
                       {/* Standard & Procedure References */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-card p-3 rounded-lg border text-xs">
                         <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Procedure Reference</span>
-                          <span className="font-medium font-mono text-foreground">{selectedRecord.procedure_reference || "AE/CAL-SOP/01"}</span>
+                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Procedure No &amp; Name</span>
+                          <span className="font-medium font-mono text-foreground">
+                            {(selectedRecord as any).procedure_no || selectedRecord.procedure_name || selectedRecord.procedure_reference
+                              ? [
+                                  (selectedRecord as any).procedure_no || selectedRecord.procedure_reference,
+                                  selectedRecord.procedure_name,
+                                ]
+                                  .filter(Boolean)
+                                  .join(" - ")
+                              : "-"}
+                          </span>
                         </div>
                         <div>
                           <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Standard Reference</span>

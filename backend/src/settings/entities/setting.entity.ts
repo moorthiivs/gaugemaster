@@ -90,6 +90,19 @@ export class Setting {
         headerBgColor?: string;        // Default: "#54c6f3" — header/footer banner background color
         headerDisplayMode?: string;    // "name" | "logo" | "both"
         companyLogoPath?: string;      // Path to uploaded logo image
+
+        // Certificate Typography & Font Sizes (pt)
+        titleFontSize?: number;
+        tableHeaderFontSize?: number;
+        contentFontSize?: number;
+        labelFontSize?: number;
+        valueFontSize?: number;
+        signatureFontSize?: number;
+
+        // Signature Dimensions & Table Spacing (pt)
+        signatureImageWidth?: number;
+        signatureImageHeight?: number;
+        tableGap?: number;
     };
 
     @Column({ type: "jsonb", nullable: true })

@@ -113,6 +113,7 @@ import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { SlidersHorizontal, LayoutGrid } from "lucide-react";
 import { validateTemplatePreSave } from "@/lib/templatePreSaveValidator";
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
+import { AddColumnModal } from "@/components/calibration/template-management/AddColumnModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export default function TemplateBuilderForm() {
@@ -195,6 +196,7 @@ export default function TemplateBuilderForm() {
   const [showAiModal, setShowAiModal] = useState(false);
   const [showTrialRun, setShowTrialRun] = useState(false);
   const [showTableAuditModal, setShowTableAuditModal] = useState(false);
+  const [showAddColumnModal, setShowAddColumnModal] = useState(false);
   const [auditTargetTable, setAuditTargetTable] =
     useState<TableGridBlock | null>(null);
 
@@ -460,13 +462,33 @@ export default function TemplateBuilderForm() {
     updateActiveTableBlock({ columns: updatedCols });
   };
 
+  const handleReorderColumnsInActiveTable = (
+    sourceIdx: number,
+    targetIdx: number,
+  ) => {
+    if (!activeTableBlock) return;
+    const currentCols = [...(activeTableBlock.columns || [])];
+    if (
+      sourceIdx < 0 ||
+      sourceIdx >= currentCols.length ||
+      targetIdx < 0 ||
+      targetIdx >= currentCols.length
+    )
+      return;
+    const [moved] = currentCols.splice(sourceIdx, 1);
+    currentCols.splice(targetIdx, 0, moved);
+    updateActiveTableBlock({ columns: currentCols });
+    markDirty();
+    toast.success(`Reordered column "${moved.label}"`);
+  };
+
   const [remarks, setRemarks] = useState(
     "Standard calibration per ISO/IEC 17025",
   );
   const [standardReference, setStandardReference] = useState(
     "Standard calibration per ISO/IEC 17025",
   );
-  const [procedureReference, setProcedureReference] = useState("AE/CAL-SOP/01");
+  const [procedureReference, setProcedureReference] = useState("");
   const [procedureNo, setProcedureNo] = useState("");
   const [procedureName, setProcedureName] = useState("");
   const [procedureDate, setProcedureDate] = useState("");
@@ -985,8 +1007,9 @@ export default function TemplateBuilderForm() {
             tpl.remarks ||
             "Standard calibration per ISO/IEC 17025",
         );
-        setProcedureReference(tpl.procedure_reference || "AE/CAL-SOP/01");
-        setProcedureNo((tpl as any).procedure_no || "");
+        const loadedProcNo = (tpl as any).procedure_no || (tpl as any).procedureNo || tpl.procedure_reference || "";
+        setProcedureNo(loadedProcNo);
+        setProcedureReference(loadedProcNo);
         setProcedureName(tpl.procedure_name || "");
         setProcedureDate(tpl.procedure_date || "");
         setProcedureRev(tpl.procedure_rev || "");
@@ -1156,7 +1179,7 @@ export default function TemplateBuilderForm() {
         diagram_image_alignment: diagramAlignment,
         remarks,
         standard_reference: standardReference,
-        procedure_reference: procedureReference,
+        procedure_reference: procedureNo ? procedureNo.trim() : null,
         procedure_no: procedureNo ? procedureNo.trim() : null,
         procedure_name: procedureName ? procedureName.trim() : null,
         procedure_date: procedureDate ? procedureDate.trim() : null,
@@ -1592,10 +1615,10 @@ export default function TemplateBuilderForm() {
                 <span>{totalPointsCount || 9} Points</span>
                 <span>•</span>
                 <span>ISO 17025</span>
-                {procedureReference && (
+                {(procedureNo || procedureReference) && (
                   <>
                     <span>•</span>
-                    <span>{procedureReference}</span>
+                    <span>{procedureNo || procedureReference}</span>
                   </>
                 )}
               </div>
@@ -1950,19 +1973,6 @@ export default function TemplateBuilderForm() {
                               value={procedureNo}
                               onChange={(e) => {
                                 setProcedureNo(e.target.value);
-                                markDirty();
-                              }}
-                              className="text-xs h-8"
-                            />
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-tiny text-muted-foreground">
-                              Procedure Doc. No. / SOP
-                            </Label>
-                            <Input
-                              placeholder="e.g., D/QCM/GI/006/01"
-                              value={procedureReference}
-                              onChange={(e) => {
                                 setProcedureReference(e.target.value);
                                 markDirty();
                               }}
@@ -2620,6 +2630,12 @@ export default function TemplateBuilderForm() {
                   }}
                   selectedColumnId={selectedColumnId}
                   onSelectColumnId={setSelectedColumnId}
+                  onOpenTableConfig={(tableId) => {
+                    setSelectedTableBlockId(tableId);
+                    setSelectedBlockId(tableId);
+                    setActiveNavTab("tableConfig");
+                    toast.info("Opened Table Configuration");
+                  }}
                   onRegisterActions={(actions) => {
                     canvasActionsRef.current = actions;
                   }}
@@ -3183,8 +3199,8 @@ export default function TemplateBuilderForm() {
                             <Button
                               type="button"
                               size="sm"
-                              onClick={handleAddColumnToActiveTable}
-                              className="h-8 text-xs gap-1.5 font-semibold shadow-xs"
+                              onClick={() => setShowAddColumnModal(true)}
+                              className="h-8 text-xs gap-1.5 font-semibold shadow-xs bg-indigo-600 hover:bg-indigo-700 text-white"
                             >
                               <Plus className="w-3.5 h-3.5" />
                               Add Column
@@ -3248,8 +3264,28 @@ export default function TemplateBuilderForm() {
                                       key={colIdentifier}
                                       className="hover:bg-muted/20 transition-colors"
                                     >
-                                      <td className="py-2 px-3 text-center text-muted-foreground font-mono text-xxs">
-                                        {idx + 1}
+                                      <td className="py-2 px-2 text-center text-muted-foreground font-mono text-xxs whitespace-nowrap">
+                                        <div className="flex items-center justify-center gap-1">
+                                          <button
+                                            type="button"
+                                            disabled={idx === 0}
+                                            onClick={() => handleReorderColumnsInActiveTable(idx, idx - 1)}
+                                            className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                                            title="Move column left / up"
+                                          >
+                                            <ChevronUp className="w-3 h-3" />
+                                          </button>
+                                          <span className="font-bold">{idx + 1}</span>
+                                          <button
+                                            type="button"
+                                            disabled={idx === (activeTableBlock.columns?.length || 1) - 1}
+                                            onClick={() => handleReorderColumnsInActiveTable(idx, idx + 1)}
+                                            className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                                            title="Move column right / down"
+                                          >
+                                            <ChevronDown className="w-3 h-3" />
+                                          </button>
+                                        </div>
                                       </td>
                                       <td className="py-2 px-3">
                                         <Input
@@ -3622,6 +3658,31 @@ export default function TemplateBuilderForm() {
                           </code>
                         );
                       })}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap pt-1.5 border-t border-border/40 mt-1">
+                      <span className="text-tiny font-semibold text-muted-foreground">
+                        Built-in Metrology Tokens:
+                      </span>
+                      {[
+                        { token: "tolerance", tip: "Table tolerance limit from header (e.g. ±0.005)" },
+                        { token: "lowerLimit", tip: "Row nominal minus tolerance limit" },
+                        { token: "upperLimit", tip: "Row nominal plus tolerance limit" },
+                        { token: "nominal", tip: "Nominal standard value" },
+                        { token: "avg", tip: "Row average of all trial readings" },
+                        { token: "error", tip: "Row deviation / error (actual - nominal)" },
+                      ].map((item) => (
+                        <code
+                          key={item.token}
+                          className="px-2 py-0.5 rounded-md bg-muted/60 border border-dashed border-primary/30 text-tiny font-mono text-muted-foreground font-semibold shadow-xs cursor-pointer hover:bg-primary hover:text-primary-foreground hover:border-solid transition-all"
+                          onClick={() => {
+                            navigator.clipboard.writeText(item.token);
+                            toast.success(`Copied "${item.token}" to clipboard!`);
+                          }}
+                          title={`${item.tip} — Click to copy`}
+                        >
+                          {item.token}
+                        </code>
+                      ))}
                     </div>
                   </div>
                 </>
@@ -4109,14 +4170,15 @@ export default function TemplateBuilderForm() {
                   </CardHeader>
                   <CardContent className="p-3.5 space-y-2.5">
                     <div className="space-y-1">
-                      <Label className="text-tiny">Procedure Ref / Code</Label>
+                      <Label className="text-tiny">Procedure No</Label>
                       <Input
-                        value={procedureReference}
+                        value={procedureNo}
                         onChange={(e) => {
+                          setProcedureNo(e.target.value);
                           setProcedureReference(e.target.value);
                           markDirty();
                         }}
-                        placeholder="e.g. AE/CAL-SOP/01"
+                        placeholder="e.g. PC-01"
                         className="text-xs h-7.5"
                       />
                     </div>
@@ -4128,23 +4190,11 @@ export default function TemplateBuilderForm() {
                           setProcedureName(e.target.value);
                           markDirty();
                         }}
-                        placeholder="e.g. SOP for Dial Gauges"
+                        placeholder="e.g. Master procedure"
                         className="text-xs h-7.5"
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-tiny">Doc No</Label>
-                        <Input
-                          value={procedureNo}
-                          onChange={(e) => {
-                            setProcedureNo(e.target.value);
-                            markDirty();
-                          }}
-                          placeholder="SOP-01"
-                          className="text-xs h-7.5"
-                        />
-                      </div>
                       <div className="space-y-1">
                         <Label className="text-tiny">Rev</Label>
                         <Input
@@ -4157,18 +4207,18 @@ export default function TemplateBuilderForm() {
                           className="text-xs h-7.5"
                         />
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Date</Label>
-                      <Input
-                        type="date"
-                        value={procedureDate}
-                        onChange={(e) => {
-                          setProcedureDate(e.target.value);
-                          markDirty();
-                        }}
-                        className="text-xs h-7.5"
-                      />
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Date</Label>
+                        <Input
+                          type="date"
+                          value={procedureDate}
+                          onChange={(e) => {
+                            setProcedureDate(e.target.value);
+                            markDirty();
+                          }}
+                          className="text-xs h-7.5"
+                        />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -5036,7 +5086,7 @@ export default function TemplateBuilderForm() {
                 doc_no: docNo || undefined,
                 doc_date: docDate || undefined,
                 doc_rev: docRev || undefined,
-                procedure_reference: procedureReference || "AE/CAL-SOP/01",
+                procedure_reference: procedureNo || undefined,
                 procedure_no: procedureNo || undefined,
                 procedure_name: procedureName || undefined,
                 procedure_date: procedureDate || undefined,
@@ -5153,6 +5203,15 @@ export default function TemplateBuilderForm() {
         onOpenChange={setShowTableAuditModal}
         table={auditTargetTable || activeTableBlock}
         onApplyFixes={handleApplyTableFixes}
+      />
+
+      {/* Add Column Modal */}
+      <AddColumnModal
+        open={showAddColumnModal}
+        onOpenChange={setShowAddColumnModal}
+        targetTable={activeTableBlock}
+        globalDecimalPlaces={decimalPlaces}
+        onAddColumn={handleAddTableColumn}
       />
     </div>
   );

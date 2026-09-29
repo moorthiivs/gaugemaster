@@ -695,6 +695,15 @@ export function extractASTDependencies(ast: ASTNode): string[] {
 }
 
 /**
+ * Safely extracts variable dependencies directly from a formula string.
+ */
+export function extractFormulaDependencies(formulaStr: string): string[] {
+  if (!formulaStr || !formulaStr.trim()) return [];
+  const parseRes = parseFormulaAST(formulaStr);
+  return parseRes.ast ? extractASTDependencies(parseRes.ast) : [];
+}
+
+/**
  * Safely evaluates an AST against a variable evaluation context.
  */
 export function evaluateAST(
@@ -825,14 +834,21 @@ export function evaluateAST(
     }
 
     if (node.type === "FunctionCall") {
+      // Lazy evaluation for conditional function IF (preserves short-circuiting)
+      if (node.name === "IF") {
+        if (!node.args.length) throw new Error("IF requires at least 1 argument");
+        const cond = evalNode(node.args[0]);
+        if (options.isBlankDetection && cond === null) return null;
+        if (cond) {
+          return node.args[1] ? evalNode(node.args[1]) : true;
+        } else {
+          return node.args[2] ? evalNode(node.args[2]) : false;
+        }
+      }
+
       const evaluatedArgs = node.args.map((a) => evalNode(a));
 
       switch (node.name) {
-        case "IF":
-          if (evaluatedArgs[0] === null) {
-            return null;
-          }
-          return evaluatedArgs[0] ? evaluatedArgs[1] : evaluatedArgs.length > 2 ? evaluatedArgs[2] : false;
         case "AND":
           return evaluatedArgs.every((arg) => Boolean(arg) && arg !== null);
         case "OR":
@@ -844,12 +860,21 @@ export function evaluateAST(
           return isBlankValue(raw) || raw === null || raw === undefined;
         }
         case "ABS":
+          if (options.isBlankDetection && (evaluatedArgs[0] === null || evaluatedArgs[0] === undefined || isBlankValue(evaluatedArgs[0]))) {
+            return null;
+          }
           return Math.abs(Number(evaluatedArgs[0]));
         case "SQRT": {
+          if (options.isBlankDetection && (evaluatedArgs[0] === null || evaluatedArgs[0] === undefined || isBlankValue(evaluatedArgs[0]))) {
+            return null;
+          }
           const val = Number(evaluatedArgs[0]);
           return val < 0 ? NaN : Math.sqrt(val);
         }
         case "ROUND": {
+          if (options.isBlankDetection && (evaluatedArgs[0] === null || evaluatedArgs[0] === undefined || isBlankValue(evaluatedArgs[0]))) {
+            return null;
+          }
           const num = Number(evaluatedArgs[0]);
           const dec = Number(evaluatedArgs[1] || 0);
           return isNaN(num) ? 0 : parseFloat(num.toFixed(dec));
@@ -1181,6 +1206,17 @@ export function validateFormula(
     } else if (model === "MPE_COMPARISON" && !cleanLower.includes("mpe") && !cleanLower.includes("limit")) {
       if (isJudgementCol && !cleanLower.includes("mpe")) {
         suitabilityReason = "Table model is MPE_COMPARISON, but judgement formula does not reference MPE.";
+        warnings.push(suitabilityReason);
+      }
+    } else if ((model === "DIRECT_DEVIATION" || model === "MULTI_TRIAL_ERROR") && isJudgementCol) {
+      const hasErrorCol = Array.isArray(options.availableColumns) && options.availableColumns.some((c: any) => {
+        const id = typeof c === "string" ? c : c.id || "";
+        const lbl = typeof c === "string" ? c : c.label || "";
+        return /error|deviation|diff/i.test(id) || /error|deviation|diff/i.test(lbl);
+      });
+      if (hasErrorCol && !cleanLower.includes("error") && !cleanLower.includes("dev") && !cleanLower.includes("diff")) {
+        suitabilityValid = false;
+        suitabilityReason = `Table model is ${model} with calculated Error/Deviation, but judgement formula does not evaluate error against tolerance.`;
         warnings.push(suitabilityReason);
       }
     }
@@ -2253,6 +2289,7 @@ export function evaluateCanvasRowFormulas(
   tableDec: number = 3
 ): any {
   if (!row) return row;
+  if (row.is_merged || row.isMerged) return row;
   const newRow = { ...row };
   const dec = tableDec;
 

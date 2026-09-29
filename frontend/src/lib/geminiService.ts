@@ -613,7 +613,7 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
         } else if (normLabel.includes("spec") || normLabel.includes("drawing") || normLabel.includes("description") || normId === "description") {
           role = "SPECIFICATION";
           colType = colType || "text";
-        } else if (normLabel.includes("nominal") || normLabel.includes("required") || normLabel.includes("master") || normLabel.includes("target") || normId === "nominal") {
+        } else if (normLabel.includes("nominal") || normLabel.includes("required") || normLabel.includes("master") || normLabel.includes("target") || normLabel.includes("std") || normId === "nominal" || normId.includes("std_")) {
           role = "NOMINAL";
           colType = colType || "nominal";
         } else if (normLabel.includes("lower limit") || normLabel.includes("min limit") || normId === "lower_limit") {
@@ -625,10 +625,10 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
         } else if (normLabel.includes("tolerance") || normLabel.includes("allowed limit") || normLabel.includes("mpe") || normId === "tolerance") {
           role = "TOLERANCE";
           colType = colType || "tolerance";
-        } else if (/^[1-5]$/.test(normLabel)) {
+        } else if (/^[1-9]\d*$/.test(normLabel) || /^t\d+$/i.test(normLabel) || /^trial/i.test(normLabel) || /^reading_[1-9]\d*$/i.test(normId) || /^trial_[1-9]\d*$/i.test(normId)) {
           role = "READING";
           colType = "trial";
-          colId = `t${normLabel}`;
+          colId = colId.startsWith("reading_") || colId.startsWith("trial_") || colId.startsWith("t") ? colId : `t${normLabel}`;
         } else if (normLabel.includes("actual") || normLabel.includes("reading") || normLabel.includes("observed") || normLabel.includes("measured") || normId.includes("reading") || normId.includes("actual")) {
           role = "READING";
           colType = colType || "reading";
@@ -662,16 +662,17 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     });
 
     // 2. Identify key semantic column IDs to bind generic calculations
-    const nominalCol = cols.find((c: any) => c.role === "NOMINAL" || c.id === "nominal") || cols.find((c: any) => c.label.toLowerCase().includes("nominal"));
-    const readingCol = cols.find((c: any) => c.role === "READING" && c.type !== "trial") || cols.find((c: any) => c.label.toLowerCase().includes("actual") || c.label.toLowerCase().includes("reading"));
-    const trialCols = cols.filter((c: any) => c.type === "trial");
+    const nominalCol = cols.find((c: any) => c.role === "NOMINAL" || c.id === "nominal" || c.id.includes("std_")) || cols.find((c: any) => /nominal|standard|std\b|target|master/i.test(c.label));
+    const trialCols = cols.filter((c: any) => c.type === "trial" || /^(t\d+|trial_\d+|reading_\d+|actual_\d+)$/i.test(c.id) || /^[1-9]\d*$/.test(c.label));
+    const readingCol = cols.find((c: any) => c.role === "READING" && c.type !== "trial" && !/^[1-9]\d*$/.test(c.label)) || cols.find((c: any) => c.label.toLowerCase().includes("actual") || c.label.toLowerCase().includes("reading"));
     const lowerLimitCol = cols.find((c: any) => c.role === "LOWER_LIMIT" || c.id === "lower_limit");
     const upperLimitCol = cols.find((c: any) => c.role === "UPPER_LIMIT" || c.id === "upper_limit");
     const toleranceCol = cols.find((c: any) => c.role === "TOLERANCE" || c.id === "tolerance");
-    const devCol = cols.find((c: any) => c.label.toLowerCase().includes("deviat") || c.label.toLowerCase().includes("error"));
+    const devCol = cols.find((c: any) => /deviat|error|diff/i.test(c.label) || /deviat|error/i.test(c.id));
+    const avgCol = cols.find((c: any) => /avg|average|mean/i.test(c.label) || /avg|average/i.test(c.id));
 
     const nominalId = nominalCol?.id || "nominal";
-    const readingId = readingCol?.id || "reading";
+    const readingId = avgCol?.id || readingCol?.id || (trialCols.length > 0 ? trialCols[0].id : "reading");
     const trialIds = trialCols.map((c: any) => c.id);
 
     // 3. Populate formulas & dependency lists for CALCULATED and JUDGEMENT columns
@@ -714,8 +715,9 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
       if (c.role === "CALCULATED" || c.type === "formula") {
         if (!formula) {
           if (normLabel.includes("deviat") || normLabel.includes("error") || normLabel.includes("diff")) {
-            formula = `${readingId} - ${nominalId}`;
-            dependsOn = [readingId, nominalId];
+            const measuredId = avgCol?.id || readingId;
+            formula = `${measuredId} - ${nominalId}`;
+            dependsOn = [measuredId, nominalId];
             formulaSource = formulaSource || "SYSTEM_GENERATED";
           } else if ((normLabel.includes("avg") || normLabel.includes("average") || normLabel.includes("mean")) && trialIds.length > 0) {
             formula = `AVERAGE(${trialIds.join(", ")})`;
@@ -732,13 +734,23 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
         }
       } else if (c.role === "JUDGEMENT" || c.type === "status") {
         if (!formula) {
-          if (lowerLimitCol && upperLimitCol) {
-            formula = `${readingId} >= ${lowerLimitCol.id} AND ${readingId} <= ${upperLimitCol.id}`;
-            dependsOn = [readingId, lowerLimitCol.id, upperLimitCol.id];
+          if (devCol) {
+            const tolTarget = toleranceCol ? toleranceCol.id : (tbl.tolerance !== undefined ? String(tbl.tolerance) : "tolerance");
+            formula = `ABS(${devCol.id}) <= ${tolTarget}`;
+            dependsOn = toleranceCol ? [devCol.id, toleranceCol.id] : [devCol.id];
             formulaSource = formulaSource || "SYSTEM_GENERATED";
-          } else if (toleranceCol && devCol) {
-            formula = `ABS(${devCol.id}) <= ${toleranceCol.id}`;
-            dependsOn = [devCol.id, toleranceCol.id];
+          } else if (lowerLimitCol && upperLimitCol) {
+            const targetVar = avgCol?.id || readingId;
+            formula = `${targetVar} >= ${lowerLimitCol.id} AND ${targetVar} <= ${upperLimitCol.id}`;
+            dependsOn = [targetVar, lowerLimitCol.id, upperLimitCol.id];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else if (avgCol) {
+            formula = `${avgCol.id} >= lowerLimit AND ${avgCol.id} <= upperLimit`;
+            dependsOn = [avgCol.id];
+            formulaSource = formulaSource || "SYSTEM_GENERATED";
+          } else if (trialCols.length > 1) {
+            formula = trialCols.map((tc: any) => `${tc.id} >= lowerLimit AND ${tc.id} <= upperLimit`).join(" AND ");
+            dependsOn = trialCols.map((tc: any) => tc.id);
             formulaSource = formulaSource || "SYSTEM_GENERATED";
           } else {
             formula = `${readingId} >= lowerLimit AND ${readingId} <= upperLimit`;
@@ -2972,18 +2984,26 @@ You must respond in JSON with:
         formula = 'IF(AND(actual_dimension >= lower_limit, actual_dimension <= upper_limit), "PASS", "FAIL")';
       }
 
+      const isJudgement =
+        /judg|status|verdict/i.test(colName) ||
+        actionPayload.type === "status" ||
+        actionPayload.role === "JUDGEMENT" ||
+        actionPayload.newColumn?.role === "JUDGEMENT" ||
+        actionPayload.newColumn?.type === "status";
+
       const newCol: CanvasColumnDef = {
         id: colId,
         label: colName.charAt(0).toUpperCase() + colName.slice(1),
-        type: formula ? "formula" : actionPayload.type || "reading",
-        role: formula ? (/judg|status/i.test(colName) ? "JUDGEMENT" : "CALCULATED") : "INPUT",
-        dataType: /judg|status/i.test(colName) ? "STATUS" : "NUMBER",
+        type: isJudgement ? "status" : formula ? "formula" : actionPayload.type || "reading",
+        role: isJudgement ? "JUDGEMENT" : formula ? "CALCULATED" : "INPUT",
+        dataType: isJudgement ? "STATUS" : "NUMBER",
         formula: formula || undefined,
         formulaStatus: formula ? "VALIDATED" : undefined,
         formulaSource: "SYSTEM_GENERATED",
         decimal_places: activeTable.decimal_places ?? 3,
-        width: "115px",
-        ...(actionPayload.newColumn || {})
+        width: isJudgement ? "110px" : "115px",
+        ...(actionPayload.newColumn || {}),
+        ...(isJudgement ? { type: "status" as const, role: "JUDGEMENT" as const, dataType: "STATUS" as const } : {})
       };
 
       actionPayload.newColumn = newCol;

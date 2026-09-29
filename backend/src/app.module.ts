@@ -49,6 +49,9 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
       synchronize: true,
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       uuidExtension: 'pgcrypto',
+      extra: {
+        options: '-c timezone=UTC',
+      },
     }),
 
     AuthModule,

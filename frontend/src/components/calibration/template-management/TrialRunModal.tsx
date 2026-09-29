@@ -292,7 +292,7 @@ export function TrialRunModal({
       pressure: "1013.2 hPa",
       soaking_time: "4 Hours",
     },
-    procedure_reference: procedureReference || "WI/CAL/01 (Accredited Calibration Procedure)",
+    procedure_reference: procedureNo || procedureReference || undefined,
     procedure_no: procedureNo || undefined,
     procedure_name: procedureName || undefined,
     procedure_date: procedureDate || undefined,

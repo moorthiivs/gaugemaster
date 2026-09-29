@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { format } from "date-fns";
 import { Instrument, InstrumentQuery } from "@/types/instrument";
 import { listInstruments, getFilterParams, updateInstrument, deleteInstrument, deleteInstrumentsBulk } from "@/lib/instrumentActions";
+import { normalizeItemStatus, deduplicateItemStatuses } from "@/lib/itemStatus";
 import { useSEO } from "@/hooks/useSEO";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -440,7 +441,7 @@ export default function Instruments() {
       setRefreshing(true);
       const filterData = await getFilterParams(user?.id, user?.companyId);
       setStatusFilter(["All", ...filterData.status]);
-      setItemStatusFilter(["All", ...(filterData.item_status || [])]);
+      setItemStatusFilter(["All", ...deduplicateItemStatuses(filterData.item_status || ["Active", "SPARE", "Inactive", "STOCK"])]);
       setFrequencyFilter(["All", ...filterData.frequency]);
       setLocationFilter(["All", ...filterData.location]);
       setCalibrationSourceFilter(["All", ...(filterData.calibration_source || [])]);
@@ -589,7 +590,7 @@ export default function Instruments() {
   useEffect(() => {
     getFilterParams(user?.id, user?.companyId).then(data => {
       setStatusFilter(["All", ...data.status]);
-      setItemStatusFilter(["All", ...(data.item_status || [])]);
+      setItemStatusFilter(["All", ...deduplicateItemStatuses(data.item_status || ["Active", "SPARE", "Inactive", "STOCK"])]);
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
       setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
@@ -1115,16 +1116,21 @@ export default function Instruments() {
       accessorKey: "item_status",
       header: "Item Status",
       cell: ({ row }) => {
-        const itemStatus = row.original.item_status || "Active";
-        const isActive = itemStatus === "Active";
+        const rawStatus = row.original.item_status || "Active";
+        const itemStatus = normalizeItemStatus(rawStatus);
+        const lower = itemStatus.toLowerCase();
+        const getBadgeStyle = () => {
+          if (lower === "active") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+          if (lower === "spare") return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+          if (lower === "stock") return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+          if (lower === "inactive") return "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
+          if (lower === "scrapped" || lower === "rejected") return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
+          return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
+        };
         return (
           <Badge 
             variant="outline" 
-            className={`border-0 ${
-              isActive 
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
-                : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-            }`}
+            className={`border font-semibold text-[11px] ${getBadgeStyle()}`}
           >
             {itemStatus}
           </Badge>
@@ -1638,7 +1644,11 @@ export default function Instruments() {
                 <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">I</Badge> Item Status
               </Label>
               <Select
-                value={filters.item_status as any}
+                value={
+                  ItemStatusFilter.find(
+                    (opt) => opt.toLowerCase() === (filters.item_status || "").toLowerCase()
+                  ) || (filters.item_status as any)
+                }
                 onValueChange={(v) => setFilters((f) => ({ ...f, item_status: v as any, page: 1 }))}
               >
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
@@ -2008,8 +2018,7 @@ export default function Instruments() {
                 })(),
                 item_status: (() => {
                   const s = getVal(["Item Status", "ITEM STATUS"]);
-                  if (!s || s.toString().trim().toLowerCase() === "ok") return "Active";
-                  return s;
+                  return normalizeItemStatus(s);
                 })(),
                 make: getVal(["Make", "Item Make"]),
                 item_type: getVal(["Item Type", "Type"]),

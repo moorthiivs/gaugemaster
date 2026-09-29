@@ -102,6 +102,15 @@ export class CreateSettingDto {
         ulrYearFormat: string;
         ulrSeqLength: number;
         ulrNextSeq: number;
+        titleFontSize?: number;
+        tableHeaderFontSize?: number;
+        contentFontSize?: number;
+        labelFontSize?: number;
+        valueFontSize?: number;
+        signatureFontSize?: number;
+        signatureImageWidth?: number;
+        signatureImageHeight?: number;
+        tableGap?: number;
     };
 
     @ApiProperty({ description: 'Dashboard & warning display configuration', required: false })

@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DashboardSummary } from "@/types/instrument";
 import { getDashboardSummary, getFilterParams } from "@/lib/instrumentActions";
+import { deduplicateItemStatuses } from "@/lib/itemStatus";
 import httpClient from "@/lib/httpClient";
 import {
   Card,
@@ -579,7 +580,7 @@ const Index = () => {
 
         const filters = await getFilterParams(user?.id, user?.companyId);
         setLocations(filters.location || []);
-        setItemStatuses(filters.item_status || []);
+        setItemStatuses(deduplicateItemStatuses(filters.item_status || []));
 
         const startStr = startDate
           ? format(startDate, "yyyy-MM-dd")

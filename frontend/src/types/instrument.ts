@@ -69,7 +69,9 @@ export type Instrument = {
       soaking_time?: string;
       soaking_start_time?: string;
       soaking_end_time?: string;
+      receipt_condition?: string;
     };
+    receipt_condition?: string;
   } & Record<string, any>;
   created_by?: any;
   updated_by?: any;

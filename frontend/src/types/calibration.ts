@@ -43,7 +43,9 @@ export interface CalibrationRecord {
     soaking_time?: string;
     soaking_start_time?: string;
     soaking_end_time?: string;
+    receipt_condition?: string;
   };
+  receipt_condition?: string;
 
   procedure_reference?: string;
   procedure_no?: string;

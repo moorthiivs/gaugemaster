@@ -15,4 +15,7 @@ export default new DataSource({
     synchronize: true,
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     uuidExtension: 'pgcrypto',
+    extra: {
+        options: '-c timezone=UTC',
+    },
 });

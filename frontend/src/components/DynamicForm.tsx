@@ -274,6 +274,30 @@ export default function DynamicForm({
                       items = resolved.map((opt) => ({ label: opt, value: opt }));
                     }
 
+                    // Deduplicate items case-insensitively to prevent duplicate keys/options
+                    const deduplicatedItems: { label: string; value: string }[] = [];
+                    const seenKeys = new Set<string>();
+                    for (const item of items) {
+                      if (!item || !item.value) continue;
+                      const key = item.value.trim().toLowerCase();
+                      if (!seenKeys.has(key)) {
+                        seenKeys.add(key);
+                        deduplicatedItems.push(item);
+                      }
+                    }
+                    items = deduplicatedItems;
+
+                    // Match current form value case-insensitively so that SPARE / Spare, STOCK / Stock match seamlessly
+                    const rawVal = selectField.value !== undefined && selectField.value !== null ? String(selectField.value).trim() : "";
+                    const exactMatch = items.find((i) => i.value === rawVal);
+                    const ciMatch = !exactMatch && rawVal ? items.find((i) => i.value.toLowerCase() === rawVal.toLowerCase()) : null;
+                    const effectiveValue = exactMatch ? exactMatch.value : (ciMatch ? ciMatch.value : rawVal);
+
+                    // If form value is non-empty and not present in items, include it so the value is displayed
+                    if (effectiveValue && !items.some((i) => i.value.toLowerCase() === effectiveValue.toLowerCase())) {
+                      items.push({ label: effectiveValue, value: effectiveValue });
+                    }
+
                     return (
                       <Select
                         onValueChange={(val) => {
@@ -282,7 +306,7 @@ export default function DynamicForm({
                             onChangeEffects(field.name, val, setValue, getValues);
                           }
                         }}
-                        value={selectField.value || ""}
+                        value={effectiveValue || ""}
                       >
                         <SelectTrigger
                           className={`h-11 bg-background/50 border-muted-foreground/20 ${

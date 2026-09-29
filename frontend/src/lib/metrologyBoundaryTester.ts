@@ -59,6 +59,8 @@ export function runMetrologyBoundaryTests(params: {
   decimalPlaces?: number;
   readingVarName?: string;
   customScope?: Record<string, any>;
+  trialVarNames?: string[];
+  errorVarName?: string;
 }): BoundaryTestReport {
   const {
     formula,
@@ -67,7 +69,9 @@ export function runMetrologyBoundaryTests(params: {
     upperLimit,
     decimalPlaces = 3,
     readingVarName = "actual_dimension",
-    customScope = {}
+    customScope = {},
+    trialVarNames,
+    errorVarName
   } = params;
 
   const delta = getPrecisionDelta(decimalPlaces);
@@ -94,10 +98,14 @@ export function runMetrologyBoundaryTests(params: {
     dimension: nominal,
     lower_limit: lowerLimit,
     lowerlimit: lowerLimit,
+    lowerLimit: lowerLimit,
     min_limit: lowerLimit,
+    minlimit: lowerLimit,
     upper_limit: upperLimit,
     upperlimit: upperLimit,
+    upperLimit: upperLimit,
     max_limit: upperLimit,
+    maxlimit: upperLimit,
     tolerance: upperLimit - nominal,
     tol: upperLimit - nominal,
     ...customScope
@@ -153,6 +161,15 @@ export function runMetrologyBoundaryTests(params: {
     }
   ];
 
+  if (trialVarNames && trialVarNames.length > 1) {
+    testSpecs.push({
+      name: "Multi-Trial Sensitivity (Trial 2 Out-of-Spec)",
+      description: `Testing out-of-spec value on secondary trial (${trialVarNames[1]}) while primary trial (${trialVarNames[0]}) is nominal`,
+      reading: "MULTI_TRIAL_FAIL",
+      expected: "FAIL"
+    });
+  }
+
   const testCases: BoundaryTestCase[] = [];
 
   for (const spec of testSpecs) {
@@ -181,12 +198,43 @@ export function runMetrologyBoundaryTests(params: {
       t3: spec.reading,
     };
 
-    // If reading is numeric, calculate deviation in scope
-    if (typeof spec.reading === "number") {
+    if (trialVarNames) {
+      trialVarNames.forEach((t) => {
+        scope[t] = spec.reading;
+      });
+    }
+
+    if (spec.reading === "MULTI_TRIAL_FAIL" && trialVarNames && trialVarNames.length > 1) {
+      const upperTol = upperLimit - nominal;
+      // Ensure the out-of-spec trial value pushes the average error beyond the tolerance limit:
+      const outOfSpec = round(nominal + (upperTol + delta) * trialVarNames.length);
+      scope[trialVarNames[0]] = nominal;
+      scope[trialVarNames[1]] = outOfSpec;
+      for (let i = 2; i < trialVarNames.length; i++) {
+        scope[trialVarNames[i]] = nominal;
+      }
+      const sum = nominal * (trialVarNames.length - 1) + outOfSpec;
+      const tAvg = sum / trialVarNames.length;
+      scope["avg"] = tAvg;
+      scope["average"] = tAvg;
+      scope["mean"] = tAvg;
+      const dev = tAvg - nominal;
+      scope["deviation"] = dev;
+      scope["error"] = dev;
+      scope["diff"] = dev;
+      if (errorVarName) scope[errorVarName] = dev;
+    } else if (typeof spec.reading === "number") {
       const dev = spec.reading - nominal;
       scope["deviation"] = dev;
       scope["error"] = dev;
       scope["diff"] = dev;
+      if (errorVarName) scope[errorVarName] = dev;
+    } else {
+      // Blank or non-numeric reading: ensure deviation and error variables are set to blank
+      scope["deviation"] = spec.reading;
+      scope["error"] = spec.reading;
+      scope["diff"] = spec.reading;
+      if (errorVarName) scope[errorVarName] = spec.reading;
     }
 
     const evalResult = testEvaluateFormula(formula, scope);

@@ -990,6 +990,23 @@ export function CalibrationDataGrid({
       const accVal = acceptanceCriteria?.enabled ? (acceptanceCriteria.value ?? 0) : 0;
       const activeOrder = getActiveColumnOrder();
       const calculatedVal = evaluateFormulaValue(col, pt, hasDescending, customColumns, activeOrder, tolerance, accVal);
+      const isPass = calculatedVal === "PASS" || calculatedVal === "OK";
+      const isFail = calculatedVal === "FAIL" || calculatedVal === "REJECT";
+      if (isPass || isFail) {
+        return (
+          <TableCell key={col.id} className="border-x border-primary/10 text-center py-1">
+            <span
+              className={`inline-block px-2 py-0.5 rounded text-xs font-bold ${
+                isPass
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300"
+                  : "bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300"
+              }`}
+            >
+              {calculatedVal}
+            </span>
+          </TableCell>
+        );
+      }
       return (
         <TableCell key={col.id} className="bg-primary/5 font-mono text-sm font-medium border-x border-primary/10">
           <span className="text-primary font-bold">{calculatedVal}</span>

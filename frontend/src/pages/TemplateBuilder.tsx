@@ -49,7 +49,9 @@ import {
   Sparkles,
   LayoutGrid,
   List,
+  ArrowUpDown,
 } from "lucide-react";
+import { format } from "date-fns";
 import { CALIBRATION_TYPES } from "@/types/calibration";
 import { CalibrationTemplate } from "@/types/template";
 import { getTemplates, createTemplate, deleteTemplate } from "@/lib/templateActions";
@@ -131,6 +133,12 @@ export default function TemplateBuilder() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { canAccess } = usePermissions();
+  const isAdmin =
+    !!user?.isSuperAdmin ||
+    user?.role === "Admin" ||
+    user?.role === "admin" ||
+    (user as any)?.role?.name?.toLowerCase() === "admin" ||
+    (user as any)?.userRole?.name?.toLowerCase() === "admin";
   const [templates, setTemplates] = useState<CalibrationTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -184,10 +192,36 @@ export default function TemplateBuilder() {
     }
   };
 
-  // Reset to page 1 when search or category filter changes
+  // Sorting State: "recent_worked" (Default) | "recent_updated" | "recent_created" | "name_asc" | "name_desc"
+  const [sortBy, setSortBy] = useState<
+    "recent_worked" | "recent_updated" | "recent_created" | "name_asc" | "name_desc"
+  >(() => {
+    try {
+      return (
+        (localStorage.getItem("gm_template_sort_by") as any) ||
+        "recent_worked"
+      );
+    } catch {
+      return "recent_worked";
+    }
+  });
+
+  const handleSetSortBy = (
+    val: "recent_worked" | "recent_updated" | "recent_created" | "name_asc" | "name_desc",
+  ) => {
+    setSortBy(val);
+    setCurrentPage(1);
+    try {
+      localStorage.setItem("gm_template_sort_by", val);
+    } catch {
+      // ignore
+    }
+  };
+
+  // Reset to page 1 when search, category filter, or sort changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, selectedType]);
+  }, [searchQuery, selectedType, sortBy]);
 
   const fetchTemplates = async () => {
     if (!user?.id) return;
@@ -254,15 +288,58 @@ export default function TemplateBuilder() {
     }
   };
 
-  const filteredTemplates = templates.filter((tpl) => {
-    const query = searchQuery.toLowerCase();
-    return (
-      tpl.name.toLowerCase().includes(query) ||
-      tpl.instrument_type.toLowerCase().includes(query) ||
-      tpl.calibration_type.toLowerCase().includes(query) ||
-      (tpl.description && tpl.description.toLowerCase().includes(query))
-    );
-  });
+  const filteredTemplates = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const matched = templates.filter((tpl) => {
+      if (!query) return true;
+      return (
+        tpl.name.toLowerCase().includes(query) ||
+        tpl.instrument_type.toLowerCase().includes(query) ||
+        tpl.calibration_type.toLowerCase().includes(query) ||
+        (tpl.description && tpl.description.toLowerCase().includes(query))
+      );
+    });
+
+    return [...matched].sort((a, b) => {
+      const getMillis = (dateStr?: string) => {
+        if (!dateStr) return 0;
+        const ms = new Date(dateStr).getTime();
+        return isNaN(ms) ? 0 : ms;
+      };
+
+      if (sortBy === "recent_worked") {
+        // Default: compare both updated and created dates, showing whichever was worked on most recently
+        const timeA = Math.max(getMillis(a.updatedAt), getMillis(a.createdAt));
+        const timeB = Math.max(getMillis(b.updatedAt), getMillis(b.createdAt));
+        if (timeB !== timeA) return timeB - timeA;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === "recent_updated") {
+        const timeA = getMillis(a.updatedAt) || getMillis(a.createdAt);
+        const timeB = getMillis(b.updatedAt) || getMillis(b.createdAt);
+        if (timeB !== timeA) return timeB - timeA;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === "recent_created") {
+        const timeA = getMillis(a.createdAt);
+        const timeB = getMillis(b.createdAt);
+        if (timeB !== timeA) return timeB - timeA;
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === "name_asc") {
+        return a.name.localeCompare(b.name);
+      }
+
+      if (sortBy === "name_desc") {
+        return b.name.localeCompare(a.name);
+      }
+
+      return 0;
+    });
+  }, [templates, searchQuery, sortBy]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTemplates.length / pageSize));
   const startIndex = (currentPage - 1) * pageSize;
@@ -289,8 +366,9 @@ export default function TemplateBuilder() {
     () => [
       {
         id: "select",
+        enableHiding: false,
         header: () => (
-          <div className="flex justify-center">
+          <div className="flex items-center justify-center">
             <Checkbox
               checked={selectedIds.length > 0 && selectedIds.length === filteredTemplates.length}
               onCheckedChange={toggleSelectAll}
@@ -302,7 +380,7 @@ export default function TemplateBuilder() {
           const tpl = row.original;
           const isSelected = selectedIds.includes(tpl.id);
           return (
-            <div className="flex justify-center" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
               <Checkbox
                 checked={isSelected}
                 onCheckedChange={() => toggleSelectOne(tpl.id)}
@@ -314,25 +392,30 @@ export default function TemplateBuilder() {
       },
       {
         accessorKey: "calibration_type",
+        id: "discipline",
         header: "Discipline",
+        meta: { minWidth: "160px" },
         cell: ({ row }) => {
           const tpl = row.original;
           const IconComp = TYPE_ICONS[tpl.calibration_type] || Layers;
           const calTypeConfig = CALIBRATION_TYPES.find((c) => c.type === tpl.calibration_type);
           const theme = DISCIPLINE_THEMES[tpl.calibration_type] || DEFAULT_THEME;
           return (
-            <Badge
-              variant="outline"
-              className={`text-[10px] gap-1 font-semibold capitalize tracking-wide px-2 py-0.5 rounded-full border ${theme.badge}`}
-            >
-              <IconComp className="w-3 h-3 shrink-0" />
-              <span>{calTypeConfig?.label || tpl.calibration_type}</span>
-            </Badge>
+            <div className="flex items-center">
+              <Badge
+                variant="outline"
+                className={`text-[11px] gap-1.5 font-medium whitespace-nowrap px-2.5 py-0.5 rounded-md border shadow-2xs inline-flex items-center shrink-0 ${theme.badge}`}
+              >
+                <IconComp className="w-3.5 h-3.5 shrink-0" />
+                <span className="whitespace-nowrap tracking-tight">{calTypeConfig?.label || tpl.calibration_type}</span>
+              </Badge>
+            </div>
           );
         },
       },
       {
         accessorKey: "name",
+        id: "template_name",
         header: "Template Name",
         cell: ({ row }) => {
           const tpl = row.original;
@@ -357,6 +440,7 @@ export default function TemplateBuilder() {
       },
       {
         accessorKey: "instrument_type",
+        id: "instrument",
         header: "Instrument",
         cell: ({ row }) => (
           <span className="font-medium text-foreground/90 bg-muted/50 dark:bg-muted/30 px-2 py-0.5 rounded text-[11px] inline-block truncate max-w-[160px]">
@@ -403,8 +487,53 @@ export default function TemplateBuilder() {
         },
       },
       {
+        accessorKey: "createdAt",
+        id: "created_at",
+        header: "Created Date",
+        meta: { minWidth: "120px" },
+        cell: ({ row }) => {
+          const val = row.original.createdAt;
+          if (!val) return <span className="text-muted-foreground/40 font-mono text-xs">—</span>;
+          const d = new Date(val);
+          if (isNaN(d.getTime())) return <span className="text-muted-foreground/40 font-mono text-xs">—</span>;
+          return (
+            <div className="flex flex-col text-left whitespace-nowrap font-mono text-[11px]">
+              <span className="font-medium text-foreground/90">
+                {format(d, "dd-MM-yyyy")}
+              </span>
+              <span className="text-[10px] text-muted-foreground/70">
+                {format(d, "hh:mm a")}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "updatedAt",
+        id: "updated_at",
+        header: "Last Updated",
+        meta: { minWidth: "120px" },
+        cell: ({ row }) => {
+          const val = row.original.updatedAt;
+          if (!val) return <span className="text-muted-foreground/40 font-mono text-xs">—</span>;
+          const d = new Date(val);
+          if (isNaN(d.getTime())) return <span className="text-muted-foreground/40 font-mono text-xs">—</span>;
+          return (
+            <div className="flex flex-col text-left whitespace-nowrap font-mono text-[11px]">
+              <span className="font-medium text-foreground/90">
+                {format(d, "dd-MM-yyyy")}
+              </span>
+              <span className="text-[10px] text-muted-foreground/70">
+                {format(d, "hh:mm a")}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         id: "actions",
         header: "Actions",
+        enableHiding: false,
         meta: { align: "right" },
         cell: ({ row }) => {
           const tpl = row.original;
@@ -650,6 +779,23 @@ export default function TemplateBuilder() {
             </span>
           </div>
 
+          {/* Sort Filter Selector */}
+          <div className="flex items-center gap-1.5">
+            <Select value={sortBy} onValueChange={(val: any) => handleSetSortBy(val)}>
+              <SelectTrigger className="h-9 text-xs gap-1.5 bg-background border-border/80 min-w-[195px] shadow-2xs font-medium">
+                <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="Sort templates" />
+              </SelectTrigger>
+              <SelectContent align="end" className="text-xs">
+                <SelectItem value="recent_worked">Recently Worked (Default)</SelectItem>
+                <SelectItem value="recent_updated">Recently Updated</SelectItem>
+                <SelectItem value="recent_created">Recently Created</SelectItem>
+                <SelectItem value="name_asc">Template Name (A → Z)</SelectItem>
+                <SelectItem value="name_desc">Template Name (Z → A)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
           {/* View Mode Toggle */}
           <div className="flex items-center bg-muted/60 dark:bg-muted/40 p-0.5 rounded-lg border border-border/70 shadow-2xs">
             <button
@@ -762,10 +908,10 @@ export default function TemplateBuilder() {
                             />
                             <Badge
                               variant="outline"
-                              className={`text-[10px] gap-1 font-semibold capitalize tracking-wide px-2 py-0.5 rounded-full border ${theme.badge}`}
+                              className={`text-[11px] gap-1.5 font-medium whitespace-nowrap px-2.5 py-0.5 rounded-md border shadow-2xs inline-flex items-center shrink-0 ${theme.badge}`}
                             >
-                              <IconComp className="w-3 h-3 shrink-0" />
-                              <span>{calTypeConfig?.label || tpl.calibration_type}</span>
+                              <IconComp className="w-3.5 h-3.5 shrink-0" />
+                              <span className="whitespace-nowrap tracking-tight">{calTypeConfig?.label || tpl.calibration_type}</span>
                             </Badge>
                           </div>
 
@@ -1089,6 +1235,9 @@ export default function TemplateBuilder() {
         onOpenChange={setBulkDeleteModalOpen}
         selectedTemplates={selectedTemplatesList}
         isSuperAdmin={user?.isSuperAdmin}
+        isAdmin={isAdmin}
+        currentUserId={user?.id}
+        userCompanyId={user?.companyId}
         onSuccess={() => {
           setSelectedIds([]);
           fetchTemplates();

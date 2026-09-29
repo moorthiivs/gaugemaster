@@ -104,16 +104,14 @@ export function CertificatePreview({
     ((calibration as any).template as any)?.doc_rev ||
     ((calibration as any).template as any)?.docRev;
 
-  const procedureReference =
-    calibration.procedure_reference ||
-    (calibration as any).procedureReference ||
-    ((calibration as any).template as any)?.procedure_reference ||
-    "AE/CAL-SOP/01";
   const procedureNo =
     calibration.procedure_no ||
     (calibration as any).procedureNo ||
     ((calibration as any).template as any)?.procedure_no ||
-    ((calibration as any).template as any)?.procedureNo;
+    ((calibration as any).template as any)?.procedureNo ||
+    calibration.procedure_reference ||
+    (calibration as any).procedureReference ||
+    ((calibration as any).template as any)?.procedure_reference;
   const procedureName =
     calibration.procedure_name ||
     (calibration as any).procedureName ||
@@ -384,8 +382,21 @@ export function CertificatePreview({
                 </tr>
               </thead>
               <tbody className="font-mono">
-                {tbl.rows.map((row: any, rIdx: number) => (
-                  <tr key={rIdx}>
+                {tbl.rows.map((row: any, rIdx: number) => {
+                  if (row.is_merged || row.isMerged) {
+                    return (
+                      <tr key={rIdx}>
+                        <td
+                          colSpan={tbl.columns.length}
+                          className="py-1 px-2 border border-black font-semibold text-left text-black bg-slate-50/50"
+                        >
+                          {row.statement || row.merged_text || row.description || row.required_dimension || "All the jaws are free from dent and damages"}
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={rIdx}>
                     {tbl.columns.map((col: any) => {
                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                       const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
@@ -426,7 +437,8 @@ export function CertificatePreview({
                       );
                     })}
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -997,7 +1009,7 @@ export function CertificatePreview({
       {/* Main Certificate Sheet */}
       <div
         ref={certRef}
-        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 h-auto overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
+        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 min-h-[1123px] overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
       >
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div
@@ -1057,8 +1069,11 @@ export function CertificatePreview({
       </div>
 
       {/* ── 2. BODY CONTENT SECTION ── */}
-      <div className="p-2.5 flex flex-col">
-        <div className={`border border-black ${isCompact ? "p-1.5 space-y-1.5 text-[8.5px]" : "p-2 space-y-2 text-[9.5px]"}`}>
+      <div className="p-2.5 flex flex-col flex-1">
+        <div
+          className={`border border-black flex flex-col flex-1 ${isCompact ? "p-1.5 text-[8.5px]" : "p-2 text-[9.5px]"}`}
+          style={{ gap: `${Math.max(2, (Number(certConfig?.tableGap) || 2.5) * 1.33)}px` }}
+        >
           {/* Top Certificate Metadata Grid */}
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
@@ -1161,7 +1176,7 @@ export function CertificatePreview({
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
             <thead>
               <tr className="bg-slate-100 border-b border-black font-bold text-left">
-                <th className={`w-[28%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure Doc.No &amp; Rev.No</th>
+                <th className={`w-[28%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No, Name &amp; Rev/Date</th>
                 <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
                 <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
                 <th className={`w-[24%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
@@ -1174,13 +1189,8 @@ export function CertificatePreview({
                     {procedureName || "-"}
                   </div>
                   {procedureNo && (
-                    <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                    <div className="font-semibold text-slate-800 dark:text-slate-200 leading-tight text-[7.5px] mt-0.5">
                       Proc No: {procedureNo}
-                    </div>
-                  )}
-                  {procedureReference && (
-                    <div className="font-semibold leading-tight text-[7.5px] mt-0.5">
-                      Doc.No.: {procedureReference}
                     </div>
                   )}
                   {(procedureRev || procedureDate) && (
@@ -1384,15 +1394,25 @@ export function CertificatePreview({
                     isImgUrl(u.signature),
                 )?.signature;
 
+            const sigWidth = Number(certConfig?.signatureImageWidth) || 75;
+            const sigHeight = Number(certConfig?.signatureImageHeight) || 28;
+
             return (
-              <div className={`border border-black ${isCompact ? "p-1.5 mt-1.5" : "p-2 mt-3"} grid grid-cols-3 gap-2 items-end`}>
+              <div className={`border border-black ${isCompact ? "p-1.5 mt-auto" : "p-2 mt-auto"} grid grid-cols-3 gap-2 items-end`}>
                 <div className="text-center space-y-0.5">
-                  <div className={`${isCompact ? "h-8" : "h-10"} flex items-end justify-center`}>
+                  <div
+                    className="flex items-end justify-center"
+                    style={{ minHeight: `${sigHeight * 1.33}px` }}
+                  >
                     {calibratedSigImg ? (
                       <img
                         src={calibratedSigImg}
                         alt="Signature"
-                        className={`${isCompact ? "max-h-7 max-w-[90px]" : "max-h-9 max-w-[120px]"} object-contain mx-auto`}
+                        style={{
+                          maxHeight: `${sigHeight * 1.33}px`,
+                          maxWidth: `${sigWidth * 1.33}px`,
+                        }}
+                        className="object-contain mx-auto"
                       />
                     ) : (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
@@ -1415,7 +1435,11 @@ export function CertificatePreview({
                   <img
                     src="/Approved-seal1.png"
                     alt="Approval Seal"
-                    className={`${isCompact ? "max-h-9 max-w-[65px]" : "max-h-14 max-w-[85px]"} object-contain mx-auto`}
+                    style={{
+                      maxHeight: `${sigHeight * 1.5}px`,
+                      maxWidth: `${sigWidth * 1.2}px`,
+                    }}
+                    className="object-contain mx-auto"
                     onError={(e) => {
                       const target = e.currentTarget;
                       target.style.display = "none";
@@ -1432,12 +1456,19 @@ export function CertificatePreview({
                 </div>
 
                 <div className="text-center space-y-0.5">
-                  <div className={`${isCompact ? "h-8" : "h-10"} flex items-end justify-center`}>
+                  <div
+                    className="flex items-end justify-center"
+                    style={{ minHeight: `${sigHeight * 1.33}px` }}
+                  >
                     {approvedSigImg ? (
                       <img
                         src={approvedSigImg}
                         alt="Signature"
-                        className={`${isCompact ? "max-h-7 max-w-[90px]" : "max-h-9 max-w-[120px]"} object-contain mx-auto`}
+                        style={{
+                          maxHeight: `${sigHeight * 1.33}px`,
+                          maxWidth: `${sigWidth * 1.33}px`,
+                        }}
+                        className="object-contain mx-auto"
                       />
                     ) : (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>

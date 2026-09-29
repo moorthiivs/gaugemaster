@@ -96,6 +96,22 @@ export class InstrumentsService {
         return undefined;
     }
 
+    normalizeItemStatus(status?: string | null): string {
+        if (!status) return 'Active';
+        const trimmed = status.toString().trim();
+        if (!trimmed) return 'Active';
+        const lower = trimmed.toLowerCase();
+        if (lower === 'active' || lower === 'ok') return 'Active';
+        if (lower === 'spare') return 'SPARE';
+        if (lower === 'stock') return 'STOCK';
+        if (lower === 'inactive') return 'Inactive';
+        if (lower === 'scrapped') return 'Scrapped';
+        if (lower === 'lost') return 'Lost';
+        if (lower === 'under repair' || lower === 'under_repair') return 'Under Repair';
+        if (lower === 'rejected') return 'Rejected';
+        return trimmed;
+    }
+
     async findFilterParams(createdById: string, companyId?: string) {
         const targetCompanyId = await this.resolveTargetCompanyId(createdById, companyId);
         let whereCondition: any = {};
@@ -119,9 +135,11 @@ export class InstrumentsService {
             }).map(item => item.trim());
         };
 
+        const itemStatuses = instruments.map(i => this.normalizeItemStatus(i.item_status));
+
         return {
             status: unique(instruments.map(i => i.status)),
-            item_status: unique(instruments.map(i => i.item_status || 'Active')),
+            item_status: unique([...itemStatuses, 'Active', 'SPARE', 'Inactive', 'STOCK']),
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),
             calibration_source: unique(instruments.map(i => i.calibration_source)),
@@ -444,10 +462,7 @@ export class InstrumentsService {
             // Always auto-generate S.No — ignore any user-provided value
             const sinoValue = await this.generateNextSino(instrumentDto.companyId);
 
-            let autoItemStatus = instrumentDto.item_status;
-            if (!autoItemStatus || autoItemStatus.toString().trim().toLowerCase() === 'ok') {
-                autoItemStatus = 'Active';
-            }
+            const autoItemStatus = this.normalizeItemStatus(instrumentDto.item_status);
 
             let autoStatus = instrumentDto.status;
             if (autoStatus && autoStatus.toString().trim().toLowerCase() === 'active') {
@@ -510,6 +525,10 @@ export class InstrumentsService {
             }
 
             const payload: any = { ...updateInstrumentDto };
+
+            if (payload.item_status !== undefined) {
+                payload.item_status = this.normalizeItemStatus(payload.item_status);
+            }
 
             if (payload.created_by) {
                 payload.created_by = { id: payload.created_by };

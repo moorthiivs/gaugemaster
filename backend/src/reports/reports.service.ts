@@ -53,6 +53,34 @@ export class ReportsService {
         return userId ? [userId] : [];
     }
 
+    private formatReportDate(val: any): string {
+        if (!val) return '-';
+        if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (!trimmed || trimmed === '-') return '-';
+            // Already in DD-MM-YYYY format
+            if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return trimmed;
+            // Match DD/MM/YYYY -> convert to DD-MM-YYYY
+            const dmySlashMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (dmySlashMatch) return `${dmySlashMatch[1]}-${dmySlashMatch[2]}-${dmySlashMatch[3]}`;
+            // Match YYYY-MM-DD or YYYY/MM/DD or ISO string
+            const ymdMatch = trimmed.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+            if (ymdMatch) {
+                return `${ymdMatch[3]}-${ymdMatch[2]}-${ymdMatch[1]}`;
+            }
+        }
+        try {
+            const d = val instanceof Date ? val : new Date(val);
+            if (isNaN(d.getTime())) return typeof val === 'string' ? val : '-';
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch {
+            return typeof val === 'string' ? val : '-';
+        }
+    }
+
     private async generatePdfReport(
         instruments: Instrument[],
         selectedColumns?: string[],
@@ -90,6 +118,8 @@ export class ReportsService {
             gauges_issued_by: 'Issued By',
             calibration_procedure: 'Procedure',
             traceable: 'Traceable',
+            device_type: 'Device Type',
+            is_reference_standard: 'Reference Standard',
         };
 
         const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
@@ -102,16 +132,20 @@ export class ReportsService {
             const row = activeColumns.map(col => {
                 let text = '';
                 if (col === 'sino') text = (i + 1).toString();
-                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                     const date = inst[col as keyof Instrument];
-                    text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
+                    text = this.formatReportDate(date);
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
                 } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                    text = (inst[col as keyof Instrument] as string) || '-';
+                    const rawVal = inst[col as keyof Instrument];
+                    text = typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : String(rawVal) || '-';
                 } else {
                     const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                        customVal = this.formatReportDate(customVal);
+                    }
                     text = String(customVal);
                 }
                 return { text, style: 'tableData' };
@@ -348,6 +382,7 @@ export class ReportsService {
         status?: string,
         location?: string,
         companyId?: string,
+        item_status?: string,
     ): Promise<Buffer> {
         const { ILike } = require('typeorm');
         const where: any = {
@@ -365,6 +400,9 @@ export class ReportsService {
 
         if (status && status !== 'All') {
             where.status = ILike(`%${status}%`);
+        }
+        if (item_status && item_status !== 'All') {
+            where.item_status = ILike(`%${item_status}%`);
         }
         if (location && location !== 'All') {
             where.location = ILike(`%${location}%`);
@@ -391,6 +429,7 @@ export class ReportsService {
                 criticality_level: 'Criticality Level', cert_no: 'Certificate No', remarks: 'Remarks',
                 gauge_issue_date: 'Gauge Issue Date', gauges_received_by: 'Gauges Received By',
                 gauges_issued_by: 'Gauges Issued By', calibration_procedure: 'Calibration Procedure', traceable: 'Traceable',
+                device_type: 'Device Type', is_reference_standard: 'Reference Standard',
             };
 
             const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
@@ -503,16 +542,20 @@ export class ReportsService {
                 const rowData: any[] = [];
                 activeColumns.forEach(col => {
                     if (col === 'sino') rowData.push(index + 1);
-                    else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                    else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                         const date = inst[col as keyof Instrument];
-                        rowData.push(date instanceof Date ? date.toISOString().split('T')[0] : '-');
+                        rowData.push(this.formatReportDate(date));
                     } else if (col === 'created_by') {
                         rowData.push(inst.created_by?.name || inst.created_by?.id || '');
                     } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                        rowData.push(inst[col as keyof Instrument] || '');
+                        const rawVal = inst[col as keyof Instrument];
+                        rowData.push(typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : (rawVal || ''));
                     } else {
                         const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                        const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '';
+                        let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '';
+                        if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                            customVal = this.formatReportDate(customVal);
+                        }
                         rowData.push(customVal);
                     }
                 });
@@ -608,6 +651,7 @@ export class ReportsService {
             criticality_level: 'Criticality', cert_no: 'Cert No', remarks: 'Remarks',
             gauge_issue_date: 'Issue Date', gauges_received_by: 'Received By', gauges_issued_by: 'Issued By',
             calibration_procedure: 'Procedure', traceable: 'Traceable',
+            device_type: 'Device Type', is_reference_standard: 'Reference Standard',
         };
         const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
 
@@ -692,16 +736,20 @@ export class ReportsService {
             activeColumns.forEach(col => {
                 let text = '';
                 if (col === 'sino') text = (i + 1).toString();
-                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                     const date = inst[col as keyof Instrument];
-                    text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
+                    text = this.formatReportDate(date);
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
                 } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                    text = (inst[col as keyof Instrument] as string) || '-';
+                    const rawVal = inst[col as keyof Instrument];
+                    text = typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : String(rawVal) || '-';
                 } else {
                     const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                        customVal = this.formatReportDate(customVal);
+                    }
                     text = String(customVal);
                 }
                 let style = 'border: 1px solid #ddd; padding: 8px; font-size: 12px;';
@@ -780,9 +828,9 @@ export class ReportsService {
 
         // Apply dynamic filters
         Object.keys(filters).forEach(key => {
-            if (filters[key]) {
+            if (filters[key] && filters[key] !== 'All') {
                 const val = filters[key];
-                if (key === 'name' || key === 'id_code' || key === 'location' || key === 'agency' || key === 'status') {
+                if (key === 'name' || key === 'id_code' || key === 'location' || key === 'agency' || key === 'status' || key === 'item_status') {
                     const { ILike } = require('typeorm');
                     where[key] = ILike(`%${val}%`);
                 }

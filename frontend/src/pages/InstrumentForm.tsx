@@ -11,6 +11,7 @@ import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import DynamicForm, { FormFieldConfig } from "@/components/DynamicForm";
 import { computeNextDueDate, isDatePast } from "@/lib/dateUtils";
+import { CANONICAL_ITEM_STATUSES, normalizeItemStatus } from "@/lib/itemStatus";
 
 const computeStatusOptions = (currentStatus: string, dueDate: string) => {
   // 1. Overdue condition
@@ -93,7 +94,7 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Item Status",
     type: "select",
     col: 6,
-    options: ["Active", "Inactive", "Scrapped", "Lost", "Under Repair", "Rejected", "Stock"]
+    options: CANONICAL_ITEM_STATUSES as unknown as string[]
   }
 ];
 
@@ -166,7 +167,7 @@ export default function InstrumentForm() {
           due_date: i.due_date ? i.due_date.slice(0, 10) : "",
           agency: i.agency ?? "",
           status: i.status || "OK",
-          item_status: i.item_status || "Active",
+          item_status: normalizeItemStatus(i.item_status),
           notes: i.notes ?? "",
           make: i.make ?? "",
           item_type: i.item_type ?? "",
@@ -255,7 +256,7 @@ export default function InstrumentForm() {
         least_count: values.least_count || "",
         notes: values.notes || "",
         status: values.status || "OK",
-        item_status: values.item_status || "Active",
+        item_status: normalizeItemStatus(values.item_status),
         make: values.make || "",
         item_type: values.item_type || "",
         device_type: values.device_type || "Instrument",

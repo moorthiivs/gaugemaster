@@ -16,7 +16,7 @@ import {
   ColumnDataType,
   CalibrationCalculationModel
 } from "../types/template";
-import { validateFormula, detectFormulaCycles } from "./formulaEngine";
+import { validateFormula, detectFormulaCycles, extractFormulaDependencies } from "./formulaEngine";
 import { translateExcelFormula } from "./excelFormulaTranslator";
 import { runMetrologyBoundaryTests, BoundaryTestReport } from "./metrologyBoundaryTester";
 
@@ -83,11 +83,7 @@ export function inferTableCalculationModel(table: TableGridBlock): CalibrationCa
   const colLabels = cols.map(c => (c.label || "").toLowerCase());
   const colIds = cols.map(c => (c.id || "").toLowerCase());
 
-  const hasTrialCols = cols.some(c =>
-    c.type === "trial" ||
-    /^(t[1-9]|trial\s*[1-9]|run\s*[1-9])/i.test(c.label || "") ||
-    /^(t[1-9]|trial_[1-9])/i.test(c.id || "")
-  );
+  const hasTrialCols = cols.some(c => isTrialColumnDef(c));
 
   const hasAverage = cols.some(c =>
     /average|mean|avg/i.test(c.label || "") ||
@@ -150,6 +146,20 @@ export function inferTableCalculationModel(table: TableGridBlock): CalibrationCa
 }
 
 /**
+ * Detect whether a column definition represents a trial or sequential measurement reading.
+ */
+export function isTrialColumnDef(col: CanvasColumnDef): boolean {
+  if (col.type === "trial") return true;
+  const label = (col.label || "").toLowerCase().trim();
+  const id = (col.id || "").toLowerCase().trim();
+  return (
+    /^(t[1-9]\d*|trial\s*[1-9]\d*|run\s*[1-9]\d*|reading\s*[1-9]\d*)$/i.test(label) ||
+    /^[1-9]\d*$/.test(label) ||
+    /^(t[1-9]\d*|trial_[1-9]\d*|trial[1-9]\d*|reading_[1-9]\d*|reading[1-9]\d*|actual_[1-9]\d*|actual[1-9]\d*)$/i.test(id)
+  );
+}
+
+/**
  * Infer column metrology role based on labels, types, and standard engineering terminology.
  */
 export function inferColumnMetrologyRole(col: CanvasColumnDef): ColumnRole {
@@ -166,7 +176,7 @@ export function inferColumnMetrologyRole(col: CanvasColumnDef): ColumnRole {
   if (/required\s*dim|specification|spec|size|parameter/i.test(label)) {
     return "SPECIFICATION";
   }
-  if (/nominal|basic|standard\s*val/i.test(label) || id === "nominal") {
+  if (/nominal|basic|standard|std\b|target|master/i.test(label) || /nominal|target|std_runout|std_taper|master/i.test(id)) {
     return "NOMINAL";
   }
   if (/lower\s*limit|min\s*limit|lower\s*spec/i.test(label) || id.includes("lower_limit") || id.includes("min_limit")) {
@@ -178,6 +188,9 @@ export function inferColumnMetrologyRole(col: CanvasColumnDef): ColumnRole {
   if (/tolerance|tol|permissible\s*error|mpe/i.test(label)) {
     return "TOLERANCE";
   }
+  if (isTrialColumnDef(col)) {
+    return col.type === "reading" && !col.id.toLowerCase().includes("trial") ? "READING" : "INPUT";
+  }
   if (/actual|reading|observed|measured|display/i.test(label) || col.type === "reading" || id.includes("actual") || id.includes("reading")) {
     return "READING";
   }
@@ -186,9 +199,6 @@ export function inferColumnMetrologyRole(col: CanvasColumnDef): ColumnRole {
   }
   if (/judgement|status|result|acceptance|pass\/fail/i.test(label) || col.type === "status" || id.includes("judgement") || id.includes("status")) {
     return "JUDGEMENT";
-  }
-  if (/trial|t[1-9]|run|repeat/i.test(label) || col.type === "trial") {
-    return "INPUT";
   }
   if (/average|mean|avg/i.test(label)) {
     return "CALCULATED";
@@ -317,11 +327,10 @@ export function auditCalibrationTable(table: TableGridBlock): TableAuditReport {
   const upperLimitCol = columns.find(c => inferColumnMetrologyRole(c) === "UPPER_LIMIT");
   const mpeCol = columns.find(c => /\bmpe\b/i.test(c.label || "") || /\bmpe\b/i.test(c.id || ""));
   const avgCol = columns.find(c => /average|avg|mean/i.test(c.label || "") || /average|avg/i.test(c.id || ""));
-  const trialCols = columns.filter(c =>
-    c.type === "trial" ||
-    /^(t[1-9]|trial\s*[1-9]|run\s*[1-9])/i.test(c.label || "") ||
-    /^(t[1-9]|trial_[1-9])/i.test(c.id || "")
-  );
+  const trialCols = columns.filter(c => isTrialColumnDef(c));
+  const trialVarNames = trialCols.map(c => c.id);
+  const devCol = columns.find(c => /deviation|error|diff|variation/i.test(c.label || "") || /deviation|error/i.test(c.id || ""));
+  const tolCol = columns.find(c => /tolerance|tol/i.test(c.label || "") || c.id === "tolerance");
 
   const readingVar = readingCol ? readingCol.id : "actual_dimension";
   const nominalVar = nominalCol ? nominalCol.id : "nominal";
@@ -415,14 +424,54 @@ export function auditCalibrationTable(table: TableGridBlock): TableAuditReport {
           lowerLimit: sampleLower,
           upperLimit: sampleUpper,
           decimalPlaces: precision,
-          readingVarName: effectiveReadingVar
+          readingVarName: effectiveReadingVar,
+          trialVarNames: trialVarNames.length > 1 ? trialVarNames : undefined,
+          errorVarName: devCol?.id
         });
 
         if (boundaryReport.allPassed) {
           boundaryPassCount++;
         } else {
           warningsCount++;
-          issues.push(`Boundary tests warning: ${boundaryReport.passedCount}/${boundaryReport.totalCount} passed. Review tolerance limits or blank handling.`);
+          const failedCase = boundaryReport.testCases.find(t => !t.passed);
+          issues.push(`Boundary tests warning: ${boundaryReport.passedCount}/${boundaryReport.totalCount} passed. ${failedCase?.testName ? `Failed case: '${failedCase.testName}'.` : "Review tolerance limits or blank handling."}`);
+        }
+
+        // Metrology completeness check: detect orphaned trials or bypassed error
+        const formulaDeps = extractFormulaDependencies(formula);
+        const referencedTrials = trialCols.filter(t => formulaDeps.includes(t.id));
+        const onlyOneTrialReferenced = trialCols.length > 1 && referencedTrials.length === 1 && !formulaDeps.includes(avgCol?.id || "") && !formulaDeps.includes(devCol?.id || "");
+        const errorNotReferenced = devCol && !formulaDeps.includes(devCol.id);
+
+        if (onlyOneTrialReferenced || (devCol && errorNotReferenced && (calcModel === "DIRECT_DEVIATION" || calcModel === "MULTI_TRIAL_ERROR"))) {
+          status = "NEEDS_REVIEW";
+          confidence = "HIGH";
+
+          if (onlyOneTrialReferenced) {
+            const singleTrial = referencedTrials[0].id;
+            const otherTrials = trialCols.filter(t => t.id !== singleTrial).map(t => t.label || t.id).join(", ");
+            issues.push(`Incomplete trial coverage: Judgement only checks '${singleTrial}' and ignores other entered readings (${otherTrials}) as well as calculated Error/Average.`);
+            issuesCount++;
+            needsReviewCount++;
+          }
+          if (devCol && errorNotReferenced) {
+            issues.push(`Orphaned Error column: Table calculates '${devCol.label || devCol.id}', but Judgement does not evaluate error against tolerance.`);
+            issuesCount++;
+            needsReviewCount++;
+          }
+
+          // Suggest the fix formula directly in the audit modal so user can review and apply
+          if (devCol) {
+            const tolTarget = tolCol ? tolCol.id : (table.tolerance !== undefined ? String(table.tolerance) : "tolerance");
+            recommendedFormula = `ABS(${devCol.id}) <= ${tolTarget}`;
+            recommendationReason = `Metrological fix: Evaluates calculated '${devCol.label || devCol.id}' against tolerance (${tolTarget}). All entered readings (1 to ${trialCols.length || 5}) and the calculated average will correctly determine the final pass/fail result.`;
+          } else if (avgCol) {
+            recommendedFormula = `${avgCol.id} >= ${lowerLimitVar} AND ${avgCol.id} <= ${upperLimitVar}`;
+            recommendationReason = `Metrological fix: Evaluates calculated Average ('${avgCol.label || avgCol.id}') against tolerance limits.`;
+          } else if (trialCols.length > 1) {
+            recommendedFormula = trialCols.map(t => `${t.id} >= ${lowerLimitVar} AND ${t.id} <= ${upperLimitVar}`).join(" AND ");
+            recommendationReason = `Comprehensive fix: Verifies all individual trial readings (${trialCols.map(t => t.label || t.id).join(", ")}) are within tolerance limits.`;
+          }
         }
       }
     } else {

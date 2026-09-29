@@ -511,6 +511,67 @@ assert(preSaveResult.canSaveProduction === false && preSaveResult.errorCount > 0
 const validPreSave = validateTemplatePreSave([templateATable, templateBTable]);
 assert(validPreSave.canSaveProduction === true, "40. Pre-save gate allows saving production-ready templates");
 
+// TEST 41: Multi-Trial Table Audit flags flawed single-reading Judgement and suggests error fix
+const runoutTable: any = {
+  id: "runout_table",
+  title: "Runout checking",
+  type: "table_grid",
+  tolerance: 0.005,
+  decimal_places: 3,
+  columns: [
+    { id: "sl_no", label: "SL.NO.", type: "nominal" },
+    { id: "std_runout", label: "STD RUNOUT", type: "nominal" },
+    { id: "location", label: "LOCATION", type: "text" },
+    { id: "reading_1", label: "1", type: "reading" },
+    { id: "reading_2", label: "2", type: "reading" },
+    { id: "reading_3", label: "3", type: "reading" },
+    { id: "reading_4", label: "4", type: "reading" },
+    { id: "reading_5", label: "5", type: "reading" },
+    { id: "avg", label: "AVG", type: "formula", formula: "(reading_1 + reading_2 + reading_3 + reading_4 + reading_5) / 5" },
+    { id: "error", label: "ERROR", type: "formula", formula: "avg - std_runout" },
+    { id: "judgement", label: "JUDGEMENT", type: "status", formula: "reading_1 >= lowerLimit AND reading_1 <= upperLimit" }
+  ],
+  rows: [
+    {
+      sl_no: 1,
+      std_runout: 0.002,
+      location: "Left end",
+      reading_1: 0.002,
+      reading_2: 23.000,
+      reading_3: 0.002,
+      reading_4: 2.000,
+      reading_5: 2.000
+    }
+  ]
+};
+
+const runoutAudit = auditCalibrationTable(runoutTable);
+const judgeAudit = runoutAudit.columnAudits.find(c => c.columnId === "judgement");
+assert(
+  judgeAudit !== undefined &&
+  judgeAudit.formulaStatus === "NEEDS_REVIEW" &&
+  judgeAudit.recommendedFormula !== undefined &&
+  judgeAudit.recommendedFormula.includes("error") &&
+  Boolean(judgeAudit.recommendationReason),
+  "41. Audit detects incomplete single-reading Judgement and suggests error fix formula with reason"
+);
+
+// TEST 42: Atomic fix updates Judgement formula and correctly evaluates out-of-spec reading_2 to FAIL
+const { columns: fixedRunoutCols } = generateFixedTableColumns(runoutTable);
+const fixedJudgeCol = fixedRunoutCols.find(c => c.id === "judgement");
+const fixedEval = testEvaluateFormula(fixedJudgeCol?.formula || "", {
+  error: 5.399,
+  tolerance: 0.005,
+  avg: 5.401,
+  std_runout: 0.002,
+  reading_1: 0.002,
+  reading_2: 23.000
+});
+assert(
+  fixedEval.result === "FAIL",
+  "42. Fixed Judgement formula evaluates out-of-spec multi-trial row to FAIL"
+);
+
 console.log("\n============================================================");
 console.log(`TEST RESULTS: ${passedCount} PASSED, ${failedCount} FAILED`);
 console.log("============================================================\n");

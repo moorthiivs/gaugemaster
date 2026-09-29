@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, FileText, ShieldCheck, Loader2, Palette, Upload, Image as ImageIcon, X } from "lucide-react";
+import { Save, FileText, ShieldCheck, Loader2, Palette, Upload, Image as ImageIcon, X, Type, RotateCcw } from "lucide-react";
 import httpClient, { API_URL } from "@/lib/httpClient";
 
 interface CertConfig {
@@ -32,6 +32,17 @@ interface CertConfig {
   headerBgColor?: string;
   headerDisplayMode: string;
   companyLogoPath: string;
+  // Typography & Font Sizes (pt)
+  titleFontSize?: number;
+  tableHeaderFontSize?: number;
+  contentFontSize?: number;
+  labelFontSize?: number;
+  valueFontSize?: number;
+  signatureFontSize?: number;
+  // Layout, Spacing & Signature Dimensions (pt)
+  signatureImageWidth?: number;
+  signatureImageHeight?: number;
+  tableGap?: number;
 }
 
 const DEFAULTS: CertConfig = {
@@ -56,6 +67,17 @@ const DEFAULTS: CertConfig = {
   headerBgColor: "#54c6f3",
   headerDisplayMode: "name",
   companyLogoPath: "",
+  // Typography & Font Sizes (pt)
+  titleFontSize: 8.0,
+  tableHeaderFontSize: 7.2,
+  contentFontSize: 6.8,
+  labelFontSize: 7.0,
+  valueFontSize: 7.5,
+  signatureFontSize: 7.0,
+  // Layout, Spacing & Signature Dimensions (pt)
+  signatureImageWidth: 75,
+  signatureImageHeight: 28,
+  tableGap: 2.5,
 };
 
 export default function CertificateConfig() {
@@ -563,6 +585,176 @@ export default function CertificateConfig() {
                 <div className="text-[9px]">{config.footerLine2 || "Laboratory Address Details..."}</div>
                 <div className="text-[9px]">{config.footerLine3 || "Contact Details & Website..."}</div>
               </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Certificate Typography, Spacing & Signatures */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Type className="w-5 h-5 text-primary" />
+              <div>
+                <CardTitle className="text-base">Certificate Typography, Spacing & Signatures (pt)</CardTitle>
+                <CardDescription className="text-xs">
+                  Customize font sizes, table margins/gaps, and signature image dimensions across the certificate. Increase sizes for better visibility, or adjust table spacing to fit single page requirements.
+                </CardDescription>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs h-8"
+              onClick={() => {
+                setConfig((prev) => ({
+                  ...prev,
+                  titleFontSize: 8.0,
+                  tableHeaderFontSize: 7.2,
+                  contentFontSize: 6.8,
+                  labelFontSize: 7.0,
+                  valueFontSize: 7.5,
+                  signatureFontSize: 7.0,
+                  signatureImageWidth: 75,
+                  signatureImageHeight: 28,
+                  tableGap: 2.5,
+                }));
+                toast.info("Typography and spacing reset to standard defaults");
+              }}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset to Defaults
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Header / Section Title Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="14"
+                value={config.titleFontSize ?? 8.0}
+                onChange={(e) => update("titleFontSize", parseFloat(e.target.value) || 8.0)}
+                placeholder="8.0"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. Description & Identification, Traceability headers</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Table Column Headers Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="12"
+                value={config.tableHeaderFontSize ?? 7.2}
+                onChange={(e) => update("tableHeaderFontSize", parseFloat(e.target.value) || 7.2)}
+                placeholder="7.2"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. Procedure, Standard Ref, Master Used columns</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Content & Data Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="12"
+                value={config.contentFontSize ?? 6.8}
+                onChange={(e) => update("contentFontSize", parseFloat(e.target.value) || 6.8)}
+                placeholder="6.8"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. Table cell data, environmental details, results</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Field Label Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="12"
+                value={config.labelFontSize ?? 7.0}
+                onChange={(e) => update("labelFontSize", parseFloat(e.target.value) || 7.0)}
+                placeholder="7.0"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. "Instrument (DUC)", "Make", "Model No.", "ID No."</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Field Value Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="12"
+                value={config.valueFontSize ?? 7.5}
+                onChange={(e) => update("valueFontSize", parseFloat(e.target.value) || 7.5)}
+                placeholder="7.5"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. Instrument name, serial number, make text</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Signature Text Size (pt)</Label>
+              <Input
+                type="number"
+                step="0.1"
+                min="5"
+                max="12"
+                value={config.signatureFontSize ?? 7.0}
+                onChange={(e) => update("signatureFontSize", parseFloat(e.target.value) || 7.0)}
+                placeholder="7.0"
+              />
+              <p className="text-[11px] text-muted-foreground">e.g. Calibrated By, Authorized By, Engineer titles</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Signature Image Width (pt)</Label>
+              <Input
+                type="number"
+                step="1"
+                min="30"
+                max="150"
+                value={config.signatureImageWidth ?? 75}
+                onChange={(e) => update("signatureImageWidth", parseFloat(e.target.value) || 75)}
+                placeholder="75"
+              />
+              <p className="text-[11px] text-muted-foreground">Width boundary for signature & stamp images</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Signature Image Height (pt)</Label>
+              <Input
+                type="number"
+                step="1"
+                min="15"
+                max="60"
+                value={config.signatureImageHeight ?? 28}
+                onChange={(e) => update("signatureImageHeight", parseFloat(e.target.value) || 28)}
+                placeholder="28"
+              />
+              <p className="text-[11px] text-muted-foreground">Height boundary for signature & stamp images</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Table Gap / Spacing (pt)</Label>
+              <Input
+                type="number"
+                step="0.5"
+                min="0"
+                max="15"
+                value={config.tableGap ?? 2.5}
+                onChange={(e) => update("tableGap", e.target.value === "" ? 2.5 : parseFloat(e.target.value))}
+                placeholder="2.5"
+              />
+              <p className="text-[11px] text-muted-foreground">Margin / gap below each table from Description to Results</p>
             </div>
           </div>
         </CardContent>

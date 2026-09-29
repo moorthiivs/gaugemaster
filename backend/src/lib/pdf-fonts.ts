@@ -6,31 +6,42 @@ const logger = new Logger('PdfFonts');
 
 /**
  * Resolves the absolute path of a font file by checking standard distribution and source locations.
- * Works seamlessly in both local development (ts-node / dist) and production environments (PM2 release).
+ * Prioritizes permanent source directories (src/fonts) so development rebuilds never cause ENOENT errors.
  */
 export function resolveFontPath(fontFileName: string): string {
   const candidatePaths = [
-    // 1. Production dist relative to compiled file location
-    path.resolve(__dirname, '..', 'fonts', fontFileName),
-    path.resolve(__dirname, 'fonts', fontFileName),
-    path.resolve(__dirname, '..', 'fonts', 'fonts', fontFileName),
-    path.resolve(__dirname, '..', '..', 'fonts', fontFileName),
-
-    // 2. Relative to process.cwd() (root of application under PM2 or dev server)
-    path.resolve(process.cwd(), 'dist', 'fonts', fontFileName),
-    path.resolve(process.cwd(), 'dist', 'fonts', 'fonts', fontFileName),
-    path.resolve(process.cwd(), 'backend', 'dist', 'fonts', fontFileName),
+    // 1. Permanent source directories (never wiped during nest build / watch restarts)
     path.resolve(process.cwd(), 'src', 'fonts', fontFileName),
     path.resolve(process.cwd(), 'backend', 'src', 'fonts', fontFileName),
+    path.resolve(__dirname, '..', '..', 'src', 'fonts', fontFileName),
+    path.resolve(__dirname, '..', 'src', 'fonts', fontFileName),
+
+    // 2. Production dist relative to compiled file location
+    path.resolve(__dirname, '..', 'fonts', fontFileName),
+    path.resolve(__dirname, 'fonts', fontFileName),
+    path.resolve(__dirname, '..', '..', 'fonts', fontFileName),
+
+    // 3. Process cwd dist / root directories
+    path.resolve(process.cwd(), 'dist', 'fonts', fontFileName),
+    path.resolve(process.cwd(), 'backend', 'dist', 'fonts', fontFileName),
     path.resolve(process.cwd(), 'fonts', fontFileName),
 
-    // 3. Fallback to node_modules if present
+    // 4. Fallback to node_modules if present
     path.resolve(process.cwd(), 'node_modules', 'pdfmake', 'fonts', fontFileName),
   ];
 
   for (const candidate of candidatePaths) {
     try {
       if (fs.existsSync(candidate)) {
+        // Also ensure dist/fonts copy exists if dist directory is present
+        const distFontsDir = path.resolve(process.cwd(), 'dist', 'fonts');
+        const distTarget = path.join(distFontsDir, fontFileName);
+        if (candidate !== distTarget && fs.existsSync(path.resolve(process.cwd(), 'dist')) && !fs.existsSync(distTarget)) {
+          try {
+            if (!fs.existsSync(distFontsDir)) fs.mkdirSync(distFontsDir, { recursive: true });
+            fs.copyFileSync(candidate, distTarget);
+          } catch {}
+        }
         return candidate;
       }
     } catch {

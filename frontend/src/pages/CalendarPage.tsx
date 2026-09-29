@@ -13,6 +13,7 @@ import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { getFilterParams } from "@/lib/instrumentActions";
+import { deduplicateItemStatuses } from "@/lib/itemStatus";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -84,7 +85,7 @@ export default function CalendarPage() {
     if (!user?.id) return;
     getFilterParams(user.id, user?.companyId).then((f) => {
       setLocations(f.location || []);
-      setItemStatuses(f.item_status || []);
+      setItemStatuses(deduplicateItemStatuses(f.item_status || []));
     }).catch(() => {});
   }, [user?.id, user?.companyId]);
 

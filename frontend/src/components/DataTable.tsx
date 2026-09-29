@@ -294,7 +294,9 @@ export function DataTable<TData, TValue>({
                       checked={column.getIsVisible()}
                       onCheckedChange={(value) => column.toggleVisibility(!!value)}
                     >
-                      {column.id.replace(/_/g, " ")}
+                      {typeof column.columnDef.header === "string"
+                        ? column.columnDef.header
+                        : column.id.replace(/_/g, " ")}
                     </DropdownMenuCheckboxItem>
                   )
                 })}
@@ -317,8 +319,18 @@ export function DataTable<TData, TValue>({
                     const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
                     const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
                     const justifyClass = align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start";
+                    const isSelect = colId === "select";
+                    const widthStyle: React.CSSProperties = {
+                      width: (header.column.columnDef.meta as any)?.width,
+                      minWidth: (header.column.columnDef.meta as any)?.minWidth,
+                      maxWidth: (header.column.columnDef.meta as any)?.maxWidth,
+                    };
                     return (
-                      <TableHead key={header.id} className={`font-bold text-foreground/80 py-3 px-4 h-auto ${textAlignClass}`}>
+                      <TableHead
+                        key={header.id}
+                        style={widthStyle}
+                        className={`font-bold text-foreground/80 py-3 ${isSelect ? "w-[48px] px-2 text-center" : "px-4"} h-auto ${textAlignClass}`}
+                      >
                         <div className="flex flex-col gap-2">
                           <div className={`flex items-center gap-2 group ${justifyClass}`}>
                             {header.isPlaceholder
@@ -422,8 +434,18 @@ export function DataTable<TData, TValue>({
                       const colId = (cell.column.id || "").toLowerCase();
                       const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
                       const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
+                      const isSelect = colId === "select";
+                      const widthStyle: React.CSSProperties = {
+                        width: (cell.column.columnDef.meta as any)?.width,
+                        minWidth: (cell.column.columnDef.meta as any)?.minWidth,
+                        maxWidth: (cell.column.columnDef.meta as any)?.maxWidth,
+                      };
                       return (
-                        <TableCell key={cell.id} className={`py-3.5 px-4 text-sm font-medium ${textAlignClass}`}>
+                        <TableCell
+                          key={cell.id}
+                          style={widthStyle}
+                          className={`py-3.5 ${isSelect ? "w-[48px] px-2 text-center" : "px-4"} text-sm font-medium ${textAlignClass}`}
+                        >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </TableCell>
                       );
