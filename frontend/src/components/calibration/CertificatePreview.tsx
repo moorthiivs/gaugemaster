@@ -1119,53 +1119,49 @@ export function CertificatePreview({
             </tbody>
           </table>
 
-          {/* Description & Identification (3 Columns Stacked) */}
+          {/* Description & Identification (4 Columns / 2 Rows) */}
           <div className="border border-black">
             <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black text-center uppercase`}>
               Description & Identification
             </div>
-            <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
+            <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
               <tbody>
+                {/* Row 1: Instrument (DUC) | Make | Range | Serial No */}
                 <tr className="border-b border-black">
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[26%] p-1 border-r border-black overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">Instrument (DUC)</div>
-                    <div className="font-bold">{instrumentName || inst?.name || "-"}</div>
+                    <div className="font-bold truncate">{instrumentName || inst?.name || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[30%] p-1 border-r border-black overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">Make</div>
-                    <div className="font-bold">{inst?.make || "-"}</div>
+                    <div className="font-bold truncate">{inst?.make || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1">
-                    <div className="font-bold text-slate-600 text-[8px]">Model No.</div>
-                    <div className="font-bold">{(inst as any)?.model_no || "-"}</div>
-                  </td>
-                </tr>
-                <tr className="border-b border-black">
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[23%] p-1 border-r border-black overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">{rangeLabel}</div>
-                    <div className="font-bold">{inst?.range || "-"}</div>
+                    <div className="font-bold truncate">{inst?.range || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[21%] p-1 overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">Serial No.</div>
-                    <div className="font-bold">{inst?.serial_no || "-"}</div>
-                  </td>
-                  <td className="w-1/3 p-1">
-                    <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
-                    <div className="font-bold">{inst?.least_count || "-"}</div>
+                    <div className="font-bold truncate">{inst?.serial_no || "-"}</div>
                   </td>
                 </tr>
+                {/* Row 2: Least Count | ID No | Instrument Cond | Location */}
                 <tr>
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[26%] p-1 border-r border-black overflow-hidden">
+                    <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
+                    <div className="font-bold truncate">{inst?.least_count || "-"}</div>
+                  </td>
+                  <td className="w-[30%] p-1 border-r border-black overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">ID No.</div>
-                    <div className="font-bold">{inst?.id_code || "-"}</div>
+                    <div className="font-bold truncate">{inst?.id_code || "-"}</div>
                   </td>
-                  <td className="w-1/3 p-1 border-r border-black">
+                  <td className="w-[23%] p-1 border-r border-black overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">Instrument Cond.</div>
-                    <div className="font-bold">SATISFACTORY</div>
+                    <div className="font-bold truncate">SATISFACTORY</div>
                   </td>
-                  <td className="w-1/3 p-1">
+                  <td className="w-[21%] p-1 overflow-hidden">
                     <div className="font-bold text-slate-600 text-[8px]">Location</div>
-                    <div className="font-bold">{inst?.location || "Permanent Laboratory"}</div>
+                    <div className="font-bold truncate">{inst?.location || "Permanent Laboratory"}</div>
                   </td>
                 </tr>
               </tbody>
@@ -1173,13 +1169,13 @@ export function CertificatePreview({
           </div>
 
           {/* Procedure & Environmental Conditions Table */}
-          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`}>
+          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
             <thead>
               <tr className="bg-slate-100 border-b border-black font-bold text-left">
-                <th className={`w-[28%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No, Name &amp; Rev/Date</th>
-                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
-                <th className={`w-[24%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
-                <th className={`w-[24%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
+                <th className={`w-[26%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No, Name &amp; Rev/Date</th>
+                <th className={`w-[30%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
+                <th className={`w-[23%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+                <th className={`w-[21%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
               </tr>
             </thead>
             <tbody>
@@ -1248,7 +1244,7 @@ export function CertificatePreview({
           <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
             <thead>
               <tr>
-                <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-left border-b border-black`}>
+                <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-center border-b border-black`}>
                   TRACEABILITY OF MASTER USED :
                 </th>
               </tr>

@@ -496,7 +496,7 @@ const Index = () => {
     return new Date(now.getFullYear(), now.getMonth() + 1, 0);
   });
   const [activePreset, setActivePreset] = useState<string | null>("This Month");
-  const [itemStatus, setItemStatus] = useState<string>("Active");
+  const [itemStatus, setItemStatus] = useState<string>("All");
   const [category, setCategory] = useState<string>("Working"); // Default to "Working" Gauges
   const [calibrationStatus, setCalibrationStatus] = useState<
     string | undefined
@@ -512,9 +512,9 @@ const Index = () => {
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (startDate || endDate) count++;
-    if (location) count++;
-    if (itemStatus && itemStatus !== "Active") count++;
-    if (calibrationStatus) count++;
+    if (location && location !== "All") count++;
+    if (itemStatus && itemStatus !== "All") count++;
+    if (calibrationStatus && calibrationStatus !== "All") count++;
     if (category && category !== "Working") count++;
     return count;
   }, [startDate, endDate, location, itemStatus, calibrationStatus, category]);
@@ -596,9 +596,9 @@ const Index = () => {
           user?.id,
           startStr,
           endStr,
-          itemStatus,
-          calibrationStatus,
-          location,
+          itemStatus === "All" ? undefined : itemStatus,
+          calibrationStatus === "All" ? undefined : calibrationStatus,
+          location === "All" ? undefined : location,
           isRefParam,
           user?.companyId,
         );
@@ -637,9 +637,9 @@ const Index = () => {
     const params = new URLSearchParams();
     const todayStr = format(new Date(), "yyyy-MM-dd");
 
-    if (location) params.append("location", location);
-    if (itemStatus) params.append("item_status", itemStatus);
-    if (calibrationStatus) params.append("status", calibrationStatus);
+    if (location && location !== "All") params.append("location", location);
+    if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+    if (calibrationStatus && calibrationStatus !== "All") params.append("status", calibrationStatus);
     if (category === "Working") params.append("is_reference_standard", "false");
     if (category === "Reference")
       params.append("is_reference_standard", "true");
@@ -712,7 +712,7 @@ const Index = () => {
     setStartDate(new Date(now.getFullYear(), now.getMonth(), 1));
     setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     setActivePreset("This Month");
-    setItemStatus("Active");
+    setItemStatus("All");
     setCategory("Working");
     setCalibrationStatus(undefined);
     setLocation(undefined);

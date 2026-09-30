@@ -2166,23 +2166,25 @@ export class CertificateService {
         },
 
         // Description & Identification Box
-        // Description & Identification Table (3 Columns / Stacked)
+        // Description & Identification Table (4 Columns / 2 Rows)
         {
           table: {
-            widths: ['33%', '34%', '33%'],
+            widths: ['26%', '28%', '24%', '22%'],
             body: [
               [
                 {
                   text: 'Description & Identification',
                   style: 'boxHeader',
+                  alignment: 'center',
                   fontSize: titleFontSize,
-                  colSpan: 3,
+                  colSpan: 4,
                   margin: [2, 0.8, 2, 0.8],
                 },
                 {},
                 {},
+                {},
               ],
-              // Row 1
+              // Row 1: Instrument (DUC) | Make | Range | Serial No
               [
                 {
                   stack: [
@@ -2221,26 +2223,6 @@ export class CertificateService {
                 {
                   stack: [
                     {
-                      text: 'Model No.',
-                      bold: true,
-                      fontSize: labelFontSize,
-                      color: '#475569',
-                    },
-                    {
-                      text: (inst as any)?.model_no || '-',
-                      fontSize: valueFontSize,
-                      bold: true,
-                      margin: [0, 0.5, 0, 0],
-                    },
-                  ],
-                  margin: [1, 0, 1, 0],
-                },
-              ],
-              // Row 2
-              [
-                {
-                  stack: [
-                    {
                       text: rangeLabel,
                       bold: true,
                       fontSize: labelFontSize,
@@ -2272,6 +2254,9 @@ export class CertificateService {
                   ],
                   margin: [1, 0, 1, 0],
                 },
+              ],
+              // Row 2: Least Count | ID No | Instrument Cond | Location
+              [
                 {
                   stack: [
                     {
@@ -2289,9 +2274,6 @@ export class CertificateService {
                   ],
                   margin: [1, 0, 1, 0],
                 },
-              ],
-              // Row 3
-              [
                 {
                   stack: [
                     {
@@ -2351,8 +2333,8 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
-            paddingLeft: () => 3,
-            paddingRight: () => 3,
+            paddingLeft: () => 2.5,
+            paddingRight: () => 2.5,
             paddingTop: () => 1.2,
             paddingBottom: () => 1.2,
           },
@@ -2367,7 +2349,7 @@ export class CertificateService {
         // Procedure & Environmental Conditions Table (3-row table: Header Row, Data Row, Environmental Conditions Row)
         {
           table: {
-            widths: ['28%', '24%', '24%', '24%'],
+            widths: ['26%', '28%', '24%', '22%'],
             body: [
               // Row 1: Header Row
               [
@@ -2378,6 +2360,7 @@ export class CertificateService {
                   alignment: 'left',
                   fillColor: '#f1f5f9',
                   margin: [1, 0.5, 1, 0.5],
+                  noWrap: true,
                 },
                 {
                   text: 'Acceptance Criteria Doc.No & Rev-Date',
@@ -2386,6 +2369,7 @@ export class CertificateService {
                   alignment: 'left',
                   fillColor: '#f1f5f9',
                   margin: [1, 0.5, 1, 0.5],
+                  noWrap: true,
                 },
                 {
                   text: 'Standard Reference',
@@ -2576,6 +2560,7 @@ export class CertificateService {
                 {
                   text: 'TRACEABILITY OF MASTER USED :',
                   style: 'boxHeader',
+                  alignment: 'center',
                   fontSize: titleFontSize,
                   margin: [1, 0.5, 1, 0.5],
                   colSpan: 6,
@@ -2869,6 +2854,7 @@ export class CertificateService {
         boxHeader: {
           fontSize: titleFontSize,
           bold: true,
+          alignment: 'center' as const,
           color: '#000',
           fillColor: '#e2e8f0',
           margin: [2, 0.8, 2, 0.8] as [number, number, number, number],

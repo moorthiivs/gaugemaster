@@ -40,6 +40,22 @@ export class DashboardService {
         return userId ? [userId] : [];
     }
 
+    private normalizeItemStatus(status?: string | null): string {
+        if (!status) return 'Active';
+        const trimmed = status.toString().trim();
+        if (!trimmed) return 'Active';
+        const lower = trimmed.toLowerCase();
+        if (lower === 'active' || lower === 'ok') return 'Active';
+        if (lower === 'spare') return 'SPARE';
+        if (lower === 'stock') return 'STOCK';
+        if (lower === 'inactive') return 'Inactive';
+        if (lower === 'scrapped') return 'Scrapped';
+        if (lower === 'lost') return 'Lost';
+        if (lower === 'under repair' || lower === 'under_repair') return 'Under Repair';
+        if (lower === 'rejected') return 'Rejected';
+        return trimmed;
+    }
+
     async fetchDashboard(userid: string, companyId?: string, startDateStr?: string, endDateStr?: string, itemStatus?: string, status?: string, location?: string, isReferenceStandard?: string) {
         const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
         const userIds = await this.getCompanyUserIds(userid, companyId);
@@ -259,14 +275,19 @@ export class DashboardService {
         }
         planQuery.andWhere('instrument.due_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
 
-        if (itemStatus) {
+        if (itemStatus && itemStatus !== 'All') {
             planQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
         }
-        if (status) {
+        if (status && status !== 'All') {
             planQuery.andWhere('instrument.status ILIKE :status', { status });
         }
-        if (location) {
+        if (location && location !== 'All') {
             planQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            planQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            planQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
         planQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
@@ -286,14 +307,19 @@ export class DashboardService {
         }
         actualQuery.andWhere('history.last_calibration_date BETWEEN :monthStart AND :monthEnd', { monthStart, monthEnd });
 
-        if (itemStatus) {
+        if (itemStatus && itemStatus !== 'All') {
             actualQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
         }
-        if (status) {
+        if (status && status !== 'All') {
             actualQuery.andWhere('instrument.status ILIKE :status', { status });
         }
-        if (location) {
+        if (location && location !== 'All') {
             actualQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            actualQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            actualQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
         actualQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
@@ -380,58 +406,82 @@ export class DashboardService {
 
         // ═══════════════════════════════════════════════════════════════
         // FIXED: Status & Item Status distributions
-        // Now uses targetUserIds (company tenant) instead of single userid
+        // Item Status: Overall inventory lifecycle breakdown (Active, SPARE, STOCK, Inactive, etc.)
+        // Calibration Status: Compliance breakdown (OK, Overdue, Due Soon, etc.)
         // ═══════════════════════════════════════════════════════════════
-        const statusQuery = this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select('instrument.status', 'status')
-            .addSelect('COUNT(*)', 'count');
 
+        // 1. Item Status Distribution (Overall inventory lifecycle breakdown: Active, SPARE, STOCK, Inactive, etc.)
+        // Must show ALL item statuses across the inventory, NOT filtered by item_status or due_date range!
         const itemStatusQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
-            .select('instrument.item_status', 'item_status')
+            .select("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')", 'item_status')
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            itemStatusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            itemStatusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+
+        if (location && location !== 'All') {
+            itemStatusQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            itemStatusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            itemStatusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+
+        const rawItemStatusGroups = await itemStatusQuery
+            .groupBy("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')")
+            .getRawMany();
+
+        // Normalize item statuses (e.g. merge 'SPARE' and 'Spare', 'STOCK' and 'Stock')
+        const itemStatusMap = new Map<string, number>();
+        for (const g of rawItemStatusGroups) {
+            const normalized = this.normalizeItemStatus(g.item_status);
+            itemStatusMap.set(normalized, (itemStatusMap.get(normalized) || 0) + Number(g.count));
+        }
+
+        const itemStatusDistribution = Array.from(itemStatusMap.entries())
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+
+        // 2. Calibration Status Distribution (Compliance breakdown: OK, Overdue, Due Soon, etc.)
+        // Shows full distribution across calibration results, NOT filtered by status so the breakdown is preserved.
+        const statusQuery = this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')", 'status')
             .addSelect('COUNT(*)', 'count');
 
         if (targetCompanyId) {
             statusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-            itemStatusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
         } else {
             statusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-            itemStatusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
         }
 
-        if (startDateStr && endDateStr) {
-            statusQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
-            itemStatusQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
-        }
-
-        if (itemStatus) {
+        if (itemStatus && itemStatus !== 'All') {
             statusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
-            itemStatusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
         }
-
-        if (status) {
-            statusQuery.andWhere('instrument.status ILIKE :status', { status });
-            itemStatusQuery.andWhere('instrument.status ILIKE :status', { status });
-        }
-
-        if (location) {
+        if (location && location !== 'All') {
             statusQuery.andWhere('instrument.location ILIKE :location', { location });
-            itemStatusQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            statusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            statusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        const statusGroups = await statusQuery.groupBy('instrument.status').getRawMany();
-        const itemStatusGroups = await itemStatusQuery.groupBy('instrument.item_status').getRawMany();
+        const rawStatusGroups = await statusQuery
+            .groupBy("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')")
+            .getRawMany();
 
-        const statusDistribution = statusGroups.map(g => ({
-            name: g.status || 'OK',
-            value: Number(g.count),
-        }));
-
-        const itemStatusDistribution = itemStatusGroups.map(g => ({
-            name: g.item_status || 'Active',
-            value: Number(g.count),
-        }));
+        const statusDistribution = rawStatusGroups
+            .map(g => ({
+                name: g.status || 'OK',
+                value: Number(g.count),
+            }))
+            .sort((a, b) => b.value - a.value);
 
         // ═══════════════════════════════════════════════════════════════
         // Module distribution (GROUP BY TRIM(instrument.module))
