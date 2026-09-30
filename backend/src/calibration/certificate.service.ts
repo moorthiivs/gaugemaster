@@ -95,6 +95,88 @@ async function removeWhiteBackground(fileBuffer: Buffer): Promise<Buffer> {
     }
   });
 }
+
+/**
+ * Normalizes diagram images for PDF generation.
+ * PDFKit has a critical bug decoding Adam7 interlaced PNGs (interlace=1) and
+ * palette-based PNGs with alpha transparency (tRNS), which causes inverted black
+ * disks, broken strokes, and severe perspective skewing.
+ * This function decodes the image pixels and re-encodes them into a standard,
+ * non-interlaced 32-bit RGBA PNG composited onto a solid white background.
+ */
+async function normalizeDiagramImage(rawDiagram: string): Promise<string> {
+  try {
+    let fileBuffer: Buffer | null = null;
+    let mimeType = 'image/png';
+
+    if (rawDiagram.startsWith('data:image/')) {
+      const match = rawDiagram.match(/^data:(image\/[a-zA-Z+.-]+);base64,/);
+      if (match) {
+        mimeType = match[1];
+      }
+      const base64Data = rawDiagram.replace(/^data:image\/[a-zA-Z+.-]+;base64,/, '');
+      fileBuffer = Buffer.from(base64Data, 'base64');
+    } else {
+      const diagramAbsPath = rawDiagram.startsWith('/')
+        ? path.join(process.cwd(), rawDiagram.slice(1))
+        : path.join(process.cwd(), rawDiagram);
+      if (fs.existsSync(diagramAbsPath)) {
+        fileBuffer = fs.readFileSync(diagramAbsPath);
+        mimeType = rawDiagram.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+      }
+    }
+
+    if (!fileBuffer || fileBuffer.length < 8) return rawDiagram;
+
+    // Check if buffer starts with standard PNG signature (0x89 0x50 0x4e 0x47 0x0d 0x0a 0x1a 0x0a)
+    const isPngSignature =
+      fileBuffer[0] === 0x89 &&
+      fileBuffer[1] === 0x50 &&
+      fileBuffer[2] === 0x4e &&
+      fileBuffer[3] === 0x47 &&
+      fileBuffer[4] === 0x0d &&
+      fileBuffer[5] === 0x0a &&
+      fileBuffer[6] === 0x1a &&
+      fileBuffer[7] === 0x0a;
+
+    if (!isPngSignature) {
+      if (rawDiagram.startsWith('data:image')) return rawDiagram;
+      return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+    }
+
+    return await new Promise<string>((resolve) => {
+      try {
+        const img = new PNG(fileBuffer);
+        img.decode((pixels: Buffer) => {
+          if (!pixels || pixels.length === 0) {
+            return resolve(rawDiagram.startsWith('data:') ? rawDiagram : `data:image/png;base64,${fileBuffer.toString('base64')}`);
+          }
+
+          // Composite any transparent alpha pixels onto a solid white background (255, 255, 255)
+          // so PDFKit and PDF viewers never render transparent voids as black or inverted blocks
+          for (let i = 0; i < pixels.length; i += 4) {
+            const alpha = pixels[i + 3] / 255;
+            if (alpha < 1) {
+              pixels[i] = Math.round(pixels[i] * alpha + 255 * (1 - alpha));
+              pixels[i + 1] = Math.round(pixels[i + 1] * alpha + 255 * (1 - alpha));
+              pixels[i + 2] = Math.round(pixels[i + 2] * alpha + 255 * (1 - alpha));
+              pixels[i + 3] = 255;
+            }
+          }
+
+          const cleanPngBuf = encodeRgbaPng(img.width, img.height, pixels);
+          resolve(`data:image/png;base64,${cleanPngBuf.toString('base64')}`);
+        });
+      } catch (err) {
+        console.warn('Failed to normalize diagram PNG, using original:', err);
+        resolve(rawDiagram.startsWith('data:') ? rawDiagram : `data:image/png;base64,${fileBuffer.toString('base64')}`);
+      }
+    });
+  } catch (err) {
+    return rawDiagram;
+  }
+}
+
 import { getPdfFonts } from '../lib/pdf-fonts';
 
 const fonts = getPdfFonts();
@@ -441,16 +523,37 @@ export class CertificateService {
       ((latestTemplate as any)?.layout_blocks && (latestTemplate as any).layout_blocks.length > 0),
     );
 
-    const canvasBlocks =
+    const rawCanvasBlocks =
       calibration.layout_blocks ||
       (latestTemplate as any)?.layout_blocks ||
       [];
+    const canvasBlocks = await Promise.all(
+      rawCanvasBlocks.map(async (b: any) => {
+        if ((b.type === 'diagram_block' || b.type === 'diagram') && (b.imageUrl || b.image)) {
+          const rawUrl = b.imageUrl || b.image;
+          const cleanUrl = await normalizeDiagramImage(rawUrl);
+          return { ...b, imageUrl: cleanUrl, image: cleanUrl };
+        }
+        return b;
+      }),
+    );
 
     // ── Build calibration data table ─────────────────────────
+    let rawDiagramToCheck: string | null = null;
+    if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+      rawDiagramToCheck = calibration.diagram_image;
+    } else if ((calibration as any).instrument?.custom_parameters?.diagram_image !== undefined) {
+      rawDiagramToCheck = (calibration as any).instrument?.custom_parameters?.diagram_image;
+    } else if (latestTemplate?.diagram_image) {
+      rawDiagramToCheck = latestTemplate.diagram_image;
+    } else if (((calibration as any).template as any)?.diagram_image) {
+      rawDiagramToCheck = ((calibration as any).template as any).diagram_image;
+    }
+
     const hasDiagram = Boolean(
-      calibration.diagram_image ||
-      latestTemplate?.diagram_image ||
-      ((calibration as any).template as any)?.diagram_image,
+      rawDiagramToCheck &&
+        typeof rawDiagramToCheck === 'string' &&
+        rawDiagramToCheck.trim() !== '',
     );
     // Standard professional certificates adopt compact, space-efficient metrics to guarantee 1-page fit
     const isDense = true;
@@ -914,42 +1017,38 @@ export class CertificateService {
     }
 
     // ── Resolve Diagram Image to base64 for pdfmake ──
-    const rawDiagram =
-      latestTemplate?.diagram_image ||
-      calibration.diagram_image ||
-      ((calibration as any).template as any)?.diagram_image;
+    let rawDiagram: string | null = null;
+    if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+      rawDiagram = calibration.diagram_image;
+    } else if ((calibration as any).instrument?.custom_parameters?.diagram_image !== undefined) {
+      rawDiagram = (calibration as any).instrument?.custom_parameters?.diagram_image;
+    } else if (latestTemplate?.diagram_image) {
+      rawDiagram = latestTemplate.diagram_image;
+    } else if (((calibration as any).template as any)?.diagram_image) {
+      rawDiagram = ((calibration as any).template as any).diagram_image;
+    }
     const diagramWidth =
-      latestTemplate?.diagram_image_width ||
       calibration.diagram_image_width ||
+      (calibration as any).instrument?.custom_parameters?.diagram_image_width ||
+      latestTemplate?.diagram_image_width ||
       ((calibration as any).template as any)?.diagram_image_width ||
       350;
     const diagramHeight =
-      latestTemplate?.diagram_image_height ||
       calibration.diagram_image_height ||
+      (calibration as any).instrument?.custom_parameters?.diagram_image_height ||
+      latestTemplate?.diagram_image_height ||
       ((calibration as any).template as any)?.diagram_image_height ||
       160;
     const diagramAlignment =
-      latestTemplate?.diagram_image_alignment ||
       calibration.diagram_image_alignment ||
+      (calibration as any).instrument?.custom_parameters?.diagram_image_alignment ||
+      latestTemplate?.diagram_image_alignment ||
       ((calibration as any).template as any)?.diagram_image_alignment ||
       'center';
 
     let diagramDataUrl: string | null = null;
     if (rawDiagram && typeof rawDiagram === 'string' && rawDiagram.trim()) {
-      if (rawDiagram.startsWith('data:image')) {
-        diagramDataUrl = rawDiagram;
-      } else {
-        try {
-          const diagramAbsPath = rawDiagram.startsWith('/')
-            ? path.join(process.cwd(), rawDiagram.slice(1))
-            : path.join(process.cwd(), rawDiagram);
-          if (fs.existsSync(diagramAbsPath)) {
-            const buf = fs.readFileSync(diagramAbsPath);
-            const mime = rawDiagram.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-            diagramDataUrl = `data:${mime};base64,${buf.toString('base64')}`;
-          }
-        } catch (e) {}
-      }
+      diagramDataUrl = await normalizeDiagramImage(rawDiagram);
     }
 
     const targetDiagramWidth = Math.min(diagramWidth, 545);

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -33,6 +33,7 @@ import {
   FileText,
   FileCode,
   LayoutGrid,
+  ClipboardPaste,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -116,6 +117,94 @@ export function AiTemplateGeneratorModal({
     };
     reader.readAsDataURL(file);
   };
+
+  // Paste image from system clipboard via Button click
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.read) {
+        toast.info("Please press Ctrl+V (or ⌘V) on your keyboard to paste your copied image.");
+        return;
+      }
+
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split("/")[1] || "png";
+          const file = new File(
+            [blob],
+            `clipboard-image-${Date.now()}.${ext === "jpeg" ? "jpg" : ext}`,
+            { type: imageType }
+          );
+          setActiveTab("image");
+          handleImageSelect(file);
+          toast.success("Image pasted from clipboard!");
+          return;
+        }
+      }
+      toast.error("No image found in clipboard. Copy an image or take a screenshot first (Win+Shift+S / PrtScn).");
+    } catch (err: any) {
+      console.warn("Clipboard read error:", err);
+      toast.info("Clipboard access blocked by browser. Please press Ctrl+V directly to paste your copied image.");
+    }
+  };
+
+  // Global / Modal paste listener (Ctrl+V) when modal is open
+  useEffect(() => {
+    if (!open) return;
+
+    const handleWindowPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      let targetFile: File | null = null;
+
+      // 1. Inspect clipboard items
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith("image/")) {
+            const f = items[i].getAsFile();
+            if (f) {
+              targetFile = f;
+              break;
+            }
+          }
+        }
+      }
+
+      // 2. Fallback to clipboardData.files
+      if (!targetFile && e.clipboardData?.files?.length) {
+        for (let i = 0; i < e.clipboardData.files.length; i++) {
+          const f = e.clipboardData.files[i];
+          if (f.type.startsWith("image/")) {
+            targetFile = f;
+            break;
+          }
+        }
+      }
+
+      // If an image was pasted, prevent default & select it
+      if (targetFile) {
+        e.preventDefault();
+        e.stopPropagation();
+        const ext = targetFile.type.split("/")[1] || "png";
+        const formattedFile = new File(
+          [targetFile],
+          targetFile.name && targetFile.name !== "image.png"
+            ? targetFile.name
+            : `clipboard-image-${Date.now()}.${ext === "jpeg" ? "jpg" : ext}`,
+          { type: targetFile.type }
+        );
+        setActiveTab("image");
+        handleImageSelect(formattedFile);
+        toast.success("Image pasted from clipboard!");
+      }
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [open]);
 
   // Process selected PDF file
   const handlePdfSelect = (file: File) => {
@@ -871,6 +960,7 @@ export function AiTemplateGeneratorModal({
                 {/* Tab 4: Image Upload */}
                 <TabsContent value="image" className="space-y-3 pt-2">
                   <div
+                    tabIndex={0}
                     onClick={() => fileInputRef.current?.click()}
                     onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onDrop={(e) => {
@@ -880,7 +970,24 @@ export function AiTemplateGeneratorModal({
                         handleImageSelect(e.dataTransfer.files[0]);
                       }
                     }}
-                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                    onPaste={(e) => {
+                      const items = e.clipboardData?.items;
+                      if (items) {
+                        for (let i = 0; i < items.length; i++) {
+                          if (items[i].type.startsWith("image/")) {
+                            const file = items[i].getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleImageSelect(file);
+                              toast.success("Image pasted from clipboard!");
+                              return;
+                            }
+                          }
+                        }
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[170px]"
                   >
                     <input
                       ref={fileInputRef}
@@ -893,27 +1000,84 @@ export function AiTemplateGeneratorModal({
                     />
 
                     {imagePreview ? (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <img
                           src={imagePreview}
                           alt="Uploaded Calibration Standard"
-                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
+                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain bg-white dark:bg-slate-900"
                         />
                         <div className="text-xs text-muted-foreground font-medium">
-                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <div
+                          className="flex items-center justify-center gap-2 pt-1 flex-wrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="h-7 text-xs gap-1.5"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            Change File
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePasteFromClipboard}
+                            className="h-7 text-xs gap-1.5 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                          >
+                            <ClipboardPaste className="w-3.5 h-3.5" />
+                            Paste New Image
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setImageFile(null);
+                              setImagePreview(null);
+                            }}
+                            className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            Remove
+                          </Button>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <div className="w-12 h-12 rounded-full bg-purple-500/10 text-purple-600 flex items-center justify-center mx-auto">
                           <Upload className="w-6 h-6" />
                         </div>
-                        <div className="text-xs font-semibold">
-                          Click to upload or Drag & Drop calibration image / standard drawing
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold">
+                            Click to upload or Drag & Drop calibration image / standard drawing
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Supports PNG, JPG, JPEG, WebP (Max 10MB)
+                          </p>
                         </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
-                        </p>
+                        <div
+                          className="pt-1 flex items-center justify-center gap-2.5 flex-wrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePasteFromClipboard}
+                            className="h-8 text-xs font-semibold gap-1.5 bg-white dark:bg-slate-900 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/50 shadow-xs transition-all cursor-pointer"
+                          >
+                            <ClipboardPaste className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            Paste from Clipboard
+                          </Button>
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            or press <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-slate-100 dark:bg-slate-800 border rounded text-slate-700 dark:text-slate-300 shadow-2xs">Ctrl+V</kbd> anywhere
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>

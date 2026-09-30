@@ -65,6 +65,10 @@ export class CreateCalibrationDto {
     soaking_end_time?: string;
   };
 
+  @IsOptional()
+  @IsString()
+  receipt_condition?: string;
+
   // Calibration Data Points & Canvas Layout
   @IsOptional()
   @IsBoolean()

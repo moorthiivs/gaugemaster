@@ -233,6 +233,36 @@ export default function CalibrationWizard() {
   const [newTemplateDescription, setNewTemplateDescription] = useState("");
   const [savingTemplateVariant, setSavingTemplateVariant] = useState(false);
 
+  // Normalizes pasted or uploaded images using an offscreen canvas:
+  // 1. Decodes any interlaced PNG formats (Adam7) into standard scanlines
+  // 2. Fills transparent alpha with solid white background to guarantee pristine PDF rendering
+  // 3. Produces standard non-interlaced 32-bit RGBA PNG DataURL
+  const cleanImageToDataUrl = (dataUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return resolve(dataUrl);
+
+          // Fill solid white background so transparent PNGs print crisp without black artifacts
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          resolve(canvas.toDataURL("image/png"));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  };
+
   // Copy diagram image base64 to system clipboard
   const handleCopyImageToClipboard = async () => {
     if (!wizardDiagramImage) return;
@@ -258,10 +288,11 @@ export default function CalibrationWizard() {
         if (imageType) {
           const blob = await item.getType(imageType);
           const reader = new FileReader();
-          reader.onload = (e) => {
+          reader.onload = async (e) => {
             const base64 = e.target?.result as string;
             if (base64) {
-              setWizardDiagramImage(base64);
+              const clean = await cleanImageToDataUrl(base64);
+              setWizardDiagramImage(clean);
               toast.success("Gauge Diagram pasted from clipboard");
             }
           };
@@ -286,10 +317,11 @@ export default function CalibrationWizard() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       const base64 = evt.target?.result as string;
       if (base64) {
-        setWizardDiagramImage(base64);
+        const clean = await cleanImageToDataUrl(base64);
+        setWizardDiagramImage(clean);
         toast.success("Diagram image attached");
       }
     };
@@ -410,10 +442,11 @@ export default function CalibrationWizard() {
           if (file) {
             e.preventDefault();
             const reader = new FileReader();
-            reader.onload = (event) => {
+            reader.onload = async (event) => {
               const base64 = event.target?.result as string;
               if (base64) {
-                setWizardDiagramImage(base64);
+                const clean = await cleanImageToDataUrl(base64);
+                setWizardDiagramImage(clean);
                 toast.success("Gauge Diagram pasted from clipboard (Ctrl+V)");
               }
             };
@@ -437,14 +470,88 @@ export default function CalibrationWizard() {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       const base64 = evt.target?.result as string;
       if (base64) {
-        setWizardDiagramImage(base64);
+        const clean = await cleanImageToDataUrl(base64);
+        setWizardDiagramImage(clean);
         toast.success("Diagram image uploaded");
       }
     };
     reader.readAsDataURL(file);
+  };
+
+  // Extract all current specifications, diagram image, and document properties for Item-level Instrument Master persistence
+  const getCustomParametersPayload = () => {
+    if (!selectedInstrument) return null;
+    let gaugeSpecs: any[] = [];
+    if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+      const allTables = getAllCanvasTables(wizardLayoutBlocks);
+      const validTables = allTables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
+      validTables.forEach((tbl: any) => {
+        if (Array.isArray(tbl.rows)) {
+          tbl.rows
+            .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
+            .forEach((r: any) => {
+              gaugeSpecs.push({
+                point_number: r.point_number ?? (gaugeSpecs.length + 1),
+                required_dimension: r.required_dimension || r.description || "",
+                description: r.description || r.required_dimension || "",
+                nominal: r.nominal,
+                tolerance: r.tolerance ?? tbl.tolerance,
+                lower_tolerance: r.lower_tolerance,
+                upper_tolerance: r.upper_tolerance,
+                lower_limit: r.lower_limit,
+                upper_limit: r.upper_limit,
+                unit: r.unit || tbl.unit || calUnit || "mm",
+                actual: r.actual,
+              });
+            });
+        }
+      });
+    } else {
+      gaugeSpecs = calPoints
+        .filter(p => ((p as any).is_merged || (p as any).isMerged) ? true : !isReceiptRow(p.description || "", p))
+        .map(p => ({
+          point_number: p.point_number,
+          description: p.description,
+          nominal: p.nominal,
+          unit: p.unit,
+          tolerance: p.tolerance,
+          customFields: p.customFields,
+        }));
+    }
+
+    return {
+      ...(selectedInstrument.custom_parameters || {}),
+      diagram_image: wizardDiagramImage ? wizardDiagramImage : null,
+      diagram_image_width: wizardDiagramWidth,
+      diagram_image_height: wizardDiagramHeight,
+      diagram_image_alignment: wizardDiagramAlignment,
+      doc_properties: {
+        doc_no: docNo || undefined,
+        doc_date: docDate || undefined,
+        doc_rev: docRev || undefined,
+        procedure_no: procedureNo || undefined,
+        procedure_name: procedureName || undefined,
+        procedure_date: procedureDate || undefined,
+        procedure_rev: procedureRev || undefined,
+        procedure_reference: procedureNo || procedureReference || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
+      },
+      environmental_defaults: {
+        temperature: envTemp || undefined,
+        humidity: envHumidity || undefined,
+        soaking_time: envSoakingTime || undefined,
+        soaking_start_time: envSoakingStartTime || undefined,
+        soaking_end_time: envSoakingEndTime || undefined,
+      },
+      receipt_condition: effectiveReceiptCondition,
+      specifications: gaugeSpecs.length > 0 ? gaugeSpecs : (selectedInstrument.custom_parameters?.specifications || []),
+    };
   };
 
   // Save current diagram, specifications, doc info to Instrument Master
@@ -453,76 +560,10 @@ export default function CalibrationWizard() {
       toast.error("No instrument selected");
       return;
     }
+    const updatedCustomParams = getCustomParametersPayload();
+    if (!updatedCustomParams) return;
     setSavingInstrumentCustom(true);
     try {
-      const updatedCustomParams = {
-        ...(selectedInstrument.custom_parameters || {}),
-        diagram_image: wizardDiagramImage ? wizardDiagramImage : null,
-        diagram_image_width: wizardDiagramWidth,
-        diagram_image_height: wizardDiagramHeight,
-        diagram_image_alignment: wizardDiagramAlignment,
-        doc_properties: {
-          doc_no: docNo || undefined,
-          doc_date: docDate || undefined,
-          doc_rev: docRev || undefined,
-          procedure_no: procedureNo || undefined,
-          procedure_name: procedureName || undefined,
-          procedure_date: procedureDate || undefined,
-          procedure_rev: procedureRev || undefined,
-          procedure_reference: procedureNo || procedureReference || undefined,
-          acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
-          acceptance_criteria_date: acceptanceCriteriaDate || undefined,
-          acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
-          acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
-        },
-        environmental_defaults: {
-          temperature: envTemp || undefined,
-          humidity: envHumidity || undefined,
-          soaking_time: envSoakingTime || undefined,
-          soaking_start_time: envSoakingStartTime || undefined,
-          soaking_end_time: envSoakingEndTime || undefined,
-        },
-        receipt_condition: effectiveReceiptCondition,
-        specifications: wizardIsCanvas && wizardLayoutBlocks.length > 0
-          ? (() => {
-              const allTables = getAllCanvasTables(wizardLayoutBlocks);
-              const validTables = allTables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-              const extractedRows: any[] = [];
-              validTables.forEach((tbl: any) => {
-                if (Array.isArray(tbl.rows)) {
-                  tbl.rows
-                    .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-                    .forEach((r: any) => {
-                      extractedRows.push({
-                        point_number: r.point_number ?? (extractedRows.length + 1),
-                        required_dimension: r.required_dimension || r.description || "",
-                        description: r.description || r.required_dimension || "",
-                        nominal: r.nominal,
-                        tolerance: r.tolerance ?? tbl.tolerance,
-                        lower_tolerance: r.lower_tolerance,
-                        upper_tolerance: r.upper_tolerance,
-                        lower_limit: r.lower_limit,
-                        upper_limit: r.upper_limit,
-                        unit: r.unit || tbl.unit || calUnit || "mm",
-                        actual: r.actual,
-                      });
-                    });
-                }
-              });
-              return extractedRows;
-            })()
-          : calPoints
-              .filter(p => ((p as any).is_merged || (p as any).isMerged) ? true : !isReceiptRow(p.description || "", p))
-              .map(p => ({
-                point_number: p.point_number,
-                description: p.description,
-                nominal: p.nominal,
-                unit: p.unit,
-                tolerance: p.tolerance,
-                customFields: p.customFields,
-              })),
-      };
-
       await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
         custom_parameters: updatedCustomParams,
       });
@@ -608,6 +649,10 @@ export default function CalibrationWizard() {
       setNewTemplateName("");
       setNewTemplateDescription("");
       toast.success(`Saved new template variant "${createdTpl.name}"`);
+      if (proceedAfterTemplateVariantRef.current) {
+        proceedAfterTemplateVariantRef.current = false;
+        executeSaveAndContinue();
+      }
     } catch (err: any) {
       console.error("Failed to save template variant", err);
       toast.error(err.response?.data?.message || "Failed to create template variant");
@@ -759,6 +804,98 @@ export default function CalibrationWizard() {
   const [step1Collapsed, setStep1Collapsed] = useState(true);
   const [step2Collapsed, setStep2Collapsed] = useState(true);
   const [step3Collapsed, setStep3Collapsed] = useState(true);
+
+  // Template modification detection & dialog state
+  const originalTemplateSnapshotRef = useRef<{
+    templateId: string;
+    templateName: string;
+    diagramImage: string | null;
+    blocksJson: string;
+    pointsJson: string;
+  } | null>(null);
+  const [templateModifiedModalOpen, setTemplateModifiedModalOpen] = useState(false);
+  const proceedAfterTemplateVariantRef = useRef<boolean>(false);
+
+  // Checks whether the user modified specifications or diagram from the original template
+  const checkIsTemplateModified = (): boolean => {
+    if (!originalTemplateSnapshotRef.current) return false;
+    if (!selectedTemplateId || selectedTemplateId === "none") return false;
+
+    const snapshot = originalTemplateSnapshotRef.current;
+    if (snapshot.templateId !== selectedTemplateId) return false;
+
+    // 1. Diagram image check
+    const currentDiagram = wizardDiagramImage || null;
+    if (snapshot.diagramImage !== currentDiagram) {
+      return true;
+    }
+
+    // 2. Specifications check
+    if (wizardIsCanvas) {
+      try {
+        const currentBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks || []));
+        const snapBlocks = JSON.parse(snapshot.blocksJson || "[]");
+        const cleanBlocks = (blks: any[]) =>
+          blks.map((b: any) => ({
+            id: b.id,
+            title: b.title,
+            rows: Array.isArray(b.rows)
+              ? b.rows.map((r: any) => ({
+                  point_number: r.point_number,
+                  required_dimension: r.required_dimension || r.description,
+                  nominal: r.nominal,
+                  tolerance: r.tolerance,
+                  unit: r.unit,
+                }))
+              : [],
+            children: Array.isArray(b.children)
+              ? b.children.map((c: any) => ({
+                  id: c.id,
+                  title: c.title,
+                  rows: Array.isArray(c.rows)
+                    ? c.rows.map((r: any) => ({
+                        point_number: r.point_number,
+                        required_dimension: r.required_dimension || r.description,
+                        nominal: r.nominal,
+                        tolerance: r.tolerance,
+                        unit: r.unit,
+                      }))
+                    : [],
+                }))
+              : [],
+          }));
+        if (JSON.stringify(cleanBlocks(currentBlocks)) !== JSON.stringify(cleanBlocks(snapBlocks))) {
+          return true;
+        }
+      } catch {
+        if (JSON.stringify(wizardLayoutBlocks || []) !== snapshot.blocksJson) return true;
+      }
+    } else {
+      try {
+        const currentPoints = (calPoints || []).map((p: any) => ({
+          point_number: p.point_number,
+          description: p.description,
+          nominal: p.nominal,
+          tolerance: p.tolerance,
+          unit: p.unit,
+        }));
+        const snapPoints = JSON.parse(snapshot.pointsJson || "[]").map((p: any) => ({
+          point_number: p.point_number,
+          description: p.description,
+          nominal: p.nominal,
+          tolerance: p.tolerance,
+          unit: p.unit,
+        }));
+        if (JSON.stringify(currentPoints) !== JSON.stringify(snapPoints)) {
+          return true;
+        }
+      } catch {
+        if (JSON.stringify(calPoints || []) !== snapshot.pointsJson) return true;
+      }
+    }
+
+    return false;
+  };
 
   const isPreloadedFromPreviousRef = useRef<boolean>(false);
 
@@ -921,6 +1058,15 @@ export default function CalibrationWizard() {
   const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[]) => {
     if (!tpl) return;
 
+    // Record snapshot of template definition for modification detection
+    originalTemplateSnapshotRef.current = {
+      templateId: tpl.id,
+      templateName: tpl.name,
+      diagramImage: tpl.diagram_image || null,
+      blocksJson: JSON.stringify(tpl.layout_blocks || []),
+      pointsJson: JSON.stringify(tpl.calibration_points || []),
+    };
+
     setSelectedTemplateId(tpl.id);
     if (tpl.default_unit) setCalUnit(tpl.default_unit);
     if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
@@ -951,17 +1097,16 @@ export default function CalibrationWizard() {
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
+    // SMART BINDING: Check if the selected instrument has its own saved specifications
+    const rawInstSpecs = selectedInstrument?.custom_parameters?.specifications;
+    const validInstSpecs = Array.isArray(rawInstSpecs)
+      ? rawInstSpecs.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s))
+      : [];
+
     // Check if canvas template
     if (tpl.is_canvas_template || (tpl.layout_blocks && tpl.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
       const clonedBlocks = JSON.parse(JSON.stringify(tpl.layout_blocks || []));
-
-      // SMART BINDING: If the selected instrument has its own saved specifications,
-      // use the template's table structure/columns/formulas but populate with the instrument's specifications!
-      const rawInstSpecs = selectedInstrument?.custom_parameters?.specifications;
-      const validInstSpecs = Array.isArray(rawInstSpecs)
-        ? rawInstSpecs.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s))
-        : [];
 
       // Only ignore the table of INSTRUMENT RECEIPT CONDITION from canvas layout blocks (not all tables)
       const sanitizedBlocks = clonedBlocks.filter((b: any) => {
@@ -972,8 +1117,8 @@ export default function CalibrationWizard() {
       if (!isEdit && validInstSpecs.length > 0) {
         const allTables = getAllCanvasTables(sanitizedBlocks);
         const primaryTable = allTables.find((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-        // Only use instrument specs if template primary table does not define its own rows
-        if (primaryTable && (!primaryTable.rows || primaryTable.rows.length === 0)) {
+        // Bind instrument specifications into the template table rows
+        if (primaryTable) {
           const dec = primaryTable.decimal_places ?? tpl.decimal_places ?? 3;
           const tol = primaryTable.tolerance ?? tpl.default_tolerance ?? 0.02;
           primaryTable.rows = validInstSpecs.map((s: any, idx: number) => {
@@ -1024,21 +1169,45 @@ export default function CalibrationWizard() {
       setWizardLayoutBlocks([]);
     }
 
-    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria, diagram from template
+    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria
     setWizardCustomColumns((tpl as any).custom_columns || []);
     setWizardStandardColumnConfigs((tpl as any).standard_columns_config || {});
     setWizardColumnOrder((tpl as any).column_order || []);
     setWizardHiddenColumns((tpl as any).hidden_columns || []);
     setWizardDecimalPlaces(tpl.decimal_places ?? 4);
     setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
-    if (tpl.diagram_image) setWizardDiagramImage(tpl.diagram_image);
-    else setWizardDiagramImage(null);
-    if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
-    if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
-    if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
+
+    // Diagram Image resolution: preserve instrument item-level diagram if saved!
+    const instCustomDiagram = selectedInstrument?.custom_parameters?.diagram_image;
+    if (instCustomDiagram !== undefined && !isEdit) {
+      setWizardDiagramImage(instCustomDiagram || null);
+      if (selectedInstrument?.custom_parameters?.diagram_image_width) setWizardDiagramWidth(selectedInstrument.custom_parameters.diagram_image_width);
+      if (selectedInstrument?.custom_parameters?.diagram_image_height) setWizardDiagramHeight(selectedInstrument.custom_parameters.diagram_image_height);
+      if (selectedInstrument?.custom_parameters?.diagram_image_alignment) setWizardDiagramAlignment(selectedInstrument.custom_parameters.diagram_image_alignment);
+    } else if (!isEdit) {
+      if (tpl.diagram_image) setWizardDiagramImage(tpl.diagram_image);
+      else setWizardDiagramImage(null);
+      if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
+      if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
+      if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
+    }
 
     if (isEdit && existingPoints && existingPoints.length > 0) {
       setCalPoints(existingPoints);
+    } else if (!isEdit && validInstSpecs.length > 0) {
+      const formattedPoints: CalibrationPoint[] = validInstSpecs.map((s: any, idx) => ({
+        point_number: s.point_number || idx + 1,
+        description: s.description || s.required_dimension || `Point ${idx + 1}`,
+        nominal: s.nominal !== undefined ? Number(s.nominal) : 0,
+        ascending_reading: s.ascending_reading !== undefined ? Number(s.ascending_reading) : (s.nominal !== undefined ? Number(s.nominal) : 0),
+        descending_reading: s.descending_reading !== undefined ? Number(s.descending_reading) : undefined,
+        error: s.error !== undefined ? Number(s.error) : 0,
+        unit: s.unit || tpl.default_unit || calUnit || "mm",
+        tolerance: s.tolerance !== undefined ? Number(s.tolerance) : (tpl.default_tolerance !== undefined ? Number(tpl.default_tolerance) : calTolerance),
+        status: s.status || "PASS",
+        customFields: s.customFields || {},
+      }));
+      setCalPoints(formattedPoints);
     } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
       const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
         point_number: pt.point_number || idx + 1,
@@ -1280,6 +1449,11 @@ export default function CalibrationWizard() {
           setWizardLayoutBlocks(sanitizedBlocks);
         }
 
+        if ((cal as any).diagram_image !== undefined) setWizardDiagramImage((cal as any).diagram_image || null);
+        if ((cal as any).diagram_image_width) setWizardDiagramWidth((cal as any).diagram_image_width);
+        if ((cal as any).diagram_image_height) setWizardDiagramHeight((cal as any).diagram_image_height);
+        if ((cal as any).diagram_image_alignment) setWizardDiagramAlignment((cal as any).diagram_image_alignment);
+
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
         if (cal.remarks) setRemarks(cal.remarks);
@@ -1347,6 +1521,13 @@ export default function CalibrationWizard() {
         receiptCondition,
         customReceiptCondition,
         calPoints,
+        wizardIsCanvas,
+        wizardLayoutBlocks,
+        selectedTemplateId,
+        wizardDiagramImage,
+        wizardDiagramWidth,
+        wizardDiagramHeight,
+        wizardDiagramAlignment,
         wizardCustomColumns,
         wizardStandardColumnConfigs,
         wizardColumnOrder,
@@ -1379,7 +1560,8 @@ export default function CalibrationWizard() {
   }, [
     step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envSoakingTime, envSoakingStartTime, envSoakingEndTime, docNo, procedureReference,
     receiptCondition, customReceiptCondition,
-    calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
+    calPoints, wizardIsCanvas, wizardLayoutBlocks, selectedTemplateId, wizardDiagramImage, wizardDiagramWidth, wizardDiagramHeight, wizardDiagramAlignment,
+    wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
 
@@ -1412,6 +1594,13 @@ export default function CalibrationWizard() {
           if (d.receiptCondition) setReceiptCondition(d.receiptCondition);
           if (d.customReceiptCondition) setCustomReceiptCondition(d.customReceiptCondition);
           setCalPoints(d.calPoints || []);
+          if (d.wizardDiagramImage !== undefined) setWizardDiagramImage(d.wizardDiagramImage);
+          if (d.wizardDiagramWidth) setWizardDiagramWidth(d.wizardDiagramWidth);
+          if (d.wizardDiagramHeight) setWizardDiagramHeight(d.wizardDiagramHeight);
+          if (d.wizardDiagramAlignment) setWizardDiagramAlignment(d.wizardDiagramAlignment);
+          if (d.wizardIsCanvas !== undefined) setWizardIsCanvas(d.wizardIsCanvas);
+          if (d.wizardLayoutBlocks) setWizardLayoutBlocks(d.wizardLayoutBlocks);
+          if (d.selectedTemplateId) setSelectedTemplateId(d.selectedTemplateId);
           setWizardCustomColumns(d.wizardCustomColumns || []);
           setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
           setWizardColumnOrder(d.wizardColumnOrder || []);
@@ -1621,6 +1810,18 @@ export default function CalibrationWizard() {
       return;
     }
 
+    // Prompt user to save as a new template variant ONLY IF original template was modified
+    if (checkIsTemplateModified()) {
+      setTemplateModifiedModalOpen(true);
+      return;
+    }
+
+    // Otherwise proceed directly without asking ("default save instrument master don't ask")
+    await executeSaveAndContinue();
+  };
+
+  async function executeSaveAndContinue() {
+    if (!selectedInstrument || !selectedType) return;
     setSaving(true);
     try {
       const data = {
@@ -1688,7 +1889,7 @@ export default function CalibrationWizard() {
 
       let savedId = savedCalibrationId;
       if (isEditMode && savedCalibrationId) {
-        const updated = await updateCalibration(
+        await updateCalibration(
           savedCalibrationId,
           data as any,
           user?.id,
@@ -1711,52 +1912,17 @@ export default function CalibrationWizard() {
         toast.success("Calibration saved successfully!");
       }
 
-      // Auto-persist specifications to Instrument Master for seamless future calibration reuse
-      if (selectedInstrument) {
-        let gaugeSpecs: any[] = [];
-        if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
-          const allTables = getAllCanvasTables(wizardLayoutBlocks);
-          const validTables = allTables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-          validTables.forEach((tbl: any) => {
-            if (Array.isArray(tbl.rows) && tbl.rows.length > 0) {
-              tbl.rows
-                .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-                .forEach((r: any) => {
-                  gaugeSpecs.push({
-                    point_number: r.point_number ?? (gaugeSpecs.length + 1),
-                    required_dimension: r.required_dimension || r.description || "",
-                    description: r.description || r.required_dimension || "",
-                    nominal: r.nominal,
-                    tolerance: r.tolerance ?? tbl.tolerance,
-                    lower_tolerance: r.lower_tolerance,
-                    upper_tolerance: r.upper_tolerance,
-                    lower_limit: r.lower_limit,
-                    upper_limit: r.upper_limit,
-                    unit: r.unit || tbl.unit || calUnit || "mm",
-                  });
-                });
-            }
-          });
-        } else if (calPoints.length > 0) {
-          gaugeSpecs = calPoints.map((p: any) => ({
-            point_number: p.point_number,
-            description: p.description,
-            nominal: p.nominal,
-            unit: p.unit,
-            tolerance: p.tolerance,
-            customFields: p.customFields,
-          }));
-        }
+      // Default: silently auto-persist specifications, diagram, doc info & env to Instrument Master ("default save instrument master don't ask")
+      const updatedCustomParams = getCustomParametersPayload();
+      if (selectedInstrument && updatedCustomParams) {
+        await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+          custom_parameters: updatedCustomParams,
+        }).catch(console.error);
 
-        if (gaugeSpecs.length > 0) {
-          const updatedCustomParams = {
-            ...(selectedInstrument.custom_parameters || {}),
-            specifications: gaugeSpecs,
-          };
-          httpClient.patch(`/instruments/${selectedInstrument.id}`, {
-            custom_parameters: updatedCustomParams,
-          }).catch(() => {});
-        }
+        setSelectedInstrument(prev => prev ? {
+          ...prev,
+          custom_parameters: updatedCustomParams,
+        } : prev);
       }
 
       setCertificateGenerated(false);
@@ -1772,7 +1938,7 @@ export default function CalibrationWizard() {
     } finally {
       setSaving(false);
     }
-  };
+  }
 
   // Generate certificate
   const handleGenerateCertificate = async () => {
@@ -3544,11 +3710,12 @@ export default function CalibrationWizard() {
               {/* ═══ Template Variant & Instrument Master Action Bar ═══ */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-muted/50 via-card to-muted/50 border rounded-xl shadow-xs mb-4">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20 font-semibold px-2 py-0.5">
-                    REUSABLE TEMPLATES &amp; SPECIFICATIONS
+                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
+                    <Check className="w-3 h-3 text-emerald-600" />
+                    Auto-saved to Instrument Master
                   </Badge>
                   <span className="text-xs text-muted-foreground hidden sm:inline">
-                    Save customized specifications &amp; drawing to Instrument Master or as a new Template Variant
+                    {selectedInstrument ? `Custom diagram & specifications save directly to ${selectedInstrument.id_code} on calibration completion` : "Specifications & drawing save automatically to instrument master"}
                   </span>
                 </div>
 
@@ -4200,6 +4367,66 @@ export default function CalibrationWizard() {
               onClick={() => setShowCertPreviewModal(false)}
             >
               Close Preview
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Template Modifications Detected Modal ═══ */}
+      <Dialog open={templateModifiedModalOpen} onOpenChange={setTemplateModifiedModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
+              <Layers className="w-5 h-5 text-primary shrink-0" />
+              Template Modifications Detected
+            </DialogTitle>
+            <DialogDescription className="space-y-3 pt-2 text-xs text-foreground">
+              <p>
+                You modified the specifications or diagram drawing from original template{" "}
+                <strong>
+                  "{availableTemplates.find((t) => t.id === selectedTemplateId)?.name || "Original Template"}"
+                </strong>.
+              </p>
+              <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-1.5 text-xs">
+                <div className="text-foreground font-medium">
+                  ✓ These changes are <strong>automatically saved to this instrument ({selectedInstrument?.id_code})</strong>.
+                </div>
+                <div className="text-muted-foreground pt-1">
+                  Would you also like to save these changes as a <strong>New Reusable Template Variant</strong> for other gauges to use?
+                </div>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setTemplateModifiedModalOpen(false);
+                executeSaveAndContinue();
+              }}
+              className="text-xs"
+            >
+              Save for this Instrument Only
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={() => {
+                setTemplateModifiedModalOpen(false);
+                proceedAfterTemplateVariantRef.current = true;
+                if (selectedInstrument) {
+                  setNewTemplateName(`${selectedInstrument.name} - ${selectedInstrument.id_code} Variant`);
+                }
+                setSaveTemplateModalOpen(true);
+              }}
+              className="text-xs gap-1.5 font-semibold"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Save as New Template Variant
             </Button>
           </DialogFooter>
         </DialogContent>

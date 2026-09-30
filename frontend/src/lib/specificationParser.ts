@@ -67,7 +67,10 @@ export function parseSpecification(
   // Also remove trailing parenthetical/bracketed notes on the same line if any (e.g. "55.10-0.025 (58.9-0.025)")
   const cleanTarget = primaryTarget.replace(/\s*[\(\[].*?[\)\]]\s*$/, "").trim() || primaryTarget;
 
-  const normalized = cleanTarget
+  // Strip trailing unit tokens (e.g. "mm", "µm", "um", "micron", "inch", "in", "deg", "°")
+  const cleanTargetWithoutUnit = cleanTarget.replace(/\s*(?:mm|µm|um|micron|inch|in|deg|°)\s*$/i, "").trim() || cleanTarget;
+
+  const normalized = cleanTargetWithoutUnit
     .replace(/[–—]/g, "-")
     .replace(/\s+/g, " ");
 

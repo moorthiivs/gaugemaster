@@ -155,10 +155,16 @@ STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/IN
 
 CRITICAL EXTRACTION & FIDELITY RULES:
 0. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
-   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data.
-   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, or engineering drawings with explicit tolerance & measurement tables.
-   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, blank spreadsheets/documents, or non-calibration paperwork.
-   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT OR HAS NO CALIBRATION TABLES/TEST POINTS:
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data OR a valid calibration template format / measurement grid skeleton.
+   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables, OR blank calibration template formats / Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+   - SPECIAL RULE FOR BLANK TEMPLATE FORMATS & SKELETONS:
+     * If an uploaded sheet or image contains valid calibration column headers (such as Specification, Nominal, Readings/Trials like X-X, Y-Y, Average, Error/Deviation, Judgement) but the rows are empty or only contain pre-calibration/receipt condition headings:
+     * DO NOT REJECT THIS DOCUMENT! It is a genuine calibration template format.
+     * Recognize it as a valid calibration document ("isValidCalibrationDocument": true).
+     * Extract all calibration columns verbatim with their semantic roles and formulas (e.g. Average formula = AVERAGE(x_top, x_bottom, y_top, y_bottom), Deviation formula = average - nominal).
+     * Generate 3 to 5 realistic sample gauge calibration rows (e.g. "point_number: 1, description: Gauge Diameter Ø25.000 mm, nominal: 25.000") so the user receives a complete, functional template ready for use.
+   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, non-calibration paperwork, or files with zero calibration columns.
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT (has zero calibration tables/columns):
      * Set "isValidCalibrationDocument": false
      * Provide "validationAudit": {
          "hasCalibrationData": false,
@@ -203,7 +209,7 @@ CRITICAL EXTRACTION & FIDELITY RULES:
 6. MANDATORY EXCLUSION RULE - GAUGE RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
    - STRICTLY DO NOT generate blocks, tables, rows, or callout notes for 'Gauge Receipt Condition', 'Instrument Receipt Condition', or visual dent/damage checks (e.g. 'NO DENT & DAMAGE', 'Free from dents and damages').
    - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as template canvas tables or rows.
-   - Even if user custom instructions explicitly or accidentally ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
+   - If the uploaded document contains BOTH a Receipt Condition section AND calibration column headers/tables (or a blank format grid), OMIT only the receipt condition rows and EXTRACT the calibration table grid with sample/nominal rows. DO NOT classify the entire document as a receipt condition sheet if calibration columns are present!
 7. MANDATORY EXCLUSION RULE - TRACEABILITY OF MASTERS & REFERENCE STANDARDS:
    - STRICTLY DO NOT generate blocks, tables, rows, or callout notes for 'TRACEABILITY OF MASTER USED', 'Traceability of Masters', 'Standard Equipments used for calibration', 'Reference Standards Used', 'Master Details', or calibration validity.
    - In Gaugemaster, Master Equipments and Traceability are managed through a standard built-in calibration workflow step (Step 2: Reference Standard) and standard certificate header section, NOT as template canvas tables or rows.
@@ -874,6 +880,14 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     // Strictly filter out rows that are purely visual damage / receipt condition checks or master standard metadata
     rows = rows.filter((r: any) => !isReceiptConditionRow(r) && !isMasterTraceabilityRow(r));
 
+    // If rows were stripped or empty, but valid calibration columns exist, provide sample parameter rows
+    if (rows.length === 0 && cols.length >= 2) {
+      rows = [
+        { point_number: 1, sl_no: "1", description: "Gauge Diameter Ø 25.000 mm", nominal: 25.0 },
+        { point_number: 2, sl_no: "2", description: "Gauge Diameter Ø 50.000 mm", nominal: 50.0 },
+      ];
+    }
+
     // If Parallelism table has 4 rows, ensure position column exists
     if (isParallelism && !cols.some((c) => c.id === "description")) {
       cols.unshift({
@@ -990,7 +1004,16 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
     if (isMasterTraceabilityBlockOrTitle(b.title || b.id || b.name)) return false;
     if (b.type === "table_grid") {
       const tbl = b as TableGridBlock;
-      if (!tbl.rows || tbl.rows.length === 0) return false;
+      if (!tbl.rows || tbl.rows.length === 0) {
+        if (Array.isArray(tbl.columns) && tbl.columns.length >= 2) {
+          tbl.rows = [
+            { point_number: 1, sl_no: "1", description: "Gauge Diameter Ø 25.000 mm", nominal: 25.0 },
+            { point_number: 2, sl_no: "2", description: "Gauge Diameter Ø 50.000 mm", nominal: 50.0 },
+          ];
+        } else {
+          return false;
+        }
+      }
       // Check if table columns indicate Master Traceability metadata table
       if (Array.isArray(tbl.columns)) {
         const colText = tbl.columns.map((c: any) => (c.id || c.label || "").toLowerCase()).join(" ");
@@ -1167,6 +1190,7 @@ export async function generateTemplateFromImage(
   const promptText = `
 Please inspect this calibration standard / drawing / test sheet image and generate a structured Visual Canvas Template.
 NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', visual dent/damage checks, 'Traceability of Masters', or 'Standard Equipments Used'. In Gaugemaster, receipt condition and master traceability are handled by default in calibration workflows and certificate headers.
+IMPORTANT: If this image is a blank or partially filled calibration template format with measurement column headers (e.g. SL.NO, SPECIFICATION, X-X, Y-Y, Average, Deviation, Judgement), DO NOT reject it! Mark isValidCalibrationDocument: true, extract all columns and formulas, and generate 3 to 5 realistic sample calibration measurement parameter rows.
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
 

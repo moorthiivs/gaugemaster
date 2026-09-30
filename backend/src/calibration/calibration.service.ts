@@ -298,14 +298,52 @@ export class CalibrationService {
 
     const savedCalibration = await this.calibrationRepository.save(calibration);
 
-    // Update Instrument Master schedule & status
+    // Update Instrument Master schedule, status, and item-level custom parameters
     if (dto.instrument_id) {
       try {
+        const inst = await this.instrumentsService.findOne(dto.instrument_id);
+        const existingCp = (inst as any)?.custom_parameters || {};
+        const updatedCp: Record<string, any> = { ...existingCp };
+
+        if (dto.diagram_image !== undefined) {
+          updatedCp.diagram_image = dto.diagram_image ? dto.diagram_image : null;
+        }
+        if (dto.diagram_image_width !== undefined) updatedCp.diagram_image_width = dto.diagram_image_width;
+        if (dto.diagram_image_height !== undefined) updatedCp.diagram_image_height = dto.diagram_image_height;
+        if (dto.diagram_image_alignment !== undefined) updatedCp.diagram_image_alignment = dto.diagram_image_alignment;
+
+        updatedCp.doc_properties = {
+          ...(existingCp.doc_properties || {}),
+          ...(dto.doc_no !== undefined ? { doc_no: dto.doc_no } : {}),
+          ...(dto.doc_date !== undefined ? { doc_date: dto.doc_date } : {}),
+          ...(dto.doc_rev !== undefined ? { doc_rev: dto.doc_rev } : {}),
+          ...((dto as any).procedure_no !== undefined ? { procedure_no: (dto as any).procedure_no } : {}),
+          ...((dto as any).procedure_name !== undefined ? { procedure_name: (dto as any).procedure_name } : {}),
+          ...((dto as any).procedure_date !== undefined ? { procedure_date: (dto as any).procedure_date } : {}),
+          ...((dto as any).procedure_rev !== undefined ? { procedure_rev: (dto as any).procedure_rev } : {}),
+          ...(dto.procedure_reference !== undefined ? { procedure_reference: dto.procedure_reference } : {}),
+          ...((dto as any).acceptance_criteria_doc_no !== undefined ? { acceptance_criteria_doc_no: (dto as any).acceptance_criteria_doc_no } : {}),
+          ...((dto as any).acceptance_criteria_date !== undefined ? { acceptance_criteria_date: (dto as any).acceptance_criteria_date } : {}),
+          ...((dto as any).acceptance_criteria_rev !== undefined ? { acceptance_criteria_rev: (dto as any).acceptance_criteria_rev } : {}),
+          ...((dto as any).acceptance_criteria_reference !== undefined ? { acceptance_criteria_reference: (dto as any).acceptance_criteria_reference } : {}),
+        };
+
+        if (dto.environmental_conditions) {
+          updatedCp.environmental_defaults = {
+            ...(existingCp.environmental_defaults || {}),
+            ...dto.environmental_conditions,
+          };
+        }
+        if (dto.receipt_condition) {
+          updatedCp.receipt_condition = dto.receipt_condition;
+        }
+
         await this.instrumentsService.update(dto.instrument_id, {
           last_calibration_date: savedCalibration.calibration_date as any,
           due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
           status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
           calibration_source: 'In-House',
+          custom_parameters: updatedCp,
         } as any);
       } catch (err) {
         console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
@@ -743,14 +781,53 @@ export class CalibrationService {
 
     const saved = await this.calibrationRepository.save(existing);
 
-    // Sync Instrument Master schedule & status
+    // Sync Instrument Master schedule, status, and item-level custom parameters
     if (saved.instrument_id) {
       try {
+        const inst = await this.instrumentsService.findOne(saved.instrument_id);
+        const existingCp = (inst as any)?.custom_parameters || {};
+        const updatedCp: Record<string, any> = { ...existingCp };
+
+        if (dto.diagram_image !== undefined) {
+          updatedCp.diagram_image = dto.diagram_image ? dto.diagram_image : null;
+        }
+        if (dto.diagram_image_width !== undefined) updatedCp.diagram_image_width = dto.diagram_image_width;
+        if (dto.diagram_image_height !== undefined) updatedCp.diagram_image_height = dto.diagram_image_height;
+        if (dto.diagram_image_alignment !== undefined) updatedCp.diagram_image_alignment = dto.diagram_image_alignment;
+
+        if (dto.doc_no !== undefined || dto.doc_date !== undefined || dto.doc_rev !== undefined || (dto as any).procedure_no !== undefined) {
+          updatedCp.doc_properties = {
+            ...(existingCp.doc_properties || {}),
+            ...(dto.doc_no !== undefined ? { doc_no: dto.doc_no } : {}),
+            ...(dto.doc_date !== undefined ? { doc_date: dto.doc_date } : {}),
+            ...(dto.doc_rev !== undefined ? { doc_rev: dto.doc_rev } : {}),
+            ...((dto as any).procedure_no !== undefined ? { procedure_no: (dto as any).procedure_no } : {}),
+            ...((dto as any).procedure_name !== undefined ? { procedure_name: (dto as any).procedure_name } : {}),
+            ...((dto as any).procedure_date !== undefined ? { procedure_date: (dto as any).procedure_date } : {}),
+            ...((dto as any).procedure_rev !== undefined ? { procedure_rev: (dto as any).procedure_rev } : {}),
+            ...(dto.procedure_reference !== undefined ? { procedure_reference: dto.procedure_reference } : {}),
+            ...((dto as any).acceptance_criteria_doc_no !== undefined ? { acceptance_criteria_doc_no: (dto as any).acceptance_criteria_doc_no } : {}),
+            ...((dto as any).acceptance_criteria_date !== undefined ? { acceptance_criteria_date: (dto as any).acceptance_criteria_date } : {}),
+            ...((dto as any).acceptance_criteria_rev !== undefined ? { acceptance_criteria_rev: (dto as any).acceptance_criteria_rev } : {}),
+            ...((dto as any).acceptance_criteria_reference !== undefined ? { acceptance_criteria_reference: (dto as any).acceptance_criteria_reference } : {}),
+          };
+        }
+        if (dto.environmental_conditions) {
+          updatedCp.environmental_defaults = {
+            ...(existingCp.environmental_defaults || {}),
+            ...dto.environmental_conditions,
+          };
+        }
+        if (dto.receipt_condition) {
+          updatedCp.receipt_condition = dto.receipt_condition;
+        }
+
         await this.instrumentsService.update(saved.instrument_id, {
           last_calibration_date: saved.calibration_date as any,
           due_date: saved.next_calibration_date as any,
           status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
           calibration_source: 'In-House',
+          custom_parameters: updatedCp,
         } as any);
       } catch (err) {
         console.warn(`Failed to update instrument ${saved.instrument_id} on calibration update`, err);

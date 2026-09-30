@@ -102,10 +102,16 @@ STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/IN
 CRITICAL RULES:
 
 1. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
-   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data.
-   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, or engineering drawings with explicit tolerance & measurement tables.
-   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, blank spreadsheets/documents, or non-calibration paperwork.
-   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT OR HAS NO CALIBRATION TABLES/TEST POINTS:
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data OR a valid calibration template format / measurement grid skeleton.
+   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables, OR blank calibration template formats / Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+   - SPECIAL RULE FOR BLANK TEMPLATE FORMATS & SKELETONS:
+     * If an uploaded sheet or image contains valid calibration column headers (such as Specification, Nominal, Readings/Trials like X-X, Y-Y, Average, Error/Deviation, Judgement) but the rows are empty or only contain pre-calibration/receipt condition headings:
+     * DO NOT REJECT THIS DOCUMENT! It is a genuine calibration template format.
+     * Recognize it as a valid calibration document ("isValidCalibrationDocument": true).
+     * Extract all calibration columns verbatim with their semantic roles and formulas (e.g. Average formula = AVERAGE(x_top, x_bottom, y_top, y_bottom), Deviation formula = average - nominal).
+     * Generate 3 to 5 realistic sample gauge calibration rows (e.g. "SL.NO: 1, SPECIFICATION: Gauge Diameter Ø25.000 mm, nominal: 25.000") so the user receives a complete, functional template ready for use.
+   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, non-calibration paperwork, or files with zero calibration columns.
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT (has zero calibration tables/columns):
      * Set "isValidCalibrationDocument": false
      * Provide "validationAudit": {
          "hasCalibrationData": false,
@@ -128,7 +134,7 @@ CRITICAL RULES:
 4. MANDATORY EXCLUSION RULE - GAUGE RECEIPT CONDITION & VISUAL DAMAGE CHECKS:
    - STRICTLY DO NOT extract, generate, or create tables, blocks, rows, or callout notes for "GAUGE RECEIPT CONDITION", "Receipt Condition", "Visual Condition", "Condition on Receipt", or visual dent/damage checks (e.g. "NO DENT & DAMAGE", "Free from dents and damages").
    - In Gaugemaster, Receipt Condition is managed through a standard built-in pre-calibration inspection workflow and certificate header field, NOT as a measurement canvas grid.
-   - Even if user custom instructions explicitly ask for "Receipt Condition" or visual inspection tables, SKIP it and only extract actual calibration measurement points (nominals, tolerances, readings, limits, deviations, judgements).
+   - If the uploaded document contains BOTH a Receipt Condition section AND calibration column headers/tables (or a blank format grid), OMIT only the receipt condition rows and EXTRACT the calibration table grid with sample/nominal rows. DO NOT classify the entire document as a receipt condition sheet if calibration columns are present!
 
 5. MANDATORY EXCLUSION RULE - TRACEABILITY OF MASTERS / STANDARD EQUIPMENTS USED:
    - STRICTLY DO NOT extract, generate, or create tables, blocks, rows, or notes for "TRACEABILITY OF MASTER USED", "Master Equipments", "Standard Equipments Used for Calibration", "Reference Standards Used", or master calibration validity.
@@ -1338,6 +1344,11 @@ export class AiService {
       parts.push({ text: `Additional Engineer Instructions: ${dto.userInstructions}` });
     }
 
+    // Explicit guidance for blank calibration formats / image extraction
+    parts.push({
+      text: 'Special Instruction for Format Sheets & Skeletons: If the uploaded file is a blank or partially filled calibration template format or sheet skeleton with measurement column headers (e.g., SL.NO, SPECIFICATION, X-X, Y-Y, Average, Deviation, Judgement), DO NOT reject it! Mark isValidCalibrationDocument: true, extract all columns and formulas, and generate 3 to 5 realistic sample calibration measurement parameter rows.',
+    });
+
     if (dto.documentType === 'image' || dto.documentType === 'pdf') {
       if (!dto.base64) {
         throw new BadRequestException(`Base64 data is required for ${dto.documentType} processing.`);
@@ -1449,15 +1460,35 @@ export class AiService {
             return false;
           }
         }
-        if (b.type === 'table_grid' && Array.isArray(b.rows)) {
-          const originalLength = b.rows.length;
-          const validRows = b.rows.filter((r: any) => {
-            const rowDesc = r.description || r.required_dimension || r.parameter_name || r.name || '';
-            const rowVal = r.actual || r.reading || r.actual_dimension || '';
-            return !isOmittedDefaultSectionText(rowDesc) && !isOmittedDefaultSectionText(rowVal);
-          });
-          b.rows = validRows;
-          if (validRows.length === 0 && originalLength > 0) return false;
+        if (b.type === 'table_grid') {
+          if (!Array.isArray(b.rows) || b.rows.length === 0) {
+            if (Array.isArray(b.columns) && b.columns.length >= 2) {
+              b.rows = [
+                { sl_no: '1', point_number: 1, specification: 'Gauge Diameter Ø 25.000 mm', nominal: 25.0 },
+                { sl_no: '2', point_number: 2, specification: 'Gauge Diameter Ø 50.000 mm', nominal: 50.0 },
+              ];
+            } else {
+              return false;
+            }
+          } else {
+            const originalLength = b.rows.length;
+            const validRows = b.rows.filter((r: any) => {
+              const rowDesc = r.description || r.required_dimension || r.parameter_name || r.name || '';
+              const rowVal = r.actual || r.reading || r.actual_dimension || '';
+              return !isOmittedDefaultSectionText(rowDesc) && !isOmittedDefaultSectionText(rowVal);
+            });
+            b.rows = validRows;
+            if (validRows.length === 0) {
+              if (Array.isArray(b.columns) && b.columns.length >= 2) {
+                b.rows = [
+                  { sl_no: '1', point_number: 1, specification: 'Gauge Diameter Ø 25.000 mm', nominal: 25.0 },
+                  { sl_no: '2', point_number: 2, specification: 'Gauge Diameter Ø 50.000 mm', nominal: 50.0 },
+                ];
+              } else if (originalLength > 0) {
+                return false;
+              }
+            }
+          }
         }
         return true;
       };

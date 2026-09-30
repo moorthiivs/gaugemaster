@@ -1315,21 +1315,29 @@ export function CertificatePreview({
 
           {/* Optional Diagram / Schematic Image */}
           {(() => {
-            const diagramImage =
-              calibration.diagram_image ||
-              ((calibration as any).template as any)?.diagram_image;
-            if (!diagramImage) return null;
+            let diagramImage: string | null = null;
+            if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+              diagramImage = calibration.diagram_image;
+            } else if ((calibration.instrument as any)?.custom_parameters?.diagram_image !== undefined) {
+              diagramImage = (calibration.instrument as any)?.custom_parameters?.diagram_image;
+            } else if (((calibration as any).template as any)?.diagram_image) {
+              diagramImage = ((calibration as any).template as any).diagram_image;
+            }
+            if (!diagramImage || (typeof diagramImage === "string" && !diagramImage.trim())) return null;
 
             const diagramWidth =
               calibration.diagram_image_width ||
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_width ||
               ((calibration as any).template as any)?.diagram_image_width ||
               240;
             const diagramHeight =
               calibration.diagram_image_height ||
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_height ||
               ((calibration as any).template as any)?.diagram_image_height ||
               140;
             const diagramAlignment =
               calibration.diagram_image_alignment ||
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_alignment ||
               ((calibration as any).template as any)?.diagram_image_alignment ||
               "center";
 
