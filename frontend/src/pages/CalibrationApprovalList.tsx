@@ -867,7 +867,7 @@ export default function CalibrationApprovalList() {
                   Cancel
                 </Button>
 
-                {selectedRecord.approval_status !== "Approved" && canAccess("calibrations", "edit") && (
+                {selectedRecord.approval_status !== "Approved" && canAccess("calibration_approvals", "edit") && (
                   <>
                     <Button
                       variant="destructive"

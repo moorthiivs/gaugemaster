@@ -54,8 +54,8 @@ const navigationGroups = [
     items: [
       { title: "Analytics Dashboard", url: "/dashboard", icon: LayoutDashboard, module: "dashboard", action: "view" },
       { title: "Calibration Execution", url: "/calibration", icon: FileCheck2, module: "calibrations", action: "view" },
-      { title: "Calibration Approval", url: "/calibration/approval", icon: CheckCircle2, module: "calibrations", action: "view" },
-      { title: "Calibration Schedule", url: "/calendar", icon: CalendarRange, module: "instruments", action: "view" },
+      { title: "Calibration Approval", url: "/calibration/approval", icon: CheckCircle2, module: "calibration_approvals", action: "view" },
+      { title: "Calibration Schedule", url: "/calendar", icon: CalendarRange, module: "calibration_schedule", action: "view" },
     ],
   },
   {
@@ -64,9 +64,9 @@ const navigationGroups = [
       { title: "Instrument Master", url: "/instruments", icon: Gauge, module: "instruments", action: "view" },
       { title: "Register Instrument", url: "/instruments/new", icon: PlusCircle, module: "instruments", action: "create" },
       { title: "Calibration Templates", url: "/calibration/templates", icon: Layers, module: "templates", action: "view" },
-      { title: "Calibration Procedure", url: "/calibration-procedures", icon: FileText, module: "instruments", action: "view" },
-      { title: "Work Instructions", url: "/work-instructions", icon: BookOpen, module: "instruments", action: "view" },
-      { title: "Gauge Diagram", url: "/gauge-diagrams", icon: Compass, module: "instruments", action: "view" },
+      { title: "Calibration Procedure", url: "/calibration-procedures", icon: FileText, module: "calibration_procedures", action: "view" },
+      { title: "Work Instructions", url: "/work-instructions", icon: BookOpen, module: "work_instructions", action: "view" },
+      { title: "Gauge Diagram", url: "/gauge-diagrams", icon: Compass, module: "gauge_diagrams", action: "view" },
     ],
   },
   {

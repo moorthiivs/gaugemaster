@@ -22,6 +22,9 @@ import { CalibrationProceduresService } from './calibration-procedures.service';
 import { CreateCalibrationProcedureDto } from './dto/create-calibration-procedure.dto';
 import { UpdateCalibrationProcedureDto } from './dto/update-calibration-procedure.dto';
 
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
+
 const uploadDirectory = './uploads/calibration-procedures';
 if (!fs.existsSync(uploadDirectory)) {
   fs.mkdirSync(uploadDirectory, { recursive: true });
@@ -52,30 +55,32 @@ const storage = diskStorage({
   },
 });
 
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/calibration-procedures')
 export class CalibrationProceduresController {
   constructor(private readonly service: CalibrationProceduresService) {}
 
   @Get()
+  @RequirePermission('calibration_procedures', 'view')
   async findAll(
     @Req() req: any,
     @Query('companyId') queryCompanyId?: string,
     @Query('search') search?: string,
   ) {
-    const user = req.user || {};
-    const companyId = queryCompanyId || user.companyId || (user.company && user.company.id);
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const companyId = isSuperAdmin ? (queryCompanyId || req.user?.companyId) : req.user?.companyId;
     return this.service.findAll(companyId, search);
   }
 
   @Get(':id')
+  @RequirePermission('calibration_procedures', 'view')
   async findOne(@Param('id') id: string, @Req() req: any) {
-    const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = req.user?.companyId;
     return this.service.findOne(id, companyId);
   }
 
   @Post()
+  @RequirePermission('calibration_procedures', 'create')
   @UseInterceptors(
     FileInterceptor('file', {
       storage,
@@ -89,14 +94,16 @@ export class CalibrationProceduresController {
     @UploadedFile() file?: any,
   ) {
     const user = req.user || {};
-    const companyId = dto.companyId || user.companyId || (user.company && user.company.id);
-    const userId = user.id || user.sub;
+    const isSuperAdmin = !!user.isSuperAdmin;
+    const companyId = isSuperAdmin ? (dto.companyId || user.companyId) : user.companyId;
+    const userId = user.id || user.userId || user.sub;
     const userName = user.name || user.fullName || user.email || 'User';
 
     return this.service.create(dto, file, { id: userId, name: userName, companyId });
   }
 
   @Put(':id')
+  @RequirePermission('calibration_procedures', 'edit')
   @UseInterceptors(
     FileInterceptor('file', {
       storage,
@@ -111,24 +118,26 @@ export class CalibrationProceduresController {
     @UploadedFile() file?: any,
   ) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
-    const userId = user.id || user.sub;
+    const companyId = user.companyId;
+    const userId = user.id || user.userId || user.sub;
     const userName = user.name || user.fullName || user.email || 'User';
 
     return this.service.update(id, dto, file, { id: userId, name: userName, companyId });
   }
 
   @Delete(':id')
+  @RequirePermission('calibration_procedures', 'delete')
   async remove(@Param('id') id: string, @Req() req: any) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = user.companyId;
     return this.service.remove(id, companyId);
   }
 
   @Get(':id/history')
+  @RequirePermission('calibration_procedures', 'view')
   async getHistory(@Param('id') id: string, @Req() req: any) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = user.companyId;
     return this.service.getHistory(id, companyId);
   }
 }

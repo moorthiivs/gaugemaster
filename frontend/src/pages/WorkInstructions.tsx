@@ -4,6 +4,7 @@ import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { useSEO } from "@/hooks/useSEO";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -74,6 +75,7 @@ export default function WorkInstructions() {
   });
 
   const { user } = useAuth();
+  const { canAccess } = usePermissions();
   const [instructions, setInstructions] = useState<WorkInstruction[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -514,16 +516,18 @@ export default function WorkInstructions() {
                 <Eye className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">View</span>
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
-                onClick={() => handleOpenEdit(inst)}
-                title="Edit Instruction"
-              >
-                <Edit2 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Edit</span>
-              </Button>
+              {canAccess("work_instructions", "edit") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
+                  onClick={() => handleOpenEdit(inst)}
+                  title="Edit Instruction"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Edit</span>
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"
@@ -533,21 +537,23 @@ export default function WorkInstructions() {
               >
                 <History className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
-                onClick={() => setDeletingId(inst.id)}
-                title="Delete"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              {canAccess("work_instructions", "delete") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
+                  onClick={() => setDeletingId(inst.id)}
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
             </div>
           );
         },
       },
     ],
-    [pageIndex, pageSize]
+    [pageIndex, pageSize, canAccess]
   );
 
   return (
@@ -561,21 +567,23 @@ export default function WorkInstructions() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            onClick={() => {
-              setCreateTitle("");
-              setCreateIdCode("");
-              setCreatePartName("");
-              setCreateInstrumentId("");
-              setCreateDescription("");
-              setCreateFile(null);
-              setIsCreateOpen(true);
-            }}
-            className="gap-2 shadow-xs bg-primary text-primary-foreground hover:bg-primary/90"
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span>Create Work Instruction</span>
-          </Button>
+          {canAccess("work_instructions", "create") && (
+            <Button
+              onClick={() => {
+                setCreateTitle("");
+                setCreateIdCode("");
+                setCreatePartName("");
+                setCreateInstrumentId("");
+                setCreateDescription("");
+                setCreateFile(null);
+                setIsCreateOpen(true);
+              }}
+              className="gap-2 shadow-xs bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span>Create Work Instruction</span>
+            </Button>
+          )}
         </div>
       </div>
 

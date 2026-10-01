@@ -92,7 +92,7 @@ const quickActionsConfig: QuickActionConfig[] = [
     description: "Review pending calibration entries", 
     url: "/calibration/approval", 
     icon: CheckCircle2, 
-    module: "calibrations", 
+    module: "calibration_approvals", 
     action: "view",
     category: "Operations" 
   },
@@ -101,7 +101,7 @@ const quickActionsConfig: QuickActionConfig[] = [
     description: "View upcoming calibration calendar", 
     url: "/calendar", 
     icon: CalendarDays, 
-    module: "instruments", 
+    module: "calibration_schedule", 
     action: "view",
     category: "Operations" 
   },

@@ -1,12 +1,17 @@
-import { Controller, Get, Query, Res, Headers } from '@nestjs/common';
+import { Controller, Get, Query, Res, Req, UseGuards } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
 import { ReportsService } from './reports.service';
 import type { Response } from 'express';
 
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/reports')
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) { }
 
   @Get()
+  @RequirePermission('reports', 'view')
   async getReport(
     @Query('from') from: string,  
     @Query('to') to: string,
@@ -17,25 +22,16 @@ export class ReportsController {
     @Query('status') status: string,
     @Query('item_status') item_status: string,
     @Query('location') location: string,
-    @Query('companyId') companyId: string,
-    @Headers('authorization') authHeader: string,
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
     @Res() res: Response,
   ) {
-    let finalUserId = userid;
-    if (!finalUserId || finalUserId === 'undefined') {
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-                const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-                finalUserId = payload.sub;
-            } catch (e) {
-                console.error("Failed to decode token", e);
-            }
-        }
-    }
-    console.log("Report Generation Request Query:", { from, to, format, userid, columns, templateId, status, item_status, location, companyId, finalUserId });
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const finalUserId = isSuperAdmin ? (userid || req.user?.userId || req.user?.id) : (req.user?.userId || req.user?.id);
+    const finalCompanyId = isSuperAdmin ? (queryCompanyId || req.user?.companyId) : req.user?.companyId;
+    console.log("Report Generation Request Query:", { from, to, format, finalUserId, columns, templateId, status, item_status, location, finalCompanyId });
 
-    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId, status, location, companyId, item_status);
+    const reportBuffer = await this.reportsService.generateReport(from, to, format, finalUserId, columns, templateId, status, location, finalCompanyId, item_status);
 
     // Set response headers based on format
     const mimeType = format === 'html' ? 'text/html' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -52,6 +48,7 @@ export class ReportsController {
   }
 
   @Get('preview')
+  @RequirePermission('reports', 'view')
   async getPreview(
     @Query('from') from: string,
     @Query('to') to: string,
@@ -64,13 +61,18 @@ export class ReportsController {
     @Query('agency') agency?: string,
     @Query('status') status?: string,
     @Query('item_status') item_status?: string,
-    @Query('companyId') companyId?: string,
+    @Query('companyId') queryCompanyId?: string,
+    @Req() req?: any,
   ) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const finalUserId = isSuperAdmin ? (userid || req?.user?.userId || req?.user?.id) : (req?.user?.userId || req?.user?.id);
+    const finalCompanyId = isSuperAdmin ? (queryCompanyId || req?.user?.companyId) : req?.user?.companyId;
+
     const p = parseInt(page, 10) || 1;
     const ps = parseInt(pageSize, 10) || 10;
     
     const filters = { name, id_code, location, agency, status, item_status };
     
-    return this.reportsService.getReportData(from, to, userid, p, ps, filters, companyId);
+    return this.reportsService.getReportData(from, to, finalUserId, p, ps, filters, finalCompanyId);
   }
 }

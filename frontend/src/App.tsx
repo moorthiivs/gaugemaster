@@ -98,18 +98,18 @@ const App = () => (
                       <Route path="/instruments" element={<ProtectedRoute module="instruments" action="view"><Instruments /></ProtectedRoute>} />
                       <Route path="/instruments/new" element={<ProtectedRoute module="instruments" action="create"><InstrumentForm /></ProtectedRoute>} />
                       <Route path="/instruments/:id/edit" element={<ProtectedRoute module="instruments" action="edit"><InstrumentForm /></ProtectedRoute>} />
-                      <Route path="/calibration-procedures" element={<ProtectedRoute module="instruments" action="view"><CalibrationProcedures /></ProtectedRoute>} />
-                      <Route path="/work-instructions" element={<ProtectedRoute module="instruments" action="view"><WorkInstructions /></ProtectedRoute>} />
-                      <Route path="/gauge-diagrams" element={<ProtectedRoute module="instruments" action="view"><GaugeDiagrams /></ProtectedRoute>} />
+                      <Route path="/calibration-procedures" element={<ProtectedRoute module="calibration_procedures" action="view"><CalibrationProcedures /></ProtectedRoute>} />
+                      <Route path="/work-instructions" element={<ProtectedRoute module="work_instructions" action="view"><WorkInstructions /></ProtectedRoute>} />
+                      <Route path="/gauge-diagrams" element={<ProtectedRoute module="gauge_diagrams" action="view"><GaugeDiagrams /></ProtectedRoute>} />
                       <Route path="/reports" element={<ProtectedRoute module="reports" action="view"><Reports /></ProtectedRoute>} />
-                      <Route path="/calibration/approval" element={<ProtectedRoute module="calibrations" action="view"><CalibrationApprovalList /></ProtectedRoute>} />
+                      <Route path="/calibration/approval" element={<ProtectedRoute module="calibration_approvals" action="view"><CalibrationApprovalList /></ProtectedRoute>} />
                       <Route path="/calibration/templates" element={<ProtectedRoute module="templates" action="view"><TemplateBuilder /></ProtectedRoute>} />
-                      <Route path="/calibration/templates/builder" element={<ProtectedRoute module="templates" action="edit"><TemplateBuilderForm /></ProtectedRoute>} />
-                      <Route path="/calibration/new" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
+                      <Route path="/calibration/templates/builder" element={<ProtectedRoute module={["templates", "template_builder"]} action="view"><TemplateBuilderForm /></ProtectedRoute>} />
+                      <Route path="/calibration/new" element={<ProtectedRoute module="calibrations" action={["create", "edit"]}><CalibrationWizard /></ProtectedRoute>} />
                       <Route path="/calibration/new/:instrumentId" element={<ProtectedRoute module="calibrations" action="create"><CalibrationWizard /></ProtectedRoute>} />
                       <Route path="/calibration/history/:id" element={<ProtectedRoute module="calibrations" action="view"><CalibrationHistory /></ProtectedRoute>} />
                       <Route path="/calibration" element={<ProtectedRoute module="calibrations" action="view"><Calibration /></ProtectedRoute>} />
-                      <Route path="/calendar" element={<ProtectedRoute module="instruments" action="view"><CalendarPage /></ProtectedRoute>} />
+                      <Route path="/calendar" element={<ProtectedRoute module="calibration_schedule" action="view"><CalendarPage /></ProtectedRoute>} />
                       <Route path="/users" element={<ProtectedRoute module="users" action="view"><UserManagement /></ProtectedRoute>} />
                       <Route path="/profile" element={<Profile />} />
                       <Route path="/settings" element={<ProtectedRoute module="settings" action="view"><Settings /></ProtectedRoute>} />

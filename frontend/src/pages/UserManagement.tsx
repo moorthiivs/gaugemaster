@@ -275,13 +275,22 @@ export default function UserManagement() {
   };
 
   const handlePermissionChange = (moduleKey: string, action: "create" | "edit" | "view" | "delete", checked: boolean) => {
-    setRolePermissions((prev) => ({
-      ...prev,
-      [moduleKey]: {
-        ...(prev[moduleKey] || { create: false, edit: false, view: false, delete: false }),
-        [action]: checked,
-      },
-    }));
+    setRolePermissions((prev) => {
+      const current = prev[moduleKey] || { create: false, edit: false, view: false, delete: false };
+      const next = { ...current, [action]: checked };
+      if (moduleKey === "template_import" && (action === "view" || action === "create")) {
+        next.view = checked;
+        next.create = checked;
+      }
+      if (moduleKey === "template_export" && (action === "view" || action === "create")) {
+        next.view = checked;
+        next.create = checked;
+      }
+      return {
+        ...prev,
+        [moduleKey]: next,
+      };
+    });
   };
 
   const handleToggleModuleAll = (moduleKey: string, checked: boolean) => {
@@ -671,22 +680,29 @@ export default function UserManagement() {
                       </CardHeader>
                       <CardContent className="p-4 pt-2">
                         <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5 border text-xs">
-                          <p className="font-bold text-[10px] uppercase text-muted-foreground tracking-wider">
-                            Active Permissions Overview:
-                          </p>
-                          <div className="grid grid-cols-2 gap-1 text-[11px]">
+                          <div className="flex items-center justify-between pb-1 border-b border-muted">
+                            <p className="font-bold text-[10px] uppercase text-muted-foreground tracking-wider">
+                              Permissions Matrix (12 Modules)
+                            </p>
+                            <span className="text-[10px] font-semibold text-primary">
+                              {Object.values(r.permissions || {}).filter((p: any) => p?.view || p?.create || p?.edit || p?.delete).length} / 12 Active
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] max-h-52 overflow-y-auto pr-1 scrollbar-thin">
                             {MODULE_NAMES.map((m) => {
                               const perm = r.permissions?.[m.key];
                               const hasAny = perm?.view || perm?.create || perm?.edit || perm?.delete;
                               return (
-                                <div key={m.key} className="flex items-center justify-between py-0.5 border-b last:border-0 border-muted">
-                                  <span className="truncate pr-1 text-foreground/80">{m.label.split(" ")[0]}</span>
+                                <div key={m.key} className="flex items-center justify-between py-0.5 border-b last:border-0 border-muted/50">
+                                  <span className="truncate pr-1 text-foreground/80 text-[11px]" title={m.label}>
+                                    {m.label}
+                                  </span>
                                   {hasAny ? (
-                                    <span className="text-[10px] font-bold text-green-600">
+                                    <span className="text-[10px] font-mono font-bold text-emerald-600 bg-emerald-500/10 px-1 rounded shrink-0">
                                       {[perm?.view && "V", perm?.create && "C", perm?.edit && "E", perm?.delete && "D"].filter(Boolean).join("")}
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] text-muted-foreground">None</span>
+                                    <span className="text-[10px] text-muted-foreground/60 shrink-0">—</span>
                                   )}
                                 </div>
                               );
@@ -940,45 +956,58 @@ export default function UserManagement() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {MODULE_NAMES.map((m) => {
-                    const perm = rolePermissions[m.key] || { create: false, edit: false, view: false, delete: false };
-                    const isAllChecked = perm.view && perm.create && perm.edit && perm.delete;
-
+                  {(["Operations", "Master Data", "Administration"] as const).map((categoryName) => {
+                    const categoryModules = MODULE_NAMES.filter((m) => m.category === categoryName);
+                    if (categoryModules.length === 0) return null;
                     return (
-                      <TableRow key={m.key}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
-                              {m.label}
+                      <React.Fragment key={categoryName}>
+                        <TableRow className="bg-muted/60 hover:bg-muted/60 border-y">
+                          <TableCell colSpan={5} className="py-1 px-3">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                              {categoryName}
                             </span>
-                            <span className="text-[10px] text-muted-foreground">{m.description}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.view}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "view", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.create}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "create", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.edit}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "edit", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.delete}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "delete", !!c)}
-                          />
-                        </TableCell>
-                      </TableRow>
+                          </TableCell>
+                        </TableRow>
+                        {categoryModules.map((m) => {
+                          const perm = rolePermissions[m.key] || { create: false, edit: false, view: false, delete: false };
+                          return (
+                            <TableRow key={m.key} className="hover:bg-muted/20">
+                              <TableCell className="py-2">
+                                <div className="flex flex-col">
+                                  <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                                    {m.label}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">{m.description}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.view}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "view", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.create}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "create", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.edit}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "edit", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.delete}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "delete", !!c)}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>

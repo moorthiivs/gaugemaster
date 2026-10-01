@@ -67,7 +67,31 @@ export class PermissionsGuard implements CanActivate {
     }
 
     const modulePermissions = role.permissions[required.module];
-    if (!modulePermissions || !modulePermissions[required.action]) {
+    let hasPermission = !!(modulePermissions && modulePermissions[required.action]);
+
+    // Single-purpose capability modules (allow view or create interchangeably)
+    if (!hasPermission && required.module === 'template_import' && modulePermissions) {
+      hasPermission = !!(modulePermissions.create || modulePermissions.view);
+    }
+    if (!hasPermission && required.module === 'template_export' && modulePermissions) {
+      hasPermission = !!(modulePermissions.view || modulePermissions.create);
+    }
+
+    // Granular submodule fallback to parent module if not explicitly defined
+    if (!hasPermission && !modulePermissions) {
+      const templatesPerm = role.permissions.templates;
+      if (templatesPerm) {
+        if (required.module === 'template_builder') {
+          hasPermission = !!templatesPerm[required.action];
+        } else if (required.module === 'template_import') {
+          hasPermission = !!(templatesPerm.create || templatesPerm.view);
+        } else if (required.module === 'template_export') {
+          hasPermission = !!(templatesPerm.view || templatesPerm.create);
+        }
+      }
+    }
+
+    if (!hasPermission) {
       throw new ForbiddenException(
         `You do not have permission to ${required.action} ${required.module}`,
       );

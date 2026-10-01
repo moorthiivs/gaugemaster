@@ -9,6 +9,7 @@ import {
   Res,
   Delete,
   UseGuards,
+  Req,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
@@ -61,7 +62,9 @@ export class CalibrationController {
   }
 
   @Get()
+  @RequirePermission('calibrations', 'view')
   async findAll(
+    @Req() req: any,
     @Query('userId') userId?: string,
     @Query('companyId') companyId?: string,
     @Query('instrumentId') instrumentId?: string,
@@ -76,9 +79,13 @@ export class CalibrationController {
     @Query('page') page: string = '1',
     @Query('pageSize') pageSize: string = '10',
   ) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
+    const effectiveUserId = isSuperAdmin ? (userId || req?.user?.userId || req?.user?.id) : (req?.user?.userId || req?.user?.id);
+
     return this.calibrationService.findAll({
-      userId,
-      companyId,
+      userId: effectiveUserId,
+      companyId: effectiveCompanyId,
       instrumentId,
       calibrationType,
       verdict,
@@ -94,7 +101,7 @@ export class CalibrationController {
   }
 
   @Post(':id/approve')
-  @RequirePermission('calibrations', 'edit')
+  @RequirePermission('calibration_approvals', 'edit')
   async approve(
     @Param('id') id: string,
     @Body() body: { reviewerId: string; reviewerName: string; reviewerDesignation?: string; signature?: string },
@@ -107,7 +114,7 @@ export class CalibrationController {
   }
 
   @Post(':id/reject')
-  @RequirePermission('calibrations', 'edit')
+  @RequirePermission('calibration_approvals', 'edit')
   async reject(
     @Param('id') id: string,
     @Body() body: { reviewerId: string; reviewerName: string; rejectionReason: string },
@@ -120,11 +127,13 @@ export class CalibrationController {
   }
 
   @Get('stats/:userId')
+  @RequirePermission('calibrations', 'view')
   async getStats(@Param('userId') userId: string) {
     return this.calibrationService.getStats(userId);
   }
 
   @Get('next-numbers/:userId')
+  @RequirePermission('calibrations', 'create')
   async getNextNumbers(
     @Param('userId') userId: string,
     @Query('companyId') companyId: string,
@@ -133,11 +142,13 @@ export class CalibrationController {
   }
 
   @Get('instrument/:instrumentId')
+  @RequirePermission('calibrations', 'view')
   async findByInstrument(@Param('instrumentId') instrumentId: string) {
     return this.calibrationService.findByInstrument(instrumentId);
   }
 
   @Get(':id')
+  @RequirePermission('calibrations', 'view')
   async findOne(@Param('id') id: string) {
     return this.calibrationService.findOne(id);
   }
@@ -158,6 +169,7 @@ export class CalibrationController {
   }
 
   @Get(':id/audit-logs')
+  @RequirePermission('calibrations', 'view')
   async getAuditLogs(@Param('id') id: string) {
     return this.calibrationService.getAuditLogs(id);
   }
@@ -173,6 +185,7 @@ export class CalibrationController {
    * ULR gate: if calibration.ulr_enabled is false and no ulr_number, return 403.
    */
   @Post(':id/certificate')
+  @RequirePermission('calibrations', 'view')
   async generateCertificate(
     @Param('id') id: string,
     @Query('templateId') templateId?: string,
@@ -211,6 +224,7 @@ export class CalibrationController {
   }
 
   @Get(':id/certificate/download')
+  @RequirePermission('calibrations', 'view')
   async downloadCertificate(
     @Param('id') id: string,
     @Query('templateId') templateId?: string,

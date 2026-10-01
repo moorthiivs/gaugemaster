@@ -3,6 +3,7 @@ import { useReactToPrint } from "react-to-print";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -198,6 +199,111 @@ export default function CalibrationWizard() {
       }
     });
     return tables;
+  };
+
+  // Helper: bind specifications to canvas tables respecting multi-table boundaries
+  const bindSpecificationsToCanvasTables = (
+    tables: any[],
+    specs: any[],
+    defaultTolerance: number,
+    defaultDecimalPlaces: number,
+    defaultUnit: string = "mm"
+  ) => {
+    if (!tables || tables.length === 0 || !specs || specs.length === 0) return;
+    const validTables = tables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
+    if (validTables.length === 0) return;
+
+    if (validTables.length === 1) {
+      // Single table template: bind all valid specs directly to primary table
+      const primaryTable = validTables[0];
+      const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
+      const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
+      primaryTable.rows = specs.map((s: any, idx: number) => {
+        const specText = s.required_dimension || s.description || "";
+        const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || defaultUnit, tol, dec) : null;
+        const rowObj: any = {
+          point_number: s.point_number || idx + 1,
+          required_dimension: specText,
+          description: specText,
+          nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+          lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+          upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+          lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+          upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+          tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+          unit: s.unit || primaryTable.unit || defaultUnit,
+          actual: s.actual ?? "",
+        };
+        return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
+      });
+    } else {
+      // Multi-table template: check if specifications carry table identifiers
+      const specsHaveTableMarkers = specs.some((s: any) =>
+        s.table_index !== undefined || s.table_id !== undefined || (s.table_title && String(s.table_title).trim().length > 0)
+      );
+
+      if (specsHaveTableMarkers) {
+        validTables.forEach((tbl: any, tblIdx: number) => {
+          const matchingSpecs = specs.filter((s: any) => {
+            if (s.table_index !== undefined) return Number(s.table_index) === tblIdx;
+            if (s.table_id && tbl.id) return s.table_id === tbl.id;
+            if (s.table_title && tbl.title) return String(s.table_title).trim().toLowerCase() === String(tbl.title).trim().toLowerCase();
+            return false;
+          });
+
+          if (matchingSpecs.length > 0) {
+            const dec = tbl.decimal_places ?? defaultDecimalPlaces ?? 3;
+            const tol = tbl.tolerance ?? defaultTolerance ?? 0.02;
+            tbl.rows = matchingSpecs.map((s: any, idx: number) => {
+              const specText = s.required_dimension || s.description || "";
+              const parsed = specText ? parseSpecification(specText, s.unit || tbl.unit || defaultUnit, tol, dec) : null;
+              const rowObj: any = {
+                point_number: s.point_number || idx + 1,
+                required_dimension: specText,
+                description: specText,
+                nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+                lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+                upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+                lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+                upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+                tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+                unit: s.unit || tbl.unit || defaultUnit,
+                actual: s.actual ?? "",
+              };
+              return evaluateCanvasRowFormulas(rowObj, tbl.columns, tol, dec);
+            });
+          }
+        });
+      } else {
+        // Legacy flat specs without table markers:
+        // If the template tables already define rows, PRESERVE template authoring!
+        // DO NOT overwrite Table 0 with all concatenated rows.
+        const templateHasRows = validTables.some((t: any) => Array.isArray(t.rows) && t.rows.length > 0);
+        if (!templateHasRows) {
+          const primaryTable = validTables[0];
+          const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
+          const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
+          primaryTable.rows = specs.map((s: any, idx: number) => {
+            const specText = s.required_dimension || s.description || "";
+            const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || defaultUnit, tol, dec) : null;
+            const rowObj: any = {
+              point_number: s.point_number || idx + 1,
+              required_dimension: specText,
+              description: specText,
+              nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+              lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+              upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+              lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+              upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+              tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+              unit: s.unit || primaryTable.unit || defaultUnit,
+              actual: s.actual ?? "",
+            };
+            return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
+          });
+        }
+      }
+    }
   };
 
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
@@ -400,29 +506,13 @@ export default function CalibrationWizard() {
           if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
           const newBlocks = JSON.parse(JSON.stringify(prevBlocks));
           const allTables = getAllCanvasTables(newBlocks);
-          const primaryTable = allTables.find((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-          if (primaryTable) {
-            const dec = primaryTable.decimal_places ?? wizardDecimalPlaces ?? 3;
-            const tol = primaryTable.tolerance ?? calTolerance ?? 0.02;
-            primaryTable.rows = validSpecs.map((s: any, idx: number) => {
-              const specText = s.required_dimension || s.description || "";
-              const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || "mm", tol, dec) : null;
-              const r: any = {
-                point_number: s.point_number || idx + 1,
-                required_dimension: specText,
-                description: specText,
-                nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
-                lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
-                upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
-                lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
-                upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-                tolerance: s.tolerance !== undefined ? s.tolerance : tol,
-                unit: s.unit || primaryTable.unit || "mm",
-                actual: s.actual ?? "",
-              };
-              return evaluateCanvasRowFormulas(r, primaryTable.columns, tol, dec);
-            });
-          }
+          bindSpecificationsToCanvasTables(
+            allTables,
+            validSpecs,
+            calTolerance || 0.02,
+            wizardDecimalPlaces ?? 3,
+            calUnit || "mm"
+          );
           return newBlocks;
         });
       }
@@ -488,12 +578,15 @@ export default function CalibrationWizard() {
     if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
       const allTables = getAllCanvasTables(wizardLayoutBlocks);
       const validTables = allTables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-      validTables.forEach((tbl: any) => {
+      validTables.forEach((tbl: any, tblIdx: number) => {
         if (Array.isArray(tbl.rows)) {
           tbl.rows
             .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
             .forEach((r: any) => {
               gaugeSpecs.push({
+                table_index: tblIdx,
+                table_id: tbl.id || `table_${tblIdx}`,
+                table_title: tbl.title || "",
                 point_number: r.point_number ?? (gaugeSpecs.length + 1),
                 required_dimension: r.required_dimension || r.description || "",
                 description: r.description || r.required_dimension || "",
@@ -718,6 +811,20 @@ export default function CalibrationWizard() {
   const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [editLoading, setEditLoading] = useState(!!editIdParam);
+
+  const { canAccess } = usePermissions();
+
+  // Enforce module RBAC permissions for edit vs create mode
+  useEffect(() => {
+    if (!user) return;
+    if (isEditMode && !canAccess("calibrations", "edit")) {
+      toast.error("You do not have permission to edit calibrations");
+      navigate("/calibration", { replace: true });
+    } else if (!isEditMode && !canAccess("calibrations", "create")) {
+      toast.error("You do not have permission to create calibrations");
+      navigate("/calibration", { replace: true });
+    }
+  }, [user, isEditMode, canAccess, navigate]);
 
   // Auto-select logged-in user as default Calibrated By
   useEffect(() => {
@@ -1116,30 +1223,13 @@ export default function CalibrationWizard() {
 
       if (!isEdit && validInstSpecs.length > 0) {
         const allTables = getAllCanvasTables(sanitizedBlocks);
-        const primaryTable = allTables.find((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
-        // Bind instrument specifications into the template table rows
-        if (primaryTable) {
-          const dec = primaryTable.decimal_places ?? tpl.decimal_places ?? 3;
-          const tol = primaryTable.tolerance ?? tpl.default_tolerance ?? 0.02;
-          primaryTable.rows = validInstSpecs.map((s: any, idx: number) => {
-            const specText = s.required_dimension || s.description || "";
-            const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || "mm", tol, dec) : null;
-            const rowObj: any = {
-              point_number: s.point_number || idx + 1,
-              required_dimension: specText,
-              description: specText,
-              nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
-              lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
-              upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
-              lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
-              upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-              tolerance: s.tolerance !== undefined ? s.tolerance : tol,
-              unit: s.unit || primaryTable.unit || tpl.default_unit || "mm",
-              actual: s.actual ?? "",
-            };
-            return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
-          });
-        }
+        bindSpecificationsToCanvasTables(
+          allTables,
+          validInstSpecs,
+          tpl.default_tolerance ?? 0.02,
+          tpl.decimal_places ?? 3,
+          tpl.default_unit || "mm"
+        );
       }
 
       // Ensure no obsolete receipt condition rows remain inside sanitizedBlocks, and evaluate formulas across all tables
@@ -1822,6 +1912,14 @@ export default function CalibrationWizard() {
 
   async function executeSaveAndContinue() {
     if (!selectedInstrument || !selectedType) return;
+    if (isEditMode && !canAccess("calibrations", "edit")) {
+      toast.error("You do not have permission to edit calibrations");
+      return;
+    }
+    if (!isEditMode && !canAccess("calibrations", "create")) {
+      toast.error("You do not have permission to create calibrations");
+      return;
+    }
     setSaving(true);
     try {
       const data = {

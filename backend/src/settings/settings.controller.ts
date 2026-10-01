@@ -21,6 +21,7 @@ export class SettingsController {
   ) { }
 
   @Get()
+  @RequirePermission('settings', 'view')
   getSettingsByQuery(
     @Query('userId') userId: string,
     @Query('companyId') companyId: string,
@@ -33,11 +34,13 @@ export class SettingsController {
   }
 
   @Post()
+  @RequirePermission('settings', 'edit')
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
     return this.settingsService.create(createSettingDto);
   }
 
   @Get(':userId/:companyId')
+  @RequirePermission('settings', 'view')
   getSettings(
     @Param('userId') userId: string,
     @Param('companyId') companyId: string,

@@ -50,6 +50,7 @@ import {
   LayoutGrid,
   List,
   ArrowUpDown,
+  Eye,
 } from "lucide-react";
 import { format } from "date-fns";
 import { CALIBRATION_TYPES } from "@/types/calibration";
@@ -248,7 +249,15 @@ export default function TemplateBuilder() {
     navigate("/calibration/templates/builder");
   };
 
+  const handleOpenViewModal = (tpl: CalibrationTemplate) => {
+    navigate(`/calibration/templates/builder?id=${tpl.id}&mode=view`);
+  };
+
   const handleOpenEditModal = (tpl: CalibrationTemplate) => {
+    if (!canAccess("templates", "edit") && !canAccess("template_builder", "edit")) {
+      handleOpenViewModal(tpl);
+      return;
+    }
     navigate(`/calibration/templates/builder?id=${tpl.id}`);
   };
 
@@ -537,18 +546,22 @@ export default function TemplateBuilder() {
         meta: { align: "right" },
         cell: ({ row }) => {
           const tpl = row.original;
+          const canEditTpl = canAccess("templates", "edit") || canAccess("template_builder", "edit");
           return (
             <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+              {/* View Template (Always available when user has view rights) */}
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors"
-                title="Duplicate Template"
-                onClick={() => handleDuplicate(tpl)}
+                className="h-7 w-7 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30 rounded-md transition-colors"
+                title="View Template Details (Read-Only)"
+                onClick={() => handleOpenViewModal(tpl)}
               >
-                <Copy className="w-3.5 h-3.5" />
+                <Eye className="w-3.5 h-3.5" />
               </Button>
-              {canAccess("templates", "edit") && (
+
+              {/* Edit Template: Active if permitted, Disabled if restricted */}
+              {canEditTpl ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -558,7 +571,32 @@ export default function TemplateBuilder() {
                 >
                   <Edit className="w-3.5 h-3.5" />
                 </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled
+                  className="h-7 w-7 text-muted-foreground/30 opacity-40 cursor-not-allowed rounded-md"
+                  title="Edit Disabled — You do not have Edit permission"
+                >
+                  <Edit className="w-3.5 h-3.5" />
+                </Button>
               )}
+
+              {/* Duplicate Template */}
+              {canAccess("templates", "create") && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors"
+                  title="Duplicate Template"
+                  onClick={() => handleDuplicate(tpl)}
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                </Button>
+              )}
+
+              {/* Delete Template */}
               {canAccess("templates", "delete") && (
                 <Button
                   variant="ghost"
@@ -597,30 +635,34 @@ export default function TemplateBuilder() {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setImportModalOpen(true)}
-            className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
-          >
-            <Upload className="w-3.5 h-3.5 text-primary" />
-            Import Templates
-          </Button>
+          {(canAccess("template_import", "create") || canAccess("template_import", "view")) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setImportModalOpen(true)}
+              className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
+            >
+              <Upload className="w-3.5 h-3.5 text-primary" />
+              Import Templates
+            </Button>
+          )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setExportModalOpen(true)}
-            className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
-          >
-            <Download className="w-3.5 h-3.5 text-primary" />
-            Export Packages
-            {selectedIds.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 bg-primary/15 text-primary text-[10px] font-bold rounded-full">
-                {selectedIds.length}
-              </span>
-            )}
-          </Button>
+          {canAccess("template_export", "view") && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setExportModalOpen(true)}
+              className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
+            >
+              <Download className="w-3.5 h-3.5 text-primary" />
+              Export Packages
+              {selectedIds.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.2 bg-primary/15 text-primary text-[10px] font-bold rounded-full">
+                  {selectedIds.length}
+                </span>
+              )}
+            </Button>
+          )}
 
           {canAccess("templates", "delete") && selectedIds.length > 0 && (
             <Button
@@ -1002,16 +1044,19 @@ export default function TemplateBuilder() {
                           </div>
 
                           <div className="flex items-center gap-1">
+                            {/* View Template */}
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors"
-                              title="Duplicate Template"
-                              onClick={() => handleDuplicate(tpl)}
+                              className="h-7 w-7 text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950/30 rounded-md transition-colors"
+                              title="View Template (Read-Only)"
+                              onClick={() => handleOpenViewModal(tpl)}
                             >
-                              <Copy className="w-3.5 h-3.5" />
+                              <Eye className="w-3.5 h-3.5" />
                             </Button>
-                            {canAccess("templates", "edit") && (
+
+                            {/* Edit Template: Active if permitted, Disabled if restricted */}
+                            {canAccess("templates", "edit") || canAccess("template_builder", "edit") ? (
                               <Button
                                 variant="ghost"
                                 size="icon"
@@ -1021,7 +1066,32 @@ export default function TemplateBuilder() {
                               >
                                 <Edit className="w-3.5 h-3.5" />
                               </Button>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled
+                                className="h-7 w-7 text-muted-foreground/30 opacity-40 cursor-not-allowed rounded-md"
+                                title="Edit Disabled — You do not have Edit permission"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </Button>
                             )}
+
+                            {/* Duplicate Template */}
+                            {canAccess("templates", "create") && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md transition-colors"
+                                title="Duplicate Template"
+                                onClick={() => handleDuplicate(tpl)}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </Button>
+                            )}
+
+                            {/* Delete Template */}
                             {canAccess("templates", "delete") && (
                               <Button
                                 variant="ghost"

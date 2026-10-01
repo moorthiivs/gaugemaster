@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import {
   Card,
@@ -127,6 +128,12 @@ export default function TemplateBuilderForm() {
   const [searchParams] = useSearchParams();
   const templateId = searchParams.get("id");
   const { user } = useAuth();
+  const { canAccess } = usePermissions();
+
+  const isViewParam = searchParams.get("mode") === "view";
+  const canEditTpl = !!user?.isSuperAdmin || canAccess("templates", "edit") || canAccess("template_builder", "edit");
+  const canCreateTpl = !!user?.isSuperAdmin || canAccess("templates", "create") || canAccess("template_builder", "create");
+  const isReadOnly = isViewParam || (!templateId ? !canCreateTpl : !canEditTpl);
 
   const [loading, setLoading] = useState(!!templateId);
   const [saving, setSaving] = useState(false);
@@ -946,6 +953,7 @@ export default function TemplateBuilderForm() {
 
   // Helper to mark form as modified
   const markDirty = () => {
+    if (isReadOnly) return;
     if (!isDirty) setIsDirty(true);
   };
 
@@ -1236,7 +1244,7 @@ export default function TemplateBuilderForm() {
   };
 
   const handleBackNavigation = () => {
-    if (isDirty) {
+    if (!isReadOnly && isDirty) {
       setShowUnsavedModal(true);
     } else {
       navigate("/calibration/templates");
@@ -1287,7 +1295,7 @@ export default function TemplateBuilderForm() {
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span className="hidden sm:inline">
-                  {templateId ? "Edit Template" : "New Template"}
+                  {isReadOnly ? "Back to Templates" : templateId ? "Edit Template" : "New Template"}
                 </span>
               </Button>
 
@@ -1361,8 +1369,9 @@ export default function TemplateBuilderForm() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="gap-1.5 text-xs h-8 px-2.5 font-medium border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg shadow-2xs shrink-0"
-                    title="Load Standard Metrology Template Preset"
+                    disabled={isReadOnly}
+                    className="gap-1.5 text-xs h-8 px-2.5 font-medium border-blue-500/30 text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30 rounded-lg shadow-2xs shrink-0 disabled:opacity-50"
+                    title={isReadOnly ? "Presets disabled in Read-Only mode" : "Load Standard Metrology Template Preset"}
                   >
                     <BookOpen className="w-3.5 h-3.5 text-blue-500" />
                     <span className="hidden sm:inline">Presets</span>
@@ -1416,9 +1425,10 @@ export default function TemplateBuilderForm() {
                 type="button"
                 variant="outline"
                 size="sm"
+                disabled={isReadOnly}
                 onClick={() => setShowAiModal(true)}
-                className="gap-1.5 text-xs h-8 px-2.5 font-medium border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs shrink-0"
-                title="AI Smart Template Generator from drawing, PDF or Excel"
+                className="gap-1.5 text-xs h-8 px-2.5 font-medium border-amber-500/40 text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 rounded-lg shadow-2xs shrink-0 disabled:opacity-50"
+                title={isReadOnly ? "AI Generation disabled in Read-Only mode" : "AI Smart Template Generator from drawing, PDF or Excel"}
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-500" />
                 <span className="hidden sm:inline">AI Generate</span>
@@ -1473,18 +1483,28 @@ export default function TemplateBuilderForm() {
                 )}
               </Button>
 
-              {/* Primary Save Template Button */}
-              <Button
-                size="sm"
-                onClick={() => handleSave()}
-                disabled={saving || isNameDuplicate || !name.trim()}
-                className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs shrink-0"
-              >
-                <Save className="w-3.5 h-3.5" />
-                <span>
-                  {saving ? "Saving..." : templateId ? "Update" : "Save"}
-                </span>
-              </Button>
+              {/* Primary Save Template Button / Read-Only View Badge */}
+              {isReadOnly ? (
+                <Badge
+                  variant="outline"
+                  className="bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/30 gap-1.5 px-3 py-1 font-semibold text-xs shrink-0"
+                >
+                  <Eye className="w-3.5 h-3.5 text-sky-600" />
+                  <span>Read-Only View</span>
+                </Badge>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => handleSave()}
+                  disabled={saving || isNameDuplicate || !name.trim()}
+                  className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs shrink-0"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>
+                    {saving ? "Saving..." : templateId ? "Update" : "Save"}
+                  </span>
+                </Button>
+              )}
 
               {/* More Options Dropdown */}
               <DropdownMenu>
@@ -1560,19 +1580,24 @@ export default function TemplateBuilderForm() {
                 <div className="relative group max-w-2xl flex-1 min-w-[280px]">
                   <Input
                     value={name}
+                    readOnly={isReadOnly}
+                    disabled={isReadOnly}
                     onChange={(e) => {
+                      if (isReadOnly) return;
                       setName(e.target.value);
                       markDirty();
                     }}
                     placeholder="Enter Template Name (e.g. Vernier Caliper Standard IS 3651) *"
                     className={`h-9 text-base sm:text-lg font-bold tracking-tight rounded-lg px-2.5 transition-all ${
-                      !name.trim()
+                      isReadOnly
+                        ? "bg-muted/40 cursor-default border-border/50 text-foreground"
+                        : !name.trim()
                         ? "border-amber-400 dark:border-amber-500 bg-amber-500/5 focus:border-primary focus:ring-2 focus:ring-primary/20"
                         : isNameDuplicate
                           ? "border-destructive focus:ring-2 focus:ring-destructive/20 bg-background"
                           : "border-border/60 hover:border-border focus:border-primary focus:ring-2 focus:ring-primary/20 bg-background"
                     }`}
-                    title="Click to edit Template Name"
+                    title={isReadOnly ? "Template Name (Read-Only)" : "Click to edit Template Name"}
                   />
                 </div>
 
@@ -1692,6 +1717,7 @@ export default function TemplateBuilderForm() {
                     </Button>
                   </CardHeader>
                   <CardContent className="flex-1 overflow-y-auto p-3 text-xs">
+                    <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
                     <Tabs defaultValue="basic" className="w-full">
                       <TabsList className="grid grid-cols-4 h-9 bg-muted/70 p-0.5 rounded-lg mb-3">
                         <TabsTrigger
@@ -2593,6 +2619,7 @@ export default function TemplateBuilderForm() {
                         </div>
                       </TabsContent>
                     </Tabs>
+                    </fieldset>
                   </CardContent>
                 </Card>
                 {/* Draggable Resizer Handle on right border of Properties */}
@@ -2619,9 +2646,11 @@ export default function TemplateBuilderForm() {
                 <CanvasTemplateEditor
                   blocks={layoutBlocks}
                   onChange={(newBlocks) => {
+                    if (isReadOnly) return;
                     setLayoutBlocks(newBlocks);
                     markDirty();
                   }}
+                  readOnly={isReadOnly}
                   hideCopilotInside={true}
                   selectedBlockId={selectedBlockId}
                   onSelectBlockId={(id) => {
@@ -2719,15 +2748,18 @@ export default function TemplateBuilderForm() {
                   </div>
                 </CardHeader>
                 <CardContent className="flex-1 overflow-y-auto p-3 space-y-3">
+                  <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
                   <CalibrationDataGrid
                     typeConfig={selectedTypeConfig}
                     points={points}
                     onPointsChange={(pts) => {
+                      if (isReadOnly) return;
                       setPoints(pts);
                       markDirty();
                     }}
                     unit={defaultUnit}
                     onUnitChange={(u) => {
+                      if (isReadOnly) return;
                       setDefaultUnit(u);
                       markDirty();
                     }}
@@ -2737,6 +2769,7 @@ export default function TemplateBuilderForm() {
                         : 0
                     }
                     onToleranceChange={(tol) => {
+                      if (isReadOnly) return;
                       setDefaultTolerance(tol);
                       markDirty();
                     }}
@@ -2745,23 +2778,28 @@ export default function TemplateBuilderForm() {
                     initialColumnOrder={columnOrder}
                     initialHiddenColumns={hiddenColumns}
                     onCustomColumnsChange={(cols) => {
+                      if (isReadOnly) return;
                       setCustomColumns(cols);
                       markDirty();
                     }}
                     onStandardColumnConfigsChange={(configs) => {
+                      if (isReadOnly) return;
                       setStandardColumnConfigs(configs);
                       markDirty();
                     }}
                     onColumnOrderChange={(order) => {
+                      if (isReadOnly) return;
                       setColumnOrder(order);
                       markDirty();
                     }}
                     onHiddenColumnsChange={(hidden) => {
+                      if (isReadOnly) return;
                       setHiddenColumns(hidden);
                       markDirty();
                     }}
                     initialDecimalPlaces={decimalPlaces}
                     onDecimalPlacesChange={(dp) => {
+                      if (isReadOnly) return;
                       setDecimalPlaces(dp);
                       markDirty();
                     }}
@@ -2774,6 +2812,7 @@ export default function TemplateBuilderForm() {
                       type: acceptanceType,
                     }}
                     onAcceptanceCriteriaChange={(config) => {
+                      if (isReadOnly) return;
                       setEnableAcceptance(!!config.enabled);
                       setAcceptanceValue(config.value ?? 2);
                       if (config.type) setAcceptanceType(config.type);
@@ -2782,11 +2821,13 @@ export default function TemplateBuilderForm() {
                     initialStatusRuleType={statusRuleType}
                     initialStatusFormula={statusFormula}
                     onStatusRuleChange={(type, formula) => {
+                      if (isReadOnly) return;
                       setStatusRuleType(type);
                       setStatusFormula(formula);
                       markDirty();
                     }}
                   />
+                  </fieldset>
                 </CardContent>
               </Card>
             )}
@@ -2833,6 +2874,7 @@ export default function TemplateBuilderForm() {
                 </div>
               </div>
 
+              <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
               {isCanvasMode ? (
                 <>
                   {/* Table Block Switcher Tabs */}
@@ -3183,29 +3225,31 @@ export default function TemplateBuilderForm() {
                             </CardDescription>
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                handleAutoCalculateWidths(activeTableBlock.id)
-                              }
-                              className="h-8 text-xs gap-1.5 font-semibold text-primary border-primary/30 hover:bg-primary/5"
-                            >
-                              <Wand2 className="w-3.5 h-3.5" />
-                              Auto-Fit Widths
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              onClick={() => setShowAddColumnModal(true)}
-                              className="h-8 text-xs gap-1.5 font-semibold shadow-xs bg-indigo-600 hover:bg-indigo-700 text-white"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                              Add Column
-                            </Button>
-                          </div>
+                          {!isReadOnly && (
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() =>
+                                  handleAutoCalculateWidths(activeTableBlock.id)
+                                }
+                                className="h-8 text-xs gap-1.5 font-semibold text-primary border-primary/30 hover:bg-primary/5"
+                              >
+                                <Wand2 className="w-3.5 h-3.5" />
+                                Auto-Fit Widths
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => setShowAddColumnModal(true)}
+                                className="h-8 text-xs gap-1.5 font-semibold shadow-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                Add Column
+                              </Button>
+                            </div>
+                          )}
                         </CardHeader>
 
                         <CardContent className="p-0 overflow-x-auto">
@@ -3595,20 +3639,22 @@ export default function TemplateBuilderForm() {
                                         />
                                       </td>
                                       <td className="py-2 px-3 text-center">
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="icon"
-                                          onClick={() =>
-                                            handleDeleteColumnFromActiveTable(
-                                              colIdentifier,
-                                            )
-                                          }
-                                          className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-md"
-                                          title="Delete Column"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </Button>
+                                        {!isReadOnly && (
+                                          <Button
+                                            type="button"
+                                            variant="ghost"
+                                            size="icon"
+                                            onClick={() =>
+                                              handleDeleteColumnFromActiveTable(
+                                                colIdentifier,
+                                              )
+                                            }
+                                            className="h-7 w-7 text-destructive hover:bg-destructive/10 rounded-md"
+                                            title="Delete Column"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </Button>
+                                        )}
                                       </td>
                                     </tr>
                                   );
@@ -3704,6 +3750,7 @@ export default function TemplateBuilderForm() {
                   </Button>
                 </Card>
               )}
+              </fieldset>
             </div>
           </div>
         )}
@@ -3745,6 +3792,7 @@ export default function TemplateBuilderForm() {
                   </Button>
                 </div>
 
+                <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {/* Instrument Profile Card */}
                   <Card className="border shadow-xs bg-card">
@@ -4061,6 +4109,7 @@ export default function TemplateBuilderForm() {
                     </Card>
                   </div>
                 </div>
+                </fieldset>
               </div>
             </div>
           </ErrorBoundary>
@@ -4103,6 +4152,7 @@ export default function TemplateBuilderForm() {
                 </div>
               </div>
 
+              <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
               {/* Document Control Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Card 1: Document Control */}
@@ -4525,6 +4575,7 @@ export default function TemplateBuilderForm() {
                   )}
                 </CardContent>
               </Card>
+              </fieldset>
             </div>
           </div>
         )}
@@ -4554,22 +4605,25 @@ export default function TemplateBuilderForm() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <Button
-                    size="sm"
-                    onClick={() => handleSave()}
-                    disabled={saving || isNameDuplicate || !name.trim()}
-                    className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    {saving
-                      ? "Saving..."
-                      : templateId
-                        ? "Update Template"
-                        : "Save Template"}
-                  </Button>
+                  {!isReadOnly && (
+                    <Button
+                      size="sm"
+                      onClick={() => handleSave()}
+                      disabled={saving || isNameDuplicate || !name.trim()}
+                      className="gap-1.5 h-8 px-3.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-lg shadow-xs"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      {saving
+                        ? "Saving..."
+                        : templateId
+                          ? "Update Template"
+                          : "Save Template"}
+                    </Button>
+                  )}
                 </div>
               </div>
 
+              <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
               {/* General Template Information Card */}
               <Card className="border shadow-xs bg-card">
                 <CardHeader className="py-3 px-4 border-b bg-muted/20">
@@ -4869,6 +4923,7 @@ export default function TemplateBuilderForm() {
                   </Card>
                 </div>
               </div>
+              </fieldset>
             </div>
           </div>
         )}

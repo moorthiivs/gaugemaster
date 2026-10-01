@@ -54,12 +54,7 @@ export class CalibrationTemplatesService {
 
     const qb = this.repository.createQueryBuilder('template');
 
-    if (companyId && userId) {
-      qb.where(
-        '(template.companyId = :companyId OR (template.companyId IS NULL AND template.userId IS NULL) OR template.userId = :userId)',
-        { companyId, userId },
-      );
-    } else if (companyId) {
+    if (companyId) {
       qb.where(
         '(template.companyId = :companyId OR (template.companyId IS NULL AND template.userId IS NULL))',
         { companyId },

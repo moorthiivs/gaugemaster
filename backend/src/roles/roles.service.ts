@@ -6,55 +6,106 @@ import { User } from '../users/user.entity';
 import { Company } from '../company/entities/company.entity';
 
 export const DEFAULT_MODULES = [
-  'instruments',
+  // Operations
   'calibrations',
-  'reports',
+  'calibration_approvals',
+  'calibration_schedule',
+  // Master Data
+  'instruments',
   'templates',
+  'template_builder',
+  'template_import',
+  'template_export',
+  'calibration_procedures',
+  'work_instructions',
+  'gauge_diagrams',
+  // Administration
+  'reports',
   'users',
   'settings',
 ];
 
 const FULL_ACCESS_PERMISSIONS: RolePermissions = {
-  instruments: { create: true, edit: true, view: true, delete: true },
   calibrations: { create: true, edit: true, view: true, delete: true },
-  reports: { create: true, edit: true, view: true, delete: true },
+  calibration_approvals: { create: true, edit: true, view: true, delete: true },
+  calibration_schedule: { create: true, edit: true, view: true, delete: true },
+  instruments: { create: true, edit: true, view: true, delete: true },
   templates: { create: true, edit: true, view: true, delete: true },
+  template_builder: { create: true, edit: true, view: true, delete: true },
+  template_import: { create: true, edit: true, view: true, delete: true },
+  template_export: { create: true, edit: true, view: true, delete: true },
+  calibration_procedures: { create: true, edit: true, view: true, delete: true },
+  work_instructions: { create: true, edit: true, view: true, delete: true },
+  gauge_diagrams: { create: true, edit: true, view: true, delete: true },
+  reports: { create: true, edit: true, view: true, delete: true },
   users: { create: true, edit: true, view: true, delete: true },
   settings: { create: true, edit: true, view: true, delete: true },
 };
 
 const QUALITY_MANAGER_PERMISSIONS: RolePermissions = {
-  instruments: { create: true, edit: true, view: true, delete: true },
   calibrations: { create: true, edit: true, view: true, delete: true },
+  calibration_approvals: { create: true, edit: true, view: true, delete: false },
+  calibration_schedule: { create: true, edit: true, view: true, delete: true },
+  instruments: { create: true, edit: true, view: true, delete: true },
+  templates: { create: true, edit: true, view: true, delete: true },
+  template_builder: { create: true, edit: true, view: true, delete: false },
+  template_import: { create: true, edit: true, view: true, delete: false },
+  template_export: { create: true, edit: true, view: true, delete: false },
+  calibration_procedures: { create: true, edit: true, view: true, delete: true },
+  work_instructions: { create: true, edit: true, view: true, delete: true },
+  gauge_diagrams: { create: true, edit: true, view: true, delete: true },
   reports: { create: true, edit: true, view: true, delete: false },
-  templates: { create: true, edit: true, view: true, delete: false },
   users: { create: false, edit: false, view: true, delete: false },
   settings: { create: false, edit: false, view: true, delete: false },
 };
 
-const LAB_TECHNICIAN_PERMISSIONS: RolePermissions = {
-  instruments: { create: true, edit: true, view: true, delete: false },
+const CALIBRATION_ENGINEER_PERMISSIONS: RolePermissions = {
   calibrations: { create: true, edit: true, view: true, delete: false },
+  calibration_approvals: { create: false, edit: false, view: true, delete: false },
+  calibration_schedule: { create: true, edit: true, view: true, delete: false },
+  instruments: { create: true, edit: true, view: true, delete: false },
+  templates: { create: true, edit: true, view: true, delete: false },
+  template_builder: { create: false, edit: false, view: true, delete: false },
+  template_import: { create: false, edit: false, view: false, delete: false },
+  template_export: { create: false, edit: false, view: true, delete: false },
+  calibration_procedures: { create: true, edit: true, view: true, delete: false },
+  work_instructions: { create: true, edit: true, view: true, delete: false },
+  gauge_diagrams: { create: true, edit: true, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
-  templates: { create: false, edit: false, view: true, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
 
-const CALIBRATION_ENGINEER_PERMISSIONS: RolePermissions = {
-  instruments: { create: true, edit: true, view: true, delete: false },
+const LAB_TECHNICIAN_PERMISSIONS: RolePermissions = {
   calibrations: { create: true, edit: true, view: true, delete: false },
-  reports: { create: true, edit: false, view: true, delete: false },
+  calibration_approvals: { create: false, edit: false, view: false, delete: false },
+  calibration_schedule: { create: false, edit: false, view: true, delete: false },
+  instruments: { create: true, edit: true, view: true, delete: false },
   templates: { create: false, edit: false, view: true, delete: false },
+  template_builder: { create: false, edit: false, view: false, delete: false },
+  template_import: { create: false, edit: false, view: false, delete: false },
+  template_export: { create: false, edit: false, view: false, delete: false },
+  calibration_procedures: { create: false, edit: false, view: true, delete: false },
+  work_instructions: { create: false, edit: false, view: true, delete: false },
+  gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  reports: { create: false, edit: false, view: true, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
 
 const VIEWER_PERMISSIONS: RolePermissions = {
-  instruments: { create: false, edit: false, view: true, delete: false },
   calibrations: { create: false, edit: false, view: true, delete: false },
-  reports: { create: false, edit: false, view: true, delete: false },
+  calibration_approvals: { create: false, edit: false, view: false, delete: false },
+  calibration_schedule: { create: false, edit: false, view: true, delete: false },
+  instruments: { create: false, edit: false, view: true, delete: false },
   templates: { create: false, edit: false, view: true, delete: false },
+  template_builder: { create: false, edit: false, view: false, delete: false },
+  template_import: { create: false, edit: false, view: false, delete: false },
+  template_export: { create: false, edit: false, view: false, delete: false },
+  calibration_procedures: { create: false, edit: false, view: true, delete: false },
+  work_instructions: { create: false, edit: false, view: true, delete: false },
+  gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  reports: { create: false, edit: false, view: true, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -73,6 +124,108 @@ export class RolesService implements OnModuleInit {
   async onModuleInit() {
     await this.seedDefaultRoles();
     await this.repairAndSeedAllCompanies();
+    await this.upgradeExistingRolesTo12Modules();
+  }
+
+  async upgradeExistingRolesTo12Modules() {
+    try {
+      const roles = await this.roleRepository.find();
+      for (const role of roles) {
+        const p = { ...(role.permissions || {}) };
+        let modified = false;
+        const roleNameLower = (role.name || '').toLowerCase();
+        const isAdmin = roleNameLower.includes('admin');
+        const isQualityManager = roleNameLower.includes('quality') || roleNameLower.includes('manager');
+        const isEngineer = roleNameLower.includes('engineer');
+
+        // 1. calibration_approvals
+        if (!p.calibration_approvals) {
+          if (isAdmin) {
+            p.calibration_approvals = { create: true, edit: true, view: true, delete: true };
+          } else if (isQualityManager) {
+            p.calibration_approvals = { create: true, edit: true, view: true, delete: false };
+          } else if (isEngineer) {
+            p.calibration_approvals = { create: false, edit: false, view: true, delete: false };
+          } else {
+            p.calibration_approvals = { create: false, edit: false, view: false, delete: false };
+          }
+          modified = true;
+        }
+
+        // 2. calibration_schedule
+        if (!p.calibration_schedule) {
+          if (isAdmin || isQualityManager) {
+            p.calibration_schedule = { create: true, edit: true, view: true, delete: isAdmin };
+          } else if (isEngineer) {
+            p.calibration_schedule = { create: true, edit: true, view: true, delete: false };
+          } else {
+            p.calibration_schedule = { create: false, edit: false, view: true, delete: false };
+          }
+          modified = true;
+        }
+
+        // 3. template_builder
+        if (!p.template_builder) {
+          if (isAdmin) {
+            p.template_builder = { create: true, edit: true, view: true, delete: true };
+          } else if (isQualityManager) {
+            p.template_builder = { create: true, edit: true, view: true, delete: false };
+          } else if (isEngineer) {
+            p.template_builder = { create: false, edit: false, view: true, delete: false };
+          } else {
+            p.template_builder = { create: false, edit: false, view: false, delete: false };
+          }
+          modified = true;
+        }
+
+        // 4. template_import
+        if (!p.template_import) {
+          if (isAdmin) {
+            p.template_import = { create: true, edit: true, view: true, delete: true };
+          } else if (isQualityManager) {
+            p.template_import = { create: true, edit: true, view: true, delete: false };
+          } else {
+            p.template_import = { create: false, edit: false, view: false, delete: false };
+          }
+          modified = true;
+        }
+
+        // 5. template_export
+        if (!p.template_export) {
+          if (isAdmin) {
+            p.template_export = { create: true, edit: true, view: true, delete: true };
+          } else if (isQualityManager || isEngineer) {
+            p.template_export = { create: false, edit: false, view: true, delete: false };
+          } else {
+            p.template_export = { create: false, edit: false, view: false, delete: false };
+          }
+          modified = true;
+        }
+
+        // 6. calibration_procedures, work_instructions, gauge_diagrams
+        const docModules = ['calibration_procedures', 'work_instructions', 'gauge_diagrams'];
+        for (const mod of docModules) {
+          if (!p[mod]) {
+            if (isAdmin) {
+              p[mod] = { create: true, edit: true, view: true, delete: true };
+            } else if (isQualityManager) {
+              p[mod] = { create: true, edit: true, view: true, delete: true };
+            } else if (isEngineer) {
+              p[mod] = { create: true, edit: true, view: true, delete: false };
+            } else {
+              p[mod] = { create: false, edit: false, view: true, delete: false };
+            }
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          await this.roleRepository.update(role.id, { permissions: p });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to upgrade roles to 12 modules:', err);
+    }
   }
 
   private async repairAndSeedAllCompanies() {

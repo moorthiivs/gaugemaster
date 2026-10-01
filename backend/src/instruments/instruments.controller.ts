@@ -20,6 +20,7 @@ export class InstrumentsController {
 
 
     @Get()
+    @RequirePermission('instruments', 'view')
     async findAll(
         @Query('status') status?: string,
         @Query('item_status') item_status?: string,
@@ -48,8 +49,9 @@ export class InstrumentsController {
     ) {
         const pageNumber = parseInt(page, 10);
         const limit = parseInt(pageSize, 10);
-        const effectiveCompanyId = companyId || req?.user?.companyId;
-        const effectiveCreatedBy = createdBy || req?.user?.id;
+        const isSuperAdmin = !!req?.user?.isSuperAdmin;
+        const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
+        const effectiveCreatedBy = isSuperAdmin ? (createdBy || req?.user?.id) : req?.user?.id;
 
         return this.instrumentsService.findAll({
             status,
@@ -79,22 +81,26 @@ export class InstrumentsController {
     }
 
     @Get('filters/:createdById')
+    @RequirePermission('instruments', 'view')
     async getFilterParams(
         @Param('createdById') createdById: string,
         @Query('companyId') companyId?: string,
         @Req() req?: any,
     ) {
-        const effectiveCompanyId = companyId || req?.user?.companyId;
+        const isSuperAdmin = !!req?.user?.isSuperAdmin;
+        const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
         return this.instrumentsService.findFilterParams(createdById, effectiveCompanyId);
     }
 
 
     @Get(':id/history')
+    @RequirePermission('instruments', 'view')
     async getHistory(@Param('id') id: string) {
         return this.instrumentsService.getHistory(id);
     }
 
     @Get(':id')
+    @RequirePermission('instruments', 'view')
     async findOne(@Param('id') id: string) {
         return this.instrumentsService.findOne(id);
     }
@@ -165,6 +171,7 @@ export class InstrumentsController {
 
 
     @Get('calendar-due/:userId')
+    @RequirePermission('calibration_schedule', 'view')
     async getCalendarDue(
         @Param('userId') userId: string,
         @Query('year') year: string,
@@ -175,7 +182,8 @@ export class InstrumentsController {
         @Query('companyId') companyId?: string,
         @Req() req?: any,
     ) {
-        const effectiveCompanyId = companyId || req?.user?.companyId;
+        const isSuperAdmin = !!req?.user?.isSuperAdmin;
+        const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
         const y = parseInt(year, 10) || new Date().getFullYear();
         const m = parseInt(month, 10) || new Date().getMonth() + 1;
         return this.instrumentsService.getCalendarDue(userId, y, m, {

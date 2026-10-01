@@ -22,6 +22,9 @@ import { GaugeDiagramsService } from './gauge-diagrams.service';
 import { CreateGaugeDiagramDto } from './dto/create-gauge-diagram.dto';
 import { UpdateGaugeDiagramDto } from './dto/update-gauge-diagram.dto';
 
+import { PermissionsGuard } from '../auth/permissions.guard';
+import { RequirePermission } from '../auth/require-permission.decorator';
+
 const uploadDirectory = './uploads/gauge-diagrams';
 if (!fs.existsSync(uploadDirectory)) {
   fs.mkdirSync(uploadDirectory, { recursive: true });
@@ -52,12 +55,13 @@ const storage = diskStorage({
   },
 });
 
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/gauge-diagrams')
 export class GaugeDiagramsController {
   constructor(private readonly service: GaugeDiagramsService) {}
 
   @Get()
+  @RequirePermission('gauge_diagrams', 'view')
   async findAll(
     @Req() req: any,
     @Query('companyId') queryCompanyId?: string,
@@ -65,19 +69,20 @@ export class GaugeDiagramsController {
     @Query('id_code') id_code?: string,
     @Query('part_name') part_name?: string,
   ) {
-    const user = req.user || {};
-    const companyId = queryCompanyId || user.companyId || (user.company && user.company.id);
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const companyId = isSuperAdmin ? (queryCompanyId || req.user?.companyId) : req.user?.companyId;
     return this.service.findAll(companyId, search, id_code, part_name);
   }
 
   @Get(':id')
+  @RequirePermission('gauge_diagrams', 'view')
   async findOne(@Param('id') id: string, @Req() req: any) {
-    const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = req.user?.companyId;
     return this.service.findOne(id, companyId);
   }
 
   @Post()
+  @RequirePermission('gauge_diagrams', 'create')
   @UseInterceptors(
     FileInterceptor('file', {
       storage,
@@ -91,14 +96,16 @@ export class GaugeDiagramsController {
     @UploadedFile() file?: any,
   ) {
     const user = req.user || {};
-    const companyId = dto.companyId || user.companyId || (user.company && user.company.id);
-    const userId = user.id || user.sub;
+    const isSuperAdmin = !!user.isSuperAdmin;
+    const companyId = isSuperAdmin ? (dto.companyId || user.companyId) : user.companyId;
+    const userId = user.id || user.userId || user.sub;
     const userName = user.name || user.fullName || user.email || 'User';
 
     return this.service.create(dto, file, { id: userId, name: userName, companyId });
   }
 
   @Put(':id')
+  @RequirePermission('gauge_diagrams', 'edit')
   @UseInterceptors(
     FileInterceptor('file', {
       storage,
@@ -113,24 +120,26 @@ export class GaugeDiagramsController {
     @UploadedFile() file?: any,
   ) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
-    const userId = user.id || user.sub;
+    const companyId = user.companyId;
+    const userId = user.id || user.userId || user.sub;
     const userName = user.name || user.fullName || user.email || 'User';
 
     return this.service.update(id, dto, file, { id: userId, name: userName, companyId });
   }
 
   @Delete(':id')
+  @RequirePermission('gauge_diagrams', 'delete')
   async remove(@Param('id') id: string, @Req() req: any) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = user.companyId;
     return this.service.remove(id, companyId);
   }
 
   @Get(':id/history')
+  @RequirePermission('gauge_diagrams', 'view')
   async getHistory(@Param('id') id: string, @Req() req: any) {
     const user = req.user || {};
-    const companyId = user.companyId || (user.company && user.company.id);
+    const companyId = user.companyId;
     return this.service.getHistory(id, companyId);
   }
 }

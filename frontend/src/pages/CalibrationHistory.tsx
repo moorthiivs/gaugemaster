@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { getAuditFieldLabel, formatAuditValue } from "@/lib/auditFormatters";
 import { useParams, useNavigate } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,6 +67,7 @@ export default function CalibrationHistory() {
   useSEO({ title: "Calibration History — GaugeMaster", description: "View calibration history" });
   const { id } = useParams(); // This is the instrument ID
   const navigate = useNavigate();
+  const { canAccess } = usePermissions();
 
   const [instrument, setInstrument] = useState<Instrument | null>(null);
   const [history, setHistory] = useState<CalibrationRecord[]>([]);
@@ -311,15 +313,17 @@ export default function CalibrationHistory() {
                               <Eye className="w-3.5 h-3.5" />
                               View
                             </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
-                              className="gap-1 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-semibold"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                              Edit
-                            </Button>
+                            {canAccess("calibrations", "edit") && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                                className="gap-1 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-semibold"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                                Edit
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -335,18 +339,20 @@ export default function CalibrationHistory() {
                                 PDF
                               </Button>
                             )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedDeleteCalibration(cal);
-                                setDeleteModalOpen(true);
-                              }}
-                              className="gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 font-semibold"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Delete
-                            </Button>
+                            {canAccess("calibrations", "delete") && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedDeleteCalibration(cal);
+                                  setDeleteModalOpen(true);
+                                }}
+                                className="gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 font-semibold"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete
+                              </Button>
+                            )}
                           </div>
                         </div>
                       </CardContent>
@@ -425,9 +431,11 @@ export default function CalibrationHistory() {
         <div className="text-center py-12">
           <FileText className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
           <p className="text-sm text-muted-foreground">No calibration history for this instrument</p>
-          <Button onClick={() => navigate(`/calibration/new/${id}`)} className="mt-4 gap-2">
-            Start First Calibration
-          </Button>
+          {canAccess("calibrations", "create") && (
+            <Button onClick={() => navigate(`/calibration/new/${id}`)} className="mt-4 gap-2">
+              Start First Calibration
+            </Button>
+          )}
         </div>
       )}
 

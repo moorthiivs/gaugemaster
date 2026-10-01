@@ -50,15 +50,21 @@ export class CalibrationTemplatesController {
   }
 
   @Get()
+  @RequirePermission('templates', 'view')
   async findAll(
+    @Req() req: any,
     @Query('userId') userId?: string,
     @Query('companyId') companyId?: string,
     @Query('calibrationType') calibrationType?: string,
   ) {
-    return this.templatesService.findAll({ userId, companyId, calibrationType });
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req.user?.companyId) : req.user?.companyId;
+    const effectiveUserId = isSuperAdmin ? (userId || req.user?.userId || req.user?.id) : (req.user?.userId || req.user?.id);
+    return this.templatesService.findAll({ userId: effectiveUserId, companyId: effectiveCompanyId, calibrationType });
   }
 
   @Post('export')
+  @RequirePermission('template_export', 'view')
   async exportTemplates(
     @Body() body: { templateIds?: string[]; companyId?: string; userId?: string; userName?: string },
     @Res() res: Response,
@@ -76,6 +82,7 @@ export class CalibrationTemplatesController {
   }
 
   @Post('import/validate')
+  @RequirePermission('template_import', 'create')
   @UseInterceptors(FileInterceptor('file'))
   async validateImport(
     @UploadedFile() file?: any,
@@ -96,6 +103,7 @@ export class CalibrationTemplatesController {
   }
 
   @Post('import')
+  @RequirePermission('template_import', 'create')
   @UseInterceptors(FileInterceptor('file'))
   async importTemplates(
     @UploadedFile() file?: any,
@@ -125,8 +133,11 @@ export class CalibrationTemplatesController {
   }
 
   @Get('audit-logs')
-  async getAuditLogs(@Query('companyId') companyId?: string) {
-    return this.auditLogService.findAll(companyId);
+  @RequirePermission('templates', 'view')
+  async getAuditLogs(@Req() req: any, @Query('companyId') companyId?: string) {
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req.user?.companyId) : req.user?.companyId;
+    return this.auditLogService.findAll(effectiveCompanyId);
   }
 
   @Post('bulk-delete')
@@ -139,6 +150,7 @@ export class CalibrationTemplatesController {
   }
 
   @Get(':id')
+  @RequirePermission('templates', 'view')
   async findOne(@Param('id') id: string) {
     return this.templatesService.findOne(id);
   }

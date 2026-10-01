@@ -134,6 +134,7 @@ export interface CanvasTemplateEditorProps {
   selectedColumnId?: string | null;
   onSelectColumnId?: (id: string | null) => void;
   onOpenTableConfig?: (tableId: string) => void;
+  readOnly?: boolean;
 }
 
 export function CanvasTemplateEditor({
@@ -169,6 +170,7 @@ export function CanvasTemplateEditor({
   selectedColumnId: propSelectedColId,
   onSelectColumnId,
   onOpenTableConfig,
+  readOnly = false,
 }: CanvasTemplateEditorProps) {
   const [internalSelectedBlockId, setInternalSelectedBlockId] = useState<
     string | null
@@ -284,6 +286,7 @@ export function CanvasTemplateEditor({
   }, [onRegisterActions, activeTableBlock]);
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
+    if (readOnly) return;
     onChange(newBlocks);
   };
 
@@ -1441,7 +1444,7 @@ export function CanvasTemplateEditor({
       {/* Main 3-Column Antigravity Workspace: Toolbox (Left) + Independent Center Scroll (Center) + Docked Copilot (Right) */}
       <div className="flex-1 flex flex-row min-h-0 w-full overflow-hidden relative">
         {/* MODULAR BLOCKS TOOLBOX (MATCHES USER DESIGN) */}
-        {isToolboxCollapsed ? (
+        {!readOnly && (isToolboxCollapsed ? (
           <div className="w-11 shrink-0 h-full bg-card border-r border-slate-200 dark:border-slate-800 p-1.5 flex flex-col items-center gap-2 shadow-xs py-3 overflow-y-auto">
             <Button
               type="button"
@@ -1579,10 +1582,11 @@ export function CanvasTemplateEditor({
               </div>
             </div>
           </div>
-        )}
+        ))}
 
         {/* MIDDLE COLUMN: CALIBRATION DATA & CANVAS BLOCKS (Independent Scroll!) */}
         <div className="flex-1 h-full min-w-0 overflow-y-auto px-4 py-4 space-y-6 bg-slate-50/50 dark:bg-slate-950/30">
+          <fieldset disabled={readOnly} className="contents border-0 p-0 m-0">
           {blocks.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-10 text-center space-y-3 shadow-xs">
               <Table className="w-8 h-8 mx-auto text-muted-foreground/40" />
@@ -1678,59 +1682,61 @@ export function CanvasTemplateEditor({
                 }`}
               >
                 {/* Floating Action Controls on Hover */}
-                <div className="absolute -top-3.5 right-4 z-30 hidden group-hover:flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1 rounded-full shadow-lg border border-slate-700 text-xs backdrop-blur-md select-none animate-in fade-in zoom-in-95 duration-100">
-                  <span className="text-xxs font-mono text-amber-400 mr-1 uppercase font-bold tracking-wider">
-                    {block.type === "table_grid"
-                      ? "TABLE"
-                      : block.type.replace("_", " ")}
-                  </span>
-                  <button
-                    type="button"
-                    disabled={index === 0}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      moveBlock(index, "up");
-                    }}
-                    className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
-                    title="Move Up"
-                  >
-                    <ChevronUp className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    disabled={index === blocks.length - 1}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      moveBlock(index, "down");
-                    }}
-                    className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
-                    title="Move Down"
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      duplicateBlock(block, index);
-                    }}
-                    className="p-1 hover:text-emerald-400 rounded hover:bg-slate-800 transition-colors"
-                    title="Duplicate Block"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteBlock(index);
-                    }}
-                    className="p-1 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
-                    title="Delete Block"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                {!readOnly && (
+                  <div className="absolute -top-3.5 right-4 z-30 hidden group-hover:flex items-center gap-1.5 bg-slate-900 text-white px-3 py-1 rounded-full shadow-lg border border-slate-700 text-xs backdrop-blur-md select-none animate-in fade-in zoom-in-95 duration-100">
+                    <span className="text-xxs font-mono text-amber-400 mr-1 uppercase font-bold tracking-wider">
+                      {block.type === "table_grid"
+                        ? "TABLE"
+                        : block.type.replace("_", " ")}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveBlock(index, "up");
+                      }}
+                      className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
+                      title="Move Up"
+                    >
+                      <ChevronUp className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === blocks.length - 1}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveBlock(index, "down");
+                      }}
+                      className="p-1 hover:text-amber-400 disabled:opacity-30 rounded hover:bg-slate-800 transition-colors"
+                      title="Move Down"
+                    >
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        duplicateBlock(block, index);
+                      }}
+                      className="p-1 hover:text-emerald-400 rounded hover:bg-slate-800 transition-colors"
+                      title="Duplicate Block"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteBlock(index);
+                      }}
+                      className="p-1 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
+                      title="Delete Block"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
 
                 {/* 1. TABLE GRID BLOCK */}
                 {block.type === "table_grid" &&
@@ -2836,68 +2842,70 @@ export function CanvasTemplateEditor({
                         )}
 
                         {/* Add Row & Column Controls */}
-                        <div className="bg-slate-50/80 dark:bg-slate-900/60 p-2.5 flex items-center justify-between text-xs border-t border-slate-200 dark:border-slate-800">
-                          <div className="flex items-center gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                const newRow: CanvasRowData = {
-                                  point_number: block.rows.length + 1,
-                                  nominal:
-                                    (block.rows[block.rows.length - 1]?.nominal ||
-                                      0) + 10,
-                                  unit: block.unit || "mm",
-                                };
-                                updateBlock(index, {
-                                  ...block,
-                                  rows: [...block.rows, newRow],
-                                });
-                              }}
-                              className="h-8 px-4 text-xs font-bold text-primary hover:text-primary hover:bg-primary/10 border-dashed border-primary/40 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
-                            >
-                              <Plus className="w-4 h-4" />
-                              <span>Add Point / Row</span>
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleOpenAddColumnModal(block)}
-                              className="h-8 px-4 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border-dashed border-indigo-400/60 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
-                              title="Add custom column to this table"
-                            >
-                              <Plus className="w-4 h-4" />
-                              <span>Add Column</span>
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleAddMergedStatementRow(index, null)}
-                              className="h-8 px-3.5 text-xs font-bold text-amber-700 dark:text-amber-400 hover:text-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/40 border-dashed border-amber-400/60 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
-                              title="Add a merged statement row across all columns (e.g. visual observation notes)"
-                            >
-                              <Merge className="w-3.5 h-3.5" />
-                              <span>Add Statement Row</span>
-                            </Button>
+                        {!readOnly && (
+                          <div className="bg-slate-50/80 dark:bg-slate-900/60 p-2.5 flex items-center justify-between text-xs border-t border-slate-200 dark:border-slate-800">
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const newRow: CanvasRowData = {
+                                    point_number: block.rows.length + 1,
+                                    nominal:
+                                      (block.rows[block.rows.length - 1]?.nominal ||
+                                        0) + 10,
+                                    unit: block.unit || "mm",
+                                  };
+                                  updateBlock(index, {
+                                    ...block,
+                                    rows: [...block.rows, newRow],
+                                  });
+                                }}
+                                className="h-8 px-4 text-xs font-bold text-primary hover:text-primary hover:bg-primary/10 border-dashed border-primary/40 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
+                              >
+                                <Plus className="w-4 h-4" />
+                                <span>Add Point / Row</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenAddColumnModal(block)}
+                                className="h-8 px-4 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border-dashed border-indigo-400/60 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
+                                title="Add custom column to this table"
+                              >
+                                <Plus className="w-4 h-4" />
+                                <span>Add Column</span>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAddMergedStatementRow(index, null)}
+                                className="h-8 px-3.5 text-xs font-bold text-amber-700 dark:text-amber-400 hover:text-amber-800 hover:bg-amber-50 dark:hover:bg-amber-950/40 border-dashed border-amber-400/60 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
+                                title="Add a merged statement row across all columns (e.g. visual observation notes)"
+                              >
+                                <Merge className="w-3.5 h-3.5" />
+                                <span>Add Statement Row</span>
+                              </Button>
+                            </div>
+                            {block.rows.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  const newRows = block.rows.slice(0, -1);
+                                  updateBlock(index, { ...block, rows: newRows });
+                                }}
+                                className="h-7 px-2.5 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md font-medium"
+                              >
+                                Remove Last Point
+                              </Button>
+                            )}
                           </div>
-                          {block.rows.length > 1 && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                const newRows = block.rows.slice(0, -1);
-                                updateBlock(index, { ...block, rows: newRows });
-                              }}
-                              className="h-7 px-2.5 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md font-medium"
-                            >
-                              Remove Last Point
-                            </Button>
-                          )}
-                        </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -4019,75 +4027,78 @@ export function CanvasTemplateEditor({
           )}
 
           {/* Quick Add Modular Blocks Section at bottom of blocks */}
-          <div className="pt-3 pb-2 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-tiny font-semibold text-muted-foreground flex items-center gap-1.5">
-                <Plus className="w-3.5 h-3.5 text-primary" />
-                <span>Add Modular Block to Canvas</span>
-              </span>
+          {!readOnly && (
+            <div className="pt-3 pb-2 border-t border-dashed border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-tiny font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <Plus className="w-3.5 h-3.5 text-primary" />
+                  <span>Add Modular Block to Canvas</span>
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTableBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-primary/5 hover:text-primary hover:border-primary/40 text-slate-800 dark:text-slate-200"
+                  title="Add Data Table Grid"
+                >
+                  <Table className="w-3.5 h-3.5 text-blue-500" />
+                  <span>+ Data Table Grid</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addSplitRowBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Side-by-Side (50/50)"
+                >
+                  <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>+ Side-by-Side (50/50)</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addMatrixBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-purple-500/10 hover:text-purple-600 dark:hover:text-purple-400 hover:border-purple-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Reference Matrix Table"
+                >
+                  <Grid2X2 className="w-3.5 h-3.5 text-purple-500" />
+                  <span>+ Reference Matrix</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addTextBlock}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Note / Statement"
+                >
+                  <FileText className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>+ Note / Statement</span>
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addPageBreak}
+                  className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-500/40 text-slate-800 dark:text-slate-200"
+                  title="Add Page Break"
+                >
+                  <SeparatorHorizontal className="w-3.5 h-3.5 text-amber-500" />
+                  <span>+ Page Break</span>
+                </Button>
+              </div>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addTableBlock}
-                className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-primary/5 hover:text-primary hover:border-primary/40 text-slate-800 dark:text-slate-200"
-                title="Add Data Table Grid"
-              >
-                <Table className="w-3.5 h-3.5 text-blue-500" />
-                <span>+ Data Table Grid</span>
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addSplitRowBlock}
-                className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-500/40 text-slate-800 dark:text-slate-200"
-                title="Add Side-by-Side (50/50)"
-              >
-                <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-500" />
-                <span>+ Side-by-Side (50/50)</span>
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addMatrixBlock}
-                className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-purple-500/10 hover:text-purple-600 dark:hover:text-purple-400 hover:border-purple-500/40 text-slate-800 dark:text-slate-200"
-                title="Add Reference Matrix Table"
-              >
-                <Grid2X2 className="w-3.5 h-3.5 text-purple-500" />
-                <span>+ Reference Matrix</span>
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addTextBlock}
-                className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-emerald-500/10 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-500/40 text-slate-800 dark:text-slate-200"
-                title="Add Note / Statement"
-              >
-                <FileText className="w-3.5 h-3.5 text-emerald-500" />
-                <span>+ Note / Statement</span>
-              </Button>
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addPageBreak}
-                className="h-8 px-3 text-xs font-semibold gap-1.5 rounded-lg border-dashed hover:bg-amber-500/10 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-500/40 text-slate-800 dark:text-slate-200"
-                title="Add Page Break"
-              >
-                <SeparatorHorizontal className="w-3.5 h-3.5 text-amber-500" />
-                <span>+ Page Break</span>
-              </Button>
-            </div>
-          </div>
+          )}
+          </fieldset>
         </div>
 
         {/* ========================================================================= */}

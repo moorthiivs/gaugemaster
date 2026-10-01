@@ -22,7 +22,26 @@ export function usePermissions() {
 
     // If permissions matrix exists for this module, strictly evaluate it
     if (rolePermissions && rolePermissions[moduleKey] !== undefined) {
+      if (moduleKey === "template_import" && (action === "create" || action === "view")) {
+        return !!(rolePermissions[moduleKey].create || rolePermissions[moduleKey].view);
+      }
+      if (moduleKey === "template_export" && (action === "create" || action === "view")) {
+        return !!(rolePermissions[moduleKey].view || rolePermissions[moduleKey].create);
+      }
       return !!rolePermissions[moduleKey][action];
+    }
+
+    // Smart fallback for granular submodules if not yet configured in legacy role
+    if (rolePermissions && rolePermissions.templates !== undefined) {
+      if (moduleKey === "template_builder") {
+        return !!rolePermissions.templates[action];
+      }
+      if (moduleKey === "template_import") {
+        return !!rolePermissions.templates.create;
+      }
+      if (moduleKey === "template_export") {
+        return !!rolePermissions.templates.view;
+      }
     }
 
     // Fallback if permissions matrix is not defined
