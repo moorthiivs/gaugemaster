@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -213,29 +213,83 @@ export default function CalibrationWizard() {
     const validTables = tables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
     if (validTables.length === 0) return;
 
+    const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string) => {
+      if (!s) return evaluateCanvasRowFormulas(existingRow, columns, tol, dec);
+
+      const specText = s.specification || s.required_dimension || s.description || existingRow.specification || existingRow.required_dimension || existingRow.description || "";
+      const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+
+      const mergedRow: any = {
+        ...existingRow,
+        ...s,
+        cellSpans: existingRow.cellSpans || s.cellSpans,
+        point_number: existingRow.point_number ?? s.point_number,
+        required_dimension: specText,
+        description: specText,
+        specification: specText,
+        nominal: (s.nominal !== undefined && s.nominal !== 0 && s.nominal !== "0" && s.nominal !== "")
+          ? s.nominal
+          : (existingRow.nominal !== undefined ? existingRow.nominal : (parsed?.isValid ? parsed.nominal : 0)),
+        lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : (existingRow.lower_tolerance ?? parsed?.lowerTolerance),
+        upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : (existingRow.upper_tolerance ?? parsed?.upperTolerance),
+        lower_limit: s.lower_limit !== undefined ? s.lower_limit : (existingRow.lower_limit ?? parsed?.lowerLimit),
+        upper_limit: s.upper_limit !== undefined ? s.upper_limit : (existingRow.upper_limit ?? parsed?.upperLimit),
+        tolerance: s.tolerance !== undefined ? s.tolerance : (existingRow.tolerance ?? tol),
+        unit: s.unit || existingRow.unit || tableUnit || defaultUnit,
+        actual: (s.actual !== undefined && s.actual !== "") ? s.actual : (existingRow.actual ?? ""),
+      };
+
+      // Ensure all custom column values from existingRow are preserved if not provided in s
+      if (Array.isArray(columns)) {
+        columns.forEach((col: any) => {
+          if (existingRow[col.id] !== undefined && (mergedRow[col.id] === undefined || mergedRow[col.id] === "")) {
+            mergedRow[col.id] = existingRow[col.id];
+          }
+        });
+      }
+
+      return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec);
+    };
+
+    const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string) => {
+      const specText = s.specification || s.required_dimension || s.description || "";
+      const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+      const rowObj: any = {
+        ...s,
+        point_number: s.point_number || idx + 1,
+        required_dimension: specText,
+        description: specText,
+        specification: specText,
+        cellSpans: s.cellSpans,
+        nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+        lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+        upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+        lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+        upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+        tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+        unit: s.unit || tableUnit || defaultUnit,
+        actual: s.actual ?? "",
+      };
+      return evaluateCanvasRowFormulas(rowObj, columns, tol, dec);
+    };
+
     if (validTables.length === 1) {
-      // Single table template: bind all valid specs directly to primary table
+      // Single table template: bind specs directly to primary table preserving template authoring & cellSpans
       const primaryTable = validTables[0];
       const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
       const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
-      primaryTable.rows = specs.map((s: any, idx: number) => {
-        const specText = s.required_dimension || s.description || "";
-        const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || defaultUnit, tol, dec) : null;
-        const rowObj: any = {
-          point_number: s.point_number || idx + 1,
-          required_dimension: specText,
-          description: specText,
-          nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
-          lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
-          upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
-          lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
-          upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-          tolerance: s.tolerance !== undefined ? s.tolerance : tol,
-          unit: s.unit || primaryTable.unit || defaultUnit,
-          actual: s.actual ?? "",
-        };
-        return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
-      });
+      const existingRows = Array.isArray(primaryTable.rows) ? primaryTable.rows : [];
+
+      if (existingRows.length > 0) {
+        primaryTable.rows = existingRows.map((existingRow: any, idx: number) => {
+          const s = specs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || specs[idx];
+          return mergeSpecIntoRow(existingRow, s, primaryTable.columns, tol, dec, primaryTable.unit);
+        });
+      } else {
+        primaryTable.rows = specs.map((s: any, idx: number) =>
+          createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit)
+        );
+      }
     } else {
       // Multi-table template: check if specifications carry table identifiers
       const specsHaveTableMarkers = specs.some((s: any) =>
@@ -254,53 +308,30 @@ export default function CalibrationWizard() {
           if (matchingSpecs.length > 0) {
             const dec = tbl.decimal_places ?? defaultDecimalPlaces ?? 3;
             const tol = tbl.tolerance ?? defaultTolerance ?? 0.02;
-            tbl.rows = matchingSpecs.map((s: any, idx: number) => {
-              const specText = s.required_dimension || s.description || "";
-              const parsed = specText ? parseSpecification(specText, s.unit || tbl.unit || defaultUnit, tol, dec) : null;
-              const rowObj: any = {
-                point_number: s.point_number || idx + 1,
-                required_dimension: specText,
-                description: specText,
-                nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
-                lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
-                upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
-                lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
-                upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-                tolerance: s.tolerance !== undefined ? s.tolerance : tol,
-                unit: s.unit || tbl.unit || defaultUnit,
-                actual: s.actual ?? "",
-              };
-              return evaluateCanvasRowFormulas(rowObj, tbl.columns, tol, dec);
-            });
+            const existingRows = Array.isArray(tbl.rows) ? tbl.rows : [];
+
+            if (existingRows.length > 0) {
+              tbl.rows = existingRows.map((existingRow: any, idx: number) => {
+                const s = matchingSpecs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || matchingSpecs[idx];
+                return mergeSpecIntoRow(existingRow, s, tbl.columns, tol, dec, tbl.unit);
+              });
+            } else {
+              tbl.rows = matchingSpecs.map((s: any, idx: number) =>
+                createNewRowFromSpec(s, idx, tbl.columns, tol, dec, tbl.unit)
+              );
+            }
           }
         });
       } else {
         // Legacy flat specs without table markers:
-        // If the template tables already define rows, PRESERVE template authoring!
-        // DO NOT overwrite Table 0 with all concatenated rows.
         const templateHasRows = validTables.some((t: any) => Array.isArray(t.rows) && t.rows.length > 0);
         if (!templateHasRows) {
           const primaryTable = validTables[0];
           const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
           const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
-          primaryTable.rows = specs.map((s: any, idx: number) => {
-            const specText = s.required_dimension || s.description || "";
-            const parsed = specText ? parseSpecification(specText, s.unit || primaryTable.unit || defaultUnit, tol, dec) : null;
-            const rowObj: any = {
-              point_number: s.point_number || idx + 1,
-              required_dimension: specText,
-              description: specText,
-              nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
-              lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
-              upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
-              lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
-              upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-              tolerance: s.tolerance !== undefined ? s.tolerance : tol,
-              unit: s.unit || primaryTable.unit || defaultUnit,
-              actual: s.actual ?? "",
-            };
-            return evaluateCanvasRowFormulas(rowObj, primaryTable.columns, tol, dec);
-          });
+          primaryTable.rows = specs.map((s: any, idx: number) =>
+            createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit)
+          );
         }
       }
     }
@@ -472,6 +503,7 @@ export default function CalibrationWizard() {
       if (cp.environmental_defaults.humidity) setEnvHumidity(cp.environmental_defaults.humidity);
       if (cp.environmental_defaults.soaking_time) setEnvSoakingTime(cp.environmental_defaults.soaking_time);
       if (cp.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(cp.environmental_defaults.soaking_start_time);
+      if (cp.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(cp.environmental_defaults.soaking_end_time);
     }
     const savedReceipt = cp.receipt_condition || cp.environmental_defaults?.receipt_condition;
     if (savedReceipt) {
@@ -584,12 +616,15 @@ export default function CalibrationWizard() {
             .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
             .forEach((r: any) => {
               gaugeSpecs.push({
+                ...r,
                 table_index: tblIdx,
                 table_id: tbl.id || `table_${tblIdx}`,
                 table_title: tbl.title || "",
                 point_number: r.point_number ?? (gaugeSpecs.length + 1),
-                required_dimension: r.required_dimension || r.description || "",
-                description: r.description || r.required_dimension || "",
+                required_dimension: r.required_dimension || r.specification || r.description || "",
+                description: r.description || r.specification || r.required_dimension || "",
+                specification: r.specification || r.required_dimension || r.description || "",
+                cellSpans: r.cellSpans,
                 nominal: r.nominal,
                 tolerance: r.tolerance ?? tbl.tolerance,
                 lower_tolerance: r.lower_tolerance,
@@ -911,19 +946,76 @@ export default function CalibrationWizard() {
   const [step1Collapsed, setStep1Collapsed] = useState(true);
   const [step2Collapsed, setStep2Collapsed] = useState(true);
   const [step3Collapsed, setStep3Collapsed] = useState(true);
+  const [metadataCollapsed, setMetadataCollapsed] = useState(true);
+  const [diagramCollapsed, setDiagramCollapsed] = useState(true);
 
   // Template modification detection & dialog state
   const originalTemplateSnapshotRef = useRef<{
     templateId: string;
     templateName: string;
     diagramImage: string | null;
-    blocksJson: string;
-    pointsJson: string;
+    blocks: any[];
+    points: any[];
   } | null>(null);
   const [templateModifiedModalOpen, setTemplateModifiedModalOpen] = useState(false);
   const proceedAfterTemplateVariantRef = useRef<boolean>(false);
 
-  // Checks whether the user modified specifications or diagram from the original template
+  // Helper to determine if a column is purely for readings or calculated results (NOT a template specification)
+  const isReadingOrCalculatedColumn = (col: any): boolean => {
+    if (!col) return false;
+    const id = String(col.id || "").toLowerCase();
+    const type = String(col.type || "").toLowerCase();
+    const role = String(col.role || "").toUpperCase();
+
+    if (type === "reading" || type === "trial" || type === "formula" || type === "calc" || type === "status" || type === "judgement") {
+      return true;
+    }
+    if (role === "READING" || role === "CALCULATED" || role === "JUDGEMENT") {
+      return true;
+    }
+    if (Boolean(col.formula && String(col.formula).trim())) {
+      return true;
+    }
+    if (id === "remarks" || id === "remark" || id === "observation" || id === "observations" || id === "notes") {
+      return true;
+    }
+    // Pattern matches trial/reading/result columns: trial_1, t1, reading, actual, error, deviation, avg, status, etc.
+    if (/^(?:trial|t|reading|r|actual|observed|measuring_value|error|deviation|status|judgement|result|avg|average)(?:_\d+|\d+)?$/i.test(id)) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to normalize values for structural equality comparison
+  const normalizeStructuralVal = (val: any): string | number => {
+    if (val === undefined || val === null) return "";
+    if (typeof val === "number") return val;
+    const trimmed = String(val).trim();
+    const num = Number(trimmed);
+    if (!isNaN(num) && trimmed !== "") return num;
+    return trimmed;
+  };
+
+  // Helper to extract table_grid blocks from canvas layout
+  const extractCanvasTables = (blocks: any[]): any[] => {
+    const tables: any[] = [];
+    if (!Array.isArray(blocks)) return tables;
+    for (const b of blocks) {
+      if (!b) continue;
+      if (b.type === "table_grid") {
+        tables.push(b);
+      } else if (b.type === "split_row" && Array.isArray(b.children)) {
+        for (const c of b.children) {
+          if (c && c.type === "table_grid") {
+            tables.push(c);
+          }
+        }
+      }
+    }
+    return tables;
+  };
+
+  // Checks whether the user modified specifications, added/deleted rows, or altered diagram from the baseline
   const checkIsTemplateModified = (): boolean => {
     if (!originalTemplateSnapshotRef.current) return false;
     if (!selectedTemplateId || selectedTemplateId === "none") return false;
@@ -931,73 +1023,139 @@ export default function CalibrationWizard() {
     const snapshot = originalTemplateSnapshotRef.current;
     if (snapshot.templateId !== selectedTemplateId) return false;
 
-    // 1. Diagram image check
+    // 1. Diagram Drawing / Image check
     const currentDiagram = wizardDiagramImage || null;
-    if (snapshot.diagramImage !== currentDiagram) {
+    const snapDiagram = snapshot.diagramImage || null;
+    if (snapDiagram !== currentDiagram) {
       return true;
     }
 
-    // 2. Specifications check
+    // 2. Specifications & Rows check (Canvas Mode)
     if (wizardIsCanvas) {
-      try {
-        const currentBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks || []));
-        const snapBlocks = JSON.parse(snapshot.blocksJson || "[]");
-        const cleanBlocks = (blks: any[]) =>
-          blks.map((b: any) => ({
-            id: b.id,
-            title: b.title,
-            rows: Array.isArray(b.rows)
-              ? b.rows.map((r: any) => ({
-                  point_number: r.point_number,
-                  required_dimension: r.required_dimension || r.description,
-                  nominal: r.nominal,
-                  tolerance: r.tolerance,
-                  unit: r.unit,
-                }))
-              : [],
-            children: Array.isArray(b.children)
-              ? b.children.map((c: any) => ({
-                  id: c.id,
-                  title: c.title,
-                  rows: Array.isArray(c.rows)
-                    ? c.rows.map((r: any) => ({
-                        point_number: r.point_number,
-                        required_dimension: r.required_dimension || r.description,
-                        nominal: r.nominal,
-                        tolerance: r.tolerance,
-                        unit: r.unit,
-                      }))
-                    : [],
-                }))
-              : [],
-          }));
-        if (JSON.stringify(cleanBlocks(currentBlocks)) !== JSON.stringify(cleanBlocks(snapBlocks))) {
+      const currentTables = extractCanvasTables(wizardLayoutBlocks || []);
+      const snapTables = extractCanvasTables(snapshot.blocks || []);
+
+      // If table count changed (e.g. table added or removed)
+      if (currentTables.length !== snapTables.length) {
+        return true;
+      }
+
+      for (let t = 0; t < currentTables.length; t++) {
+        const curTbl = currentTables[t];
+        const snpTbl = snapTables[t];
+        const curRows = Array.isArray(curTbl.rows) ? curTbl.rows : [];
+        const snpRows = Array.isArray(snpTbl.rows) ? snpTbl.rows : [];
+
+        // Additional row added or row deleted!
+        if (curRows.length !== snpRows.length) {
           return true;
         }
-      } catch {
-        if (JSON.stringify(wizardLayoutBlocks || []) !== snapshot.blocksJson) return true;
+
+        // Columns structure modified (column added, removed, or ID changed)
+        const curCols = Array.isArray(curTbl.columns) ? curTbl.columns : [];
+        const snpCols = Array.isArray(snpTbl.columns) ? snpTbl.columns : [];
+        if (curCols.length !== snpCols.length) {
+          return true;
+        }
+        for (let c = 0; c < curCols.length; c++) {
+          if (curCols[c]?.id !== snpCols[c]?.id || curCols[c]?.type !== snpCols[c]?.type) {
+            return true;
+          }
+        }
+
+        // Identify specification / metadata columns (excluding reading, trial, formula, and status columns)
+        const specCols = curCols.filter((col) => !isReadingOrCalculatedColumn(col));
+
+        // Check each row for structural modifications
+        for (let r = 0; r < curRows.length; r++) {
+          const cr = curRows[r];
+          const sr = snpRows[r];
+          if (!cr || !sr) return true;
+
+          // Check if statement / merged row status changed
+          const curMerged = Boolean(cr.is_merged || cr.isMerged || cr.is_statement || cr.isStatement);
+          const snpMerged = Boolean(sr.is_merged || sr.isMerged || sr.is_statement || sr.isStatement);
+          if (curMerged !== snpMerged) return true;
+          if (curMerged) {
+            const curText = normalizeStructuralVal(cr.text || cr.merged_text || cr.statement_text || "");
+            const snpText = normalizeStructuralVal(sr.text || sr.merged_text || sr.statement_text || "");
+            if (curText !== snpText) return true;
+            continue;
+          }
+
+          // Check specification columns (nominal, vernier_reading, tolerance, max_permissible_error, etc.)
+          for (const col of specCols) {
+            if (normalizeStructuralVal(cr[col.id]) !== normalizeStructuralVal(sr[col.id])) {
+              return true;
+            }
+          }
+
+          // Check standard specification properties: nominal, tolerance, limits, required_dimension, unit
+          const curNom = cr.nominal !== undefined ? cr.nominal : cr.nom;
+          const snpNom = sr.nominal !== undefined ? sr.nominal : sr.nom;
+          if (normalizeStructuralVal(curNom) !== normalizeStructuralVal(snpNom)) {
+            return true;
+          }
+
+          if (normalizeStructuralVal(cr.tolerance) !== normalizeStructuralVal(sr.tolerance)) {
+            return true;
+          }
+
+          const curLTol = cr.lower_tolerance !== undefined ? cr.lower_tolerance : cr.lowerTolerance;
+          const snpLTol = sr.lower_tolerance !== undefined ? sr.lower_tolerance : sr.lowerTolerance;
+          if (normalizeStructuralVal(curLTol) !== normalizeStructuralVal(snpLTol)) {
+            return true;
+          }
+
+          const curUTol = cr.upper_tolerance !== undefined ? cr.upper_tolerance : cr.upperTolerance;
+          const snpUTol = sr.upper_tolerance !== undefined ? sr.upper_tolerance : sr.upperTolerance;
+          if (normalizeStructuralVal(curUTol) !== normalizeStructuralVal(snpUTol)) {
+            return true;
+          }
+
+          const curReq = cr.required_dimension || cr.description || cr.specification;
+          const snpReq = sr.required_dimension || sr.description || sr.specification;
+          if (normalizeStructuralVal(curReq) !== normalizeStructuralVal(snpReq)) {
+            return true;
+          }
+
+          if (normalizeStructuralVal(cr.unit) !== normalizeStructuralVal(sr.unit)) {
+            return true;
+          }
+        }
       }
     } else {
-      try {
-        const currentPoints = (calPoints || []).map((p: any) => ({
-          point_number: p.point_number,
-          description: p.description,
-          nominal: p.nominal,
-          tolerance: p.tolerance,
-          unit: p.unit,
-        }));
-        const snapPoints = JSON.parse(snapshot.pointsJson || "[]").map((p: any) => ({
-          point_number: p.point_number,
-          description: p.description,
-          nominal: p.nominal,
-          tolerance: p.tolerance,
-          unit: p.unit,
-        }));
-        if (JSON.stringify(currentPoints) !== JSON.stringify(snapPoints)) {
+      // 3. Specifications & Rows check (Standard Points Mode)
+      const currentPoints = calPoints || [];
+      const snapPoints = snapshot.points || [];
+
+      // Additional row added or row deleted!
+      if (currentPoints.length !== snapPoints.length) {
+        return true;
+      }
+
+      for (let i = 0; i < currentPoints.length; i++) {
+        const cp = currentPoints[i];
+        const sp = snapPoints[i];
+        if (!cp || !sp) return true;
+
+        const curReq = cp.description || (cp as any).required_dimension;
+        const snpReq = sp.description || (sp as any).required_dimension;
+        if (normalizeStructuralVal(curReq) !== normalizeStructuralVal(snpReq)) {
           return true;
         }
-      } catch {
-        if (JSON.stringify(calPoints || []) !== snapshot.pointsJson) return true;
+
+        if (normalizeStructuralVal(cp.nominal) !== normalizeStructuralVal(sp.nominal)) {
+          return true;
+        }
+
+        if (normalizeStructuralVal(cp.tolerance) !== normalizeStructuralVal(sp.tolerance)) {
+          return true;
+        }
+
+        if (normalizeStructuralVal(cp.unit) !== normalizeStructuralVal(sp.unit)) {
+          return true;
+        }
       }
     }
 
@@ -1136,6 +1294,7 @@ export default function CalibrationWizard() {
   };
 
   const handleClearTemplate = () => {
+    originalTemplateSnapshotRef.current = null;
     setSelectedTemplateId("none");
     setWizardIsCanvas(false);
     setWizardLayoutBlocks([]);
@@ -1165,42 +1324,132 @@ export default function CalibrationWizard() {
   const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[]) => {
     if (!tpl) return;
 
-    // Record snapshot of template definition for modification detection
-    originalTemplateSnapshotRef.current = {
-      templateId: tpl.id,
-      templateName: tpl.name,
-      diagramImage: tpl.diagram_image || null,
-      blocksJson: JSON.stringify(tpl.layout_blocks || []),
-      pointsJson: JSON.stringify(tpl.calibration_points || []),
-    };
-
     setSelectedTemplateId(tpl.id);
     if (tpl.default_unit) setCalUnit(tpl.default_unit);
     if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
+    const instEnv = selectedInstrument?.custom_parameters?.environmental_defaults;
     if (tpl.environmental_defaults) {
       if (tpl.environmental_defaults.temperature) setEnvTemp(tpl.environmental_defaults.temperature);
       if (tpl.environmental_defaults.humidity) setEnvHumidity(tpl.environmental_defaults.humidity);
       if (tpl.environmental_defaults.soaking_time) setEnvSoakingTime(tpl.environmental_defaults.soaking_time);
       if (tpl.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(tpl.environmental_defaults.soaking_start_time);
       if (tpl.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(tpl.environmental_defaults.soaking_end_time);
+    } else if (instEnv && !isEdit) {
+      if (instEnv.temperature) setEnvTemp(instEnv.temperature);
+      if (instEnv.humidity) setEnvHumidity(instEnv.humidity);
+      if (instEnv.soaking_time) setEnvSoakingTime(instEnv.soaking_time);
+      if (instEnv.soaking_start_time) setEnvSoakingStartTime(instEnv.soaking_start_time);
+      if (instEnv.soaking_end_time) setEnvSoakingEndTime(instEnv.soaking_end_time);
     }
-    setDocNo((tpl as any).doc_no || (tpl as any).docNo || "");
-    setDocDate(tpl.doc_date || "");
-    setDocRev(tpl.doc_rev || "");
+
+    const instDocProps = selectedInstrument?.custom_parameters?.doc_properties;
+
+    const tplDocNo = (tpl as any).doc_no || (tpl as any).docNo;
+    if (tplDocNo) {
+      setDocNo(tplDocNo);
+    } else if (instDocProps?.doc_no) {
+      setDocNo(instDocProps.doc_no);
+    } else if (!isEdit) {
+      setDocNo("");
+    }
+
+    const tplDocDate = tpl.doc_date;
+    if (tplDocDate) {
+      setDocDate(tplDocDate);
+    } else if (instDocProps?.doc_date) {
+      setDocDate(instDocProps.doc_date);
+    } else if (!isEdit) {
+      setDocDate("");
+    }
+
+    const tplDocRev = tpl.doc_rev;
+    if (tplDocRev) {
+      setDocRev(tplDocRev);
+    } else if (instDocProps?.doc_rev) {
+      setDocRev(instDocProps.doc_rev);
+    } else if (!isEdit) {
+      setDocRev("");
+    }
+
     if (tpl.remarks) setRemarks(tpl.remarks);
     if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
-    const loadedTplProcNo = (tpl as any).procedure_no || tpl.procedure_reference || "";
+
+    const loadedTplProcNo = (tpl as any).procedure_no || tpl.procedure_reference;
     if (loadedTplProcNo) {
       setProcedureNo(loadedTplProcNo);
       setProcedureReference(loadedTplProcNo);
+    } else if (instDocProps?.procedure_no || instDocProps?.procedure_reference) {
+      const p = instDocProps.procedure_no || instDocProps.procedure_reference;
+      setProcedureNo(p);
+      setProcedureReference(p);
+    } else if (!isEdit) {
+      setProcedureNo("");
+      setProcedureReference("");
     }
-    if (tpl.procedure_name) setProcedureName(tpl.procedure_name);
-    if (tpl.procedure_date) setProcedureDate(tpl.procedure_date);
-    if (tpl.procedure_rev) setProcedureRev(tpl.procedure_rev);
-    if (tpl.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(tpl.acceptance_criteria_doc_no);
-    if (tpl.acceptance_criteria_date) setAcceptanceCriteriaDate(tpl.acceptance_criteria_date);
-    if (tpl.acceptance_criteria_rev) setAcceptanceCriteriaRev(tpl.acceptance_criteria_rev);
-    if (tpl.acceptance_criteria_reference) setAcceptanceCriteriaReference(tpl.acceptance_criteria_reference);
+
+    const tplProcName = tpl.procedure_name;
+    if (tplProcName) {
+      setProcedureName(tplProcName);
+    } else if (instDocProps?.procedure_name) {
+      setProcedureName(instDocProps.procedure_name);
+    } else if (!isEdit) {
+      setProcedureName("");
+    }
+
+    const tplProcDate = tpl.procedure_date;
+    if (tplProcDate) {
+      setProcedureDate(tplProcDate);
+    } else if (instDocProps?.procedure_date) {
+      setProcedureDate(instDocProps.procedure_date);
+    } else if (!isEdit) {
+      setProcedureDate("");
+    }
+
+    const tplProcRev = tpl.procedure_rev;
+    if (tplProcRev) {
+      setProcedureRev(tplProcRev);
+    } else if (instDocProps?.procedure_rev) {
+      setProcedureRev(instDocProps.procedure_rev);
+    } else if (!isEdit) {
+      setProcedureRev("");
+    }
+
+    const tplCritDocNo = tpl.acceptance_criteria_doc_no;
+    if (tplCritDocNo) {
+      setAcceptanceCriteriaDocNo(tplCritDocNo);
+    } else if (instDocProps?.acceptance_criteria_doc_no) {
+      setAcceptanceCriteriaDocNo(instDocProps.acceptance_criteria_doc_no);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaDocNo("");
+    }
+
+    const tplCritDate = tpl.acceptance_criteria_date;
+    if (tplCritDate) {
+      setAcceptanceCriteriaDate(tplCritDate);
+    } else if (instDocProps?.acceptance_criteria_date) {
+      setAcceptanceCriteriaDate(instDocProps.acceptance_criteria_date);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaDate("");
+    }
+
+    const tplCritRev = tpl.acceptance_criteria_rev;
+    if (tplCritRev) {
+      setAcceptanceCriteriaRev(tplCritRev);
+    } else if (instDocProps?.acceptance_criteria_rev) {
+      setAcceptanceCriteriaRev(instDocProps.acceptance_criteria_rev);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaRev("");
+    }
+
+    const tplCritRef = tpl.acceptance_criteria_reference;
+    if (tplCritRef) {
+      setAcceptanceCriteriaReference(tplCritRef);
+    } else if (instDocProps?.acceptance_criteria_reference) {
+      setAcceptanceCriteriaReference(instDocProps.acceptance_criteria_reference);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaReference("");
+    }
+
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
@@ -1210,6 +1459,7 @@ export default function CalibrationWizard() {
       ? rawInstSpecs.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s))
       : [];
 
+    let initialSanitizedBlocks: any[] = [];
     // Check if canvas template
     if (tpl.is_canvas_template || (tpl.layout_blocks && tpl.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
@@ -1253,6 +1503,7 @@ export default function CalibrationWizard() {
         }
       });
 
+      initialSanitizedBlocks = sanitizedBlocks;
       setWizardLayoutBlocks(sanitizedBlocks);
     } else {
       setWizardIsCanvas(false);
@@ -1269,23 +1520,29 @@ export default function CalibrationWizard() {
 
     // Diagram Image resolution: preserve instrument item-level diagram if saved!
     const instCustomDiagram = selectedInstrument?.custom_parameters?.diagram_image;
+    let initialDiagram: string | null = null;
     if (instCustomDiagram !== undefined && !isEdit) {
-      setWizardDiagramImage(instCustomDiagram || null);
+      initialDiagram = instCustomDiagram || null;
+      setWizardDiagramImage(initialDiagram);
       if (selectedInstrument?.custom_parameters?.diagram_image_width) setWizardDiagramWidth(selectedInstrument.custom_parameters.diagram_image_width);
       if (selectedInstrument?.custom_parameters?.diagram_image_height) setWizardDiagramHeight(selectedInstrument.custom_parameters.diagram_image_height);
       if (selectedInstrument?.custom_parameters?.diagram_image_alignment) setWizardDiagramAlignment(selectedInstrument.custom_parameters.diagram_image_alignment);
     } else if (!isEdit) {
-      if (tpl.diagram_image) setWizardDiagramImage(tpl.diagram_image);
-      else setWizardDiagramImage(null);
+      initialDiagram = tpl.diagram_image || null;
+      setWizardDiagramImage(initialDiagram);
       if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
       if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
       if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
+    } else {
+      initialDiagram = tpl.diagram_image || null;
     }
 
+    let initialPoints: CalibrationPoint[] = [];
     if (isEdit && existingPoints && existingPoints.length > 0) {
+      initialPoints = existingPoints;
       setCalPoints(existingPoints);
     } else if (!isEdit && validInstSpecs.length > 0) {
-      const formattedPoints: CalibrationPoint[] = validInstSpecs.map((s: any, idx) => ({
+      initialPoints = validInstSpecs.map((s: any, idx) => ({
         point_number: s.point_number || idx + 1,
         description: s.description || s.required_dimension || `Point ${idx + 1}`,
         nominal: s.nominal !== undefined ? Number(s.nominal) : 0,
@@ -1297,9 +1554,9 @@ export default function CalibrationWizard() {
         status: s.status || "PASS",
         customFields: s.customFields || {},
       }));
-      setCalPoints(formattedPoints);
+      setCalPoints(initialPoints);
     } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
-      const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
+      initialPoints = tpl.calibration_points.map((pt: any, idx) => ({
         point_number: pt.point_number || idx + 1,
         description: pt.description || `Point ${idx + 1}`,
         nominal: pt.nominal !== undefined ? Number(pt.nominal) : 0,
@@ -1311,8 +1568,17 @@ export default function CalibrationWizard() {
         status: pt.status || "PASS",
         customFields: pt.customFields || {},
       }));
-      setCalPoints(formattedPoints);
+      setCalPoints(initialPoints);
     }
+
+    // Record baseline snapshot of initialized template definition for modification detection
+    originalTemplateSnapshotRef.current = {
+      templateId: tpl.id,
+      templateName: tpl.name,
+      diagramImage: initialDiagram,
+      blocks: JSON.parse(JSON.stringify(initialSanitizedBlocks || [])),
+      points: JSON.parse(JSON.stringify(initialPoints || [])),
+    };
   };
 
   // Apply Standard Preset helper
@@ -1377,6 +1643,13 @@ export default function CalibrationWizard() {
         if ((match as any).doc_no || (match as any).docNo) {
           setDocNo((match as any).doc_no || (match as any).docNo);
         }
+        originalTemplateSnapshotRef.current = {
+          templateId: match.id,
+          templateName: match.name,
+          diagramImage: wizardDiagramImage || null,
+          blocks: JSON.parse(JSON.stringify(wizardLayoutBlocks || [])),
+          points: JSON.parse(JSON.stringify(calPoints || [])),
+        };
       } else {
         handleApplyTemplate(match.id);
       }
@@ -1461,7 +1734,16 @@ export default function CalibrationWizard() {
           if (cal.environmental_conditions.soaking_start_time) setEnvSoakingStartTime(cal.environmental_conditions.soaking_start_time);
           if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
         }
-        const savedReceipt = (cal.environmental_conditions as any)?.receipt_condition || (cal as any).receipt_condition || cal.instrument?.custom_parameters?.receipt_condition;
+        const instEnv = cal.instrument?.custom_parameters?.environmental_defaults;
+        if (instEnv) {
+          if (!cal.environmental_conditions?.temperature && instEnv.temperature) setEnvTemp(instEnv.temperature);
+          if (!cal.environmental_conditions?.humidity && instEnv.humidity) setEnvHumidity(instEnv.humidity);
+          if (!cal.environmental_conditions?.soaking_time && instEnv.soaking_time) setEnvSoakingTime(instEnv.soaking_time);
+          if (!cal.environmental_conditions?.soaking_start_time && instEnv.soaking_start_time) setEnvSoakingStartTime(instEnv.soaking_start_time);
+          if (!cal.environmental_conditions?.soaking_end_time && instEnv.soaking_end_time) setEnvSoakingEndTime(instEnv.soaking_end_time);
+        }
+
+        const savedReceipt = (cal.environmental_conditions as any)?.receipt_condition || (cal as any).receipt_condition || cal.instrument?.custom_parameters?.receipt_condition || cal.instrument?.custom_parameters?.environmental_defaults?.receipt_condition;
         if (savedReceipt) {
           if (["NO DENT & DAMAGE (OK)", "SATISFACTORY", "DENT & DAMAGE OBSERVED"].includes(savedReceipt)) {
             setReceiptCondition(savedReceipt);
@@ -1472,14 +1754,57 @@ export default function CalibrationWizard() {
         } else {
           setReceiptCondition("NO DENT & DAMAGE (OK)");
         }
-        if (cal.doc_no) {
-          setDocNo(cal.doc_no);
-        }
-        const calProcNo = (cal as any).procedure_no || (cal as any).procedure_reference;
+
+        const instDocProps = cal.instrument?.custom_parameters?.doc_properties;
+
+        // 1. Doc Number
+        const loadedDocNo = cal.doc_no || instDocProps?.doc_no;
+        if (loadedDocNo) setDocNo(loadedDocNo);
+
+        // 2. Doc Date
+        const loadedDocDate = cal.doc_date || instDocProps?.doc_date;
+        if (loadedDocDate) setDocDate(loadedDocDate);
+
+        // 3. Doc Rev
+        const loadedDocRev = cal.doc_rev || instDocProps?.doc_rev;
+        if (loadedDocRev) setDocRev(loadedDocRev);
+
+        // 4. Procedure No & Reference
+        const calProcNo = (cal as any).procedure_no || (cal as any).procedure_reference || instDocProps?.procedure_no || instDocProps?.procedure_reference;
         if (calProcNo) {
           setProcedureNo(calProcNo);
           setProcedureReference(calProcNo);
         }
+
+        // 5. Procedure Name
+        const calProcName = (cal as any).procedure_name || instDocProps?.procedure_name;
+        if (calProcName) setProcedureName(calProcName);
+
+        // 6. Procedure Date
+        const calProcDate = (cal as any).procedure_date || instDocProps?.procedure_date;
+        if (calProcDate) setProcedureDate(calProcDate);
+
+        // 7. Procedure Rev
+        const calProcRev = (cal as any).procedure_rev || instDocProps?.procedure_rev;
+        if (calProcRev) setProcedureRev(calProcRev);
+
+        // 8. Acceptance Criteria Doc No
+        const calCritDocNo = (cal as any).acceptance_criteria_doc_no || instDocProps?.acceptance_criteria_doc_no;
+        if (calCritDocNo) setAcceptanceCriteriaDocNo(calCritDocNo);
+
+        // 9. Acceptance Criteria Date
+        const calCritDate = (cal as any).acceptance_criteria_date || instDocProps?.acceptance_criteria_date;
+        if (calCritDate) setAcceptanceCriteriaDate(calCritDate);
+
+        // 10. Acceptance Criteria Rev
+        const calCritRev = (cal as any).acceptance_criteria_rev || instDocProps?.acceptance_criteria_rev;
+        if (calCritRev) setAcceptanceCriteriaRev(calCritRev);
+
+        // 11. Acceptance Criteria Reference
+        const calCritRef = (cal as any).acceptance_criteria_reference || instDocProps?.acceptance_criteria_reference;
+        if (calCritRef) setAcceptanceCriteriaReference(calCritRef);
+
+        // 12. Standard Reference
         if ((cal as any).standard_reference) {
           setStandardReference((cal as any).standard_reference);
         } else if (cal.remarks) {
@@ -2295,7 +2620,7 @@ export default function CalibrationWizard() {
                       if (col.type === "nominal" || col.type === "number") {
                         const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                           ? row[col.id]
-                          : (col.id === "nominal" ? row.nominal : (row[col.id] ?? row.nominal));
+                          : (col.id === "nominal" || col.id === "nom" ? row.nominal : "");
                         const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
                           ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
                           : "-";
@@ -2509,12 +2834,96 @@ export default function CalibrationWizard() {
 
                 return (
                   <tr key={rIdx} className="divide-x hover:bg-muted/20">
-                  {tbl.columns.map((col: any) => {
+                  {(() => {
+                    let skipCols = 0;
+                    return tbl.columns.map((col: any, colIdx: number) => {
+                      if (skipCols > 0) {
+                        skipCols--;
+                        return null;
+                      }
+                      const span = row.cellSpans?.[col.id]?.colSpan || 1;
+                      if (span > 1) {
+                        skipCols = span - 1;
+                      }
                     const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                     if (isPointNo) {
                       return (
-                        <td key={col.id} className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]">
+                        <td key={col.id} colSpan={span} className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]">
                           {row.point_number ?? row[col.id] ?? (rIdx + 1)}
+                        </td>
+                      );
+                    }
+                    // MERGED CELL (colSpan > 1) across parameter columns
+                    if (span > 1) {
+                      const cellVal = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                        ? row[col.id]
+                        : (col.id === "nominal" ? row.nominal : "") ?? "";
+                      const isReadingOrTrial =
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.role === "READING" ||
+                        col.dataType === "MEASUREMENT" ||
+                        /actual|reading|trial|observed/i.test(col.id) ||
+                        /actual|reading|trial|observed/i.test(col.label || "");
+
+                      return (
+                        <td
+                          key={col.id}
+                          colSpan={span}
+                          className="py-1 px-1.5 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs"
+                        >
+                          {isReadingOrTrial ? (
+                            <div className="flex items-center gap-1.5 w-full justify-center">
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
+                              >
+                                {span} Cols
+                              </Badge>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                value={row[col.id] ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                    handleWizardCanvasCellChange(
+                                      bIdx,
+                                      isSplit,
+                                      cIdx,
+                                      rIdx,
+                                      col.id,
+                                      v
+                                    );
+                                  }
+                                }}
+                                onBlur={(e) => {
+                                  const raw = e.target.value.trim();
+                                  if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                  const parsed = parseFloat(raw);
+                                  if (!isNaN(parsed)) {
+                                    const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                                    const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                    handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                  }
+                                }}
+                                className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-2 w-full max-w-xs"
+                                placeholder="0.000"
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1.5">
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                              >
+                                {span} Cols
+                              </Badge>
+                              <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                                {cellVal || "-"}
+                              </span>
+                            </div>
+                          )}
                         </td>
                       );
                     }
@@ -2522,7 +2931,7 @@ export default function CalibrationWizard() {
                     if (col.type === "nominal" || col.type === "number") {
                       const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                         ? row[col.id]
-                        : (col.id === "nominal" ? row.nominal : (row[col.id] ?? row.nominal));
+                        : (col.id === "nominal" || col.id === "nom" ? row.nominal : "");
                       const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
                         ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
                         : "-";
@@ -2648,7 +3057,8 @@ export default function CalibrationWizard() {
                       );
                     }
                     return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}</td>;
-                  })}
+                  });
+                })()}
                   <td className="p-0.5 text-center">
                     <Button
                       type="button"
@@ -3396,249 +3806,343 @@ export default function CalibrationWizard() {
                 </Popover>
               </div>
 
-              <div className="space-y-3 mb-6 p-3.5 bg-card border rounded-xl shadow-xs">
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="space-y-1.5 flex-1 min-w-[220px]">
-                    <Label className="text-xs font-semibold">Standard Reference</Label>
-                    <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
-                  </div>
-                  <div className="space-y-1.5 min-w-[210px]">
-                    <Label className="text-xs font-semibold flex items-center gap-1">
-                      Gauge Receipt Condition <span className="text-rose-500">*</span>
-                    </Label>
-                    <Select value={receiptCondition} onValueChange={(val) => setReceiptCondition(val)}>
-                      <SelectTrigger className="text-xs font-medium bg-background h-9">
-                        <SelectValue placeholder="Select Condition" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="NO DENT & DAMAGE (OK)">NO DENT & DAMAGE (OK)</SelectItem>
-                        <SelectItem value="SATISFACTORY">SATISFACTORY</SelectItem>
-                        <SelectItem value="DENT & DAMAGE OBSERVED">DENT & DAMAGE OBSERVED</SelectItem>
-                        <SelectItem value="CUSTOM">CUSTOM (Enter Condition...)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {receiptCondition === "CUSTOM" && (
-                    <div className="space-y-1.5 min-w-[220px] flex-1">
-                      <Label className="text-xs font-semibold text-foreground">Custom Receipt Condition <span className="text-rose-500">*</span></Label>
-                      <Input
-                        value={customReceiptCondition}
-                        onChange={(e) => setCustomReceiptCondition(e.target.value)}
-                        placeholder="e.g., No dent, measuring face OK"
-                        className="text-xs font-medium h-9"
-                      />
-                    </div>
-                  )}
-                  <div className="space-y-1.5 w-36">
-                    <Label className="text-xs font-semibold">Template Doc No</Label>
-                    <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
-                  </div>
-                  <div className="space-y-1.5 w-28">
-                    <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
-                    <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD-MM-YYYY" className="text-xs font-medium text-center" />
-                  </div>
-                  <div className="space-y-1.5 w-20">
-                    <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
-                    <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium text-center" />
-                  </div>
-                  <div className="space-y-1.5 w-24">
-                    <Label className="text-xs font-medium">Temp (°C)</Label>
-                    <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
-                  </div>
-                  <div className="space-y-1.5 w-24">
-                    <Label className="text-xs font-medium">Humidity (%)</Label>
-                    <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
-                  </div>
-                </div>
+              {/* ═══ Collapsible Document, Procedure & Environmental Metadata ═══ */}
+              {(() => {
+                const metadataFields = [
+                  { label: "Receipt Condition", value: receiptCondition === "CUSTOM" ? customReceiptCondition : receiptCondition, required: true },
+                  { label: "Standard Reference", value: standardReference },
+                  { label: "Template Doc No", value: docNo },
+                  { label: "Doc Date", value: docDate },
+                  { label: "Doc Rev", value: docRev },
+                  { label: "Temp (°C)", value: envTemp },
+                  { label: "Humidity (%)", value: envHumidity },
+                  { label: "Procedure No", value: procedureNo },
+                  { label: "Procedure Name", value: procedureName },
+                  { label: "Rev", value: procedureRev },
+                  { label: "Date", value: procedureDate },
+                  { label: "Acceptance Criteria Doc No", value: acceptanceCriteriaDocNo },
+                  { label: "Criteria Rev", value: acceptanceCriteriaRev },
+                  { label: "Criteria Date", value: acceptanceCriteriaDate },
+                  { label: "Criteria Ref", value: acceptanceCriteriaReference },
+                  { label: "Soaking Time", value: envSoakingTime },
+                ];
+                const emptyMetadataFields = metadataFields.filter((f) => !f.value || !String(f.value).trim());
+                const emptyMetadataCount = emptyMetadataFields.length;
+                const isReceiptConditionEmpty = !receiptCondition || (receiptCondition === "CUSTOM" && !customReceiptCondition?.trim());
 
-                {/* Procedure & Acceptance Criteria Details */}
-                <div className="pt-3 border-t border-border/70 grid grid-cols-1 md:grid-cols-12 gap-3">
-                  <div className="space-y-1 col-span-12 md:col-span-3">
-                    <Label className="text-[11px] font-semibold text-foreground">Procedure No</Label>
-                    <Input
-                      value={procedureNo}
-                      onChange={(e) => {
-                        setProcedureNo(e.target.value);
-                        setProcedureReference(e.target.value);
-                      }}
-                      placeholder="e.g. PC-01"
-                      className="text-xs h-8 font-medium"
-                    />
-                  </div>
-                  <div className="space-y-1 col-span-12 md:col-span-5">
-                    <Label className="text-[11px] font-semibold text-foreground">Procedure Name</Label>
-                    <Input
-                      value={procedureName}
-                      onChange={(e) => setProcedureName(e.target.value)}
-                      placeholder="e.g. Master procedure"
-                      className="text-xs h-8 font-medium"
-                    />
-                  </div>
-                  <div className="space-y-1 col-span-6 md:col-span-2">
-                    <Label className="text-[11px] font-semibold text-foreground">Rev</Label>
-                    <Input
-                      value={procedureRev}
-                      onChange={(e) => setProcedureRev(e.target.value)}
-                      placeholder="Rev"
-                      className="text-xs h-8 font-medium text-center"
-                    />
-                  </div>
-                  <div className="space-y-1 col-span-6 md:col-span-2">
-                    <Label className="text-[11px] font-semibold text-foreground">Date</Label>
-                    <Input
-                      value={procedureDate}
-                      onChange={(e) => setProcedureDate(e.target.value)}
-                      placeholder="DD-MM-YYYY"
-                      className="text-xs h-8 font-medium text-center"
-                    />
-                  </div>
-
-                  <div className="space-y-1 col-span-12 md:col-span-4">
-                    <Label className="text-[11px] font-semibold text-foreground">Acceptance Criteria Doc No</Label>
-                    <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/001/03" className="text-xs h-8 font-medium" />
-                  </div>
-                  <div className="space-y-1 col-span-12 md:col-span-8">
-                    <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
-                    <div className="flex gap-1.5 items-center">
-                      <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
-                      <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-8 w-28 shrink-0 font-medium text-center" />
-                      <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Soaking Time Row */}
-                <div className="pt-2.5 border-t border-border/70 flex flex-wrap items-end gap-3">
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                      Soaking Start Time
-                    </Label>
-                    <TimePicker
-                      value={envSoakingStartTime}
-                      onChange={(val) => handleSoakingStartChange(val)}
-                      placeholder="08:30"
-                    />
-                  </div>
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                      Soaking End Time
-                    </Label>
-                    <TimePicker
-                      value={envSoakingEndTime}
-                      onChange={(val) => handleSoakingEndChange(val)}
-                      placeholder="10:30"
-                    />
-                  </div>
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-primary font-bold flex items-center gap-1">
-                      Soaking Time (hh:mm)
-                    </Label>
-                    <DurationPicker
-                      value={envSoakingTime}
-                      onChange={(val) => setEnvSoakingTime(val)}
-                      placeholder="02:00"
-                    />
-                  </div>
-                  {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
-                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium self-center mt-3">
-                      ✓ Soaking details active
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* ═══ Diagram / Schematic Image (Optional) Card ═══ */}
-              <div className="p-4 bg-card border rounded-xl shadow-xs space-y-3 mb-4">
-                <div className="flex items-center justify-between gap-2 border-b pb-2">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="w-4 h-4 text-primary" />
-                    <span className="text-xs font-bold text-foreground">Diagram / Schematic Image (Optional)</span>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
+                return (
+                  <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20 mb-4">
+                    <button
                       type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setShowCertPreviewModal(true)}
-                      className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
-                      title="Open Full Certificate Preview"
+                      onClick={() => setMetadataCollapsed(!metadataCollapsed)}
+                      className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                      aria-expanded={!metadataCollapsed}
                     >
-                      <Eye className="w-3 h-3" />
-                      Full Preview
-                    </Button>
-                    {wizardDiagramImage && (
-                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 text-[10px] font-semibold">
-                        Uploaded
-                      </Badge>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                            isReceiptConditionEmpty
+                              ? "bg-rose-500 text-white"
+                              : emptyMetadataCount > 0
+                              ? "bg-amber-500 text-white"
+                              : "bg-emerald-500 text-white"
+                          )}
+                        >
+                          {isReceiptConditionEmpty ? (
+                            <AlertCircle className="w-3.5 h-3.5" />
+                          ) : emptyMetadataCount > 0 ? (
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5" />
+                          )}
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                              SOP, Environmental &amp; Document Properties
+                            </span>
+                            {isReceiptConditionEmpty && (
+                              <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/30 font-semibold flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3 text-rose-500" />
+                                Receipt Condition Required *
+                              </Badge>
+                            )}
+                            {emptyMetadataCount > 0 ? (
+                              <Badge
+                                variant="outline"
+                                title={`Empty fields: ${emptyMetadataFields.map(f => f.label).join(", ")}`}
+                                className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold flex items-center gap-1 cursor-help"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                {emptyMetadataCount} Empty {emptyMetadataCount === 1 ? "Field" : "Fields"}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold flex items-center gap-1">
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                All Parameters Filled
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs font-medium text-foreground mt-0.5">
+                            {effectiveReceiptCondition ? `${effectiveReceiptCondition}` : "No Receipt Condition"}
+                            {(envTemp || envHumidity) && ` • ${envTemp || "--"}°C / ${envHumidity || "--"}%`}
+                            {procedureNo && ` • SOP: ${procedureNo}`}
+                            {docNo && ` • Doc: ${docNo}`}
+                          </p>
+                          {emptyMetadataCount > 0 && (
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-normal mt-0.5">
+                              <span className="font-semibold">Empty:</span>{" "}
+                              {emptyMetadataFields.map((f) => f.label).slice(0, 4).join(", ")}
+                              {emptyMetadataCount > 4 && ` +${emptyMetadataCount - 4} more`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground shrink-0">
+                        <span>{metadataCollapsed ? "View Details" : "Hide Details"}</span>
+                        <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !metadataCollapsed && "rotate-180")} />
+                      </div>
+                    </button>
+
+                    {!metadataCollapsed && (
+                      <div className="p-3.5 border-t bg-card space-y-3 animate-in fade-in-50 duration-200">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="space-y-1.5 flex-1 min-w-[220px]">
+                            <Label className="text-xs font-semibold">Standard Reference</Label>
+                            <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
+                          </div>
+                          <div className="space-y-1.5 min-w-[210px]">
+                            <Label className="text-xs font-semibold flex items-center gap-1">
+                              Gauge Receipt Condition <span className="text-rose-500">*</span>
+                            </Label>
+                            <Select value={receiptCondition} onValueChange={(val) => setReceiptCondition(val)}>
+                              <SelectTrigger className="text-xs font-medium bg-background h-9">
+                                <SelectValue placeholder="Select Condition" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="NO DENT & DAMAGE (OK)">NO DENT & DAMAGE (OK)</SelectItem>
+                                <SelectItem value="SATISFACTORY">SATISFACTORY</SelectItem>
+                                <SelectItem value="DENT & DAMAGE OBSERVED">DENT & DAMAGE OBSERVED</SelectItem>
+                                <SelectItem value="CUSTOM">CUSTOM (Enter Condition...)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {receiptCondition === "CUSTOM" && (
+                            <div className="space-y-1.5 min-w-[220px] flex-1">
+                              <Label className="text-xs font-semibold text-foreground">Custom Receipt Condition <span className="text-rose-500">*</span></Label>
+                              <Input
+                                value={customReceiptCondition}
+                                onChange={(e) => setCustomReceiptCondition(e.target.value)}
+                                placeholder="e.g., No dent, measuring face OK"
+                                className="text-xs font-medium h-9"
+                              />
+                            </div>
+                          )}
+                          <div className="space-y-1.5 w-36">
+                            <Label className="text-xs font-semibold">Template Doc No</Label>
+                            <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
+                          </div>
+                          <div className="space-y-1.5 w-28">
+                            <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
+                            <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD-MM-YYYY" className="text-xs font-medium text-center" />
+                          </div>
+                          <div className="space-y-1.5 w-20">
+                            <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
+                            <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium text-center" />
+                          </div>
+                          <div className="space-y-1.5 w-24">
+                            <Label className="text-xs font-medium">Temp (°C)</Label>
+                            <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
+                          </div>
+                          <div className="space-y-1.5 w-24">
+                            <Label className="text-xs font-medium">Humidity (%)</Label>
+                            <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
+                          </div>
+                        </div>
+
+                        {/* Procedure & Acceptance Criteria Details */}
+                        <div className="pt-3 border-t border-border/70 grid grid-cols-1 md:grid-cols-12 gap-3">
+                          <div className="space-y-1 col-span-12 md:col-span-3">
+                            <Label className="text-[11px] font-semibold text-foreground">Procedure No</Label>
+                            <Input
+                              value={procedureNo}
+                              onChange={(e) => {
+                                setProcedureNo(e.target.value);
+                                setProcedureReference(e.target.value);
+                              }}
+                              placeholder="e.g. PC-01"
+                              className="text-xs h-8 font-medium"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-12 md:col-span-5">
+                            <Label className="text-[11px] font-semibold text-foreground">Procedure Name</Label>
+                            <Input
+                              value={procedureName}
+                              onChange={(e) => setProcedureName(e.target.value)}
+                              placeholder="e.g. Master procedure"
+                              className="text-xs h-8 font-medium"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-6 md:col-span-2">
+                            <Label className="text-[11px] font-semibold text-foreground">Rev</Label>
+                            <Input
+                              value={procedureRev}
+                              onChange={(e) => setProcedureRev(e.target.value)}
+                              placeholder="Rev"
+                              className="text-xs h-8 font-medium text-center"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-6 md:col-span-2">
+                            <Label className="text-[11px] font-semibold text-foreground">Date</Label>
+                            <Input
+                              value={procedureDate}
+                              onChange={(e) => setProcedureDate(e.target.value)}
+                              placeholder="DD-MM-YYYY"
+                              className="text-xs h-8 font-medium text-center"
+                            />
+                          </div>
+
+                          <div className="space-y-1 col-span-12 md:col-span-4">
+                            <Label className="text-[11px] font-semibold text-foreground">Acceptance Criteria Doc No</Label>
+                            <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/001/03" className="text-xs h-8 font-medium" />
+                          </div>
+                          <div className="space-y-1 col-span-12 md:col-span-8">
+                            <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
+                            <div className="flex gap-1.5 items-center">
+                              <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
+                              <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-8 w-28 shrink-0 font-medium text-center" />
+                              <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Soaking Time Row */}
+                        <div className="pt-2.5 border-t border-border/70 flex flex-wrap items-end gap-3">
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                              Soaking Start Time
+                            </Label>
+                            <TimePicker
+                              value={envSoakingStartTime}
+                              onChange={(val) => handleSoakingStartChange(val)}
+                              placeholder="08:30"
+                            />
+                          </div>
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                              Soaking End Time
+                            </Label>
+                            <TimePicker
+                              value={envSoakingEndTime}
+                              onChange={(val) => handleSoakingEndChange(val)}
+                              placeholder="10:30"
+                            />
+                          </div>
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-primary font-bold flex items-center gap-1">
+                              Soaking Time (hh:mm)
+                            </Label>
+                            <DurationPicker
+                              value={envSoakingTime}
+                              onChange={(val) => setEnvSoakingTime(val)}
+                              placeholder="02:00"
+                            />
+                          </div>
+                          {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
+                            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium self-center mt-3">
+                              ✓ Soaking details active
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
+                );
+              })()}
 
-                <p className="text-[11px] text-muted-foreground leading-tight">
-                  Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
-                </p>
-
-                {!wizardDiagramImage ? (
-                  <div
-                    tabIndex={0}
-                    onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
-                    onDragLeave={() => setIsDragOverDiagram(false)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      setIsDragOverDiagram(false);
-                      const file = e.dataTransfer.files?.[0];
-                      if (file) processImageFile(file);
-                    }}
-                    className={`border-2 border-dashed ${
-                      isDragOverDiagram ? "border-primary bg-primary/10" : "border-muted-foreground/30 hover:border-primary/50 bg-background/50"
-                    } rounded-lg p-3 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40`}
-                  >
-                    <input
-                      type="file"
-                      id="wizard-diagram-upload"
-                      accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) processImageFile(file);
-                      }}
-                    />
-                    <div className="flex flex-col items-center gap-1.5 py-1">
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
-                        <Upload className="w-4 h-4" />
+              {/* ═══ Diagram / Schematic Image (Optional) Card ═══ */}
+              <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setDiagramCollapsed(!diagramCollapsed)}
+                  className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                  aria-expanded={!diagramCollapsed}
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                        wizardDiagramImage ? "bg-emerald-500 text-white" : "bg-amber-500 text-white"
+                      )}
+                    >
+                      {wizardDiagramImage ? <Check className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                          <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                          Diagram / Schematic Image (Optional)
+                        </span>
+                        {wizardDiagramImage ? (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            Diagram Attached
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 text-amber-500" />
+                            No Diagram Uploaded
+                          </Badge>
+                        )}
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap justify-center mt-0.5">
-                        <label
-                          htmlFor="wizard-diagram-upload"
-                          className="cursor-pointer text-xs font-semibold text-primary hover:underline"
-                        >
-                          Browse File
-                        </label>
-                        <span className="text-xs text-muted-foreground">•</span>
-                        <button
-                          type="button"
-                          onClick={handlePasteFromClipboard}
-                          className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
-                        >
-                          <ClipboardPaste className="w-3 h-3" />
-                          Paste from Clipboard
-                        </button>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        PNG, JPG, SVG, WebP (Max 5MB) • Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Ctrl+V</kbd> anywhere to paste
-                      </span>
+                      <p className="text-xs font-medium text-foreground mt-0.5">
+                        {wizardDiagramImage
+                          ? `${wizardDiagramWidth || 350}px × ${wizardDiagramHeight || 160}px • Align ${wizardDiagramAlignment || "center"}`
+                          : "No schematic image uploaded yet for this calibration"}
+                      </p>
                     </div>
                   </div>
-                ) : (
-                  <div className="space-y-3 bg-muted/20 p-3 rounded-xl border">
-                    {/* Live Preview Box */}
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                        <span className="font-semibold text-foreground">Live Certificate Preview</span>
-                        <span className="font-mono text-[10px]">{wizardDiagramWidth || 350}px × {wizardDiagramHeight || 160}px • {wizardDiagramAlignment || "center"}</span>
+                  <div className="flex items-center gap-2">
+                    {wizardDiagramImage && (
+                      <div className="hidden sm:flex items-center gap-1.5 mr-2" onClick={(e) => e.stopPropagation()}>
+                        <img
+                          src={wizardDiagramImage}
+                          alt="Thumbnail"
+                          className="w-7 h-7 object-contain rounded border border-muted bg-white shrink-0"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowCertPreviewModal(true);
+                          }}
+                          className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                          title="Open Full Certificate Preview"
+                        >
+                          <Eye className="w-3 h-3" />
+                          Preview
+                        </Button>
                       </div>
+                    )}
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground shrink-0">
+                      <span>{diagramCollapsed ? "View Details" : "Hide Details"}</span>
+                      <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !diagramCollapsed && "rotate-180")} />
+                    </div>
+                  </div>
+                </button>
+
+                {!diagramCollapsed && (
+                  <div className="p-4 border-t bg-card space-y-3 animate-in fade-in-50 duration-200">
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
+                    </p>
+
+                    {!wizardDiagramImage ? (
                       <div
+                        tabIndex={0}
                         onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
                         onDragLeave={() => setIsDragOverDiagram(false)}
                         onDrop={(e) => {
@@ -3647,124 +4151,13 @@ export default function CalibrationWizard() {
                           const file = e.dataTransfer.files?.[0];
                           if (file) processImageFile(file);
                         }}
-                        className={`border rounded-lg bg-slate-50 dark:bg-slate-900 p-3 flex ${
-                          wizardDiagramAlignment === 'left' ? 'justify-start' : wizardDiagramAlignment === 'right' ? 'justify-end' : 'justify-center'
-                        } overflow-hidden min-h-[100px] max-h-[220px] items-center relative ${isDragOverDiagram ? 'ring-2 ring-primary bg-primary/5' : ''}`}
+                        className={`border-2 border-dashed ${
+                          isDragOverDiagram ? "border-primary bg-primary/10" : "border-muted-foreground/30 hover:border-primary/50 bg-background/50"
+                        } rounded-lg p-3 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40`}
                       >
-                        <img
-                          src={wizardDiagramImage}
-                          alt="Diagram Preview"
-                          style={{
-                            width: `${wizardDiagramWidth || 350}px`,
-                            maxHeight: `${wizardDiagramHeight || 160}px`,
-                            objectFit: "contain",
-                          }}
-                          className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Size Sliders */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <div className="flex justify-between items-center mb-1">
-                          <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth || 350}px</span></Label>
-                        </div>
-                        <input
-                          type="range"
-                          min={80}
-                          max={540}
-                          step={5}
-                          value={wizardDiagramWidth || 350}
-                          onChange={(e) => setWizardDiagramWidth(parseInt(e.target.value, 10))}
-                          className="w-full accent-primary h-1.5 cursor-pointer"
-                        />
-                      </div>
-                      <div>
-                        <div className="flex justify-between items-center mb-1">
-                          <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight || 160}px</span></Label>
-                        </div>
-                        <input
-                          type="range"
-                          min={40}
-                          max={280}
-                          step={5}
-                          value={wizardDiagramHeight || 160}
-                          onChange={(e) => setWizardDiagramHeight(parseInt(e.target.value, 10))}
-                          className="w-full accent-primary h-1.5 cursor-pointer"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Alignment & Actions Row */}
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t flex-wrap">
-                      <div className="flex items-center gap-1">
-                        <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
-                        <Button
-                          type="button"
-                          variant={wizardDiagramAlignment === "left" ? "default" : "outline"}
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={() => setWizardDiagramAlignment("left")}
-                          title="Align Left"
-                        >
-                          <AlignLeft className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={wizardDiagramAlignment === "center" ? "default" : "outline"}
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={() => setWizardDiagramAlignment("center")}
-                          title="Align Center"
-                        >
-                          <AlignCenter className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={wizardDiagramAlignment === "right" ? "default" : "outline"}
-                          size="sm"
-                          className="h-7 w-7 p-0"
-                          onClick={() => setWizardDiagramAlignment("right")}
-                          title="Align Right"
-                        >
-                          <AlignRight className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2.5 text-xs gap-1 font-medium"
-                          onClick={handleCopyImageToClipboard}
-                          title="Copy Diagram Image to Clipboard"
-                        >
-                          <Copy className="w-3 h-3" />
-                          Copy
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2.5 text-xs gap-1 font-medium"
-                          onClick={handlePasteFromClipboard}
-                          title="Paste new image from Clipboard (or press Ctrl+V)"
-                        >
-                          <ClipboardPaste className="w-3 h-3" />
-                          Paste
-                        </Button>
-                        <label
-                          htmlFor="wizard-diagram-replace-upload"
-                          className="cursor-pointer inline-flex items-center gap-1 text-xs h-7 px-2.5 border rounded-md hover:bg-muted font-medium"
-                        >
-                          <Upload className="w-3 h-3" />
-                          Replace
-                        </label>
                         <input
                           type="file"
-                          id="wizard-diagram-replace-upload"
+                          id="wizard-diagram-upload"
                           accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
                           className="hidden"
                           onChange={(e) => {
@@ -3772,35 +4165,205 @@ export default function CalibrationWizard() {
                             if (file) processImageFile(file);
                           }}
                         />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 gap-1"
-                          onClick={() => {
-                            setWizardDiagramImage(null);
-                            toast.info("Diagram image removed");
-                          }}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          Remove
-                        </Button>
+                        <div className="flex flex-col items-center gap-1.5 py-1">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                            <Upload className="w-4 h-4" />
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap justify-center mt-0.5">
+                            <label
+                              htmlFor="wizard-diagram-upload"
+                              className="cursor-pointer text-xs font-semibold text-primary hover:underline"
+                            >
+                              Browse File
+                            </label>
+                            <span className="text-xs text-muted-foreground">•</span>
+                            <button
+                              type="button"
+                              onClick={handlePasteFromClipboard}
+                              className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+                            >
+                              <ClipboardPaste className="w-3 h-3" />
+                              Paste from Clipboard
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground">
+                            PNG, JPG, SVG, WebP (Max 5MB) • Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Ctrl+V</kbd> anywhere to paste
+                          </span>
+                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="space-y-3 bg-muted/20 p-3 rounded-xl border">
+                        {/* Live Preview Box */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                            <span className="font-semibold text-foreground">Live Certificate Preview</span>
+                            <span className="font-mono text-[10px]">{wizardDiagramWidth || 350}px × {wizardDiagramHeight || 160}px • {wizardDiagramAlignment || "center"}</span>
+                          </div>
+                          <div
+                            onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                            onDragLeave={() => setIsDragOverDiagram(false)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDragOverDiagram(false);
+                              const file = e.dataTransfer.files?.[0];
+                              if (file) processImageFile(file);
+                            }}
+                            className={`border rounded-lg bg-slate-50 dark:bg-slate-900 p-3 flex ${
+                              wizardDiagramAlignment === 'left' ? 'justify-start' : wizardDiagramAlignment === 'right' ? 'justify-end' : 'justify-center'
+                            } overflow-hidden min-h-[100px] max-h-[220px] items-center relative ${isDragOverDiagram ? 'ring-2 ring-primary bg-primary/5' : ''}`}
+                          >
+                            <img
+                              src={wizardDiagramImage}
+                              alt="Diagram Preview"
+                              style={{
+                                width: `${wizardDiagramWidth || 350}px`,
+                                maxHeight: `${wizardDiagramHeight || 160}px`,
+                                objectFit: "contain",
+                              }}
+                              className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
+                            />
+                          </div>
+                        </div>
 
-                    {/* View in Full Certificate Preview Button */}
-                    <div className="pt-1">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowCertPreviewModal(true)}
-                        className="w-full h-8 text-xs font-semibold text-primary border-primary/30 hover:bg-primary/5 bg-primary/5 gap-2"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        View in Full Certificate Preview
-                      </Button>
-                    </div>
+                        {/* Size Sliders */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth || 350}px</span></Label>
+                            </div>
+                            <input
+                              type="range"
+                              min={80}
+                              max={540}
+                              step={5}
+                              value={wizardDiagramWidth || 350}
+                              onChange={(e) => setWizardDiagramWidth(parseInt(e.target.value, 10))}
+                              className="w-full accent-primary h-1.5 cursor-pointer"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight || 160}px</span></Label>
+                            </div>
+                            <input
+                              type="range"
+                              min={40}
+                              max={280}
+                              step={5}
+                              value={wizardDiagramHeight || 160}
+                              onChange={(e) => setWizardDiagramHeight(parseInt(e.target.value, 10))}
+                              className="w-full accent-primary h-1.5 cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Alignment & Actions Row */}
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "left" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("left")}
+                              title="Align Left"
+                            >
+                              <AlignLeft className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "center" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("center")}
+                              title="Align Center"
+                            >
+                              <AlignCenter className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "right" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("right")}
+                              title="Align Right"
+                            >
+                              <AlignRight className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 font-medium"
+                              onClick={handleCopyImageToClipboard}
+                              title="Copy Diagram Image to Clipboard"
+                            >
+                              <Copy className="w-3 h-3" />
+                              Copy
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 font-medium"
+                              onClick={handlePasteFromClipboard}
+                              title="Paste new image from Clipboard (or press Ctrl+V)"
+                            >
+                              <ClipboardPaste className="w-3 h-3" />
+                              Paste
+                            </Button>
+                            <label
+                              htmlFor="wizard-diagram-replace-upload"
+                              className="cursor-pointer inline-flex items-center gap-1 text-xs h-7 px-2.5 border rounded-md hover:bg-muted font-medium"
+                            >
+                              <Upload className="w-3 h-3" />
+                              Replace
+                            </label>
+                            <input
+                              type="file"
+                              id="wizard-diagram-replace-upload"
+                              accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) processImageFile(file);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 gap-1"
+                              onClick={() => {
+                                setWizardDiagramImage(null);
+                                toast.info("Diagram image removed");
+                              }}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Remove
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* View in Full Certificate Preview Button */}
+                        <div className="pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowCertPreviewModal(true)}
+                            className="w-full h-8 text-xs font-semibold text-primary border-primary/30 hover:bg-primary/5 bg-primary/5 gap-2"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            View in Full Certificate Preview
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3861,9 +4424,24 @@ export default function CalibrationWizard() {
                       <Sparkles className="w-4 h-4 text-primary" />
                       <span className="font-bold text-foreground">Canvas Template Data Entry ({wizardLayoutBlocks.length} Sections)</span>
                     </div>
-                    <span className="text-[11px] text-muted-foreground">
-                      Readings calculate automatically based on template formulas
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {selectedTemplateId && selectedTemplateId !== "none" && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleApplyTemplate(selectedTemplateId)}
+                          className="h-6 text-[11px] px-2 gap-1 text-primary hover:bg-primary/20"
+                          title="Reload layout blocks, values and merges directly from the saved template"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          Reload from Template
+                        </Button>
+                      )}
+                      <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                        Readings calculate automatically based on template formulas
+                      </span>
+                    </div>
                   </div>
 
                   {wizardLayoutBlocks.map((block: any, bIdx: number) => {

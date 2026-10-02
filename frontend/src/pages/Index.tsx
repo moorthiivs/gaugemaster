@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { DashboardSummary } from "@/types/instrument";
 import { getDashboardSummary, getFilterParams } from "@/lib/instrumentActions";
@@ -482,10 +483,6 @@ const Index = () => {
     description:
       "Operational dashboard showing calibrations due today, progress targets, and instrument metrics.",
   });
-  const [data, setData] = useState<DashboardSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   // Date range filters
   const [startDate, setStartDate] = useState<Date | undefined>(() => {
     const now = new Date();
@@ -502,8 +499,6 @@ const Index = () => {
     string | undefined
   >(undefined);
   const [location, setLocation] = useState<string | undefined>(undefined);
-  const [locations, setLocations] = useState<string[]>([]);
-  const [itemStatuses, setItemStatuses] = useState<string[]>([]);
 
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -519,11 +514,40 @@ const Index = () => {
     return count;
   }, [startDate, endDate, location, itemStatus, calibrationStatus, category]);
 
-  const [dashboardConfig, setDashboardConfig] = useState<{
-    warningDays: number;
-    widgets: Record<string, boolean>;
-  }>({
-    warningDays: 7,
+  // ── Server State Queries via TanStack React Query ───────────────────
+  // 1. Filter parameters query (cached for 5 minutes)
+  const { data: filterParams } = useQuery({
+    queryKey: ["filterParams", user?.id, user?.companyId],
+    queryFn: () => getFilterParams(user?.id, user?.companyId),
+    enabled: !!user?.id,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const locations = useMemo(() => filterParams?.location || [], [filterParams]);
+  const itemStatuses = useMemo(
+    () => deduplicateItemStatuses(filterParams?.item_status || []),
+    [filterParams]
+  );
+
+  // 2. Mail & dashboard configuration query (cached for 10 minutes)
+  const { data: mailConfigData } = useQuery({
+    queryKey: ["dashboardConfig", user?.id, user?.companyId],
+    queryFn: async () => {
+      try {
+        const res = await httpClient.get('/settings/fetchmailconfig', {
+          params: { userId: user?.id, companyId: user?.companyId }
+        });
+        return res.status === 200 ? res.data?.dashboardConfig : null;
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!user?.id,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const dashboardConfig = useMemo(() => ({
+    warningDays: mailConfigData?.warningDays ?? 7,
     widgets: {
       overallProgress: true,
       overdue: true,
@@ -532,8 +556,9 @@ const Index = () => {
       dueSoon: true,
       compliance: true,
       totalMaster: true,
+      ...(mailConfigData?.widgets || {}),
     },
-  });
+  }), [mailConfigData]);
 
   const visibleWidgetCount = useMemo(() => {
     const keys = [
@@ -548,79 +573,54 @@ const Index = () => {
     return keys.filter((k) => dashboardConfig.widgets[k] !== false).length;
   }, [dashboardConfig.widgets]);
 
-  useEffect(() => {
-    if (!user?.id) return;
+  // 3. Main Dashboard Summary Query (cached, automatic background revalidation)
+  const startStr = startDate ? format(startDate, "yyyy-MM-dd") : undefined;
+  const endStr = endDate ? format(endDate, "yyyy-MM-dd") : undefined;
+  const isRefParam =
+    category === "Working"
+      ? "false"
+      : category === "Reference"
+        ? "true"
+        : undefined;
 
-    async function fetchDashboard() {
-      setLoading(true);
-      setError(null);
-      try {
-        try {
-          const settingsRes = await httpClient.get('/settings/fetchmailconfig', {
-            params: { userId: user?.id, companyId: user?.companyId }
-          });
-          if (settingsRes.status === 200 && settingsRes.data?.dashboardConfig) {
-            setDashboardConfig({
-              warningDays: settingsRes.data.dashboardConfig.warningDays ?? 7,
-              widgets: {
-                overallProgress: true,
-                overdue: true,
-                dueToday: true,
-                periodProgress: true,
-                dueSoon: true,
-                compliance: true,
-                totalMaster: true,
-                ...(settingsRes.data.dashboardConfig.widgets || {}),
-              },
-            });
-          }
-        } catch (e) {
-          // ignore fallback
-        }
+  const {
+    data: queryData,
+    isLoading: loading,
+    isFetching,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: [
+      "dashboardSummary",
+      user?.id,
+      user?.companyId,
+      startStr,
+      endStr,
+      itemStatus,
+      calibrationStatus,
+      location,
+      category,
+    ],
+    queryFn: () =>
+      getDashboardSummary(
+        user?.id,
+        startStr,
+        endStr,
+        itemStatus === "All" ? undefined : itemStatus,
+        calibrationStatus === "All" ? undefined : calibrationStatus,
+        location === "All" ? undefined : location,
+        isRefParam,
+        user?.companyId,
+      ),
+    enabled: !!user?.id,
+    staleTime: 60 * 1000,
+  });
 
-        const filters = await getFilterParams(user?.id, user?.companyId);
-        setLocations(filters.location || []);
-        setItemStatuses(deduplicateItemStatuses(filters.item_status || []));
+  const data: DashboardSummary | null = queryData || null;
+  const error: string | null = queryError
+    ? "Failed to load dashboard data. Please try again."
+    : null;
 
-        const startStr = startDate
-          ? format(startDate, "yyyy-MM-dd")
-          : undefined;
-        const endStr = endDate ? format(endDate, "yyyy-MM-dd") : undefined;
-        const isRefParam =
-          category === "Working"
-            ? "false"
-            : category === "Reference"
-              ? "true"
-              : undefined;
-        const d = await getDashboardSummary(
-          user?.id,
-          startStr,
-          endStr,
-          itemStatus === "All" ? undefined : itemStatus,
-          calibrationStatus === "All" ? undefined : calibrationStatus,
-          location === "All" ? undefined : location,
-          isRefParam,
-          user?.companyId,
-        );
-        setData(d);
-      } catch (err: any) {
-        console.error("Failed to fetch dashboard data:", err);
-        setError("Failed to load dashboard data. Please try again.");
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    fetchDashboard();
-  }, [
-    user?.id,
-    startDate,
-    endDate,
-    itemStatus,
-    calibrationStatus,
-    location,
-    category,
-  ]);
 
   // Click Handlers for KPI Cards & Action Banners
   const handleCardClick = (
@@ -789,13 +789,11 @@ const Index = () => {
             <Button
               variant="outline"
               size="sm"
+              disabled={isFetching}
               className="h-8 gap-1.5 text-xs font-bold rounded-xl shadow-xs border-border/80 hover:border-primary/50 hover:bg-card/80 transition-all"
-              onClick={() => {
-                setData(null);
-                setLoading(true);
-              }}
+              onClick={() => refetch()}
             >
-              <RefreshCw className="h-3.5 w-3.5 text-primary" /> Refresh Data
+              <RefreshCw className={`h-3.5 w-3.5 text-primary ${isFetching ? "animate-spin" : ""}`} /> Refresh Data
             </Button>
           </div>
         </div>
@@ -1092,7 +1090,7 @@ const Index = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setLoading(true)}
+              onClick={() => refetch()}
               className="h-7 text-xs"
             >
               Retry

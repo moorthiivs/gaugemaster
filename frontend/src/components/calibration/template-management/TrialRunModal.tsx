@@ -555,11 +555,36 @@ export function TrialRunModal({
                               <tbody className="divide-y divide-black">
                                 {tbl.rows.map((row, rIdx) => (
                                   <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                    {tbl.columns.map((col) => {
+                                    {(() => {
+                                      let skipCols = 0;
+                                      return tbl.columns.map((col, colIdx) => {
+                                        if (skipCols > 0) {
+                                          skipCols--;
+                                          return null;
+                                        }
+                                        const span = (row as any).cellSpans?.[col.id]?.colSpan || 1;
+                                        if (span > 1) {
+                                          skipCols = span - 1;
+                                        }
                                       const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
                                       if (col.id === "point_number" || col.id === "sl_no") {
-                                        return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
+                                        return <td key={col.id} colSpan={span} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
                                       }
+                                        // MERGED CELL (colSpan > 1)
+                                        if (span > 1) {
+                                          const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                          return (
+                                            <td
+                                              key={col.id}
+                                              colSpan={span}
+                                              className="py-1 px-2 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs"
+                                            >
+                                              <span className="font-semibold text-slate-800 dark:text-slate-100">
+                                                {cellVal}
+                                              </span>
+                                            </td>
+                                          );
+                                        }
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
                                         const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
@@ -627,7 +652,8 @@ export function TrialRunModal({
                                         );
                                       }
                                       return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
-                                    })}
+                                    });
+                                  })()}
                                   </tr>
                                 ))}
                               </tbody>

@@ -45,10 +45,13 @@ export class UsersService {
   }
 
   async findByEmail(email: string) {
-    const user = await this.userRepository.findOne({
-      where: { email },
-      relations: ['role', 'company'],
-    });
+    const user = await this.userRepository
+      .createQueryBuilder('user')
+      .addSelect('user.password')
+      .leftJoinAndSelect('user.role', 'role')
+      .leftJoinAndSelect('user.company', 'company')
+      .where('user.email = :email', { email })
+      .getOne();
 
     if (user && user.companyId && !user.roleId) {
       const adminRole = await this.roleRepository.findOne({

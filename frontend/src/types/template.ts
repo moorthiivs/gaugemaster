@@ -99,6 +99,12 @@ export interface CanvasColumnDef {
   validationMetadata?: any;
 }
 
+export interface CellSpan {
+  colSpan?: number;
+  rowSpan?: number;
+  text?: string;
+}
+
 export interface CanvasRowData {
   point_number?: number;
   nominal?: number;
@@ -107,6 +113,11 @@ export interface CanvasRowData {
   unit?: string;
   status?: "PASS" | "FAIL";
   customFields?: Record<string, any>;
+  is_merged?: boolean;
+  isMerged?: boolean;
+  merged_text?: string;
+  statement?: string;
+  cellSpans?: Record<string, CellSpan>;
   [key: string]: any;
 }
 

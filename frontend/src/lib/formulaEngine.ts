@@ -2299,8 +2299,11 @@ export function evaluateCanvasRowFormulas(
   // 2. Build initial row context
   let ctx = buildRowContext(newRow, columns, tableTol, dec);
 
-  // 3. Populate structured limits on newRow
-  newRow.nominal = typeof row.nominal === "string" && (row.nominal.endsWith(".") || row.nominal === "-" || row.nominal.includes(".")) ? row.nominal : ctx.nom;
+  newRow.nominal =
+    (typeof row.nominal === "string" && isNaN(Number(row.nominal)) && row.nominal.trim() !== "") ||
+    (typeof row.nominal === "string" && (row.nominal.endsWith(".") || row.nominal === "-" || row.nominal.includes(".")))
+      ? row.nominal
+      : ctx.nom;
   newRow.nom = ctx.nom;
   newRow.lowerTolerance = ctx.lowerTol;
   newRow.upperTolerance = ctx.upperTol;

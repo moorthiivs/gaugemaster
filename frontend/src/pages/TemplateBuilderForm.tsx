@@ -95,7 +95,6 @@ import {
   updateTemplate,
 } from "@/lib/templateActions";
 import {
-  CalibrationDataGrid,
   CustomColumn,
 } from "@/components/calibration/CalibrationDataGrid";
 import {
@@ -146,8 +145,6 @@ export default function TemplateBuilderForm() {
     CalibrationTemplate[]
   >([]);
 
-  // Canvas Mode State
-  const [isCanvasMode, setIsCanvasMode] = useState<boolean>(!templateId);
   const [layoutBlocks, setLayoutBlocks] = useState<CanvasBlock[]>(() => {
     if (!templateId) {
       return JSON.parse(JSON.stringify(CANVAS_PRESETS[0].blocks));
@@ -325,26 +322,23 @@ export default function TemplateBuilderForm() {
   >("canvas");
 
   const totalPointsCount = useMemo(() => {
-    if (isCanvasMode) {
-      return layoutBlocks.reduce((acc, b) => {
-        if (b.type === "table_grid") {
-          return acc + (b.rows?.length || 0);
-        }
-        if (b.type === "split_row" && b.children) {
-          return (
-            acc +
-            b.children.reduce(
-              (cAcc, c) =>
-                c.type === "table_grid" ? cAcc + (c.rows?.length || 0) : cAcc,
-              0,
-            )
-          );
-        }
-        return acc;
-      }, 0);
-    }
-    return points.length;
-  }, [isCanvasMode, layoutBlocks, points]);
+    return layoutBlocks.reduce((acc, b) => {
+      if (b.type === "table_grid") {
+        return acc + (b.rows?.length || 0);
+      }
+      if (b.type === "split_row" && b.children) {
+        return (
+          acc +
+          b.children.reduce(
+            (cAcc, c) =>
+              c.type === "table_grid" ? cAcc + (c.rows?.length || 0) : cAcc,
+            0,
+          )
+        );
+      }
+      return acc;
+    }, 0);
+  }, [layoutBlocks]);
 
   const [selectedTableBlockId, setSelectedTableBlockId] = useState<string>("");
 
@@ -408,18 +402,34 @@ export default function TemplateBuilderForm() {
     const target = allTableBlocks.find((t) => t.block.id === tableId)?.block;
     if (!target || !target.columns || target.columns.length === 0) return;
 
-    const updatedCols = target.columns.map((col) => {
-      let baseWidth = Math.max(90, (col.label?.length || 8) * 11 + 35);
-      if (col.type === "number") baseWidth = Math.max(100, baseWidth);
-      if (col.type === "formula" || (col.type as any) === "calculated")
-        baseWidth = Math.max(130, baseWidth);
-      if (col.isPassFail || col.type === "status")
-        baseWidth = Math.max(100, baseWidth);
-      return { ...col, width: baseWidth };
+    // Available printable width on portrait A4 is roughly 520px net budget
+    const targetTotal = 520;
+
+    // Assign relative baseline weight based on column type & label
+    const rawWeights = target.columns.map((col) => {
+      const cId = String(col.id || col.key || "").toLowerCase();
+      const cType = String(col.type || "").toLowerCase();
+      if (cId === "point_number" || cId === "sl_no" || cId === "sino") return 25;
+      if (cType === "status" || cId === "judgement" || col.isPassFail) return 35;
+      if (cType === "text" || cId === "specification" || cId === "description") {
+        return Math.max(45, Math.min(95, (col.label?.length || 8) * 7 + 20));
+      }
+      if (cId.includes("master")) return 45;
+      if (cType === "formula") return 50;
+      return 45;
+    });
+
+    const sumWeights = rawWeights.reduce((a, b) => a + b, 0) || 1;
+    const updatedCols = target.columns.map((col, idx) => {
+      const calculatedWidth = Math.max(
+        20,
+        Math.round((rawWeights[idx] * targetTotal) / sumWeights)
+      );
+      return { ...col, width: calculatedWidth };
     });
 
     updateActiveTableBlock({ columns: updatedCols });
-    toast.success("Optimized column widths based on content type!");
+    toast.success("Auto-fit column widths optimized to fit certificate page!");
   };
 
   const handleAddColumnToActiveTable = () => {
@@ -1050,14 +1060,60 @@ export default function TemplateBuilderForm() {
           );
         }
 
-        if (
-          tpl.is_canvas_template ||
-          (tpl.layout_blocks && tpl.layout_blocks.length > 0)
-        ) {
-          setIsCanvasMode(true);
-          setLayoutBlocks(tpl.layout_blocks || []);
-        } else {
-          setIsCanvasMode(false);
+        if (tpl.layout_blocks && tpl.layout_blocks.length > 0) {
+          setLayoutBlocks(tpl.layout_blocks);
+        } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
+          // Backward compatibility: automatically convert legacy flat calibration points into a visual canvas table_grid block
+          const convertedBlock: TableGridBlock = {
+            id: `table_${Date.now()}`,
+            type: "table_grid",
+            title: tpl.name ? `${tpl.name} Table` : "Calibration Table",
+            width: "100%",
+            unit: tpl.default_unit || "mm",
+            tolerance:
+              typeof tpl.default_tolerance === "number"
+                ? tpl.default_tolerance
+                : 0.01,
+            decimal_places: Number(tpl.decimal_places) || 4,
+            columns: [
+              { id: "point_number", label: "Sl.No.", type: "nominal", width: "8%" },
+              { id: "description", label: "Description", type: "text", width: "22%" },
+              { id: "nominal", label: "Std. Spec", type: "nominal", width: "20%" },
+              { id: "reading", label: "Actual Reading", type: "reading", width: "20%" },
+              {
+                id: "deviation",
+                label: "Deviation",
+                type: "formula",
+                formula: "reading - nominal",
+                width: "15%",
+              },
+              {
+                id: "status",
+                label: "Judgement",
+                type: "status",
+                formula: "IF(ABS(deviation)<=tolerance,'PASS','FAIL')",
+                width: "15%",
+              },
+            ],
+            rows: tpl.calibration_points.map((pt: any, idx: number) => ({
+              point_number: pt.point_number || idx + 1,
+              description: pt.description || "",
+              nominal: pt.nominal !== undefined ? Number(pt.nominal) : 0,
+              tolerance:
+                pt.tolerance !== undefined
+                  ? Number(pt.tolerance)
+                  : (tpl.default_tolerance ?? 0.01),
+              reading:
+                pt.ascending_reading !== undefined
+                  ? Number(pt.ascending_reading)
+                  : 0,
+              deviation: pt.error !== undefined ? Number(pt.error) : 0,
+              unit: pt.unit || tpl.default_unit || "mm",
+              status: pt.status || "PASS",
+              ...(pt.customFields || {}),
+            })),
+          };
+          setLayoutBlocks([convertedBlock]);
         }
 
         if (tpl.calibration_points && tpl.calibration_points.length > 0) {
@@ -1138,7 +1194,7 @@ export default function TemplateBuilderForm() {
     }
 
     // Pre-save quality & formula audit gate
-    if (isCanvasMode && layoutBlocks.length > 0 && !options?.force) {
+    if (layoutBlocks.length > 0 && !options?.force) {
       const preSaveCheck = validateTemplatePreSave(layoutBlocks);
       if (!preSaveCheck.canSaveProduction) {
         setShowPreSaveModal(true);
@@ -1173,8 +1229,8 @@ export default function TemplateBuilderForm() {
           value: acceptanceValue === "" ? 0 : Number(acceptanceValue),
           type: acceptanceType,
         },
-        is_canvas_template: isCanvasMode,
-        layout_blocks: isCanvasMode ? layoutBlocks : undefined,
+        is_canvas_template: true,
+        layout_blocks: layoutBlocks,
         calibration_points: points,
         custom_columns: customColumns,
         standard_columns_config: standardColumnConfigs,
@@ -1301,47 +1357,13 @@ export default function TemplateBuilderForm() {
 
               <div className="h-4 w-px bg-border/80 hidden sm:block shrink-0" />
 
-              {/* Segmented View Switch */}
-              <div className="flex items-center bg-muted/70 p-0.5 rounded-lg border shadow-2xs shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCanvasMode(true);
-                    setActiveNavTab("canvas");
-                    markDirty();
-                    if (layoutBlocks.length === 0) {
-                      setLayoutBlocks(
-                        JSON.parse(JSON.stringify(CANVAS_PRESETS[0].blocks)),
-                      );
-                    }
-                  }}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isCanvasMode
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Switch to Visual Canvas Layout"
-                >
-                  <Sparkles className="w-3 h-3" />
-                  <span>Visual Canvas</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsCanvasMode(false);
-                    setActiveNavTab("canvas");
-                    markDirty();
-                  }}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-md flex items-center gap-1.5 transition-all cursor-pointer ${
-                    !isCanvasMode
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Switch to Single Grid Table Layout"
-                >
-                  <SlidersHorizontal className="w-3 h-3" />
-                  <span>Single Grid</span>
-                </button>
+              {/* Visual Canvas Mode Badge */}
+              <div
+                className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md bg-primary/10 text-primary border border-primary/20 shrink-0"
+                title="Visual Canvas Template Builder"
+              >
+                <Sparkles className="w-3 h-3" />
+                <span>Visual Canvas</span>
               </div>
 
               <Button
@@ -2640,197 +2662,87 @@ export default function TemplateBuilderForm() {
               </div>
             )}
 
-            {/* Right Column: Interactive Canvas or Single Grid Data Table */}
-            {isCanvasMode ? (
-              <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
-                <CanvasTemplateEditor
-                  blocks={layoutBlocks}
-                  onChange={(newBlocks) => {
-                    if (isReadOnly) return;
-                    setLayoutBlocks(newBlocks);
-                    markDirty();
-                  }}
-                  readOnly={isReadOnly}
-                  hideCopilotInside={true}
-                  selectedBlockId={selectedBlockId}
-                  onSelectBlockId={(id) => {
-                    setSelectedBlockId(id);
-                    if (id) setSelectedTableBlockId(id);
-                  }}
-                  selectedColumnId={selectedColumnId}
-                  onSelectColumnId={setSelectedColumnId}
-                  onOpenTableConfig={(tableId) => {
-                    setSelectedTableBlockId(tableId);
-                    setSelectedBlockId(tableId);
-                    setActiveNavTab("tableConfig");
-                    toast.info("Opened Table Configuration");
-                  }}
-                  onRegisterActions={(actions) => {
-                    canvasActionsRef.current = actions;
-                  }}
-                  onSelectPreset={(preset) => {
-                    setLayoutBlocks(JSON.parse(JSON.stringify(preset.blocks)));
-                    if (
-                      !templateId ||
-                      name === "New Template" ||
-                      !name.trim()
-                    ) {
-                      setName(preset.name);
-                    }
-                    if (preset.instrumentType) {
-                      setInstrumentType(preset.instrumentType);
-                    }
-                    if (preset.defaultTolerance !== undefined) {
-                      setDefaultTolerance(preset.defaultTolerance);
-                    }
-                    if (preset.defaultUnit) {
-                      setDefaultUnit(preset.defaultUnit);
-                    }
-                    markDirty();
-                    toast.success(
-                      `Loaded "${preset.name}" preset layout and properties!`,
-                    );
-                  }}
-                  onApplyGeneratedTemplate={handleApplyAiGenerated}
-                  defaultUnit={defaultUnit}
-                  defaultTolerance={
-                    typeof defaultTolerance === "number"
-                      ? defaultTolerance
-                      : 0.01
+            {/* Right Column: Interactive Visual Canvas */}
+            <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+              <CanvasTemplateEditor
+                blocks={layoutBlocks}
+                onChange={(newBlocks) => {
+                  if (isReadOnly) return;
+                  setLayoutBlocks(newBlocks);
+                  markDirty();
+                }}
+                readOnly={isReadOnly}
+                hideCopilotInside={true}
+                selectedBlockId={selectedBlockId}
+                onSelectBlockId={(id) => {
+                  setSelectedBlockId(id);
+                  if (id) setSelectedTableBlockId(id);
+                }}
+                selectedColumnId={selectedColumnId}
+                onSelectColumnId={setSelectedColumnId}
+                onOpenTableConfig={(tableId) => {
+                  setSelectedTableBlockId(tableId);
+                  setSelectedBlockId(tableId);
+                  setActiveNavTab("tableConfig");
+                  toast.info("Opened Table Configuration");
+                }}
+                onRegisterActions={(actions) => {
+                  canvasActionsRef.current = actions;
+                }}
+                onSelectPreset={(preset) => {
+                  setLayoutBlocks(JSON.parse(JSON.stringify(preset.blocks)));
+                  if (
+                    !templateId ||
+                    name === "New Template" ||
+                    !name.trim()
+                  ) {
+                    setName(preset.name);
                   }
-                  decimalPlaces={decimalPlaces}
-                  templateName={name}
-                  docNo={docNo}
-                  docDate={docDate}
-                  docRev={docRev}
-                  procedureReference={procedureReference}
-                  procedureNo={procedureNo}
-                  procedureName={procedureName}
-                  procedureDate={procedureDate}
-                  procedureRev={procedureRev}
-                  acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
-                  acceptanceCriteriaDate={acceptanceCriteriaDate}
-                  acceptanceCriteriaRev={acceptanceCriteriaRev}
-                  acceptanceCriteriaReference={acceptanceCriteriaReference}
-                  diagramImage={diagramImage}
-                  diagramImageWidth={diagramWidth}
-                  diagramImageHeight={diagramHeight}
-                  diagramImageAlignment={diagramAlignment}
-                  onDecimalPlacesChange={(dp) => {
-                    setDecimalPlaces(dp);
-                    markDirty();
-                  }}
-                />
-              </div>
-            ) : (
-              <Card className="flex-1 min-w-0 h-full flex flex-col overflow-hidden border shadow-xs bg-card">
-                <CardHeader className="py-2.5 px-3.5 border-b shrink-0 bg-muted/20 flex flex-row items-center justify-between space-y-0 flex-wrap gap-2">
-                  <div>
-                    <CardTitle className="text-xs font-bold flex items-center gap-1.5">
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-primary" />
-                      Standard Test Points & Custom Formulas
-                    </CardTitle>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {isPropertiesCollapsed && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsPropertiesCollapsed(false)}
-                        className="text-xs h-7 gap-1 shadow-xs shrink-0 border-primary/40 text-primary hover:bg-primary/5"
-                        title="Show Template Properties sidebar"
-                      >
-                        <PanelLeftOpen className="w-3.5 h-3.5" />
-                        Show Properties
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="flex-1 overflow-y-auto p-3 space-y-3">
-                  <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
-                  <CalibrationDataGrid
-                    typeConfig={selectedTypeConfig}
-                    points={points}
-                    onPointsChange={(pts) => {
-                      if (isReadOnly) return;
-                      setPoints(pts);
-                      markDirty();
-                    }}
-                    unit={defaultUnit}
-                    onUnitChange={(u) => {
-                      if (isReadOnly) return;
-                      setDefaultUnit(u);
-                      markDirty();
-                    }}
-                    tolerance={
-                      typeof defaultTolerance === "number"
-                        ? defaultTolerance
-                        : 0
-                    }
-                    onToleranceChange={(tol) => {
-                      if (isReadOnly) return;
-                      setDefaultTolerance(tol);
-                      markDirty();
-                    }}
-                    initialCustomColumns={customColumns}
-                    initialStandardColumnConfigs={standardColumnConfigs}
-                    initialColumnOrder={columnOrder}
-                    initialHiddenColumns={hiddenColumns}
-                    onCustomColumnsChange={(cols) => {
-                      if (isReadOnly) return;
-                      setCustomColumns(cols);
-                      markDirty();
-                    }}
-                    onStandardColumnConfigsChange={(configs) => {
-                      if (isReadOnly) return;
-                      setStandardColumnConfigs(configs);
-                      markDirty();
-                    }}
-                    onColumnOrderChange={(order) => {
-                      if (isReadOnly) return;
-                      setColumnOrder(order);
-                      markDirty();
-                    }}
-                    onHiddenColumnsChange={(hidden) => {
-                      if (isReadOnly) return;
-                      setHiddenColumns(hidden);
-                      markDirty();
-                    }}
-                    initialDecimalPlaces={decimalPlaces}
-                    onDecimalPlacesChange={(dp) => {
-                      if (isReadOnly) return;
-                      setDecimalPlaces(dp);
-                      markDirty();
-                    }}
-                    acceptanceCriteria={{
-                      enabled: enableAcceptance,
-                      value:
-                        typeof acceptanceValue === "number"
-                          ? acceptanceValue
-                          : 0,
-                      type: acceptanceType,
-                    }}
-                    onAcceptanceCriteriaChange={(config) => {
-                      if (isReadOnly) return;
-                      setEnableAcceptance(!!config.enabled);
-                      setAcceptanceValue(config.value ?? 2);
-                      if (config.type) setAcceptanceType(config.type);
-                      markDirty();
-                    }}
-                    initialStatusRuleType={statusRuleType}
-                    initialStatusFormula={statusFormula}
-                    onStatusRuleChange={(type, formula) => {
-                      if (isReadOnly) return;
-                      setStatusRuleType(type);
-                      setStatusFormula(formula);
-                      markDirty();
-                    }}
-                  />
-                  </fieldset>
-                </CardContent>
-              </Card>
-            )}
+                  if (preset.instrumentType) {
+                    setInstrumentType(preset.instrumentType);
+                  }
+                  if (preset.defaultTolerance !== undefined) {
+                    setDefaultTolerance(preset.defaultTolerance);
+                  }
+                  if (preset.defaultUnit) {
+                    setDefaultUnit(preset.defaultUnit);
+                  }
+                  markDirty();
+                  toast.success(
+                    `Loaded "${preset.name}" preset layout and properties!`,
+                  );
+                }}
+                onApplyGeneratedTemplate={handleApplyAiGenerated}
+                defaultUnit={defaultUnit}
+                defaultTolerance={
+                  typeof defaultTolerance === "number"
+                    ? defaultTolerance
+                    : 0.01
+                }
+                decimalPlaces={decimalPlaces}
+                templateName={name}
+                docNo={docNo}
+                docDate={docDate}
+                docRev={docRev}
+                procedureReference={procedureReference}
+                procedureNo={procedureNo}
+                procedureName={procedureName}
+                procedureDate={procedureDate}
+                procedureRev={procedureRev}
+                acceptanceCriteriaDocNo={acceptanceCriteriaDocNo}
+                acceptanceCriteriaDate={acceptanceCriteriaDate}
+                acceptanceCriteriaRev={acceptanceCriteriaRev}
+                acceptanceCriteriaReference={acceptanceCriteriaReference}
+                diagramImage={diagramImage}
+                diagramImageWidth={diagramWidth}
+                diagramImageHeight={diagramHeight}
+                diagramImageAlignment={diagramAlignment}
+                onDecimalPlacesChange={(dp) => {
+                  setDecimalPlaces(dp);
+                  markDirty();
+                }}
+              />
+            </div>
           </div>
         )}
 
@@ -2850,9 +2762,7 @@ export default function TemplateBuilderForm() {
                       variant="outline"
                       className="text-xs bg-primary/5 text-primary border-primary/30"
                     >
-                      {isCanvasMode
-                        ? `${allTableBlocks.length} Table Block${allTableBlocks.length === 1 ? "" : "s"}`
-                        : "Single Grid Mode"}
+                      {`${allTableBlocks.length} Table Block${allTableBlocks.length === 1 ? "" : "s"}`}
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
@@ -2875,8 +2785,6 @@ export default function TemplateBuilderForm() {
               </div>
 
               <fieldset disabled={isReadOnly} className="contents border-0 p-0 m-0">
-              {isCanvasMode ? (
-                <>
                   {/* Table Block Switcher Tabs */}
                   {allTableBlocks.length > 1 && (
                     <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
@@ -3515,7 +3423,7 @@ export default function TemplateBuilderForm() {
                                           <div className="flex items-center gap-1.5">
                                             <input
                                               type="range"
-                                              min={50}
+                                              min={15}
                                               max={300}
                                               step={5}
                                               value={parsedWidth}
@@ -3535,19 +3443,18 @@ export default function TemplateBuilderForm() {
                                             />
                                             <Input
                                               type="number"
+                                              min={15}
+                                              max={500}
                                               value={parsedWidth}
-                                              onChange={(e) =>
+                                              onChange={(e) => {
+                                                const val = parseInt(e.target.value, 10);
                                                 handleUpdateColumnInActiveTable(
                                                   colIdentifier,
                                                   {
-                                                    width:
-                                                      parseInt(
-                                                        e.target.value,
-                                                        10,
-                                                      ) || 80,
+                                                    width: isNaN(val) ? 50 : Math.max(10, val),
                                                   },
-                                                )
-                                              }
+                                                );
+                                              }}
                                               className="h-7 text-xs font-mono w-16 px-1.5 text-center"
                                             />
                                             <span className="text-xxs text-muted-foreground">
@@ -3556,9 +3463,10 @@ export default function TemplateBuilderForm() {
                                           </div>
                                           <div className="flex items-center gap-1">
                                             {[
-                                              { label: "Sm", w: 70 },
-                                              { label: "Md", w: 110 },
-                                              { label: "Lg", w: 160 },
+                                              { label: "Xs", w: 35 },
+                                              { label: "Sm", w: 50 },
+                                              { label: "Md", w: 90 },
+                                              { label: "Lg", w: 140 },
                                             ].map((p) => (
                                               <button
                                                 key={p.label}
@@ -3731,25 +3639,6 @@ export default function TemplateBuilderForm() {
                       ))}
                     </div>
                   </div>
-                </>
-              ) : (
-                /* Single Grid Table Configuration */
-                <Card className="border shadow-xs bg-card p-6 text-center space-y-3">
-                  <p className="text-xs text-muted-foreground">
-                    You are currently in Single Grid Mode. Columns and formulas
-                    can be configured directly on the data grid.
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setActiveNavTab("canvas")}
-                    className="text-xs"
-                  >
-                    Edit Points in Single Grid
-                  </Button>
-                </Card>
-              )}
               </fieldset>
             </div>
           </div>
@@ -4893,7 +4782,7 @@ export default function TemplateBuilderForm() {
                         </div>
                         <div className="p-2 rounded-lg bg-card border">
                           <div className="text-base font-bold font-mono text-foreground">
-                            {isCanvasMode ? allTableBlocks.length : 1}
+                            {allTableBlocks.length}
                           </div>
                           <div className="text-xxs text-muted-foreground">
                             Data Tables
@@ -5006,30 +4895,6 @@ export default function TemplateBuilderForm() {
           docked={false}
           onToggleDock={() => setIsAssistantDocked(true)}
         />
-      )}
-
-      {/* Floating Trigger Pill (when assistant is closed) */}
-      {!showAssistant && (
-        <div className="fixed bottom-6 right-6 z-40">
-          <Button
-            type="button"
-            onClick={() => {
-              setShowAssistant(true);
-              setIsAssistantDocked(true);
-            }}
-            className="h-10 px-4 rounded-full shadow-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs flex items-center gap-2 border-2 border-indigo-400/30 animate-in fade-in zoom-in duration-200"
-          >
-            <div className="relative flex items-center justify-center">
-              <Bot className="w-4 h-4" />
-              <span className="absolute -top-1 -right-1 flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-            </div>
-            <span>Template Copilot</span>
-            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-          </Button>
-        </div>
       )}
 
       {/* Unsaved Changes Confirmation Modal */}
@@ -5156,8 +5021,8 @@ export default function TemplateBuilderForm() {
                   standardReference ||
                   remarks ||
                   "Standard calibration per ISO/IEC 17025",
-                is_canvas_template: isCanvasMode,
-                layout_blocks: isCanvasMode ? layoutBlocks : undefined,
+                is_canvas_template: true,
+                layout_blocks: layoutBlocks,
                 calibration_points: points,
                 custom_columns: customColumns,
                 standard_columns_config: standardColumnConfigs,

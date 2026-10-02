@@ -139,15 +139,15 @@ export default function CalibrationHistory() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Sorted history: Most recent calibrations at top
+  // Sorted history: Most recent calibrations at top (by database creation timestamp)
   const sortedHistory = useMemo(() => {
     return [...history].sort((a, b) => {
-      const timeA = new Date(a.calibration_date || a.created_at || 0).getTime();
-      const timeB = new Date(b.calibration_date || b.created_at || 0).getTime();
-      if (timeA !== timeB) return timeB - timeA;
-      const createA = new Date(a.created_at || 0).getTime();
-      const createB = new Date(b.created_at || 0).getTime();
-      return createB - createA;
+      const createA = new Date(a.created_at || a.calibration_date || 0).getTime();
+      const createB = new Date(b.created_at || b.calibration_date || 0).getTime();
+      if (createA !== createB) return createB - createA;
+      const timeA = new Date(a.calibration_date || 0).getTime();
+      const timeB = new Date(b.calibration_date || 0).getTime();
+      return timeB - timeA;
     });
   }, [history]);
 

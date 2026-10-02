@@ -17,7 +17,7 @@ export class User {
   @ApiProperty()
   name: string;
 
-  @Column({ nullable: true })
+  @Column({ nullable: true, select: false })
   @ApiProperty()
   password: string;
 

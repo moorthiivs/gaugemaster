@@ -18,14 +18,12 @@ import {
   Upload,
   FileSpreadsheet,
   Image as ImageIcon,
-  Key,
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
   Loader2,
   Eye,
   ArrowRight,
-  ExternalLink,
   Table,
   Layers,
   RotateCcw,
@@ -43,8 +41,6 @@ import {
   generateTemplateFromExcel,
   generateTemplateFromPdf,
   generateTemplateFromWord,
-  getStoredGeminiApiKey,
-  saveStoredGeminiApiKey,
   GeneratedTemplateResult,
   DocumentValidationAudit,
   isReceiptConditionBlockOrTitle,
@@ -66,8 +62,6 @@ export function AiTemplateGeneratorModal({
   onOpenChange,
   onApplyTemplate,
 }: AiTemplateGeneratorModalProps) {
-  const [apiKey, setApiKey] = useState<string>(() => getStoredGeminiApiKey());
-  const [showKeyInput, setShowKeyInput] = useState<boolean>(!getStoredGeminiApiKey());
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"pdf" | "word" | "excel" | "image">("pdf");
   const [previewMode, setPreviewMode] = useState<"sheet" | "summary">("sheet");
@@ -96,11 +90,6 @@ export function AiTemplateGeneratorModal({
   const [extractedResult, setExtractedResult] = useState<GeneratedTemplateResult | null>(null);
   const [validationError, setValidationError] = useState<DocumentValidationAudit | null>(null);
 
-  const handleSaveApiKey = () => {
-    saveStoredGeminiApiKey(apiKey);
-    toast.success("Gemini API key saved!");
-    setShowKeyInput(false);
-  };
 
   // Process selected image file
   const handleImageSelect = (file: File) => {
@@ -378,18 +367,17 @@ export function AiTemplateGeneratorModal({
     setValidationError(null);
 
     try {
-      const keyToUse = apiKey?.trim() || undefined;
       let result: GeneratedTemplateResult;
       if (activeTab === "pdf" && pdfFile) {
-        result = await generateTemplateFromPdf(pdfFile, customInstructions, keyToUse);
+        result = await generateTemplateFromPdf(pdfFile, customInstructions);
       } else if (activeTab === "word" && wordFile) {
         const content = wordSummary || `File: ${wordFile.name}`;
-        result = await generateTemplateFromWord(content, wordFile.name, customInstructions, keyToUse);
+        result = await generateTemplateFromWord(content, wordFile.name, customInstructions);
       } else if (activeTab === "image" && imageFile) {
-        result = await generateTemplateFromImage(imageFile, customInstructions, keyToUse);
+        result = await generateTemplateFromImage(imageFile, customInstructions);
       } else {
         const summaryToSend = excelSummary || `File name: ${excelFile?.name || "Uploaded workbook"}`;
-        result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
+        result = await generateTemplateFromExcel(summaryToSend, customInstructions);
       }
 
       // Strict Document Validity Audit Check
@@ -675,50 +663,9 @@ export function AiTemplateGeneratorModal({
             </div>
 
             <div className="flex items-center gap-2">
-              <AiConnectionBadge compact />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowKeyInput(!showKeyInput)}
-                className="text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 h-8 gap-1.5 cursor-pointer"
-              >
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                {apiKey ? "API Key Override" : "API Key Override"}
-              </Button>
+              <AiConnectionBadge />
             </div>
           </div>
-
-          {/* API Key Configuration Dropdown */}
-          {showKeyInput && (
-            <div className="mt-3 p-3 bg-slate-800/90 rounded-lg border border-slate-700 text-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-amber-400" />
-                  Google Gemini API Key (Free from AI Studio)
-                </Label>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  Get Free API Key <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="h-8 text-xs bg-slate-900 border-slate-700 font-mono text-white"
-                />
-                <Button size="sm" onClick={handleSaveApiKey} className="h-8 text-xs shrink-0">
-                  Save Key
-                </Button>
-              </div>
-            </div>
-          )}
         </DialogHeader>
 
         {/* Content Body */}

@@ -32,6 +32,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InstrumentDateFilter } from "@/components/InstrumentDateFilter";
+import { InstrumentsColumnModal } from "@/components/instruments/InstrumentsColumnModal";
+import { InstrumentsDeleteModals } from "@/components/instruments/InstrumentsDeleteModals";
+import { InstrumentsReviewSelectedModal } from "@/components/instruments/InstrumentsReviewSelectedModal";
+import { InstrumentsHistoryModal } from "@/components/instruments/InstrumentsHistoryModal";
 
 export interface ColumnConfig {
   id: string;
@@ -276,21 +280,17 @@ export default function Instruments() {
   });
 
   const [columnModalOpen, setColumnModalOpen] = useState(false);
-  const [tempColumnConfigs, setTempColumnConfigs] = useState<ColumnConfig[]>([]);
-  const [columnSearchQuery, setColumnSearchQuery] = useState("");
 
   const handleOpenColumnModal = () => {
-    setTempColumnConfigs([...columnConfigs]);
-    setColumnSearchQuery("");
     setColumnModalOpen(true);
   };
 
-  const handleSaveColumnConfigs = () => {
-    setColumnConfigs(tempColumnConfigs);
+  const handleSaveColumnConfigs = (newConfigs: ColumnConfig[]) => {
+    setColumnConfigs(newConfigs);
     try {
       localStorage.setItem(
         "gaugemaster_instrument_columns_config",
-        JSON.stringify(tempColumnConfigs)
+        JSON.stringify(newConfigs)
       );
     } catch (e) {
       console.error("Failed to save column config", e);
@@ -303,46 +303,6 @@ export default function Instruments() {
     });
   };
 
-  const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedColIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDragOver = (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    if (draggedColIndex === null || draggedColIndex === targetIndex) return;
-
-    setTempColumnConfigs((prev) => {
-      const updated = [...prev];
-      const draggedItem = updated[draggedColIndex];
-      updated.splice(draggedColIndex, 1);
-      updated.splice(targetIndex, 0, draggedItem);
-      return updated;
-    });
-    setDraggedColIndex(targetIndex);
-  };
-
-  const handleDragEnd = () => {
-    setDraggedColIndex(null);
-  };
-
-  const handleMoveColumn = (index: number, direction: "up" | "down") => {
-    const newConfigs = [...tempColumnConfigs];
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= newConfigs.length) return;
-    const temp = newConfigs[index];
-    newConfigs[index] = newConfigs[targetIndex];
-    newConfigs[targetIndex] = temp;
-    setTempColumnConfigs(newConfigs);
-  };
-
-  const handleToggleColumnVisibility = (id: string, checked: boolean) => {
-    setTempColumnConfigs((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, visible: checked } : c))
-    );
-  };
 
   const [isOpenCalibagency, setisOpenCalibagency] = useState(false);
   const [selectedAgency, setSelectedAgency] = useState("");
@@ -2327,239 +2287,39 @@ export default function Instruments() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={historyModalOpen} onOpenChange={setHistoryModalOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="w-5 h-5 text-primary" />
-              Calibration History
-            </DialogTitle>
-            <DialogDescription>
-              Audit trail for {dateUpdateInstrument?.name} ({dateUpdateInstrument?.id_code})
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {loadingHistory ? (
-              <div className="space-y-2">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ) : historyData.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No history records found for this instrument.
-              </div>
-            ) : (
-              <div className="border rounded-md overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>Updated On</TableHead>
-                      <TableHead>Last Calibration</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead>Certificate</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {historyData.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell className="font-medium">
-                          {record.created_at ? new Date(record.created_at).toLocaleString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {record.last_calibration_date ? new Date(record.last_calibration_date).toLocaleDateString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {record.due_date ? new Date(record.due_date).toLocaleDateString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={record.calibration_source === 'In-House' ? 'bg-blue-50 text-blue-700' : record.calibration_source === 'External' ? 'bg-amber-50 text-amber-700' : ''}>
-                            {record.calibration_source || 'Unknown'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {record.certificate_file ? (
-                            <a 
-                              href={record.certificate_file.startsWith("http") ? record.certificate_file : `${BASE_URL}${record.certificate_file}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline flex items-center text-sm"
-                            >
-                              <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
-                              View
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">None</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setHistoryModalOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <InstrumentsHistoryModal
+        isOpen={historyModalOpen}
+        onOpenChange={setHistoryModalOpen}
+        instrument={dateUpdateInstrument}
+        historyData={historyData}
+        loadingHistory={loadingHistory}
+      />
 
-      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <Trash2 className="h-5 w-5" />
-              Delete Instrument
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete the instrument <strong>{instrumentToDelete?.name}</strong> ({instrumentToDelete?.id_code})? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleting}>
-              {deleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <InstrumentsDeleteModals
+        deleteModalOpen={deleteModalOpen}
+        setDeleteModalOpen={setDeleteModalOpen}
+        instrumentToDelete={instrumentToDelete}
+        onConfirmDelete={handleConfirmDelete}
+        bulkDeleteModalOpen={bulkDeleteModalOpen}
+        setBulkDeleteModalOpen={setBulkDeleteModalOpen}
+        selectedCount={selectedIds.length}
+        onConfirmBulkDelete={confirmBulkDelete}
+        isDeleting={deleting}
+      />
 
-      <Dialog open={bulkDeleteModalOpen} onOpenChange={setBulkDeleteModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <Trash2 className="h-5 w-5" />
-              Delete Instruments
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete <strong>{selectedIds.length}</strong> selected instruments? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setBulkDeleteModalOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmBulkDelete} disabled={deleting}>
-              {deleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      
-      {/* ─── Selected Instruments Review & Action Modal ─── */}
-      <Dialog open={selectedReviewModalOpen} onOpenChange={setSelectedReviewModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col space-y-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCheck className="w-5 h-5 text-primary" />
-                <span>Review Selected Instruments ({selectedItemsList.length})</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30 gap-1"
-                onClick={handleClearAllSelections}
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Clear All
-              </Button>
-            </DialogTitle>
-            <DialogDescription>
-              Review all items selected across search & pagination. Deselect any item not required, then print labels or download in XLSX format.
-            </DialogDescription>
-          </DialogHeader>
+      <InstrumentsReviewSelectedModal
+        isOpen={selectedReviewModalOpen}
+        onOpenChange={setSelectedReviewModalOpen}
+        selectedItemsList={selectedItemsList}
+        onClearAllSelections={handleClearAllSelections}
+        onDeselectItem={handleDeselectItem}
+        onExportSelected={() => handleExportData("selected")}
+        onPrintSelected={() => {
+          setInstrumentsToPrint(selectedItemsList);
+          setPrintModalOpen(true);
+        }}
+      />
 
-          <div className="flex-1 overflow-y-auto border rounded-xl max-h-[50vh] scrollbar-thin">
-            <Table>
-              <TableHeader className="bg-muted/50 sticky top-0 z-10">
-                <TableRow>
-                  <TableHead className="w-12 text-center">S.No</TableHead>
-                  <TableHead>ID Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Last Cal. Date</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {selectedItemsList.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8 text-xs">
-                      No items selected. Select items from the inventory table to review or print.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  selectedItemsList.map((item, idx) => (
-                    <TableRow key={item.id} className="hover:bg-muted/30 text-xs">
-                      <TableCell className="text-center font-mono text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell className="font-semibold text-foreground">{item.id_code}</TableCell>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.location || "-"}</TableCell>
-                      <TableCell>
-                        {item.last_calibration_date ? format(new Date(item.last_calibration_date), "dd-MM-yyyy") : "-"}
-                      </TableCell>
-                      <TableCell>
-                        {item.due_date ? format(new Date(item.due_date), "dd-MM-yyyy") : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={item.status === "OK" ? "success" : item.status === "Overdue" ? "destructive" : "warning"} className="text-[10px]">
-                          {item.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          title="Deselect this item"
-                          onClick={() => handleDeselectItem(item.id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <DialogFooter className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-            <div className="text-xs text-muted-foreground font-medium">
-              {selectedItemsList.length} item(s) selected
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setSelectedReviewModalOpen(false)}>
-                Close
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={selectedItemsList.length === 0}
-                onClick={() => handleExportData("selected")}
-                className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-600/30 hover:bg-emerald-50"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span>Download XLSX ({selectedItemsList.length})</span>
-              </Button>
-              <Button
-                disabled={selectedItemsList.length === 0}
-                size="sm"
-                onClick={() => {
-                  setInstrumentsToPrint(selectedItemsList);
-                  setPrintModalOpen(true);
-                }}
-                className="gap-1.5 bg-primary text-primary-foreground"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print Labels ({selectedItemsList.length})</span>
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <PrintLabelModal 
         open={printModalOpen}
@@ -2573,136 +2333,14 @@ export default function Instruments() {
         onOpenChange={setLabelHistoryModalOpen}
       />
 
-      <Dialog open={columnModalOpen} onOpenChange={setColumnModalOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col space-y-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="w-5 h-5 text-primary" />
-              <span>Customize Instrument Columns</span>
-            </DialogTitle>
-            <DialogDescription>
-              Drag & drop columns to re-order, or use the checkboxes to toggle visibility.
-            </DialogDescription>
-          </DialogHeader>
+      <InstrumentsColumnModal
+        isOpen={columnModalOpen}
+        onOpenChange={setColumnModalOpen}
+        columnConfigs={columnConfigs}
+        defaultColumns={DEFAULT_INSTRUMENT_COLUMNS}
+        onSave={handleSaveColumnConfigs}
+      />
 
-          {/* Search & Quick Actions */}
-          <div className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search columns..."
-                value={columnSearchQuery}
-                onChange={(e) => setColumnSearchQuery(e.target.value)}
-                className="pl-9 h-9 text-xs"
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs pt-1">
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs px-2"
-                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: true })))}
-                >
-                  Select All
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs px-2 text-muted-foreground"
-                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: c.id === "sino" || c.id === "name" || c.id === "id_code" })))}
-                >
-                  Deselect All
-                </Button>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs px-2 text-primary font-medium"
-                onClick={() => setTempColumnConfigs([...DEFAULT_INSTRUMENT_COLUMNS])}
-              >
-                Reset Default
-              </Button>
-            </div>
-          </div>
-
-          {/* Drag & Drop Re-orderable & Selectable Columns List */}
-          <div className="flex-1 overflow-y-auto space-y-1.5 border rounded-xl p-2 max-h-[45vh] scrollbar-thin">
-            {tempColumnConfigs
-              .map((col, index) => ({ col, originalIndex: index }))
-              .filter(({ col }) => col.label.toLowerCase().includes(columnSearchQuery.toLowerCase()))
-              .map(({ col, originalIndex }) => (
-                <div
-                  key={col.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, originalIndex)}
-                  onDragOver={(e) => handleDragOver(e, originalIndex)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition-all duration-150 select-none ${
-                    draggedColIndex === originalIndex
-                      ? "bg-primary/10 border-primary shadow-md scale-[1.01] z-10"
-                      : col.visible
-                      ? "bg-card border-border hover:border-primary/40 shadow-2xs"
-                      : "bg-muted/30 border-transparent opacity-60 hover:opacity-80"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <div
-                      className="cursor-grab active:cursor-grabbing p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                      title="Drag to reorder"
-                    >
-                      <GripVertical className="w-4 h-4" />
-                    </div>
-                    <Checkbox
-                      id={`col-cfg-${col.id}`}
-                      checked={col.visible}
-                      onCheckedChange={(checked) => handleToggleColumnVisibility(col.id, !!checked)}
-                    />
-                    <label htmlFor={`col-cfg-${col.id}`} className="font-medium text-xs truncate cursor-pointer select-none">
-                      {col.label}
-                    </label>
-                  </div>
-
-                  {/* Up / Down Re-order Buttons */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      disabled={originalIndex === 0}
-                      onClick={() => handleMoveColumn(originalIndex, "up")}
-                      title="Move Up"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      disabled={originalIndex === tempColumnConfigs.length - 1}
-                      onClick={() => handleMoveColumn(originalIndex, "down")}
-                      title="Move Down"
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-          </div>
-
-          {/* Footer Actions */}
-          <DialogFooter className="flex items-center justify-end gap-2 pt-2 border-t">
-            <Button variant="outline" size="sm" onClick={() => setColumnModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSaveColumnConfigs} className="gap-1.5">
-              <Check className="w-4 h-4" />
-              <span>Save Configuration</span>
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
 
   );

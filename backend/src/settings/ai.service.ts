@@ -90,6 +90,12 @@ If the user shares their screen or attaches a live screen capture (e.g. named "S
     1. Screen State Assessment (what is currently displayed and configured)
     2. Step-by-Step Technical Implementation Plan (columns, formulas, nominal dimensions, tolerances, units)
     3. ISO/IEC 17025 Compliance & Verification Actions
+
+8. GROUND TRUTH & ANTI-HALLUCINATION RULES (STRICT):
+- All advice, audits, limits, and formula proposals MUST strictly correspond to the active template, table, columns, and rows provided in the context or attachments.
+- NEVER invent fictitious file names (such as "LF-Gauge-Calibration.xlsx") or row lookup formulas (such as "CHOOSE(ROW()-k, ...)") unless explicitly present in the user prompt or attached documents.
+- Always refer directly to the actual table name (e.g. "Calibration of external jaws"), the actual columns (e.g. AVG, ERROR, JUDGEMENT), and the actual calibration points on screen.
+- If information is missing from the template or attachments, inform the engineer cleanly rather than fabricating hypothetical values.
 `;
 
 
@@ -1177,17 +1183,10 @@ export class AiService {
       text: userPromptText,
     });
 
-    // Check if technical prompt or screen data is needed
-    const isTechnicalPrompt =
-      hasAttachments ||
-      /(template|table|column|row|formula|tolerance|reading|deviation|uncertainty|dimension|spec|iso|audit|error|certificate|calculate|check|draw|workflow|nominal|limit)/i.test(
-        dto.prompt,
-      );
-
-    // Smart context pruning: Only inject screen data if prompt is technical or has attachments
-    if (dto.context && isTechnicalPrompt) {
+    // Ground Truth Context Injection: Inject active screen / template context whenever available
+    if (dto.context) {
       parts.push({
-        text: `Active Screen Data / Template Context for reference:\n${JSON.stringify(dto.context)}`,
+        text: `Active Screen Data / Template Context (GROUND TRUTH - All answers must align with this active data):\n${JSON.stringify(dto.context)}`,
       });
     }
 

@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { Repository, Between, In, DataSource } from 'typeorm';
 import { Calibration } from './calibration.entity';
 import { CalibrationDraft } from './calibration-draft.entity';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
@@ -27,6 +27,7 @@ export class CalibrationService {
     private readonly userRepository: Repository<User>,
     private readonly settingsService: SettingsService,
     private readonly instrumentsService: InstrumentsService,
+    private readonly dataSource: DataSource,
   ) {}
 
   private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
@@ -115,7 +116,34 @@ export class CalibrationService {
    * Generates the next certificate number based on company settings.
    * Increments the sequence counter atomically.
    */
+  /**
+   * Generates the next certificate number based on company settings.
+   * Increments the sequence counter atomically with PostgreSQL advisory locks.
+   */
   async generateCertificateNumber(
+    userId: string,
+    companyId: string,
+  ): Promise<string> {
+    if (companyId) {
+      try {
+        await this.calibrationRepository.query(
+          `SELECT pg_advisory_lock(hashtext('company_cert_' || $1))`,
+          [companyId],
+        );
+        return await this.computeNextCertificateNumber(userId, companyId);
+      } finally {
+        try {
+          await this.calibrationRepository.query(
+            `SELECT pg_advisory_unlock(hashtext('company_cert_' || $1))`,
+            [companyId],
+          );
+        } catch {}
+      }
+    }
+    return this.computeNextCertificateNumber(userId, companyId);
+  }
+
+  private async computeNextCertificateNumber(
     userId: string,
     companyId: string,
   ): Promise<string> {
@@ -162,6 +190,29 @@ export class CalibrationService {
    * Only called when ULR is enabled.
    */
   async generateUlrNumber(
+    userId: string,
+    companyId: string,
+  ): Promise<string> {
+    if (companyId) {
+      try {
+        await this.calibrationRepository.query(
+          `SELECT pg_advisory_lock(hashtext('company_ulr_' || $1))`,
+          [companyId],
+        );
+        return await this.computeNextUlrNumber(userId, companyId);
+      } finally {
+        try {
+          await this.calibrationRepository.query(
+            `SELECT pg_advisory_unlock(hashtext('company_ulr_' || $1))`,
+            [companyId],
+          );
+        } catch {}
+      }
+    }
+    return this.computeNextUlrNumber(userId, companyId);
+  }
+
+  private async computeNextUlrNumber(
     userId: string,
     companyId: string,
   ): Promise<string> {
@@ -277,80 +328,82 @@ export class CalibrationService {
       }
     }
 
-    const calibration = this.calibrationRepository.create({
-      ...dto,
-      certificate_number,
-      ulr_number,
-      approval_status,
-      certificate_generated: approval_status === 'Approved',
-      calibration_date: new Date(dto.calibration_date),
-      certificate_issue_date: dto.certificate_issue_date
-        ? new Date(dto.certificate_issue_date)
-        : dto.calibration_date
-          ? new Date(dto.calibration_date)
-          : new Date(),
-      reference_standard_validity: dto.reference_standard_validity
-        ? new Date(dto.reference_standard_validity)
-        : undefined,
-      next_calibration_date: computedNextCalDate,
-      created_by: dto.created_by ? ({ id: dto.created_by } as any) : undefined,
-    });
+    return await this.dataSource.transaction(async (manager) => {
+      const calibration = manager.create(Calibration, {
+        ...dto,
+        certificate_number,
+        ulr_number,
+        approval_status,
+        certificate_generated: approval_status === 'Approved',
+        calibration_date: new Date(dto.calibration_date),
+        certificate_issue_date: dto.certificate_issue_date
+          ? new Date(dto.certificate_issue_date)
+          : dto.calibration_date
+            ? new Date(dto.calibration_date)
+            : new Date(),
+        reference_standard_validity: dto.reference_standard_validity
+          ? new Date(dto.reference_standard_validity)
+          : undefined,
+        next_calibration_date: computedNextCalDate,
+        created_by: dto.created_by ? ({ id: dto.created_by } as any) : undefined,
+      });
 
-    const savedCalibration = await this.calibrationRepository.save(calibration);
+      const savedCalibration = await manager.save(Calibration, calibration);
 
-    // Update Instrument Master schedule, status, and item-level custom parameters
-    if (dto.instrument_id) {
-      try {
-        const inst = await this.instrumentsService.findOne(dto.instrument_id);
-        const existingCp = (inst as any)?.custom_parameters || {};
-        const updatedCp: Record<string, any> = { ...existingCp };
+      // Update Instrument Master schedule, status, and item-level custom parameters
+      if (dto.instrument_id) {
+        try {
+          const inst = await this.instrumentsService.findOne(dto.instrument_id);
+          const existingCp = (inst as any)?.custom_parameters || {};
+          const updatedCp: Record<string, any> = { ...existingCp };
 
-        if (dto.diagram_image !== undefined) {
-          updatedCp.diagram_image = dto.diagram_image ? dto.diagram_image : null;
-        }
-        if (dto.diagram_image_width !== undefined) updatedCp.diagram_image_width = dto.diagram_image_width;
-        if (dto.diagram_image_height !== undefined) updatedCp.diagram_image_height = dto.diagram_image_height;
-        if (dto.diagram_image_alignment !== undefined) updatedCp.diagram_image_alignment = dto.diagram_image_alignment;
+          if (dto.diagram_image !== undefined) {
+            updatedCp.diagram_image = dto.diagram_image ? dto.diagram_image : null;
+          }
+          if (dto.diagram_image_width !== undefined) updatedCp.diagram_image_width = dto.diagram_image_width;
+          if (dto.diagram_image_height !== undefined) updatedCp.diagram_image_height = dto.diagram_image_height;
+          if (dto.diagram_image_alignment !== undefined) updatedCp.diagram_image_alignment = dto.diagram_image_alignment;
 
-        updatedCp.doc_properties = {
-          ...(existingCp.doc_properties || {}),
-          ...(dto.doc_no !== undefined ? { doc_no: dto.doc_no } : {}),
-          ...(dto.doc_date !== undefined ? { doc_date: dto.doc_date } : {}),
-          ...(dto.doc_rev !== undefined ? { doc_rev: dto.doc_rev } : {}),
-          ...((dto as any).procedure_no !== undefined ? { procedure_no: (dto as any).procedure_no } : {}),
-          ...((dto as any).procedure_name !== undefined ? { procedure_name: (dto as any).procedure_name } : {}),
-          ...((dto as any).procedure_date !== undefined ? { procedure_date: (dto as any).procedure_date } : {}),
-          ...((dto as any).procedure_rev !== undefined ? { procedure_rev: (dto as any).procedure_rev } : {}),
-          ...(dto.procedure_reference !== undefined ? { procedure_reference: dto.procedure_reference } : {}),
-          ...((dto as any).acceptance_criteria_doc_no !== undefined ? { acceptance_criteria_doc_no: (dto as any).acceptance_criteria_doc_no } : {}),
-          ...((dto as any).acceptance_criteria_date !== undefined ? { acceptance_criteria_date: (dto as any).acceptance_criteria_date } : {}),
-          ...((dto as any).acceptance_criteria_rev !== undefined ? { acceptance_criteria_rev: (dto as any).acceptance_criteria_rev } : {}),
-          ...((dto as any).acceptance_criteria_reference !== undefined ? { acceptance_criteria_reference: (dto as any).acceptance_criteria_reference } : {}),
-        };
-
-        if (dto.environmental_conditions) {
-          updatedCp.environmental_defaults = {
-            ...(existingCp.environmental_defaults || {}),
-            ...dto.environmental_conditions,
+          updatedCp.doc_properties = {
+            ...(existingCp.doc_properties || {}),
+            ...(dto.doc_no !== undefined ? { doc_no: dto.doc_no } : {}),
+            ...(dto.doc_date !== undefined ? { doc_date: dto.doc_date } : {}),
+            ...(dto.doc_rev !== undefined ? { doc_rev: dto.doc_rev } : {}),
+            ...((dto as any).procedure_no !== undefined ? { procedure_no: (dto as any).procedure_no } : {}),
+            ...((dto as any).procedure_name !== undefined ? { procedure_name: (dto as any).procedure_name } : {}),
+            ...((dto as any).procedure_date !== undefined ? { procedure_date: (dto as any).procedure_date } : {}),
+            ...((dto as any).procedure_rev !== undefined ? { procedure_rev: (dto as any).procedure_rev } : {}),
+            ...(dto.procedure_reference !== undefined ? { procedure_reference: dto.procedure_reference } : {}),
+            ...((dto as any).acceptance_criteria_doc_no !== undefined ? { acceptance_criteria_doc_no: (dto as any).acceptance_criteria_doc_no } : {}),
+            ...((dto as any).acceptance_criteria_date !== undefined ? { acceptance_criteria_date: (dto as any).acceptance_criteria_date } : {}),
+            ...((dto as any).acceptance_criteria_rev !== undefined ? { acceptance_criteria_rev: (dto as any).acceptance_criteria_rev } : {}),
+            ...((dto as any).acceptance_criteria_reference !== undefined ? { acceptance_criteria_reference: (dto as any).acceptance_criteria_reference } : {}),
           };
-        }
-        if (dto.receipt_condition) {
-          updatedCp.receipt_condition = dto.receipt_condition;
-        }
 
-        await this.instrumentsService.update(dto.instrument_id, {
-          last_calibration_date: savedCalibration.calibration_date as any,
-          due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
-          status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
-          calibration_source: 'In-House',
-          custom_parameters: updatedCp,
-        } as any);
-      } catch (err) {
-        console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
+          if (dto.environmental_conditions) {
+            updatedCp.environmental_defaults = {
+              ...(existingCp.environmental_defaults || {}),
+              ...dto.environmental_conditions,
+            };
+          }
+          if (dto.receipt_condition) {
+            updatedCp.receipt_condition = dto.receipt_condition;
+          }
+
+          await this.instrumentsService.update(dto.instrument_id, {
+            last_calibration_date: savedCalibration.calibration_date as any,
+            due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
+            status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+            calibration_source: 'In-House',
+            custom_parameters: updatedCp,
+          } as any);
+        } catch (err) {
+          console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
+        }
       }
-    }
 
-    return savedCalibration;
+      return savedCalibration;
+    });
   }
 
   async approve(
@@ -483,8 +536,8 @@ export class CalibrationService {
           .select('c.id')
           .from(Calibration, 'c')
           .where('c.instrument_id = cal.instrument_id')
-          .orderBy('c.calibration_date', 'DESC')
-          .addOrderBy('c.created_at', 'DESC')
+          .orderBy('c.created_at', 'DESC')
+          .addOrderBy('c.calibration_date', 'DESC')
           .limit(1)
           .getQuery();
         return `(cal.instrument_id IS NULL OR cal.id = ${subQuery})`;
@@ -529,8 +582,8 @@ export class CalibrationService {
       );
     }
 
-    qb.orderBy('cal.calibration_date', 'DESC')
-      .addOrderBy('cal.created_at', 'DESC')
+    qb.orderBy('cal.created_at', 'DESC')
+      .addOrderBy('cal.calibration_date', 'DESC')
       .skip((page - 1) * pageSize)
       .take(pageSize);
 
@@ -559,14 +612,14 @@ export class CalibrationService {
   async getLatestByInstrument(instrumentId: string): Promise<Calibration | null> {
     return this.calibrationRepository.findOne({
       where: { instrument_id: instrumentId },
-      order: { calibration_date: 'DESC' },
+      order: { created_at: 'DESC', calibration_date: 'DESC' },
     });
   }
 
   async findByInstrument(instrumentId: string) {
     return this.calibrationRepository.find({
       where: { instrument_id: instrumentId },
-      order: { calibration_date: 'DESC', created_at: 'DESC' },
+      order: { created_at: 'DESC', calibration_date: 'DESC' },
       relations: ['instrument'],
     });
   }

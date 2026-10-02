@@ -46,7 +46,11 @@ export class AuthService {
 
   /** Helper to generate Access Token (15m) and Refresh Token (7d) */
   private generateTokens(payload: any) {
-    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const configuredSecret = this.configService.get<string>('JWT_SECRET');
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      throw new Error('SECURITY CONFIGURATION ERROR: JWT_SECRET must be defined in production environment!');
+    }
+    const jwtSecret = configuredSecret || 'gaugemaster';
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
     const accessTokenExpiry = this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
     const refreshTokenExpiry = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
@@ -273,7 +277,11 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token is required');
     }
 
-    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const configuredSecret = this.configService.get<string>('JWT_SECRET');
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      throw new Error('SECURITY CONFIGURATION ERROR: JWT_SECRET must be defined in production environment!');
+    }
+    const jwtSecret = configuredSecret || 'gaugemaster';
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
 
     let decoded: any;

@@ -37,6 +37,12 @@ export function DocumentViewerModal({
 
   if (!isOpen || !filePath) return null;
 
+  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+  const authenticatedFilePath =
+    filePath.startsWith("/uploads/") && token && !filePath.includes("token=")
+      ? `${filePath}${filePath.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
+      : filePath;
+
   const isPdf =
     fileType?.toLowerCase().includes("pdf") ||
     filePath.toLowerCase().endsWith(".pdf") ||
@@ -52,8 +58,9 @@ export function DocumentViewerModal({
   const handleResetZoom = () => setZoom(1);
 
   const handleOpenExternal = () => {
-    window.open(filePath, "_blank", "noopener,noreferrer");
+    window.open(authenticatedFilePath, "_blank", "noopener,noreferrer");
   };
+
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -142,14 +149,14 @@ export function DocumentViewerModal({
         <div className="flex-1 overflow-auto rounded-lg bg-muted/30 border p-2 flex items-center justify-center min-h-[400px] max-h-[70vh]">
           {isPdf ? (
             <iframe
-              src={filePath}
+              src={authenticatedFilePath}
               title={documentName || "PDF Document"}
               className="w-full h-full min-h-[550px] border-0 rounded-md bg-white shadow-xs"
             />
           ) : isImage ? (
             <div className="w-full h-full overflow-auto flex items-center justify-center p-4">
               <img
-                src={filePath}
+                src={authenticatedFilePath}
                 alt={documentName || "Document Image"}
                 style={{ transform: `scale(${zoom})`, transformOrigin: "center center" }}
                 className="max-w-full max-h-full object-contain rounded-md shadow-sm transition-transform duration-150"

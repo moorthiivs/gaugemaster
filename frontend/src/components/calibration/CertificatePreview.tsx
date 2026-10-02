@@ -367,14 +367,21 @@ export function CertificatePreview({
             {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
           </div>
           <div className="w-full">
-            <table className="w-full border-collapse text-[8px] text-center">
+            <table className={`w-full border-collapse text-center ${tbl.columns?.length > 11 ? "text-[6.5px]" : tbl.columns?.length > 8 ? "text-[7.5px]" : "text-[8px]"}`}>
               <thead>
                 <tr className="bg-slate-100 font-bold">
                   {tbl.columns.map((col: any) => (
                     <th
                       key={col.id}
-                      style={{ width: col.width }}
-                      className="py-1 px-1 border border-black text-black font-bold"
+                      style={{
+                        width:
+                          typeof col.width === "number"
+                            ? `${col.width}px`
+                            : typeof col.width === "string" && /^\d+$/.test(col.width.trim())
+                              ? `${col.width.trim()}px`
+                              : col.width,
+                      }}
+                      className="py-1 px-0.5 border border-black text-black font-bold"
                     >
                       {col.label}
                     </th>
@@ -397,10 +404,34 @@ export function CertificatePreview({
                   }
                   return (
                     <tr key={rIdx}>
-                    {tbl.columns.map((col: any) => {
+                    {(() => {
+                      let skipCols = 0;
+                      return tbl.columns.map((col: any, colIdx: number) => {
+                        if (skipCols > 0) {
+                          skipCols--;
+                          return null;
+                        }
+                        const span = row.cellSpans?.[col.id]?.colSpan || 1;
+                        if (span > 1) {
+                          skipCols = span - 1;
+                        }
                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                       const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
                       let val: any = row[col.id];
+                        if (span > 1) {
+                          val = (row[col.id] !== undefined && row[col.id] !== "")
+                            ? row[col.id]
+                            : (col.id === "nominal" ? row.nominal : "") ?? "";
+                          return (
+                            <td
+                              key={col.id}
+                              colSpan={span}
+                              className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center bg-slate-50/50"
+                            >
+                              {val}
+                            </td>
+                          );
+                        }
                       if (isPointNo) {
                         val = row.point_number ?? row[col.id] ?? (rIdx + 1);
                       } else if (col.type === "nominal") {
@@ -435,7 +466,8 @@ export function CertificatePreview({
                           {val}
                         </td>
                       );
-                    })}
+                    });
+                  })()}
                   </tr>
                 );
               })}

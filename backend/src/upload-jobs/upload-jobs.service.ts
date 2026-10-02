@@ -17,27 +17,20 @@ export class UploadJobsService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    this.logger.log('Initializing UploadJobs table...');
+    this.logger.log('Initializing UploadJobsService and reconciling zombie jobs...');
     try {
-      await this.dataSource.query(`
-        CREATE TABLE IF NOT EXISTS upload_jobs (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          "companyId" UUID NOT NULL,
-          "fileName" VARCHAR(255) NOT NULL,
-          status VARCHAR(50) NOT NULL DEFAULT 'pending',
-          "totalRows" INTEGER NOT NULL DEFAULT 0,
-          "processedRows" INTEGER NOT NULL DEFAULT 0,
-          "successCount" INTEGER NOT NULL DEFAULT 0,
-          "failedCount" INTEGER NOT NULL DEFAULT 0,
-          errors JSONB DEFAULT '[]'::jsonb,
-          "createdBy" UUID,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-      `);
-      this.logger.log('UploadJobs table checked/created successfully!');
-    } catch (err) {
-      this.logger.error('Failed to create upload_jobs table:', err.message);
+      const result = await this.jobRepository.update(
+        { status: 'processing' },
+        {
+          status: 'failed',
+          errors: [{ error: 'Job was interrupted by a server restart. Please re-upload.' }] as any,
+        },
+      );
+      if (result.affected && result.affected > 0) {
+        this.logger.warn(`Recovered ${result.affected} interrupted upload job(s) from previous server session.`);
+      }
+    } catch (err: any) {
+      this.logger.error('Failed to reconcile pending upload jobs on init:', err.message);
     }
   }
 
@@ -92,7 +85,7 @@ export class UploadJobsService implements OnModuleInit {
   }
 
   private async processUploadInBackground(jobId: string, instruments: CreateInstrumentDto[]) {
-    const batchSize = 1;
+    const batchSize = 25;
     let processed = 0;
     let success = 0;
     let failed = 0;

@@ -73,18 +73,43 @@ export class InstrumentsService {
 
     /**
      * Generates the next sequential S.No for a given company.
-     * Finds the current maximum sino and returns max + 1.
+     * Uses PostgreSQL advisory locks to guarantee concurrency safety and prevent race conditions.
      */
     private async generateNextSino(companyId: string): Promise<number> {
-        const result = await this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select('MAX(instrument.sino)', 'maxSino')
-            .where('instrument."companyId" = :companyId', { companyId })
-            .andWhere('instrument.sino IS NOT NULL')
-            .getRawOne();
+        if (!companyId) {
+            const result = await this.instrumentRepository
+                .createQueryBuilder('instrument')
+                .select('MAX(instrument.sino)', 'maxSino')
+                .where('instrument.sino IS NOT NULL')
+                .getRawOne();
+            return (result?.maxSino ? Number(result.maxSino) : 0) + 1;
+        }
 
-        const maxSino = result?.maxSino ? Number(result.maxSino) : 0;
-        return maxSino + 1;
+        try {
+            await this.instrumentRepository.query(
+                `SELECT pg_advisory_lock(hashtext('company_sino_' || $1))`,
+                [companyId],
+            );
+
+            const result = await this.instrumentRepository
+                .createQueryBuilder('instrument')
+                .select('MAX(instrument.sino)', 'maxSino')
+                .where('instrument."companyId" = :companyId', { companyId })
+                .andWhere('instrument.sino IS NOT NULL')
+                .getRawOne();
+
+            const maxSino = result?.maxSino ? Number(result.maxSino) : 0;
+            return maxSino + 1;
+        } finally {
+            try {
+                await this.instrumentRepository.query(
+                    `SELECT pg_advisory_unlock(hashtext('company_sino_' || $1))`,
+                    [companyId],
+                );
+            } catch {
+                // Ignore if connection already terminated
+            }
+        }
     }
 
     private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {

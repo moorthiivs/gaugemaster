@@ -442,7 +442,17 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
   const [editingText, setEditingText] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+
+  // Auto-resize textarea to fit content naturally up to max-height
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 140)}px`;
+    }
+  }, [input]);
 
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
@@ -901,8 +911,12 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
     await sendMessage(textToSubmit);
   };
 
-  const handleCopyMessage = (text: string) => {
+  const handleCopyMessage = (text: string, msgId?: string) => {
     navigator.clipboard.writeText(text);
+    if (msgId) {
+      setCopiedMessageId(msgId);
+      setTimeout(() => setCopiedMessageId(null), 2000);
+    }
     toast.success("Copied to clipboard");
   };
 
@@ -1460,71 +1474,61 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
       style={getContainerStyle()}
       className={
         docked
-          ? "w-full h-full flex flex-col bg-card border-none rounded-none overflow-hidden relative"
+          ? "w-full h-full flex flex-col bg-slate-50/70 dark:bg-slate-950/40 border-l border-border/80 rounded-none overflow-hidden relative shadow-md"
           : `fixed z-50 ${
               !position ? "bottom-4 right-4" : ""
             } ${
               minimized
                 ? "w-[360px] h-16 cursor-pointer transition-all duration-200"
                 : expandedMode && !customSize
-                ? "w-[840px] max-w-[95vw] h-[780px] max-h-[92vh] flex flex-col bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden transition-[width,height] duration-200"
+                ? "w-[840px] max-w-[95vw] h-[780px] max-h-[92vh] flex flex-col bg-card text-foreground border border-border/90 rounded-2xl shadow-2xl overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/50 transition-all duration-200"
                 : !customSize
-                ? "w-[490px] max-w-[92vw] h-[670px] max-h-[88vh] flex flex-col bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden transition-[width,height] duration-200"
-                : "flex flex-col bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+                ? "w-[490px] max-w-[92vw] h-[670px] max-h-[88vh] flex flex-col bg-card text-foreground border border-border/90 rounded-2xl shadow-2xl overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/50 transition-all duration-200"
+                : "flex flex-col bg-card text-foreground border border-border/90 rounded-2xl shadow-2xl overflow-hidden focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary/50 transition-all"
             }`
       }
     >
       {/* ========================================================================= */}
       {/* MINIMIZED STATE: SLEEK DARK CAPSULE WITH GLOW & LIVE ANIMATION            */}
       {/* ========================================================================= */}
+      {/* ========================================================================= */}
+      {/* MINIMIZED STATE: SLEEK CAPSULE WITH LIVE STATUS                            */}
+      {/* ========================================================================= */}
       {minimized && !docked ? (
         <div
           onClick={() => setMinimized(false)}
           onMouseDown={handleHeaderMouseDown}
           onTouchStart={handleHeaderTouchStart}
-          className="w-full h-full p-3 px-4 rounded-2xl bg-slate-950/95 text-white border-2 border-slate-700/90 hover:border-primary shadow-[0_10px_35px_rgba(0,0,0,0.6),0_0_20px_rgba(59,130,246,0.35)] ring-1 ring-primary/40 backdrop-blur-md flex items-center justify-between transition-all duration-200 hover:-translate-y-0.5 group select-none cursor-grab active:cursor-grabbing"
-          title="Drag to move, or click to restore Gaugemaster Template Copilot"
+          className="w-full h-full p-3 px-4 rounded-2xl bg-card text-foreground border border-border/80 hover:border-primary/50 shadow-xl backdrop-blur-md flex items-center justify-between transition-all duration-200 hover:-translate-y-0.5 group select-none cursor-grab active:cursor-grabbing"
+          title="Drag to move, or click to restore Template Copilot"
         >
           <div className="flex items-center gap-3">
-            {/* Pulsing Bot Icon Container with Live Status Ping */}
             <div className="relative shrink-0">
-              <div className="p-2 rounded-xl bg-gradient-to-tr from-primary via-blue-600 to-indigo-600 text-white shadow-md shadow-primary/40 flex items-center justify-center">
-                <Bot className="w-5 h-5 animate-pulse" />
+              <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center">
+                <Sparkles className="w-4 h-4 text-primary" />
               </div>
-              <span className="absolute -top-1 -right-1 flex h-3 w-3">
+              <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-slate-950"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
             </div>
-
             <div className="overflow-hidden">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs text-white tracking-wide flex items-center gap-1">
-                  Gaugemaster Template Copilot
-                  <Sparkles className="w-3 h-3 text-amber-400" />
-                </span>
-                <Badge
-                  variant="outline"
-                  className="text-[8.5px] py-0 px-1.5 bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-mono uppercase"
-                >
-                  Active
-                </Badge>
-              </div>
-              <span className="text-[11px] text-slate-300 block truncate max-w-[170px] font-medium mt-0.5">
-                Calibration Template Intelligence
+              <span className="font-semibold text-xs text-foreground tracking-tight flex items-center gap-1">
+                Template Copilot
+              </span>
+              <span className="text-[10.5px] text-muted-foreground block truncate max-w-[170px]">
+                {selectedTable?.title || "Calibration Intelligence"}
               </span>
             </div>
           </div>
-
           <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
             <Button
               type="button"
               variant="ghost"
               size="icon"
               onClick={() => setMinimized(false)}
-              className="h-8 w-8 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 hover:text-white transition-colors cursor-pointer"
+              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
               title="Restore Copilot"
-              aria-label="Restore Copilot"
             >
               <Square className="w-3.5 h-3.5" />
             </Button>
@@ -1533,11 +1537,10 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
               variant="ghost"
               size="icon"
               onClick={onClose}
-              className="h-8 w-8 rounded-lg bg-slate-800/90 hover:bg-rose-600 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              className="h-7 w-7 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
               title="Close Copilot"
-              aria-label="Close Copilot"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </Button>
           </div>
         </div>
@@ -1546,48 +1549,50 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
         /* EXPANDED STATE: FULL INTELLIGENCE ASSISTANT WINDOW                        */
         /* ========================================================================= */
         <>
-          {/* Header (Draggable Title Bar with 3 Standard Web/OS Window Controls) */}
+          {/* Header (Claude/ChatGPT Minimalist Clean Title Bar) */}
           <div
             onMouseDown={handleHeaderMouseDown}
             onTouchStart={handleHeaderTouchStart}
-            className={`p-2.5 px-3.5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white border-b border-slate-800 flex items-center justify-between shrink-0 shadow-xs ${
+            className={`px-4 py-2.5 bg-background/95 backdrop-blur-md border-b border-border/80 flex items-center justify-between shrink-0 shadow-2xs ${
               !docked ? "cursor-grab active:cursor-grabbing select-none" : ""
             }`}
           >
-            {/* Left: Identity & Drag Handle */}
+            {/* Left: AI Identity & Active Context */}
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="relative shrink-0">
-                <div className="p-1.5 rounded-xl bg-gradient-to-tr from-primary via-blue-600 to-indigo-600 text-white shadow-md shadow-primary/30 flex items-center justify-center">
-                  <Bot className="w-4 h-4" />
+                <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-primary via-indigo-600 to-violet-600 text-white flex items-center justify-center shadow-xs shrink-0 ring-2 ring-primary/20">
+                  <Sparkles className="w-4 h-4" />
                 </div>
-                <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+                <span className="absolute -top-0.5 -right-0.5 flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 border border-slate-950"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="font-bold text-xs text-white tracking-wide truncate">
-                    Gaugemaster Template Copilot
+                  <span className="font-semibold text-xs text-foreground tracking-tight truncate">
+                    Template Copilot
                   </span>
-                  <Sparkles className="w-3 h-3 text-amber-400 shrink-0" />
                   <AiConnectionBadge compact className="ml-0.5" />
                 </div>
-                <span className="text-[10px] text-slate-300 block truncate max-w-[180px] sm:max-w-[280px] font-medium">
-                  Calibration Template Intelligence
-                </span>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground mt-0.5 font-medium truncate">
+                  <TableIcon className="w-3 h-3 text-primary/80 shrink-0" />
+                  <span className="truncate max-w-[190px] sm:max-w-[280px]">
+                    {selectedTable?.title || templateName || "Calibration Template Intelligence"}
+                  </span>
+                </div>
               </div>
               {!docked && (
                 <div
-                  className="hidden sm:flex items-center ml-0.5 text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing"
+                  className="hidden sm:flex items-center ml-0.5 text-muted-foreground/50 hover:text-muted-foreground cursor-grab active:cursor-grabbing"
                   title="Click and drag anywhere on header to move"
                 >
-                  <GripHorizontal className="w-3.5 h-3.5 opacity-60" />
+                  <GripHorizontal className="w-3.5 h-3.5" />
                 </div>
               )}
             </div>
 
-            {/* Right: Conversation Tools + Standard Window Controls */}
+            {/* Right: Window & Session Controls */}
             <div className="flex items-center gap-1 shrink-0">
               {historyStack.length > 0 && (
                 <Button
@@ -1595,106 +1600,104 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
                   variant="outline"
                   size="sm"
                   onClick={handleUndo}
-                  className="h-6 px-2 text-[10px] bg-amber-500/20 text-amber-200 border-amber-400/50 hover:bg-amber-500/30 flex items-center gap-1 cursor-pointer"
+                  className="h-7 px-2 text-[10.5px] bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20 flex items-center gap-1 cursor-pointer rounded-lg font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:ring-offset-1"
                   title={`Undo last action (${historyStack[historyStack.length - 1].description})`}
                 >
                   <Undo2 className="w-3 h-3" />
-                  Undo
+                  <span>Undo</span>
                 </Button>
               )}
 
+              {/* Clear / New Conversation Button */}
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 onClick={handleClearChat}
-                className="h-7 w-7 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
-                title="Reset Conversation"
-                aria-label="Reset Conversation"
+                className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                title="New Chat / Clear Conversation"
+                aria-label="New Chat"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
               </Button>
 
+              {/* Dock / Undock Toggle */}
               {onToggleDock && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={onToggleDock}
-                  className="h-7 w-7 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white cursor-pointer"
+                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
                   title={docked ? "Float Assistant" : "Dock to Side Panel"}
                   aria-label={docked ? "Float Assistant" : "Dock to Side Panel"}
                 >
-                  {docked ? <PanelRightClose className="w-3.5 h-3.5" /> : <PanelRight className="w-3.5 h-3.5" />}
+                  {docked ? (
+                    <PanelRight className="w-3.5 h-3.5" />
+                  ) : (
+                    <PanelRightClose className="w-3.5 h-3.5" />
+                  )}
                 </Button>
               )}
 
-              {/* Vertical divider */}
-              <div className="h-4 w-px bg-slate-700/80 mx-1 hidden xs:block" />
-
-              {/* Web/OS Standard 3 Window Controls: Minimize (-), Maximize/Restore (▢), Close (X) */}
-              <div className="flex items-center gap-0.5 bg-slate-950/70 p-0.5 rounded-lg border border-slate-800">
-                {/* 1. Minimize (-) */}
-                {!docked && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMinimized(true);
-                    }}
-                    className="h-6 w-6 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                    title="Minimize"
-                    aria-label="Minimize"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </Button>
-                )}
-
-                {/* 2. Maximize / Restore (▢ / ⧉) */}
-                {!docked && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCustomSize(null);
-                      setExpandedMode(!expandedMode);
-                    }}
-                    className="h-6 w-6 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                    title={expandedMode ? "Restore Down" : "Maximize"}
-                    aria-label={expandedMode ? "Restore Down" : "Maximize"}
-                  >
-                    {expandedMode ? (
-                      <Copy className="w-3 h-3" />
-                    ) : (
-                      <Square className="w-3 h-3" />
-                    )}
-                  </Button>
-                )}
-
-                {/* 3. Close (X) */}
+              {/* Minimize (when floating) */}
+              {!docked && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onClose();
+                    setMinimized(true);
                   }}
-                  className="h-6 w-6 rounded hover:bg-rose-600 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                  title="Close"
-                  aria-label="Close"
+                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                  title="Minimize"
+                  aria-label="Minimize"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <Minus className="w-3.5 h-3.5" />
                 </Button>
-              </div>
+              )}
+
+              {/* Maximize / Restore (when floating) */}
+              {!docked && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCustomSize(null);
+                    setExpandedMode(!expandedMode);
+                  }}
+                  className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                  title={expandedMode ? "Restore Down" : "Maximize"}
+                  aria-label={expandedMode ? "Restore Down" : "Maximize"}
+                >
+                  {expandedMode ? (
+                    <Copy className="w-3 h-3" />
+                  ) : (
+                    <Square className="w-3 h-3" />
+                  )}
+                </Button>
+              )}
+
+              {/* Close Button */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClose();
+                }}
+                className="h-7 w-7 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive focus-visible:ring-offset-1"
+                title="Close Copilot"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </Button>
             </div>
           </div>
-
-
 
           {/* Messages Scroll Area */}
           <div
@@ -1702,139 +1705,905 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3.5 text-xs bg-slate-50/40 dark:bg-slate-950/20 relative"
+            className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4 text-xs bg-slate-50/70 dark:bg-slate-950/40 relative selection:bg-primary/20 scroll-smooth"
           >
             {isDragging && (
-              <div className="absolute inset-0 z-50 bg-primary/10 backdrop-blur-xs border-2 border-dashed border-primary rounded-xl flex flex-col items-center justify-center p-6 pointer-events-none">
+              <div className="absolute inset-0 z-50 bg-background/90 backdrop-blur-sm border-2 border-dashed border-primary rounded-xl flex flex-col items-center justify-center p-6 pointer-events-none">
                 <Upload className="w-8 h-8 text-primary animate-bounce mb-2" />
-                <p className="font-bold text-xs text-primary">Drop calibration files here</p>
-                <p className="text-[10px] text-muted-foreground">Excel (.xlsx), Drawing (.png), PDF, Word</p>
+                <p className="font-semibold text-xs text-foreground">Drop calibration files here</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Excel (.xlsx), Technical Drawing (.png), PDF, Word</p>
               </div>
             )}
 
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex gap-2.5 group relative ${
-                  msg.sender === "user" || msg.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                {(msg.sender === "assistant" || msg.role === "assistant") && (
-                  <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-primary to-indigo-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-                    <Bot className="w-3.5 h-3.5" />
+            {/* Empty State / Welcome Hero (ChatGPT & Claude Style) */}
+            {messages.length <= 1 ? (
+              <div className="py-8 px-2 flex flex-col items-center text-center space-y-5 max-w-lg mx-auto">
+                <div className="relative">
+                  <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-primary via-indigo-600 to-violet-600 text-white border border-primary/20 flex items-center justify-center shadow-md">
+                    <Sparkles className="w-7 h-7" />
                   </div>
-                )}
+                  <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-500 border-2 border-background"></span>
+                  </span>
+                </div>
 
-                <div
-                  className={`max-w-[92%] rounded-xl p-3 text-xs leading-relaxed space-y-2 ${
-                    msg.sender === "user" || msg.role === "user"
-                      ? "bg-gradient-to-r from-primary to-blue-600 text-primary-foreground font-medium rounded-br-xs shadow-xs"
-                      : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-foreground rounded-bl-xs shadow-xs"
-                  }`}
-                >
-                  {/* Assistant Content */}
-                  {(msg.sender === "assistant" || msg.role === "assistant") ? (
-                    <div className="space-y-2">
-                      {/* Engine Source Badge & Timestamp Header */}
-                      <div className="flex items-center justify-between pb-1 border-b border-slate-100 dark:border-slate-800/80 text-[9.5px]">
-                        {msg.engineSource === "cloud_gemini" ? (
-                          <span className="inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                            <Sparkles className="w-2.5 h-2.5" />
-                            Gemini Cloud AI
-                          </span>
-                        ) : msg.engineSource === "local_deterministic" ? (
-                          <span className="inline-flex items-center gap-1 font-medium text-slate-500 dark:text-slate-400">
-                            <Cpu className="w-2.5 h-2.5 text-slate-500" />
-                            Local Metrology Engine
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 font-semibold text-primary">
-                            <Sparkles className="w-2.5 h-2.5" />
-                            Assistant
-                          </span>
-                        )}
-                        <span className="text-[9px] text-muted-foreground font-mono">{msg.timestamp}</span>
+                <div className="space-y-1.5">
+                  <h3 className="text-base font-bold text-foreground tracking-tight">
+                    Gaugemaster Template Copilot
+                  </h3>
+                  <p className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
+                    Authoritative ISO/IEC 17025 metrology intelligence, automated formula AST validation, and calibration template authoring.
+                  </p>
+                  {selectedTable && (
+                    <div className="pt-1">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[11px] font-medium shadow-2xs">
+                        <TableIcon className="w-3.5 h-3.5" />
+                        <span>Ready to assist with "{selectedTable.title || "Active Table"}"</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 4 Interactive Starter Prompt Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full pt-1 text-left">
+                  <button
+                    type="button"
+                    onClick={() => sendMessage("Audit this table")}
+                    className="p-3.5 rounded-2xl border border-border/80 hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary bg-card hover:bg-muted/40 text-left transition-all cursor-pointer group shadow-2xs hover:shadow-xs space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-foreground group-hover:text-primary transition-colors">
+                      <div className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                      </div>
+                      <span>Audit Table Formulas</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-normal pl-8">
+                      Validate AVG, error deviations, and PASS/FAIL tolerances
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => sendMessage("Check and fix formula errors in this table")}
+                    className="p-3.5 rounded-2xl border border-border/80 hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary bg-card hover:bg-muted/40 text-left transition-all cursor-pointer group shadow-2xs hover:shadow-xs space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-foreground group-hover:text-primary transition-colors">
+                      <div className="w-6 h-6 rounded-lg bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                        <Wand2 className="w-3.5 h-3.5" />
+                      </div>
+                      <span>Fix Calculation Errors</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-normal pl-8">
+                      Diagnose formula syntax issues and automatically repair them
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => sendMessage("Parse specification Shaft Ø35.035 -0.02/-0.01")}
+                    className="p-3.5 rounded-2xl border border-border/80 hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary bg-card hover:bg-muted/40 text-left transition-all cursor-pointer group shadow-2xs hover:shadow-xs space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-foreground group-hover:text-primary transition-colors">
+                      <div className="w-6 h-6 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center shrink-0">
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                      </div>
+                      <span>Parse Engineering Spec</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-normal pl-8">
+                      Extract nominals, bilateral limits, and decimal precision
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => sendMessage("Can I save this template?")}
+                    className="p-3.5 rounded-2xl border border-border/80 hover:border-primary/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:border-primary bg-card hover:bg-muted/40 text-left transition-all cursor-pointer group shadow-2xs hover:shadow-xs space-y-1.5"
+                  >
+                    <div className="flex items-center gap-2 font-semibold text-xs text-foreground group-hover:text-primary transition-colors">
+                      <div className="w-6 h-6 rounded-lg bg-cyan-500/10 text-cyan-600 flex items-center justify-center shrink-0">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </div>
+                      <span>Pre-Save Quality Gate</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-normal pl-8">
+                      Run 12-point calibration certification readiness check
+                    </p>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Conversation Stream */
+              messages
+                .filter((msg) => !msg.id.startsWith("initial"))
+                .map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex gap-3 group relative ${
+                      msg.sender === "user" || msg.role === "user" ? "justify-end" : "justify-start"
+                    }`}
+                  >
+                    {/* Assistant Message (Claude / ChatGPT Unboxed Natural Canvas Flow) */}
+                    {(msg.sender === "assistant" || msg.role === "assistant") ? (
+                      <div className="flex items-start gap-2.5 max-w-[96%] w-full">
+                        <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-primary via-indigo-600 to-violet-600 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                          <Sparkles className="w-4 h-4" />
+                        </div>
+
+                        <div className="flex-1 min-w-0 space-y-2">
+                          {/* Assistant Header: Model Source & Timestamp */}
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                            <div className="flex items-center gap-1.5 font-medium">
+                              {msg.engineSource === "cloud_gemini" ? (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border border-emerald-500/25 text-[10.5px] font-semibold">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                  Gemini Cloud AI
+                                </span>
+                              ) : msg.engineSource === "local_deterministic" ? (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border text-[10.5px] font-semibold">
+                                  <Cpu className="w-3 h-3 text-muted-foreground" />
+                                  Local Metrology Engine
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/25 text-[10.5px] font-semibold">
+                                  <Sparkles className="w-3 h-3 text-primary" />
+                                  Template Copilot
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] font-mono opacity-70">{msg.timestamp}</span>
+                          </div>
+
+                      {/* Main Markdown Body */}
+                      <div className="text-foreground leading-relaxed text-xs">
+                        <FormattedAssistantMessage
+                          text={msg.content || msg.text || ""}
+                          auditSummary={msg.auditSummary}
+                          onCopyFormula={handleFormulaApplyFromMarkdown}
+                          onSelectSuggestion={(sug) => sendMessage(sug)}
+                        />
                       </div>
 
-                      <FormattedAssistantMessage
-                        text={msg.content || msg.text || ""}
-                        auditSummary={msg.auditSummary}
-                        onCopyFormula={handleFormulaApplyFromMarkdown}
-                        onSelectSuggestion={(sug) => sendMessage(sug)}
-                      />
-
-                      {/* Proactive Quick-Action Suggestion Chips */}
-                      {msg.suggestions && msg.suggestions.length > 0 && (
-                        <div className="pt-2 mt-1 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
-                          <div className="flex items-center gap-1 text-[10px] font-semibold text-muted-foreground">
-                            <Sparkles className="w-3 h-3 text-primary animate-pulse" />
-                            <span>Suggested Follow-Ups:</span>
+                      {/* ========================================================================= */}
+                      {/* CANONICAL CHANGE PROPOSAL ARTIFACT (Section 10)                           */}
+                      {/* ========================================================================= */}
+                      {msg.changeProposal && (
+                        <div className="mt-3 rounded-xl border border-border/80 bg-card text-card-foreground shadow-xs overflow-hidden">
+                          <div className="px-3.5 py-2.5 bg-muted/40 border-b border-border/60 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-semibold text-xs">
+                              <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
+                              <span>{msg.changeProposal.summary}</span>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] font-mono bg-background border-border/80">
+                              {msg.changeProposal.intent}
+                            </Badge>
                           </div>
-                          <div className="flex flex-wrap gap-1.5">
+
+                          <div className="p-3 space-y-2.5">
+                            {/* Quality & Validation Badge */}
+                            <div className="flex flex-wrap items-center gap-2 text-[10px] px-2.5 py-1.5 rounded-lg bg-muted/30 border border-border/60 text-muted-foreground">
+                              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                                <Check className="w-3 h-3" /> Formula AST Validated
+                              </span>
+                              <span>•</span>
+                              <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
+                                <ShieldCheck className="w-3 h-3" /> ISO 17025 Metrology Gate Passed
+                              </span>
+                            </div>
+
+                            {/* Comparison Table Format */}
+                            <div className="overflow-x-auto rounded-lg border border-border/70 bg-background shadow-2xs">
+                              <table className="w-full text-[10.5px] text-left border-collapse">
+                                <thead>
+                                  <tr className="bg-muted/50 text-muted-foreground border-b border-border/70 font-semibold">
+                                    <th className="py-2 px-3">Area</th>
+                                    <th className="py-2 px-3">Current Template</th>
+                                    <th className="py-2 px-3">Proposed Update</th>
+                                    <th className="py-2 px-2.5 text-center">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-border/50">
+                                  {msg.changeProposal.changes.map((ch, chIdx) => (
+                                    <tr key={chIdx} className="hover:bg-muted/30 transition-colors">
+                                      <td className="py-2 px-3 font-medium text-foreground">
+                                        {ch.columnDef?.label || ch.targetId || ch.type.replace(/_/g, " ")}
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-muted-foreground truncate max-w-[120px]">
+                                        {ch.before !== undefined ? String(ch.before) : "—"}
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-primary font-semibold truncate max-w-[140px]">
+                                        {ch.after !== undefined ? String(ch.after) : ch.columnDef?.formula || "Mapped"}
+                                      </td>
+                                      <td className="py-2 px-2.5 text-center">
+                                        <span className="inline-block px-2 py-0.5 rounded text-[9.5px] font-semibold bg-primary/10 text-primary border border-primary/20">
+                                          {ch.type === "UPDATE_COLUMN_FORMULA" ? "Validated" : ch.type === "UPDATE_TABLE_SETTINGS" ? "Updated" : "Match"}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Information Callout Box */}
+                            <div className="p-2.5 rounded-lg bg-primary/5 border border-primary/20 text-[11px] text-foreground flex items-start gap-2 leading-relaxed">
+                              <Info className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                              <div>
+                                <span>
+                                  {msg.changeProposal.summary ||
+                                    `The proposed changes modify ${msg.changeProposal.changes.length} element(s). All specifications and formulas will be automatically mapped to your Visual Canvas.`}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Confirmation Actions */}
+                          <div className="px-3.5 py-2.5 bg-muted/20 border-t border-border/60 flex items-center justify-between">
+                            {!msg.actionApplied && !msg.actionRejected ? (
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleApplyCanonicalProposal(msg.id, msg.changeProposal!)}
+                                  className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-medium flex items-center gap-1.5 cursor-pointer shadow-xs rounded-lg"
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  Apply Changes
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    toast.info(`Reviewing ${msg.changeProposal!.changes.length} proposed changes against canvas.`);
+                                  }}
+                                  className="h-7 text-xs text-muted-foreground hover:text-foreground cursor-pointer rounded-lg"
+                                >
+                                  Review Details
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRejectProposal(msg.id)}
+                                  className="h-7 text-xs text-muted-foreground hover:text-foreground cursor-pointer rounded-lg"
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            ) : msg.actionApplied ? (
+                              <div className="flex items-center justify-between w-full text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                                <span className="flex items-center gap-1.5">
+                                  <CheckCheck className="w-4 h-4" /> Changes Applied to Template
+                                </span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={handleUndo}
+                                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground gap-1 rounded-md"
+                                >
+                                  <Undo2 className="w-3 h-3" /> Undo
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-muted-foreground italic">Proposal cancelled</div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 1: FORMULA CHANGES                                   */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal && msg.proposals && msg.proposals.length > 0 && (
+                        <div className="mt-3 space-y-2 text-foreground">
+                          {msg.proposals.map((prop) => (
+                            <div
+                              key={prop.columnId}
+                              className="p-3 rounded-xl border border-amber-300/70 dark:border-amber-700/50 bg-amber-50/50 dark:bg-amber-950/20 space-y-2 shadow-2xs"
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-xs text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                                  <Sparkles className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                                  {prop.columnLabel}{" "}
+                                  <span className="font-mono text-[10px] text-muted-foreground">
+                                    ({prop.columnId})
+                                  </span>
+                                </span>
+                                {prop.confidence && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] bg-background text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                                  >
+                                    {prop.confidence}
+                                  </Badge>
+                                )}
+                              </div>
+
+                              <div className="text-xs space-y-1 font-mono">
+                                <div className="text-muted-foreground flex items-center gap-1.5">
+                                  <span className="w-12 shrink-0 font-sans text-[11px]">Before:</span>
+                                  <code className="bg-background px-1.5 py-0.5 rounded border border-border/60 text-muted-foreground break-all flex-1">
+                                    {prop.before}
+                                  </code>
+                                </div>
+                                <div className="text-primary font-bold flex items-center gap-1.5">
+                                  <span className="w-12 shrink-0 text-amber-900 dark:text-amber-200 font-sans text-[11px]">
+                                    Proposed:
+                                  </span>
+                                  <code className="bg-background px-1.5 py-0.5 rounded border border-amber-400 dark:border-amber-600 text-amber-900 dark:text-amber-200 break-all flex-1">
+                                    {prop.after}
+                                  </code>
+                                </div>
+                              </div>
+
+                              <p className="text-[11px] text-amber-800 dark:text-amber-300 italic leading-tight">
+                                "{prop.reason}"
+                              </p>
+
+                              {!msg.actionApplied && (
+                                <div className="flex items-center gap-1.5 pt-1">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => handleApplySingleProposal(msg.id, prop)}
+                                    className="h-6 text-[11px] bg-amber-600 hover:bg-amber-700 text-white font-medium flex items-center gap-1 cursor-pointer rounded-lg shadow-2xs"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    Apply Change
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+
+                          {msg.proposals.length > 1 && !msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleApplyAllProposals(msg.id, msg.proposals!)}
+                              className="w-full h-7 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Wand2 className="w-3.5 h-3.5" />
+                              Apply All Changes ({msg.proposals.length} columns)
+                            </Button>
+                          )}
+
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              Changes Applied. (Click Undo in header to revert if needed)
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 2: TABLE SETTINGS                                     */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal &&
+                        msg.proposedAction === "UPDATE_TABLE_SETTINGS" &&
+                        msg.actionPayload?.tableSettings && (
+                          <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-xs flex items-center gap-1.5">
+                                <Sliders className="w-3.5 h-3.5 text-primary" />
+                                Table Settings Proposal
+                              </span>
+                              <Badge variant="outline" className="text-[9px] bg-background">
+                                PROPOSED
+                              </Badge>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-1.5 text-xs">
+                              {msg.actionPayload.tableSettings.orientation && (
+                                <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                  <span className="text-muted-foreground block text-[10px]">Orientation</span>
+                                  <span className="font-semibold capitalize text-foreground">
+                                    {msg.actionPayload.tableSettings.orientation}
+                                  </span>
+                                </div>
+                              )}
+                              {msg.actionPayload.tableSettings.decimal_places !== undefined && (
+                                <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                  <span className="text-muted-foreground block text-[10px]">Decimal Places</span>
+                                  <span className="font-semibold text-foreground">
+                                    {msg.actionPayload.tableSettings.decimal_places} decimals
+                                  </span>
+                                </div>
+                              )}
+                              {msg.actionPayload.tableSettings.tolerance !== undefined && (
+                                <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                  <span className="text-muted-foreground block text-[10px]">Tolerance</span>
+                                  <span className="font-semibold text-foreground">
+                                    ±{msg.actionPayload.tableSettings.tolerance}
+                                  </span>
+                                </div>
+                              )}
+                              {msg.actionPayload.tableSettings.unit && (
+                                <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                  <span className="text-muted-foreground block text-[10px]">Unit</span>
+                                  <span className="font-semibold text-foreground">
+                                    {msg.actionPayload.tableSettings.unit}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {!msg.actionApplied && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() =>
+                                  handleApplyTableSettings(msg.id, msg.actionPayload!.tableSettings!)
+                                }
+                                className="w-full h-7 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                Apply Table Settings
+                              </Button>
+                            )}
+
+                            {msg.actionApplied && (
+                              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                Table Settings Applied.
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 3: ADD COLUMN                                        */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal &&
+                        msg.proposedAction === "ADD_COLUMN" &&
+                        msg.actionPayload?.newColumn && (
+                        <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-primary" />
+                              New Column Proposal: {msg.actionPayload.newColumn.label}
+                            </span>
+                            <Badge variant="outline" className="text-[9px] bg-background">
+                              {msg.actionPayload.newColumn.type}
+                            </Badge>
+                          </div>
+
+                          <div className="text-xs space-y-1 font-mono">
+                            <div className="text-muted-foreground flex items-center gap-1.5">
+                              <span className="w-16 shrink-0 font-sans text-[11px]">Role:</span>
+                              <span className="font-semibold text-foreground font-sans">
+                                {msg.actionPayload.newColumn.role || "CALCULATED"}
+                              </span>
+                            </div>
+                            {msg.actionPayload.newColumn.formula && (
+                              <div className="text-primary font-bold flex items-center gap-1.5">
+                                <span className="w-16 shrink-0 font-sans text-muted-foreground text-[11px]">Formula:</span>
+                                <code className="bg-background px-1.5 py-0.5 rounded border border-primary/40 text-primary break-all flex-1">
+                                  {msg.actionPayload.newColumn.formula}
+                                </code>
+                              </div>
+                            )}
+                          </div>
+
+                          {!msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() =>
+                                handleApplyAddColumn(msg.id, msg.actionPayload!.newColumn!)
+                              }
+                              className="w-full h-7 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Add Column to Table
+                            </Button>
+                          )}
+
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              Column Added to Table.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 3B: REMOVE COLUMN                                    */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal &&
+                        msg.proposedAction === "REMOVE_COLUMN" &&
+                        msg.actionPayload?.removeColumnId && (
+                        <div className="mt-3 p-3 rounded-xl border border-destructive/40 bg-destructive/5 space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5 text-destructive">
+                              <X className="w-3.5 h-3.5" />
+                              Remove Column: {msg.actionPayload.removeColumnId}
+                            </span>
+                            <Badge variant="outline" className="text-[9px] bg-background text-destructive border-destructive/30">
+                              ALTER TABLE
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Remove column <strong>"{msg.actionPayload.removeColumnId}"</strong> from table <strong>{selectedTable?.title || "Active Table"}</strong>.
+                          </p>
+                          {!msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleApplyDeleteColumn(msg.id, msg.actionPayload!.removeColumnId!)}
+                              className="w-full h-7 text-xs font-medium bg-destructive hover:bg-destructive/90 text-destructive-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Remove Column from Table
+                            </Button>
+                          )}
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              Column Removed.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 3C: CREATE TABLE                                     */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal && msg.proposedAction === "CREATE_TABLE" && (
+                        <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5 text-foreground">
+                              <TableIcon className="w-3.5 h-3.5 text-primary" />
+                              Create New Table: {msg.actionPayload?.newTable?.title || "Calibration Table"}
+                            </span>
+                            <Badge variant="outline" className="text-[9px] bg-background">
+                              NEW TABLE
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Ready to create a new calibration table with default ISO 17025 columns and formula structures.
+                          </p>
+                          {!msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleApplyCreateTable(msg.id, msg.actionPayload?.newTable)}
+                              className="w-full h-7 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Create Table in Canvas
+                            </Button>
+                          )}
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              Table Created in Canvas.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 3D: DELETE TABLE                                     */}
+                      {/* ========================================================================= */}
+                      {!msg.changeProposal && msg.proposedAction === "DELETE_TABLE" && (
+                        <div className="mt-3 p-3 rounded-xl border border-destructive/40 bg-destructive/5 space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5 text-destructive">
+                              <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                              Delete Table: {selectedTable?.title || "Active Table"}
+                            </span>
+                            <Badge variant="outline" className="text-[9px] bg-background text-destructive border-destructive/30">
+                              DELETE TABLE
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            This action will delete table <strong>"{selectedTable?.title || "Active Table"}"</strong> from the template.
+                          </p>
+                          {!msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() => handleApplyDeleteTable(msg.id, msg.actionPayload?.deleteTableId)}
+                              className="w-full h-7 text-xs font-medium bg-destructive hover:bg-destructive/90 text-destructive-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Confirm Delete Table
+                            </Button>
+                          )}
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-muted text-muted-foreground text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5" />
+                              Table Deleted.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 4: PARSED SPECIFICATION                              */}
+                      {/* ========================================================================= */}
+                      {msg.proposedAction === "PARSE_SPECIFICATION" && msg.actionPayload?.parsedSpec && (
+                        <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5">
+                              <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+                              Parsed Metrology Specification
+                            </span>
+                            <Badge variant="outline" className="text-[9px] bg-background">
+                              {msg.actionPayload.parsedSpec.decimalPrecision} DEC
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-1.5 text-xs">
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[10px]">Nominal</span>
+                              <span className="font-semibold text-foreground">
+                                {msg.actionPayload.parsedSpec.nominal} {msg.actionPayload.parsedSpec.unit}
+                              </span>
+                            </div>
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[10px]">Tolerance Range</span>
+                              <span className="font-semibold text-foreground">
+                                {msg.actionPayload.parsedSpec.lowerTolerance >= 0 ? "+" : ""}
+                                {msg.actionPayload.parsedSpec.lowerTolerance} /{" "}
+                                {msg.actionPayload.parsedSpec.upperTolerance >= 0 ? "+" : ""}
+                                {msg.actionPayload.parsedSpec.upperTolerance}
+                              </span>
+                            </div>
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[10px]">Lower Limit</span>
+                              <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                {msg.actionPayload.parsedSpec.lowerLimit} {msg.actionPayload.parsedSpec.unit}
+                              </span>
+                            </div>
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[10px]">Upper Limit</span>
+                              <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                {msg.actionPayload.parsedSpec.upperLimit} {msg.actionPayload.parsedSpec.unit}
+                              </span>
+                            </div>
+                          </div>
+
+                          {!msg.actionApplied && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={() =>
+                                handleApplyParsedSpec(msg.id, msg.actionPayload!.parsedSpec!)
+                              }
+                              className="w-full h-7 text-xs font-medium bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Apply Specification to Rows
+                            </Button>
+                          )}
+
+                          {msg.actionApplied && (
+                            <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-medium flex items-center gap-1.5">
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              Specification Applied to Rows.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 5: VIRTUAL TRIAL RUN SIMULATION                      */}
+                      {/* ========================================================================= */}
+                      {msg.proposedAction === "SIMULATE_TRIAL_RUN" &&
+                        msg.actionPayload?.simulationResult && (
+                          <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-xs flex items-center gap-1.5">
+                                <Play className="w-3.5 h-3.5 text-primary" />
+                                Virtual Reading Verdict
+                              </span>
+                              <Badge
+                                className={`text-[10px] font-semibold ${
+                                  msg.actionPayload.simulationResult.status === "PASS"
+                                    ? "bg-emerald-600 text-white"
+                                    : "bg-destructive text-destructive-foreground"
+                                }`}
+                              >
+                                {msg.actionPayload.simulationResult.status}
+                              </Badge>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1.5 text-xs text-center">
+                              <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                <span className="text-muted-foreground block text-[10px]">Nominal</span>
+                                <span className="font-semibold">{msg.actionPayload.simulationResult.nominal}</span>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                <span className="text-muted-foreground block text-[10px]">Reading</span>
+                                <span className="font-semibold text-primary">
+                                  {msg.actionPayload.simulationResult.reading}
+                                </span>
+                              </div>
+                              <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                                <span className="text-muted-foreground block text-[10px]">Deviation</span>
+                                <span className="font-semibold font-mono text-emerald-600 dark:text-emerald-400">
+                                  {msg.actionPayload.simulationResult.deviation}
+                                </span>
+                              </div>
+                            </div>
+
+                            {onOpenTrialRun && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={onOpenTrialRun}
+                                className="w-full h-7 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                              >
+                                <Play className="w-3.5 h-3.5" />
+                                Open Full Interactive Trial Run Modal
+                              </Button>
+                            )}
+                          </div>
+                        )}
+
+                      {/* ========================================================================= */}
+                      {/* CHANGE PROPOSAL CARD 6: PRE-SAVE QUALITY GATE                             */}
+                      {/* ========================================================================= */}
+                      {msg.proposedAction === "VALIDATE_PRE_SAVE" && msg.actionPayload?.preSaveAudit && (
+                        <div className="mt-3 p-3 rounded-xl border border-border/80 bg-card space-y-2 text-foreground shadow-2xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-xs flex items-center gap-1.5">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
+                              Pre-Save Quality Gate Results
+                            </span>
+                            <Badge
+                              className={`text-[9.5px] font-semibold ${
+                                msg.actionPayload.preSaveAudit.canSaveProduction
+                                  ? "bg-emerald-600 text-white"
+                                  : "bg-amber-600 text-white"
+                              }`}
+                            >
+                              {msg.actionPayload.preSaveAudit.canSaveProduction
+                                ? "READY FOR PRODUCTION"
+                                : "REVIEW REQUIRED"}
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-1.5 text-xs text-center">
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[9.5px]">Passed</span>
+                              <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                {msg.actionPayload.preSaveAudit.passedCount} /{" "}
+                                {msg.actionPayload.preSaveAudit.totalChecks}
+                              </span>
+                            </div>
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[9.5px]">Warnings</span>
+                              <span className="font-semibold text-amber-600 dark:text-amber-400">
+                                {msg.actionPayload.preSaveAudit.warningCount}
+                              </span>
+                            </div>
+                            <div className="p-2 bg-muted/40 rounded-lg border border-border/60">
+                              <span className="text-muted-foreground block text-[9.5px]">Errors</span>
+                              <span
+                                className={`font-semibold ${
+                                  msg.actionPayload.preSaveAudit.errorCount > 0
+                                    ? "text-destructive"
+                                    : "text-emerald-600 dark:text-emerald-400"
+                                }`}
+                              >
+                                {msg.actionPayload.preSaveAudit.errorCount}
+                              </span>
+                            </div>
+                          </div>
+
+                          {onOpenPreSaveModal && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              onClick={onOpenPreSaveModal}
+                              className="w-full h-7 text-xs font-medium bg-foreground text-background hover:bg-foreground/90 flex items-center justify-center gap-1.5 shadow-xs cursor-pointer rounded-lg"
+                            >
+                              <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                              View Detailed 12-Point Quality Checklist
+                            </Button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Proactive Follow-up Recommendation Cards (Claude Style) */}
+                      {msg.suggestions && msg.suggestions.length > 0 && (
+                        <div className="pt-2.5 space-y-1.5">
+                          <div className="flex items-center gap-1.5 text-[10.5px] font-semibold text-muted-foreground uppercase tracking-wider">
+                            <Sparkles className="w-3 h-3 text-primary" />
+                            <span>Recommended next steps</span>
+                          </div>
+                          <div className="flex flex-col gap-1.5">
                             {msg.suggestions.map((sug, sIdx) => (
                               <button
                                 key={sIdx}
                                 type="button"
                                 onClick={() => sendMessage(sug)}
-                                className="group/chip inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-primary/5 hover:bg-primary/15 text-primary border border-primary/20 hover:border-primary/40 transition-all duration-150 cursor-pointer text-left shadow-2xs hover:scale-[1.01] active:scale-[0.99]"
+                                className="group/chip w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-card hover:bg-primary/5 text-foreground hover:text-primary border border-border/80 hover:border-primary/40 text-xs font-medium transition-all shadow-2xs hover:shadow-xs active:scale-[0.99] text-left cursor-pointer"
                               >
-                                <span className="w-1.5 h-1.5 rounded-full bg-primary/60 group-hover/chip:bg-primary shrink-0 transition-colors" />
-                                <span>{sug}</span>
-                                <ArrowRight className="w-3 h-3 opacity-50 group-hover/chip:opacity-100 group-hover/chip:translate-x-0.5 transition-all shrink-0 ml-0.5" />
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-primary/70 group-hover/chip:bg-primary shrink-0 transition-colors" />
+                                  <span className="truncate">{sug}</span>
+                                </div>
+                                <ArrowRight className="w-3.5 h-3.5 text-muted-foreground/40 group-hover/chip:text-primary group-hover/chip:translate-x-0.5 transition-all shrink-0" />
                               </button>
                             ))}
                           </div>
                         </div>
                       )}
-                      
-                      {/* Assistant Hover Action Toolbar */}
-                      <div className="flex items-center gap-2 pt-1 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-muted-foreground border-t border-slate-100 dark:border-slate-800">
-                        <button
-                          type="button"
-                          onClick={() => handleCopyMessage(msg.content || msg.text || "")}
-                          className="flex items-center gap-1 hover:text-foreground cursor-pointer"
-                          title="Copy response"
-                        >
-                          <Copy className="w-3 h-3" />
-                          <span>Copy</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleRetry}
-                          className="flex items-center gap-1 hover:text-foreground cursor-pointer"
-                          title="Retry last query"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                          <span>Retry</span>
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    /* User Content */
-                    <div className="space-y-1.5">
-                      {/* Attached files preview chips */}
-                      {msg.attachments && msg.attachments.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mb-1 justify-end">
-                          {msg.attachments.map((att) => (
-                            <div
-                              key={att.id}
-                              className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white/20 text-[10px] font-medium backdrop-blur-xs"
-                            >
-                              <Paperclip className="w-2.5 h-2.5" />
-                              <span className="truncate max-w-[120px]">{att.name}</span>
-                            </div>
-                          ))}
+
+                      {/* Assistant Bottom Hover Action Toolbar */}
+                      {msg.id !== "initial" && !msg.id.startsWith("initial") && (
+                        <div className="flex items-center gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150 text-muted-foreground">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopyMessage(msg.content || msg.text || "", msg.id)}
+                            className="h-6 px-2 text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md gap-1 cursor-pointer"
+                            title="Copy response"
+                          >
+                            {copiedMessageId === msg.id ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-500" />
+                                <span className="text-emerald-500 text-[10.5px] font-medium">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span className="text-[10.5px]">Copy</span>
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleRetry}
+                            className="h-6 px-2 text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md gap-1 cursor-pointer"
+                            title="Retry last query"
+                          >
+                            <RotateCcw className="w-3 h-3" />
+                            <span className="text-[10.5px]">Retry</span>
+                          </Button>
                         </div>
                       )}
+                    </div>
+                  </div>
+                ) : (
+                  /* User Message (ChatGPT / Claude Caliber Right-Aligned Bubble) */
+                  <div className="flex flex-col items-end max-w-[85%] sm:max-w-[78%] space-y-1 group">
+                    {/* Attached files preview chips */}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 justify-end mb-1">
+                        {msg.attachments.map((att) => (
+                          <div
+                            key={att.id}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-card text-[10.5px] font-medium border border-border/80 text-foreground shadow-2xs"
+                          >
+                            <Paperclip className="w-3 h-3 text-primary" />
+                            <span className="truncate max-w-[130px]">{att.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
-                      {/* Editing Mode */}
+                    {/* User Bubble */}
+                    <div className="px-4 py-2.5 rounded-2xl rounded-tr-xs bg-primary text-primary-foreground text-xs font-medium leading-relaxed shadow-xs relative select-text">
                       {editingMessageId === msg.id ? (
-                        <div className="space-y-2 p-1">
+                        <div className="space-y-2 min-w-[240px] text-foreground">
                           <Textarea
                             value={editingText}
                             onChange={(e) => setEditingText(e.target.value)}
-                            className="text-xs bg-white text-slate-900 rounded p-2 min-h-[50px]"
+                            className="text-xs bg-background text-foreground border border-border rounded-lg p-2 min-h-[55px] focus-visible:ring-1 focus-visible:ring-primary"
+                            autoFocus
                           />
                           <div className="flex items-center justify-end gap-1.5">
                             <Button
@@ -1842,7 +2611,7 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
                               variant="ghost"
                               size="sm"
                               onClick={handleCancelEdit}
-                              className="h-6 text-[10px] text-white/80 hover:text-white hover:bg-white/10"
+                              className="h-6 text-[10px] text-muted-foreground hover:text-foreground"
                             >
                               Cancel
                             </Button>
@@ -1850,740 +2619,81 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
                               type="button"
                               size="sm"
                               onClick={() => handleSaveEdit(msg.id)}
-                              className="h-6 text-[10px] bg-white text-primary hover:bg-slate-100 font-bold"
+                              className="h-6 text-[10px] bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
                             >
                               Update & Send
                             </Button>
                           </div>
                         </div>
                       ) : (
-                        <div>
-                          <div className="whitespace-pre-wrap">{msg.content || msg.text}</div>
-                          {/* User Message Hover Toolbar */}
-                          <div className="flex items-center gap-2 pt-1 opacity-0 group-hover:opacity-100 transition-opacity justify-end text-[10px] text-primary-foreground/80">
-                            <button
-                              type="button"
-                              onClick={() => handleStartEdit(msg)}
-                              className="flex items-center gap-1 hover:text-white cursor-pointer"
-                              title="Edit message"
-                            >
-                              <Pencil className="w-2.5 h-2.5" />
-                              <span>Edit</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyMessage(msg.content || msg.text || "")}
-                              className="flex items-center gap-1 hover:text-white cursor-pointer"
-                              title="Copy text"
-                            >
-                              <Copy className="w-2.5 h-2.5" />
-                              <span>Copy</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => sendMessage(msg.content || msg.text)}
-                              className="flex items-center gap-1 hover:text-white cursor-pointer"
-                              title="Resend"
-                            >
-                              <RotateCcw className="w-2.5 h-2.5" />
-                              <span>Resend</span>
-                            </button>
-                          </div>
-                        </div>
+                        <div className="whitespace-pre-wrap">{msg.content || msg.text}</div>
                       )}
                     </div>
-                  )}
 
-                  {/* ========================================================================= */}
-                  {/* CANONICAL CHANGE PROPOSAL CARD (Section 10)                                 */}
-                  {/* ========================================================================= */}
-                  {msg.changeProposal && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-gradient-to-br from-indigo-50/90 to-blue-50/60 dark:from-indigo-950/40 dark:to-blue-950/20 border border-indigo-200 dark:border-indigo-800/70 space-y-2.5 shadow-xs text-foreground">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5 font-bold text-[11px]">
-                          <Sparkles className="w-3.5 h-3.5 text-primary shrink-0" />
-                          <span>{msg.changeProposal.summary}</span>
-                        </div>
-                        <Badge variant="outline" className="text-[9px] font-mono bg-white dark:bg-slate-900 border-indigo-200">
-                          {msg.changeProposal.intent}
-                        </Badge>
-                      </div>
-
-                      {/* Quality & Validation Badge */}
-                      <div className="flex items-center gap-2 text-[9.5px] px-2 py-1 rounded-md bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-muted-foreground">
-                        <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-                          <Check className="w-3 h-3" /> Formula AST Validated
-                        </span>
-                        <span>•</span>
-                        <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-                          <ShieldCheck className="w-3 h-3" /> ISO 17025 Metrology Gate Passed
-                        </span>
-                      </div>
-
-                      {/* Comparison Table Format (Matching Reference Design) */}
-                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 shadow-2xs">
-                        <table className="w-full text-[10px] text-left border-collapse">
-                          <thead>
-                            <tr className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 font-bold">
-                              <th className="py-1.5 px-2.5">Area</th>
-                              <th className="py-1.5 px-2.5">Current Template</th>
-                              <th className="py-1.5 px-2.5">Excel File / Proposal</th>
-                              <th className="py-1.5 px-2 text-center">Action</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-sans">
-                            {msg.changeProposal.changes.map((ch, chIdx) => (
-                              <tr key={chIdx} className="hover:bg-slate-50/80 dark:hover:bg-slate-900/50 transition-colors">
-                                <td className="py-1.5 px-2.5 font-semibold text-slate-800 dark:text-slate-200">
-                                  {ch.columnDef?.label || ch.targetId || ch.type.replace(/_/g, " ")}
-                                </td>
-                                <td className="py-1.5 px-2.5 font-mono text-muted-foreground truncate max-w-[100px]">
-                                  {ch.before !== undefined ? String(ch.before) : "—"}
-                                </td>
-                                <td className="py-1.5 px-2.5 font-mono text-primary font-semibold truncate max-w-[120px]">
-                                  {ch.after !== undefined ? String(ch.after) : ch.columnDef?.formula || "Mapped"}
-                                </td>
-                                <td className="py-1.5 px-2 text-center">
-                                  <span className="inline-block px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                                    {ch.type === "UPDATE_COLUMN_FORMULA" ? "Validated" : ch.type === "UPDATE_TABLE_SETTINGS" ? "Updated" : "Match"}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Information Callout Box */}
-                      <div className="p-2.5 rounded-lg bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 text-[10.5px] text-slate-700 dark:text-slate-300 flex items-start gap-2 leading-relaxed">
-                        <Info className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                        <div>
-                          <span>
-                            {msg.changeProposal.summary ||
-                              `The proposed changes modify ${msg.changeProposal.changes.length} element(s). All specifications and formulas will be automatically mapped to your Visual Canvas.`}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Confirmation Actions */}
-                      {!msg.actionApplied && !msg.actionRejected ? (
-                        <div className="flex items-center gap-2 pt-1">
-                          <Button
+                    {/* User Hover Toolbar */}
+                    <div className="flex items-center gap-2 px-1 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                      <span className="font-mono text-[9px]">{msg.timestamp}</span>
+                      {editingMessageId !== msg.id && (
+                        <>
+                          <span>•</span>
+                          <button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              toast.info(`Reviewing ${msg.changeProposal!.changes.length} proposed changes against canvas.`);
-                            }}
-                            className="h-7 text-[11px] font-semibold text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 cursor-pointer shadow-2xs"
+                            onClick={() => handleStartEdit(msg)}
+                            className="hover:text-foreground transition-colors cursor-pointer inline-flex items-center gap-0.5"
+                            title="Edit query"
                           >
-                            Review Changes
-                          </Button>
-                          <Button
+                            <Pencil className="w-2.5 h-2.5" />
+                            <span>Edit</span>
+                          </button>
+                          <span>•</span>
+                          <button
                             type="button"
-                            size="sm"
-                            onClick={() => handleApplyCanonicalProposal(msg.id, msg.changeProposal!)}
-                            className="h-7 text-[11px] bg-primary hover:bg-primary/90 text-primary-foreground font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                            onClick={() => handleCopyMessage(msg.content || msg.text || "", msg.id)}
+                            className="hover:text-foreground transition-colors cursor-pointer inline-flex items-center gap-0.5"
+                            title="Copy query"
                           >
-                            <Check className="w-3 h-3" />
-                            Apply Changes
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRejectProposal(msg.id)}
-                            className="h-7 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      ) : msg.actionApplied ? (
-                        <div className="flex items-center justify-between text-[10px] text-emerald-600 font-semibold pt-1">
-                          <span className="flex items-center gap-1">
-                            <CheckCheck className="w-3.5 h-3.5" /> Changes Applied to Template
-                          </span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={handleUndo}
-                            className="h-5 px-1.5 text-[10px] text-muted-foreground hover:text-foreground gap-1"
-                          >
-                            <Undo2 className="w-3 h-3" /> Undo
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="text-[10px] text-muted-foreground italic pt-1">Proposal cancelled</div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 1: FORMULA CHANGES                                   */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal && msg.proposals && msg.proposals.length > 0 && (
-                    <div className="mt-2.5 space-y-2 text-foreground">
-                      {msg.proposals.map((prop) => (
-                        <div
-                          key={prop.columnId}
-                          className="p-2.5 rounded-xl bg-amber-50/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 space-y-2 shadow-2xs"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="font-bold text-[11px] text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
-                              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                              {prop.columnLabel}{" "}
-                              <span className="font-mono text-[10px] text-muted-foreground">
-                                ({prop.columnId})
-                              </span>
-                            </span>
-                            {prop.confidence && (
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] bg-white text-amber-800 border-amber-300 dark:bg-slate-900 dark:text-amber-300"
-                              >
-                                {prop.confidence}
-                              </Badge>
+                            {copiedMessageId === msg.id ? (
+                              <span className="text-emerald-500 font-semibold">Copied</span>
+                            ) : (
+                              <>
+                                <Copy className="w-2.5 h-2.5" />
+                                <span>Copy</span>
+                              </>
                             )}
-                          </div>
-
-                          <div className="text-[10.5px] space-y-1 font-mono">
-                            <div className="text-muted-foreground flex items-center gap-1.5">
-                              <span className="w-12 shrink-0">Before:</span>
-                              <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border text-muted-foreground break-all flex-1">
-                                {prop.before}
-                              </code>
-                            </div>
-                            <div className="text-primary font-bold flex items-center gap-1.5">
-                              <span className="w-12 shrink-0 text-amber-900 dark:text-amber-200 font-sans">
-                                Proposed:
-                              </span>
-                              <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-primary/40 text-primary break-all flex-1">
-                                {prop.after}
-                              </code>
-                            </div>
-                          </div>
-
-                          <p className="text-[10px] text-amber-900 dark:text-amber-300 italic leading-tight">
-                            "{prop.reason}"
-                          </p>
-
-                          {!msg.actionApplied && (
-                            <div className="flex items-center gap-1.5 pt-1">
-                              <Button
-                                type="button"
-                                size="sm"
-                                onClick={() => handleApplySingleProposal(msg.id, prop)}
-                                className="h-6 text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-semibold flex items-center gap-1 cursor-pointer shadow-2xs"
-                              >
-                                <Check className="w-2.5 h-2.5" />
-                                Apply Change
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-
-                      {/* Apply All Button if multiple proposals */}
-                      {msg.proposals.length > 1 && !msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleApplyAllProposals(msg.id, msg.proposals!)}
-                          className="w-full h-7 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Wand2 className="w-3.5 h-3.5" />
-                          Apply All Changes ({msg.proposals.length} columns)
-                        </Button>
-                      )}
-
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Changes Applied. (Click Undo in header to revert if needed)
-                        </div>
+                          </button>
+                        </>
                       )}
                     </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 2: TABLE SETTINGS (ORIENTATION, DECIMALS, TOLERANCE) */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal &&
-                    msg.proposedAction === "UPDATE_TABLE_SETTINGS" &&
-                    msg.actionPayload?.tableSettings && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-blue-50/80 dark:bg-blue-950/50 border border-blue-300 dark:border-blue-800 space-y-2 text-foreground shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-[11px] text-blue-950 dark:text-blue-200 flex items-center gap-1.5">
-                            <Sliders className="w-3.5 h-3.5 text-blue-600" />
-                            Table Settings Proposal
-                          </span>
-                          <Badge variant="outline" className="text-[9px] bg-white text-blue-800 border-blue-300">
-                            PROPOSED
-                          </Badge>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
-                          {msg.actionPayload.tableSettings.orientation && (
-                            <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                              <span className="text-muted-foreground block text-[9.5px]">Orientation</span>
-                              <span className="font-bold capitalize text-primary">
-                                {msg.actionPayload.tableSettings.orientation}
-                              </span>
-                            </div>
-                          )}
-                          {msg.actionPayload.tableSettings.decimal_places !== undefined && (
-                            <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                              <span className="text-muted-foreground block text-[9.5px]">Decimal Places</span>
-                              <span className="font-bold text-primary">
-                                {msg.actionPayload.tableSettings.decimal_places} decimals
-                              </span>
-                            </div>
-                          )}
-                          {msg.actionPayload.tableSettings.tolerance !== undefined && (
-                            <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                              <span className="text-muted-foreground block text-[9.5px]">Tolerance</span>
-                              <span className="font-bold text-primary">
-                                ±{msg.actionPayload.tableSettings.tolerance}
-                              </span>
-                            </div>
-                          )}
-                          {msg.actionPayload.tableSettings.unit && (
-                            <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                              <span className="text-muted-foreground block text-[9.5px]">Unit</span>
-                              <span className="font-bold text-primary">
-                                {msg.actionPayload.tableSettings.unit}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {!msg.actionApplied && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={() =>
-                              handleApplyTableSettings(msg.id, msg.actionPayload!.tableSettings!)
-                            }
-                            className="w-full h-7 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                            Apply Table Settings
-                          </Button>
-                        )}
-
-                        {msg.actionApplied && (
-                          <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                            <Check className="w-3 h-3 text-emerald-600" />
-                            Table Settings Applied.
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 3: ADD COLUMN                                        */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal &&
-                    msg.proposedAction === "ADD_COLUMN" &&
-                    msg.actionPayload?.newColumn && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-indigo-50/80 dark:bg-indigo-950/50 border border-indigo-300 dark:border-indigo-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                          <Layers className="w-3.5 h-3.5 text-indigo-600" />
-                          New Column Proposal: {msg.actionPayload.newColumn.label}
-                        </span>
-                        <Badge variant="outline" className="text-[9px] bg-white text-indigo-800 border-indigo-300">
-                          {msg.actionPayload.newColumn.type}
-                        </Badge>
-                      </div>
-
-                      <div className="text-[10.5px] space-y-1 font-mono">
-                        <div className="text-muted-foreground flex items-center gap-1.5">
-                          <span className="w-16 shrink-0 font-sans">Role:</span>
-                          <span className="font-bold text-foreground font-sans">
-                            {msg.actionPayload.newColumn.role || "CALCULATED"}
-                          </span>
-                        </div>
-                        {msg.actionPayload.newColumn.formula && (
-                          <div className="text-primary font-bold flex items-center gap-1.5">
-                            <span className="w-16 shrink-0 font-sans text-muted-foreground">Formula:</span>
-                            <code className="bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-indigo-300 text-indigo-600 break-all flex-1">
-                              {msg.actionPayload.newColumn.formula}
-                            </code>
-                          </div>
-                        )}
-                      </div>
-
-                      {!msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() =>
-                            handleApplyAddColumn(msg.id, msg.actionPayload!.newColumn!)
-                          }
-                          className="w-full h-7 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Add Column to Table
-                        </Button>
-                      )}
-
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Column Added to Table.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 3B: REMOVE COLUMN                                    */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal &&
-                    msg.proposedAction === "REMOVE_COLUMN" &&
-                    msg.actionPayload?.removeColumnId && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-amber-50/80 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-amber-950 dark:text-amber-200 flex items-center gap-1.5">
-                          <X className="w-3.5 h-3.5 text-amber-600" />
-                          Remove Column: {msg.actionPayload.removeColumnId}
-                        </span>
-                        <Badge variant="outline" className="text-[9px] bg-white text-amber-800 border-amber-300">
-                          ALTER TABLE
-                        </Badge>
-                      </div>
-                      <p className="text-[10.5px] text-muted-foreground">
-                        Remove column <strong>"{msg.actionPayload.removeColumnId}"</strong> from table <strong>{selectedTable?.title || "Active Table"}</strong>.
-                      </p>
-                      {!msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleApplyDeleteColumn(msg.id, msg.actionPayload!.removeColumnId!)}
-                          className="w-full h-7 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Remove Column from Table
-                        </Button>
-                      )}
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Column Removed.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 3C: CREATE TABLE                                     */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal && msg.proposedAction === "CREATE_TABLE" && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
-                          <TableIcon className="w-3.5 h-3.5 text-emerald-600" />
-                          Create New Table: {msg.actionPayload?.newTable?.title || "Calibration Table"}
-                        </span>
-                        <Badge variant="outline" className="text-[9px] bg-white text-emerald-800 border-emerald-300">
-                          NEW TABLE
-                        </Badge>
-                      </div>
-                      <p className="text-[10.5px] text-muted-foreground">
-                        Ready to create a new calibration table with default ISO 17025 columns and formula structures.
-                      </p>
-                      {!msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleApplyCreateTable(msg.id, msg.actionPayload?.newTable)}
-                          className="w-full h-7 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Create Table in Canvas
-                        </Button>
-                      )}
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Table Created in Canvas.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 3D: DELETE TABLE                                     */}
-                  {/* ========================================================================= */}
-                  {!msg.changeProposal && msg.proposedAction === "DELETE_TABLE" && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-red-50/80 dark:bg-red-950/50 border border-red-300 dark:border-red-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-red-950 dark:text-red-200 flex items-center gap-1.5">
-                          <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                          Delete Table: {selectedTable?.title || "Active Table"}
-                        </span>
-                        <Badge variant="outline" className="text-[9px] bg-white text-red-800 border-red-300">
-                          DELETE TABLE
-                        </Badge>
-                      </div>
-                      <p className="text-[10.5px] text-muted-foreground">
-                        This action will delete table <strong>"{selectedTable?.title || "Active Table"}"</strong> from the template.
-                      </p>
-                      {!msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => handleApplyDeleteTable(msg.id, msg.actionPayload?.deleteTableId)}
-                          className="w-full h-7 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Confirm Delete Table
-                        </Button>
-                      )}
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-300 text-muted-foreground text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3" />
-                          Table Deleted.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 4: PARSED SPECIFICATION                              */}
-                  {/* ========================================================================= */}
-                  {msg.proposedAction === "PARSE_SPECIFICATION" && msg.actionPayload?.parsedSpec && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-purple-50/80 dark:bg-purple-950/50 border border-purple-300 dark:border-purple-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-purple-950 dark:text-purple-200 flex items-center gap-1.5">
-                          <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
-                          Parsed Metrology Specification
-                        </span>
-                        <Badge variant="outline" className="text-[9px] bg-white text-purple-800 border-purple-300">
-                          {msg.actionPayload.parsedSpec.decimalPrecision} DEC
-                        </Badge>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-1.5 text-[10.5px]">
-                        <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                          <span className="text-muted-foreground block text-[9.5px]">Nominal</span>
-                          <span className="font-bold text-primary">
-                            {msg.actionPayload.parsedSpec.nominal} {msg.actionPayload.parsedSpec.unit}
-                          </span>
-                        </div>
-                        <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                          <span className="text-muted-foreground block text-[9.5px]">Tolerance Range</span>
-                          <span className="font-bold text-primary">
-                            {msg.actionPayload.parsedSpec.lowerTolerance >= 0 ? "+" : ""}
-                            {msg.actionPayload.parsedSpec.lowerTolerance} /{" "}
-                            {msg.actionPayload.parsedSpec.upperTolerance >= 0 ? "+" : ""}
-                            {msg.actionPayload.parsedSpec.upperTolerance}
-                          </span>
-                        </div>
-                        <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                          <span className="text-muted-foreground block text-[9.5px]">Lower Limit</span>
-                          <span className="font-bold text-emerald-600">
-                            {msg.actionPayload.parsedSpec.lowerLimit} {msg.actionPayload.parsedSpec.unit}
-                          </span>
-                        </div>
-                        <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                          <span className="text-muted-foreground block text-[9.5px]">Upper Limit</span>
-                          <span className="font-bold text-emerald-600">
-                            {msg.actionPayload.parsedSpec.upperLimit} {msg.actionPayload.parsedSpec.unit}
-                          </span>
-                        </div>
-                      </div>
-
-                      {!msg.actionApplied && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() =>
-                            handleApplyParsedSpec(msg.id, msg.actionPayload!.parsedSpec!)
-                          }
-                          className="w-full h-7 text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          Apply Specification to Rows
-                        </Button>
-                      )}
-
-                      {msg.actionApplied && (
-                        <div className="p-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-300 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold flex items-center gap-1">
-                          <Check className="w-3 h-3 text-emerald-600" />
-                          Specification Applied to Rows.
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 5: VIRTUAL TRIAL RUN SIMULATION                      */}
-                  {/* ========================================================================= */}
-                  {msg.proposedAction === "SIMULATE_TRIAL_RUN" &&
-                    msg.actionPayload?.simulationResult && (
-                      <div className="mt-2.5 p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 space-y-2 text-foreground shadow-2xs">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-[11px] text-emerald-950 dark:text-emerald-200 flex items-center gap-1.5">
-                            <Play className="w-3.5 h-3.5 text-emerald-600" />
-                            Virtual Reading Verdict
-                          </span>
-                          <Badge
-                            className={`text-[10px] font-bold ${
-                              msg.actionPayload.simulationResult.status === "PASS"
-                                ? "bg-emerald-600 text-white"
-                                : "bg-rose-600 text-white"
-                            }`}
-                          >
-                            {msg.actionPayload.simulationResult.status}
-                          </Badge>
-                        </div>
-
-                        <div className="grid grid-cols-3 gap-1.5 text-[10.5px] text-center">
-                          <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                            <span className="text-muted-foreground block text-[9.5px]">Nominal</span>
-                            <span className="font-bold">{msg.actionPayload.simulationResult.nominal}</span>
-                          </div>
-                          <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                            <span className="text-muted-foreground block text-[9.5px]">Reading</span>
-                            <span className="font-bold text-primary">
-                              {msg.actionPayload.simulationResult.reading}
-                            </span>
-                          </div>
-                          <div className="p-1.5 bg-white dark:bg-slate-900 rounded border">
-                            <span className="text-muted-foreground block text-[9.5px]">Deviation</span>
-                            <span className="font-bold font-mono text-emerald-700 dark:text-emerald-300">
-                              {msg.actionPayload.simulationResult.deviation}
-                            </span>
-                          </div>
-                        </div>
-
-                        {onOpenTrialRun && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            onClick={onOpenTrialRun}
-                            className="w-full h-7 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                          >
-                            <Play className="w-3.5 h-3.5" />
-                            Open Full Interactive Trial Run Modal
-                          </Button>
-                        )}
-                      </div>
-                    )}
-
-                  {/* ========================================================================= */}
-                  {/* CHANGE PROPOSAL CARD 6: PRE-SAVE QUALITY GATE                             */}
-                  {/* ========================================================================= */}
-                  {msg.proposedAction === "VALIDATE_PRE_SAVE" && msg.actionPayload?.preSaveAudit && (
-                    <div className="mt-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/90 border border-slate-300 dark:border-slate-800 space-y-2 text-foreground shadow-2xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-[11px] text-foreground flex items-center gap-1.5">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
-                          Pre-Save Quality Gate Results
-                        </span>
-                        <Badge
-                          className={`text-[9.5px] font-bold ${
-                            msg.actionPayload.preSaveAudit.canSaveProduction
-                              ? "bg-emerald-600 text-white"
-                              : "bg-amber-600 text-white"
-                          }`}
-                        >
-                          {msg.actionPayload.preSaveAudit.canSaveProduction
-                            ? "READY FOR PRODUCTION"
-                            : "REVIEW REQUIRED"}
-                        </Badge>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-1.5 text-[10.5px] text-center">
-                        <div className="p-1.5 bg-white dark:bg-slate-950 rounded border">
-                          <span className="text-muted-foreground block text-[9px]">Passed</span>
-                          <span className="font-bold text-emerald-600">
-                            {msg.actionPayload.preSaveAudit.passedCount} /{" "}
-                            {msg.actionPayload.preSaveAudit.totalChecks}
-                          </span>
-                        </div>
-                        <div className="p-1.5 bg-white dark:bg-slate-950 rounded border">
-                          <span className="text-muted-foreground block text-[9px]">Warnings</span>
-                          <span className="font-bold text-amber-600">
-                            {msg.actionPayload.preSaveAudit.warningCount}
-                          </span>
-                        </div>
-                        <div className="p-1.5 bg-white dark:bg-slate-950 rounded border">
-                          <span className="text-muted-foreground block text-[9px]">Errors</span>
-                          <span
-                            className={`font-bold ${
-                              msg.actionPayload.preSaveAudit.errorCount > 0
-                                ? "text-rose-600"
-                                : "text-emerald-600"
-                            }`}
-                          >
-                            {msg.actionPayload.preSaveAudit.errorCount}
-                          </span>
-                        </div>
-                      </div>
-
-                      {onOpenPreSaveModal && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={onOpenPreSaveModal}
-                          className="w-full h-7 text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
-                        >
-                          <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                          View Detailed 12-Point Quality Checklist
-                        </Button>
-                      )}
-                    </div>
-                  )}
-
-                  <span className="text-[9px] opacity-60 block text-right pt-0.5">
-                    {msg.timestamp}
-                  </span>
-                </div>
-
-                {msg.sender === "user" && (
-                  <div className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center shrink-0 mt-0.5">
-                    <User className="w-3.5 h-3.5 text-foreground" />
                   </div>
                 )}
               </div>
-            ))}
+            )))}
 
+            {/* Thinking / Streaming Indicator */}
             {loading && (
-              <div className="flex items-center gap-2 text-muted-foreground text-xs italic bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs animate-pulse">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
-                <span>{thinkingMessages[thinkingStage]}</span>
+              <div className="flex items-start gap-2.5 max-w-[96%]">
+                <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-primary/15 via-primary/10 to-indigo-500/10 text-primary border border-primary/20 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
+                  <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                </div>
+                <div className="space-y-1.5 py-1">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    </span>
+                    <span className="font-medium animate-pulse">
+                      {thinkingMessages[thinkingStage]}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 pl-4">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:-0.3s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/60 animate-bounce [animation-delay:-0.15s]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/80 animate-bounce" />
+                  </div>
+                </div>
               </div>
             )}
           </div>
-
-          {/* Attachment Preview Chips */}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-3 pt-2 pb-1 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800">
-              {attachments.map((att) => (
-                <div
-                  key={att.id}
-                  className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-[10.5px] text-foreground font-medium shadow-2xs"
-                >
-                  <Paperclip className="w-3 h-3 text-primary" />
-                  <span className="truncate max-w-[140px]">{att.name}</span>
-                  <span className="text-[9px] text-muted-foreground">
-                    ({(att.size / 1024).toFixed(0)}KB)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveAttachment(att.id)}
-                    className="text-muted-foreground hover:text-destructive cursor-pointer ml-0.5"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* Hidden File Input */}
           <input
@@ -2598,61 +2708,8 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
             }}
           />
 
-          {/* Modern Input Bar */}
-          <div className="p-2.5 border-t bg-slate-50 dark:bg-slate-950 flex items-center gap-2 shrink-0">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => fileInputRef.current?.click()}
-              className="h-8 w-8 text-muted-foreground hover:text-primary hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer shrink-0 rounded-full"
-              title="Attach Excel, Drawing, PDF or Image"
-            >
-              <Paperclip className="w-4 h-4" />
-            </Button>
-            <div className="flex-1 relative flex items-center">
-              <Input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                placeholder="Ask about your calibration template..."
-                className="h-9 text-xs bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 pr-9 pl-3.5 rounded-full shadow-2xs focus-visible:ring-primary"
-              />
-              <Button
-                type="button"
-                size="icon"
-                disabled={!loading && !input.trim() && attachments.length === 0}
-                onClick={() => {
-                  if (loading) {
-                    handleStopGeneration();
-                  } else {
-                    sendMessage();
-                  }
-                }}
-                className={`h-7 w-7 absolute right-1 cursor-pointer shadow-2xs rounded-full flex items-center justify-center transition-all ${
-                  loading
-                    ? "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/25 animate-pulse"
-                    : "bg-primary hover:bg-primary/90 text-primary-foreground"
-                }`}
-                aria-label={loading ? "Pause / Stop generation" : "Send message"}
-                title={loading ? "Pause / Stop generation" : "Send message"}
-              >
-                {loading ? (
-                  <Pause className="w-3.5 h-3.5 fill-current" />
-                ) : (
-                  <Send className="w-3.5 h-3.5" />
-                )}
-              </Button>
-            </div>
-          </div>
-
-          {/* Quick Action Suggestion Chips Bar (Below Input Bar) */}
-          <div className="px-3 pb-2.5 pt-0.5 bg-slate-50 dark:bg-slate-950 flex items-center gap-1.5 overflow-x-auto text-[10px] shrink-0 no-scrollbar">
+          {/* Quick Action Suggestion Ribbon */}
+          <div className="px-3.5 py-2 bg-background/85 backdrop-blur-xs border-t border-border/70 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0 no-scrollbar">
             {suggestionPills.map((chip, idx) => {
               const IconComp = chip.icon;
               return (
@@ -2660,13 +2717,122 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
                   key={idx}
                   type="button"
                   onClick={() => sendMessage(chip.query)}
-                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-primary text-foreground shrink-0 transition-all flex items-center gap-1.5 font-medium cursor-pointer shadow-2xs hover:shadow-xs active:scale-95"
+                  className="px-3 py-1.5 rounded-full bg-card hover:bg-muted/70 text-foreground/90 hover:text-foreground border border-border/80 hover:border-primary/50 transition-all flex items-center gap-1.5 shrink-0 font-medium cursor-pointer shadow-2xs hover:shadow-xs active:scale-95 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
                 >
-                  <IconComp className="w-3 h-3 text-primary shrink-0" />
+                  <IconComp className="w-3.5 h-3.5 text-primary shrink-0" />
                   <span>{chip.label}</span>
                 </button>
               );
             })}
+          </div>
+
+          {/* Signature ChatGPT / Claude Floating Input Dock */}
+          <div className="p-3 bg-background/95 backdrop-blur-md border-t border-border/80 shrink-0 space-y-1.5">
+            <div className="rounded-2xl border border-border/80 bg-card shadow-xs hover:border-border/90 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20 focus-within:shadow-md transition-all duration-200 p-2.5 space-y-1.5">
+              {/* Context Pill & Attached File Chips inside Input Card */}
+              {(attachments.length > 0 || selectedTable) && (
+                <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 border-b border-border/40">
+                  {selectedTable && (
+                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20 text-primary text-[10.5px] font-semibold shadow-2xs">
+                      <TableIcon className="w-3 h-3 text-primary shrink-0" />
+                      <span className="truncate max-w-[190px]">{selectedTable.title || "Active Table"}</span>
+                      <span className="text-[9.5px] font-mono opacity-70">
+                        ({selectedTable.columns?.length || 0} cols)
+                      </span>
+                    </div>
+                  )}
+                  {attachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted border border-border text-[10px] text-foreground font-medium shadow-2xs"
+                    >
+                      <Paperclip className="w-2.5 h-2.5 text-primary" />
+                      <span className="truncate max-w-[120px]">{att.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveAttachment(att.id)}
+                        className="text-muted-foreground hover:text-destructive cursor-pointer ml-0.5 rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-destructive"
+                        title="Remove attachment"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Auto-expanding Textarea */}
+              <div className="relative flex items-center px-1">
+                <textarea
+                  ref={textareaRef}
+                  rows={1}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder="Message Copilot or ask about formulas, ISO 17025, tables..."
+                  className="w-full bg-transparent resize-none overflow-y-auto text-xs sm:text-[13px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-0 leading-relaxed py-1 min-h-[32px] max-h-[140px]"
+                />
+              </div>
+
+              {/* Bottom Controls Row inside Input Card */}
+              <div className="flex items-center justify-between pt-1 px-1 border-t border-border/40 text-[11px]">
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/80 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1"
+                    title="Attach Excel, Drawing, PDF or Image"
+                  >
+                    <Paperclip className="w-3.5 h-3.5" />
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground/60 hidden sm:inline select-none">
+                    Shift + Enter for new line
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="icon"
+                    disabled={!loading && !input.trim() && attachments.length === 0}
+                    onClick={() => {
+                      if (loading) {
+                        handleStopGeneration();
+                      } else {
+                        sendMessage();
+                      }
+                    }}
+                    className={`h-7 w-7 rounded-full flex items-center justify-center transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
+                      loading
+                        ? "bg-foreground text-background hover:bg-foreground/90 shadow-2xs active:scale-95"
+                        : input.trim() || attachments.length > 0
+                        ? "bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs active:scale-95"
+                        : "bg-muted text-muted-foreground/40 cursor-not-allowed"
+                    }`}
+                    aria-label={loading ? "Stop generating" : "Send message"}
+                    title={loading ? "Stop generating" : "Send message"}
+                  >
+                    {loading ? (
+                      <Square className="w-3 h-3 fill-current" />
+                    ) : (
+                      <Send className="w-3.5 h-3.5" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Disclaimer footer note */}
+            <div className="text-center text-[10px] text-muted-foreground/60 select-none">
+              Copilot can make mistakes. Verify critical metrology tolerances and ISO 17025 standards.
+            </div>
           </div>
 
           {/* Edge & corner resize handles for width/height resizing */}

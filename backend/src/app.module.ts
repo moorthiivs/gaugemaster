@@ -46,7 +46,7 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       migrationsRun: false,
-      synchronize: true,
+      synchronize: process.env.NODE_ENV !== 'production' && process.env.DB_SYNCHRONIZE !== 'false',
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       uuidExtension: 'pgcrypto',
       extra: {

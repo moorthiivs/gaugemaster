@@ -12,7 +12,7 @@ export default new DataSource({
     database: process.env.DB_NAME,
     entities: ['src/**/*.entity.ts'],
     migrations: ['src/migrations/*.ts'],
-    synchronize: true,
+    synchronize: process.env.NODE_ENV !== 'production' && process.env.DB_SYNCHRONIZE !== 'false',
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
     uuidExtension: 'pgcrypto',
     extra: {
