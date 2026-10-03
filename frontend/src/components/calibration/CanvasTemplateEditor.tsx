@@ -65,13 +65,25 @@ import {
   Combine,
   MoreHorizontal,
   Minus,
+  ClipboardCopy,
+  ClipboardPaste,
+  ArrowRightLeft,
+  Pencil,
+  ArrowDown,
 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { toast } from "sonner";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { AiTemplateGeneratorModal } from "@/components/calibration/template-management/AiTemplateGeneratorModal";
@@ -79,6 +91,8 @@ import { TrialRunModal } from "@/components/calibration/template-management/Tria
 import { TableAuditModal } from "@/components/calibration/template-management/TableAuditModal";
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
 import { AddColumnModal } from "@/components/calibration/template-management/AddColumnModal";
+import { MergeTablesModal } from "@/components/calibration/template-management/MergeTablesModal";
+import { PasteValuesModal } from "@/components/calibration/template-management/PasteValuesModal";
 import { GaugemasterTemplateAssistant } from "@/components/calibration/template-management/GaugemasterTemplateAssistant";
 import { GeneratedTemplateResult } from "@/lib/geminiService";
 import {
@@ -86,11 +100,20 @@ import {
   buildRowContext,
   testEvaluateFormula,
 } from "@/lib/formulaEngine";
+import { parseSpecification } from "@/lib/specificationParser";
 import {
   getEffectiveTableOrientation,
   getTableOrientationRecommendation,
 } from "@/lib/tableLayoutOptimizer";
 import { ColumnFormulaInspector } from "@/components/calibration/template-management/ColumnFormulaInspector";
+import {
+  applyPastedValuesToRows,
+  copyColumnValuesToClipboard,
+  mirrorSiblingTableSpecs,
+  mergeTablesSideBySide,
+  unmergeSplitRow,
+} from "@/lib/tableClipboardHelper";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
 
 export { CANVAS_PRESETS };
 export type { CanvasTemplatePreset };
@@ -215,6 +238,19 @@ export function CanvasTemplateEditor({
   const [showAddColumnModal, setShowAddColumnModal] = useState(false);
   const [addColumnTargetTable, setAddColumnTargetTable] = useState<TableGridBlock | null>(null);
 
+  // Merge Tables Modal State
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeSourceTable, setMergeSourceTable] = useState<TableGridBlock | null>(null);
+
+  // Paste Column Values Modal State
+  const [showPasteValuesModal, setShowPasteValuesModal] = useState(false);
+  const [pasteTargetTable, setPasteTargetTable] = useState<{
+    blockIdx: number;
+    childIdx: number | null;
+    table: TableGridBlock;
+    colId?: string;
+  } | null>(null);
+
   // Floating Cell Context Menu State for Merging / Unmerging
   const [cellContextMenu, setCellContextMenu] = useState<{
     x: number;
@@ -226,8 +262,11 @@ export function CanvasTemplateEditor({
     colLabel: string;
     colIdx: number;
     totalCols: number;
-    currentSpan: number;
-    maxRemaining: number;
+    currentSpan: number; // colSpan
+    maxRemaining: number; // maxRemainingCols
+    totalRows: number;
+    currentRowSpan: number; // rowSpan
+    maxRemainingRows: number;
   } | null>(null);
 
   const handleOpenCellMenu = (
@@ -240,16 +279,36 @@ export function CanvasTemplateEditor({
     colIdx: number,
     totalCols: number,
     currentSpan: number = 1,
+    currentRowSpan: number = 1,
+    totalRows?: number,
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    const maxRemaining = totalCols - colIdx;
+
+    // Defensively resolve totalRows from blocks if omitted or invalid (<= 1)
+    let resolvedTotalRows = totalRows;
+    if (!resolvedTotalRows || resolvedTotalRows <= 1) {
+      const targetBlock = blocks[blockIndex];
+      if (targetBlock) {
+        if (childIndex !== null && "children" in targetBlock) {
+          const childTable = (targetBlock as SplitRowBlock).children?.[childIndex] as any;
+          if (childTable?.rows?.length) resolvedTotalRows = childTable.rows.length;
+        } else if ("rows" in targetBlock) {
+          if ((targetBlock as TableGridBlock).rows?.length) {
+            resolvedTotalRows = (targetBlock as TableGridBlock).rows.length;
+          }
+        }
+      }
+    }
+    const finalTotalRows = Math.max(1, resolvedTotalRows || 1);
+    const maxRemaining = Math.max(1, totalCols - colIdx);
+    const maxRemainingRows = Math.max(1, finalTotalRows - rowIndex);
     
     let menuX = e.clientX;
     let menuY = e.clientY;
     
-    const estimatedWidth = 230;
-    const estimatedHeight = 220;
+    const estimatedWidth = 260;
+    const estimatedHeight = 360;
     if (menuX + estimatedWidth > window.innerWidth) {
       menuX = window.innerWidth - estimatedWidth - 16;
     }
@@ -269,6 +328,9 @@ export function CanvasTemplateEditor({
       totalCols,
       currentSpan,
       maxRemaining,
+      totalRows: finalTotalRows,
+      currentRowSpan,
+      maxRemainingRows,
     });
   };
 
@@ -461,12 +523,13 @@ export function CanvasTemplateEditor({
     const newBlocks = blocks.map((b) => {
       if (b.type === "table_grid" && b.id === tableId) {
         const updatedCols = [...b.columns, newColumn];
-        const updatedRows = (b.rows || []).map((row) =>
+                const updatedRows = (b.rows || []).map((row) =>
           evaluateCanvasRowFormulas(
             row,
             updatedCols,
             b.tolerance ?? defaultTolerance,
             b.decimal_places ?? decimalPlaces,
+            b.nominal,
           ),
         );
         return { ...b, columns: updatedCols, rows: updatedRows };
@@ -475,12 +538,13 @@ export function CanvasTemplateEditor({
         const newChildren = b.children.map((c) => {
           if (c.type === "table_grid" && c.id === tableId) {
             const updatedCols = [...c.columns, newColumn];
-            const updatedRows = (c.rows || []).map((row) =>
+                        const updatedRows = (c.rows || []).map((row) =>
               evaluateCanvasRowFormulas(
                 row,
                 updatedCols,
                 c.tolerance ?? defaultTolerance,
                 c.decimal_places ?? decimalPlaces,
+                c.nominal,
               ),
             );
             return { ...c, columns: updatedCols, rows: updatedRows };
@@ -494,6 +558,55 @@ export function CanvasTemplateEditor({
     markChanged(newBlocks);
     if (onSelectColumnId) {
       onSelectColumnId(newColumn.id);
+    }
+  };
+
+  const handleUpdateTableNominal = (
+    blockIndex: number,
+    childIndex: number | null,
+    newNominalStr: string,
+  ) => {
+    const rawVal = newNominalStr.trim();
+    const parsedNom = rawVal !== "" && !isNaN(Number(rawVal)) ? parseFloat(rawVal) : (rawVal || undefined);
+
+    const block = blocks[blockIndex];
+    if (!block) return;
+
+    if (childIndex === null) {
+      if (block.type !== "table_grid") return;
+      const tol = block.tolerance ?? defaultTolerance ?? 0.02;
+      const dec = block.decimal_places ?? decimalPlaces ?? 3;
+      const reEvaluatedRows = (block.rows || []).map((row) =>
+        evaluateCanvasRowFormulas(row, block.columns, tol, dec, parsedNom)
+      );
+      const updatedBlock = {
+        ...block,
+        nominal: parsedNom,
+        rows: reEvaluatedRows,
+      };
+      const newBlocks = [...blocks];
+      newBlocks[blockIndex] = updatedBlock;
+      markChanged(newBlocks);
+      toast.success(`Updated Table Nominal to ${rawVal || "Not Set"}`);
+    } else {
+      if (block.type !== "split_row" || !block.children) return;
+      const child = block.children[childIndex];
+      if (!child || child.type !== "table_grid") return;
+      const tol = child.tolerance ?? defaultTolerance ?? 0.02;
+      const dec = child.decimal_places ?? decimalPlaces ?? 3;
+      const reEvaluatedRows = (child.rows || []).map((row) =>
+        evaluateCanvasRowFormulas(row, child.columns, tol, dec, parsedNom)
+      );
+      const newChildren = [...block.children];
+      newChildren[childIndex] = {
+        ...child,
+        nominal: parsedNom,
+        rows: reEvaluatedRows,
+      };
+      const newBlocks = [...blocks];
+      newBlocks[blockIndex] = { ...block, children: newChildren as any };
+      markChanged(newBlocks);
+      toast.success(`Updated Section Nominal to ${rawVal || "Not Set"}`);
     }
   };
 
@@ -983,7 +1096,7 @@ export function CanvasTemplateEditor({
     const currentRow = newRows[rowIndex] || {};
     const parsedNum = parseFloat(String(val));
     const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
-    const updatedRow = {
+    const updatedRow: CanvasRowData = {
       ...currentRow,
       [colId]: val,
       ...(colId === "reading" ? { reading: numVal } : {}),
@@ -1020,11 +1133,36 @@ export function CanvasTemplateEditor({
       parseFloat(String(updatedRow.tolerance ?? block.tolerance ?? 0.02)) ||
       0.02;
     const dec = block.decimal_places ?? decimalPlaces ?? 3;
-    const evaluatedRow = evaluateCanvasRowFormulas(
+
+    // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
+    if (
+      colId === "required_dimension" ||
+      colId === "specification" ||
+      colId === "description" ||
+      colId === "nominal" ||
+      /spec|dimension/i.test(colId)
+    ) {
+      const specText = String(val ?? "").trim();
+      const parsed = parseSpecification(specText, block.unit || "mm", tol, dec);
+      if (parsed.isValid) {
+        updatedRow.nominal = parsed.nominal;
+        updatedRow.lower_tolerance = parsed.lowerTolerance;
+        updatedRow.upper_tolerance = parsed.upperTolerance;
+        updatedRow.lowerTolerance = parsed.lowerTolerance;
+        updatedRow.upperTolerance = parsed.upperTolerance;
+        updatedRow.lower_limit = parsed.lowerLimit;
+        updatedRow.upper_limit = parsed.upperLimit;
+        updatedRow.lowerLimit = parsed.lowerLimit;
+        updatedRow.upperLimit = parsed.upperLimit;
+      }
+    }
+
+        const evaluatedRow = evaluateCanvasRowFormulas(
       updatedRow,
       block.columns,
       tol,
       dec,
+      block.nominal,
     );
 
     // CRITICAL: Ensure the active cell keeps the exact string the user is typing (e.g. "35.", "0.", "-")
@@ -1069,7 +1207,7 @@ export function CanvasTemplateEditor({
     const currentRow = newRows[rowIndex] || {};
     const parsedNum = parseFloat(String(val));
     const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
-    const updatedRow = {
+    const updatedRow: CanvasRowData = {
       ...currentRow,
       [colId]: val,
       ...(colId === "reading" ? { reading: numVal } : {}),
@@ -1105,11 +1243,36 @@ export function CanvasTemplateEditor({
       parseFloat(String(updatedRow.tolerance ?? child.tolerance ?? 0.02)) ||
       0.02;
     const dec = child.decimal_places ?? decimalPlaces ?? 3;
-    const evaluatedRow = evaluateCanvasRowFormulas(
+
+    // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
+    if (
+      colId === "required_dimension" ||
+      colId === "specification" ||
+      colId === "description" ||
+      colId === "nominal" ||
+      /spec|dimension/i.test(colId)
+    ) {
+      const specText = String(val ?? "").trim();
+      const parsed = parseSpecification(specText, child.unit || "mm", tol, dec);
+      if (parsed.isValid) {
+        updatedRow.nominal = parsed.nominal;
+        updatedRow.lower_tolerance = parsed.lowerTolerance;
+        updatedRow.upper_tolerance = parsed.upperTolerance;
+        updatedRow.lowerTolerance = parsed.lowerTolerance;
+        updatedRow.upperTolerance = parsed.upperTolerance;
+        updatedRow.lower_limit = parsed.lowerLimit;
+        updatedRow.upper_limit = parsed.upperLimit;
+        updatedRow.lowerLimit = parsed.lowerLimit;
+        updatedRow.upperLimit = parsed.upperLimit;
+      }
+    }
+
+        const evaluatedRow = evaluateCanvasRowFormulas(
       updatedRow,
       child.columns,
       tol,
       dec,
+      child.nominal,
     );
 
     evaluatedRow[colId] = val;
@@ -1203,10 +1366,16 @@ export function CanvasTemplateEditor({
       const newRows = [...rows];
       const cur = { ...newRows[rowIndex] };
       const currentSpans = { ...(cur.cellSpans || {}) };
+      const currentCell = { ...(currentSpans[colId] || {}) };
       if (span <= 1) {
+        delete currentCell.colSpan;
+      } else {
+        currentCell.colSpan = span;
+      }
+      if (!currentCell.colSpan && !currentCell.rowSpan) {
         delete currentSpans[colId];
       } else {
-        currentSpans[colId] = { colSpan: span };
+        currentSpans[colId] = currentCell;
       }
       cur.cellSpans = Object.keys(currentSpans).length > 0 ? currentSpans : undefined;
       newRows[rowIndex] = cur;
@@ -1232,9 +1401,96 @@ export function CanvasTemplateEditor({
 
     toast.success(
       span > 1
-        ? `Merged ${span} columns on row ${rowIndex + 1}`
-        : `Unmerged cell on row ${rowIndex + 1}`,
+        ? `Merged ${span} columns horizontally on row ${rowIndex + 1}`
+        : `Reset horizontal column merge on row ${rowIndex + 1}`,
     );
+  };
+
+  const handleSetCellRowSpan = (
+    blockIndex: number,
+    childIndex: number | null,
+    rowIndex: number,
+    colId: string,
+    span: number,
+  ) => {
+    const updateRows = (rows: CanvasRowData[]): CanvasRowData[] => {
+      const newRows = [...rows];
+      const cur = { ...newRows[rowIndex] };
+      const currentSpans = { ...(cur.cellSpans || {}) };
+      const currentCell = { ...(currentSpans[colId] || {}) };
+      if (span <= 1) {
+        delete currentCell.rowSpan;
+      } else {
+        currentCell.rowSpan = span;
+      }
+      if (!currentCell.colSpan && !currentCell.rowSpan) {
+        delete currentSpans[colId];
+      } else {
+        currentSpans[colId] = currentCell;
+      }
+      cur.cellSpans = Object.keys(currentSpans).length > 0 ? currentSpans : undefined;
+      newRows[rowIndex] = cur;
+      return newRows;
+    };
+
+    if (childIndex !== null) {
+      const split = blocks[blockIndex] as SplitRowBlock;
+      if (!split || !split.children) return;
+      const child = split.children[childIndex] as TableGridBlock;
+      if (!child || !child.rows) return;
+      const newRows = updateRows(child.rows);
+      const updatedChildren = split.children.map((c, i) =>
+        i === childIndex ? { ...child, rows: newRows } : c,
+      );
+      updateBlock(blockIndex, { ...split, children: updatedChildren });
+    } else {
+      const block = blocks[blockIndex] as TableGridBlock;
+      if (!block || !block.rows) return;
+      const newRows = updateRows(block.rows);
+      updateBlock(blockIndex, { ...block, rows: newRows });
+    }
+
+    toast.success(
+      span > 1
+        ? `Merged ${span} rows vertically down column`
+        : `Reset vertical row merge on row ${rowIndex + 1}`,
+    );
+  };
+
+  const handleResetCellSpans = (
+    blockIndex: number,
+    childIndex: number | null,
+    rowIndex: number,
+    colId: string,
+  ) => {
+    const updateRows = (rows: CanvasRowData[]): CanvasRowData[] => {
+      const newRows = [...rows];
+      const cur = { ...newRows[rowIndex] };
+      const currentSpans = { ...(cur.cellSpans || {}) };
+      delete currentSpans[colId];
+      cur.cellSpans = Object.keys(currentSpans).length > 0 ? currentSpans : undefined;
+      newRows[rowIndex] = cur;
+      return newRows;
+    };
+
+    if (childIndex !== null) {
+      const split = blocks[blockIndex] as SplitRowBlock;
+      if (!split || !split.children) return;
+      const child = split.children[childIndex] as TableGridBlock;
+      if (!child || !child.rows) return;
+      const newRows = updateRows(child.rows);
+      const updatedChildren = split.children.map((c, i) =>
+        i === childIndex ? { ...child, rows: newRows } : c,
+      );
+      updateBlock(blockIndex, { ...split, children: updatedChildren });
+    } else {
+      const block = blocks[blockIndex] as TableGridBlock;
+      if (!block || !block.rows) return;
+      const newRows = updateRows(block.rows);
+      updateBlock(blockIndex, { ...block, rows: newRows });
+    }
+
+    toast.success(`Unmerged cell on row ${rowIndex + 1}`);
   };
 
   const handleAddMergedStatementRow = (
@@ -1308,6 +1564,169 @@ export function CanvasTemplateEditor({
       updateBlock(blockIndex, { ...block, columns: newCols });
       toast.success(`Moved column "${moved.label || moved.id}" to position ${toIdx + 1}`);
     }
+  };
+
+  // Table Merging & Unmerging Handlers
+  const handleOpenMergeModal = (table: TableGridBlock) => {
+    setMergeSourceTable(table);
+    setShowMergeModal(true);
+  };
+
+  const handleExecuteMerge = (tableAId: string, tableBId: string) => {
+    const newBlocks = mergeTablesSideBySide(blocks, tableAId, tableBId);
+    markChanged(newBlocks);
+    toast.success("Merged tables into Side-by-Side (50/50) split!");
+  };
+
+  const handleUnmergeSplitRow = (splitRowId: string) => {
+    const newBlocks = unmergeSplitRow(blocks, splitRowId);
+    markChanged(newBlocks);
+    toast.success("Separated side-by-side section back into standalone individual tables.");
+  };
+
+  // Column Value Copy / Paste Handlers
+  const handleOpenPasteModal = (
+    blockIdx: number,
+    childIdx: number | null,
+    table: TableGridBlock,
+    colId?: string
+  ) => {
+    setPasteTargetTable({ blockIdx, childIdx, table, colId });
+    setShowPasteValuesModal(true);
+  };
+
+  const handleApplyModalPaste = (colId: string, text: string, autoExpand: boolean) => {
+    if (!pasteTargetTable) return;
+    const { blockIdx, childIdx, table } = pasteTargetTable;
+    // Always resolve current block from blocks array to guarantee up-to-date data
+    const currentTable =
+      childIdx !== null
+        ? ((blocks[blockIdx] as SplitRowBlock)?.children?.[childIdx] as TableGridBlock) || table
+        : (blocks[blockIdx] as TableGridBlock) || table;
+
+    const res = applyPastedValuesToRows({
+      rows: currentTable.rows || [],
+      columns: currentTable.columns || [],
+      colId,
+      startRowIndex: 0,
+      clipboardText: text,
+      unit: currentTable.unit || defaultUnit,
+      defaultTolerance: currentTable.tolerance ?? defaultTolerance,
+            decimalPlaces: currentTable.decimal_places ?? decimalPlaces,
+      autoExpand,
+      tableNominal: currentTable.nominal,
+    });
+
+    if (childIdx !== null) {
+      const split = blocks[blockIdx] as SplitRowBlock;
+      if (!split || !split.children) return;
+      const updatedChildren = split.children.map((c, i) =>
+        i === childIdx ? { ...c, rows: res.updatedRows } : c
+      );
+      updateBlock(blockIdx, { ...split, children: updatedChildren as any });
+    } else {
+      updateBlock(blockIdx, { ...currentTable, rows: res.updatedRows });
+    }
+
+    const colLabel = currentTable.columns?.find((c) => c.id === colId)?.label || colId;
+    toast.success(
+      `✓ Pasted ${res.pastedCount} values into "${colLabel}"${
+        res.addedRowCount > 0 ? ` (auto-added ${res.addedRowCount} rows)` : ""
+      }`
+    );
+  };
+
+  const handleCellPaste = (
+    e: React.ClipboardEvent,
+    blockIdx: number,
+    childIdx: number | null,
+    startRowIndex: number,
+    colId: string
+  ) => {
+    const clipText = e.clipboardData?.getData("text");
+    if (!clipText) return;
+
+    // Check if multi-line or multi-value paste (contains newline, carriage return, or tab)
+    if (clipText.includes("\n") || clipText.includes("\r") || clipText.includes("\t")) {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const table =
+        childIdx !== null
+          ? ((blocks[blockIdx] as SplitRowBlock)?.children?.[childIdx] as TableGridBlock)
+          : (blocks[blockIdx] as TableGridBlock);
+
+      if (!table || !table.rows) return;
+
+      const res = applyPastedValuesToRows({
+        rows: table.rows,
+        columns: table.columns || [],
+        colId,
+        startRowIndex,
+        clipboardText: clipText,
+        unit: table.unit || defaultUnit,
+        defaultTolerance: table.tolerance ?? defaultTolerance,
+        decimalPlaces: table.decimal_places ?? decimalPlaces,
+        autoExpand: true,
+        tableNominal: table.nominal,
+      });
+
+      if (childIdx !== null) {
+        const split = blocks[blockIdx] as SplitRowBlock;
+        if (!split || !split.children) return;
+        const updatedChildren = split.children.map((c, i) =>
+          i === childIdx ? { ...c, rows: res.updatedRows } : c
+        );
+        updateBlock(blockIdx, { ...split, children: updatedChildren as any });
+      } else {
+        updateBlock(blockIdx, { ...table, rows: res.updatedRows });
+      }
+
+      const colLabel = table.columns?.find((c) => c.id === colId)?.label || colId;
+      toast.success(
+        `✓ Pasted ${res.pastedCount} values into "${colLabel}"${
+          res.addedRowCount > 0 ? ` (auto-added ${res.addedRowCount} rows)` : ""
+        }`
+      );
+    }
+  };
+
+  const handleCopyColumn = async (table: TableGridBlock, colId: string, colLabel: string) => {
+    const res = await copyColumnValuesToClipboard(table.rows || [], colId);
+    if (res.success) {
+      toast.success(`Copied ${res.count} values from "${colLabel}" to clipboard`);
+    } else {
+      toast.error(`Could not copy values to clipboard`);
+    }
+  };
+
+  const handleMirrorSibling = (blockIdx: number, targetChildIdx: number) => {
+    const split = blocks[blockIdx] as SplitRowBlock;
+    if (!split || !split.children || split.children.length < 2) return;
+
+    const sourceChildIdx = targetChildIdx === 0 ? 1 : 0;
+    const sourceChild = split.children[sourceChildIdx] as TableGridBlock;
+    const targetChild = split.children[targetChildIdx] as TableGridBlock;
+
+    if (!sourceChild || !targetChild || !sourceChild.rows) return;
+
+    const res = mirrorSiblingTableSpecs(
+      sourceChild.rows,
+      targetChild.rows || [],
+      targetChild.columns,
+      targetChild.tolerance ?? defaultTolerance,
+      targetChild.decimal_places ?? decimalPlaces,
+      targetChild.unit || defaultUnit
+    );
+
+    const updatedChildren = split.children.map((c, i) =>
+      i === targetChildIdx ? { ...targetChild, rows: res.updatedRows } : c
+    );
+
+    updateBlock(blockIdx, { ...split, children: updatedChildren as any });
+    toast.success(
+      `✓ Copied ${res.count} specification values from "${sourceChild.title || 'Left Table'}" into "${targetChild.title || 'Right Table'}"!`
+    );
   };
 
   // Helper to evaluate formula preview in builder with decimal formatting
@@ -1844,6 +2263,20 @@ export function CanvasTemplateEditor({
                     >
                       <Copy className="w-3.5 h-3.5" />
                     </button>
+                    {block.type === "table_grid" &&
+                      blocks.filter((b) => b.type === "table_grid").length > 1 && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenMergeModal(block as TableGridBlock);
+                          }}
+                          className="p-1 hover:text-indigo-400 rounded hover:bg-slate-800 transition-colors"
+                          title="Merge Side-by-Side (50/50) with another table"
+                        >
+                          <SplitSquareVertical className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -1898,6 +2331,71 @@ export function CanvasTemplateEditor({
                             >
                               Unit: {block.unit || "mm"}
                             </Badge>
+
+                            {/* Master Table Nominal Badge with Popover Quick-Editor */}
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-all cursor-pointer bg-amber-50/80 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800 shadow-2xs"
+                                  title="Click to set or change master Nominal / Standard value for this table"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <span className="font-medium text-amber-700 dark:text-amber-400">Nominal:</span>
+                                  <span className="font-bold">
+                                    {(block as TableGridBlock).nominal !== undefined && (block as TableGridBlock).nominal !== ""
+                                      ? `${(block as TableGridBlock).nominal} ${block.unit || "mm"}`
+                                      : "Not Set"}
+                                  </span>
+                                  <Pencil className="w-3 h-3 opacity-60 hover:opacity-100 ml-0.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="center" className="w-64 p-3 shadow-lg z-50">
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                      Table Master Nominal
+                                    </h4>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold">
+                                      {block.unit || "mm"}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground leading-tight">
+                                    Master nominal size applied to rows without a dedicated nominal column (e.g. Standard Pins).
+                                  </p>
+                                  <div className="flex items-center gap-1.5 pt-1">
+                                    <Input
+                                      type="text"
+                                      placeholder="e.g. 10.0000"
+                                      defaultValue={String((block as TableGridBlock).nominal ?? "")}
+                                      id={`nominal-input-${block.id}`}
+                                      className="h-8 text-xs font-mono"
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          const val = (e.currentTarget as HTMLInputElement).value;
+                                          handleUpdateTableNominal(index, null, val);
+                                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                        }
+                                      }}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      className="h-8 px-2.5 text-xs font-bold"
+                                      onClick={(e) => {
+                                        const input = document.getElementById(`nominal-input-${block.id}`) as HTMLInputElement;
+                                        if (input) {
+                                          handleUpdateTableNominal(index, null, input.value);
+                                        }
+                                        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                      }}
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+
                             <Badge
                               variant="outline"
                               className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
@@ -1939,6 +2437,80 @@ export function CanvasTemplateEditor({
                                 <span>Configure Table</span>
                               </Button>
                             )}
+
+                            {/* Consolidated Table Options Dropdown (Merge Side-by-Side + Values / Copy / Paste) */}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="h-7 text-xs font-semibold gap-1.5 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                  title="Table actions: Merge side-by-side, Copy / Paste column values"
+                                >
+                                  <MoreHorizontal className="w-3.5 h-3.5 text-primary" />
+                                  <span>Table Options</span>
+                                  <ChevronDown className="w-3 h-3 opacity-60" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-60 max-h-80 overflow-y-auto">
+                                {blocks.filter((b, i) => i !== index && b.type === "table_grid").length > 0 && (
+                                  <>
+                                    <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                      Layout Actions
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleOpenMergeModal(block as TableGridBlock);
+                                      }}
+                                      className="text-xs cursor-pointer gap-2 font-medium text-indigo-700 dark:text-indigo-300 focus:text-indigo-800"
+                                    >
+                                      <SplitSquareVertical className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                                      <span>Merge Side-by-Side (50/50)...</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator />
+                                  </>
+                                )}
+
+                                <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                  Data & Values
+                                </DropdownMenuLabel>
+                                <DropdownMenuItem
+                                  onClick={() => handleOpenPasteModal(index, null, block as TableGridBlock, "nominal")}
+                                  className="text-xs cursor-pointer gap-2 font-medium text-primary focus:text-primary"
+                                >
+                                  <ClipboardPaste className="w-3.5 h-3.5 text-primary" />
+                                  <span>Paste Values into Column...</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                  Copy Column to Clipboard
+                                </DropdownMenuLabel>
+                                {(block.columns || [])
+                                  .filter((col) => col && col.id !== "point_number" && col.id !== "sl_no")
+                                  .map((col) => (
+                                    <DropdownMenuItem
+                                      key={col.id}
+                                      onClick={() => handleCopyColumn(block as TableGridBlock, col.id, col.label || col.id)}
+                                      className="text-xs cursor-pointer gap-2"
+                                    >
+                                      <ClipboardCopy className="w-3.5 h-3.5 text-slate-500" />
+                                      <span className="truncate">Copy "{col.label || col.id}"</span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                {(block.columns || []).some((col) => col.id === "point_number" || col.id === "sl_no") && (
+                                  <DropdownMenuItem
+                                    onClick={() => handleCopyColumn(block as TableGridBlock, "point_number", "Sl No / Points")}
+                                    className="text-xs cursor-pointer gap-2 text-muted-foreground"
+                                  >
+                                    <ClipboardCopy className="w-3.5 h-3.5" />
+                                    <span>Copy Points / Sl.No.</span>
+                                  </DropdownMenuItem>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
 
                             {/* Table Print Orientation Toggle */}
                             <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-full border border-slate-200 dark:border-slate-700 text-xs shadow-2xs">
@@ -2136,21 +2708,36 @@ export function CanvasTemplateEditor({
                                             <Input
                                               value={cellVal}
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: e.target.value,
-                                                  ...(col.id === "description"
-                                                    ? {
-                                                        description:
-                                                          e.target.value,
-                                                      }
-                                                    : {}),
-                                                };
-                                                updateBlock(index, {
-                                                  ...block,
-                                                  rows: newRows,
-                                                });
+                                                const isSpecCol =
+                                                  col.id === "required_dimension" ||
+                                                  col.id === "specification" ||
+                                                  col.id === "description" ||
+                                                  col.id === "nominal" ||
+                                                  /spec|dimension/i.test(col.id || col.label || "");
+                                                if (isSpecCol) {
+                                                  handleTableCellChange(
+                                                    index,
+                                                    rIdx,
+                                                    col.id,
+                                                    e.target.value,
+                                                  );
+                                                } else {
+                                                  const newRows = [...block.rows];
+                                                  newRows[rIdx] = {
+                                                    ...newRows[rIdx],
+                                                    [col.id]: e.target.value,
+                                                    ...(col.id === "description"
+                                                      ? {
+                                                          description:
+                                                            e.target.value,
+                                                        }
+                                                      : {}),
+                                                  };
+                                                  updateBlock(index, {
+                                                    ...block,
+                                                    rows: newRows,
+                                                  });
+                                                }
                                               }}
                                               className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder={col.label || "Desc"}
@@ -2445,6 +3032,32 @@ export function CanvasTemplateEditor({
                                               <ChevronRight className="w-2.5 h-2.5" />
                                             </button>
                                           )}
+                                           {!isPointNo && (
+                                             <button
+                                               type="button"
+                                               onClick={(e) => {
+                                                 e.stopPropagation();
+                                                 handleCopyColumn(block as TableGridBlock, col.id, col.label || col.id);
+                                               }}
+                                               className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                                               title={`Copy all values from "${col.label || col.id}"`}
+                                             >
+                                               <ClipboardCopy className="w-2.5 h-2.5" />
+                                             </button>
+                                           )}
+                                           {!isPointNo && col.type !== "formula" && col.type !== "status" && (
+                                             <button
+                                               type="button"
+                                               onClick={(e) => {
+                                                 e.stopPropagation();
+                                                 handleOpenPasteModal(index, null, block as TableGridBlock, col.id);
+                                               }}
+                                               className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
+                                               title={`Paste values into "${col.label || col.id}"`}
+                                             >
+                                               <ClipboardPaste className="w-2.5 h-2.5" />
+                                             </button>
+                                           )}
                                         </div>
                                         {/* Draggable Resizer Handle */}
                                         <div
@@ -2467,7 +3080,9 @@ export function CanvasTemplateEditor({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-border">
-                                {block.rows.map((row, rIdx) => {
+                                {(() => {
+                                  const coveredCells = getCoveredCells(block.rows, block.columns);
+                                  return block.rows.map((row, rIdx) => {
                                   if (row.is_merged || row.isMerged) {
                                     const isPointNoCol = block.columns.find(
                                       (c) =>
@@ -2579,146 +3194,206 @@ export function CanvasTemplateEditor({
                                       key={rIdx}
                                       className="divide-x divide-border hover:bg-muted/20 transition-colors group/row"
                                     >
-                                      {(() => {
-                                        let skipCols = 0;
-                                         const hasPointNoColumn = block.columns.some((c) => c.id === "point_number" || c.id === "sl_no" || c.id === "sino");
-                                        return block.columns.map((col, cIdx) => {
-                                          if (skipCols > 0) {
-                                            skipCols--;
-                                            return null;
-                                          }
-                                          const span = row.cellSpans?.[col.id]?.colSpan || 1;
-                                          if (span > 1) {
-                                            skipCols = span - 1;
-                                          }
+                                      {block.columns.map((col, cIdx) => {
+                                        if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                                          return null;
+                                        }
+                                        const spanInfo = row.cellSpans?.[col.id];
+                                        const span = spanInfo?.colSpan || 1;
+                                        const rSpan = spanInfo?.rowSpan || 1;
+                                        const isMergedCell = span > 1 || rSpan > 1;
 
-                                          const isPointNo =
-                                            col.id === "point_number" ||
-                                            col.id === "sl_no" ||
-                                            col.id === "sino";
-                                          if (isPointNo) {
-                                            return (
-                                              <td
-                                                key={col.id}
-                                                colSpan={span}
-                                                style={{
-                                                  width: col.width,
-                                                  minWidth:
-                                                    col.width || "60px",
-                                                }}
-                                                className="py-1.5 px-2 text-xs font-semibold text-muted-foreground sticky left-0 z-10 bg-card/90 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.06)] border-r border-border"
-                                              >
-                                                <div className="flex items-center justify-center gap-1">
-                                                  <span>
-                                                    {row.point_number ?? rIdx + 1}
-                                                  </span>
+                                        const isPointNo =
+                                          col.id === "point_number" ||
+                                          col.id === "sl_no" ||
+                                          col.id === "sino";
+                                        if (isPointNo) {
+                                          return (
+                                            <td
+                                              key={col.id}
+                                              colSpan={span > 1 ? span : undefined}
+                                              rowSpan={rSpan > 1 ? rSpan : undefined}
+                                              style={{
+                                                width: col.width,
+                                                minWidth:
+                                                  col.width || "60px",
+                                              }}
+                                              className="py-1.5 px-2 text-xs font-semibold text-muted-foreground sticky left-0 z-10 bg-card/90 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.06)] border-r border-border"
+                                            >
+                                              <div className="flex items-center justify-center gap-1">
+                                                <span>
+                                                  {row.point_number ?? rIdx + 1}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleToggleMergeRow(
+                                                      index,
+                                                      null,
+                                                      rIdx,
+                                                    );
+                                                  }}
+                                                  className="opacity-0 group-hover/row:opacity-100 p-0.5 text-muted-foreground hover:text-amber-600 rounded transition-opacity"
+                                                  title="Merge row across all columns for statement/notes"
+                                                >
+                                                  <Merge className="w-2.5 h-2.5" />
+                                                </button>
+                                                {block.rows.length > 1 && (
                                                   <button
                                                     type="button"
                                                     onClick={(e) => {
                                                       e.stopPropagation();
-                                                      handleToggleMergeRow(
-                                                        index,
-                                                        null,
-                                                        rIdx,
-                                                      );
+                                                      const newRows =
+                                                        block.rows.filter(
+                                                          (_, i) => i !== rIdx,
+                                                        );
+                                                      updateBlock(index, {
+                                                        ...block,
+                                                        rows: newRows,
+                                                      });
                                                     }}
-                                                    className="opacity-0 group-hover/row:opacity-100 p-0.5 text-muted-foreground hover:text-amber-600 rounded transition-opacity"
-                                                    title="Merge row across all columns for statement/notes"
+                                                    className="opacity-0 group-hover/row:opacity-100 p-0.5 text-muted-foreground hover:text-rose-500 rounded transition-opacity"
+                                                    title={`Delete row ${rIdx + 1}`}
                                                   >
-                                                    <Merge className="w-2.5 h-2.5" />
+                                                    <Trash2 className="w-2.5 h-2.5" />
                                                   </button>
-                                                  {block.rows.length > 1 && (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        const newRows =
-                                                          block.rows.filter(
-                                                            (_, i) => i !== rIdx,
-                                                          );
-                                                        updateBlock(index, {
-                                                          ...block,
-                                                          rows: newRows,
-                                                        });
-                                                      }}
-                                                      className="opacity-0 group-hover/row:opacity-100 p-0.5 text-muted-foreground hover:text-rose-500 rounded transition-opacity"
-                                                      title={`Delete row ${rIdx + 1}`}
+                                                )}
+                                              </div>
+                                            </td>
+                                          );
+                                        }
+
+                                        // MERGED CELL (span > 1 || rSpan > 1)
+                                        if (isMergedCell) {
+                                          const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                          const borderClass = (span > 1 && rSpan > 1)
+                                            ? "border-2 border-dashed border-purple-500/80 bg-purple-50/50 dark:bg-purple-950/20"
+                                            : span > 1
+                                            ? "border-2 border-dashed border-amber-400/80 bg-amber-50/50 dark:bg-amber-950/20"
+                                            : "border-2 border-dashed border-indigo-400/80 bg-indigo-50/50 dark:bg-indigo-950/20";
+
+                                          return (
+                                            <td
+                                              key={col.id}
+                                              colSpan={span > 1 ? span : undefined}
+                                              rowSpan={rSpan > 1 ? rSpan : undefined}
+                                              onContextMenu={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  cIdx,
+                                                  block.columns.length,
+                                                  span,
+                                                  rSpan,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className={`py-1 px-1.5 align-middle relative group/cell ${borderClass}`}
+                                            >
+                                              {/* Action buttons pinned to top right so they never squeeze inputs */}
+                                              <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-40 group-hover/cell:opacity-100 transition-opacity z-10 bg-white/80 dark:bg-slate-900/80 rounded px-0.5 shadow-xs">
+                                                <button
+                                                  type="button"
+                                                  onClick={(e) =>
+                                                    handleOpenCellMenu(
+                                                      e,
+                                                      index,
+                                                      null,
+                                                      rIdx,
+                                                      col.id,
+                                                      col.label || col.id,
+                                                      cIdx,
+                                                      block.columns.length,
+                                                      span,
+                                                      rSpan,
+                                                      block.rows.length,
+                                                    )
+                                                  }
+                                                  className="p-0.5 text-slate-500 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 rounded transition-colors"
+                                                  title="Cell merge menu (or right-click)"
+                                                >
+                                                  <MoreHorizontal className="w-3 h-3" />
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleResetCellSpans(index, null, rIdx, col.id)}
+                                                  className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors"
+                                                  title="Unmerge cells back to normal individual cells"
+                                                >
+                                                  <X className="w-3 h-3" />
+                                                </button>
+                                              </div>
+
+                                              <div className={`w-full flex ${rSpan > 1 ? "flex-col items-center justify-center gap-1.5 py-1" : "items-center gap-1.5 pr-12"}`}>
+                                                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-center">
+                                                  {span > 1 && (
+                                                    <Badge
+                                                      variant="outline"
+                                                      className="shrink-0 text-[10px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700"
+                                                      title={`Merged across ${span} columns`}
                                                     >
-                                                      <Trash2 className="w-2.5 h-2.5" />
-                                                    </button>
+                                                      {span} Cols
+                                                    </Badge>
+                                                  )}
+                                                  {rSpan > 1 && (
+                                                    <Badge
+                                                      variant="outline"
+                                                      className="shrink-0 text-[10px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 border-indigo-300 dark:border-indigo-700"
+                                                      title={`Merged down ${rSpan} rows`}
+                                                    >
+                                                      {rSpan} Rows
+                                                    </Badge>
                                                   )}
                                                 </div>
-                                              </td>
-                                            );
-                                          }
-
-                                          // MERGED CELL (colSpan > 1)
-                                          if (span > 1) {
-                                            const maxRemaining = block.columns.length - cIdx;
-                                            const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
-                                            return (
-                                              <td
-                                                key={col.id}
-                                                colSpan={span}
-                                                onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, span)}
-                                                className="py-1 px-1.5 bg-amber-50/50 dark:bg-amber-950/20 border-2 border-dashed border-amber-400/80"
-                                              >
-                                                <div className="flex items-center gap-1.5 w-full">
-                                                  <Badge
-                                                    variant="outline"
-                                                    className="shrink-0 text-[10px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700"
-                                                    title={`Merged across ${span} columns`}
-                                                  >
-                                                    {span} Cols
-                                                  </Badge>
-                                                  <Input
-                                                    type="text"
-                                                    value={cellVal ?? ""}
-                                                    onChange={(e) => {
-                                                      handleTableCellChange(
-                                                        index,
-                                                        rIdx,
-                                                        col.id,
-                                                        e.target.value,
-                                                      );
-                                                    }}
-                                                    className="h-7 w-full text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/80 focus:ring-1 focus:ring-amber-500 rounded px-2"
-                                                    placeholder={`Merged label (e.g. "AIR PLUG Symmetry")`}
-                                                  />
-                                                  <div className="flex items-center gap-0.5 shrink-0">
-                                                    {span < maxRemaining && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => handleSetCellColSpan(index, null, rIdx, col.id, span + 1)}
-                                                        className="h-6 px-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 rounded"
-                                                        title="Expand merge by 1 column (+1)"
-                                                      >
-                                                        +1
-                                                      </button>
-                                                    )}
-                                                    {span > 2 && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => handleSetCellColSpan(index, null, rIdx, col.id, span - 1)}
-                                                        className="h-6 px-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 rounded"
-                                                        title="Reduce merge by 1 column (-1)"
-                                                      >
-                                                        -1
-                                                      </button>
-                                                    )}
-                                                    <button
-                                                      type="button"
-                                                      onClick={() => handleSetCellColSpan(index, null, rIdx, col.id, 1)}
-                                                      className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors"
-                                                      title="Unmerge cells back to normal individual columns"
-                                                    >
-                                                      <X className="w-3.5 h-3.5" />
-                                                    </button>
-                                                  </div>
-                                                </div>
-                                              </td>
-                                            );
-                                          }
+                                                <Input
+                                                  type="text"
+                                                  value={cellVal ?? ""}
+                                                  onPaste={(e) =>
+                                                    handleCellPaste(
+                                                      e,
+                                                      index,
+                                                      null,
+                                                      rIdx,
+                                                      col.id,
+                                                    )
+                                                  }
+                                                  onChange={(e) => {
+                                                    handleTableCellChange(
+                                                      index,
+                                                      rIdx,
+                                                      col.id,
+                                                      e.target.value,
+                                                    );
+                                                  }}
+                                                  onBlur={(e) => {
+                                                    const raw = e.target.value.trim();
+                                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                    const parsed = parseFloat(raw);
+                                                    if (!isNaN(parsed) && (col.type === "reading" || col.type === "trial" || col.type === "nominal")) {
+                                                      const colDec =
+                                                        col.decimal_places ??
+                                                        col.decimalPrecision ??
+                                                        block.decimal_places ??
+                                                        decimalPlaces ??
+                                                        3;
+                                                      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                      handleTableCellChange(index, rIdx, col.id, formatted);
+                                                    }
+                                                  }}
+                                                  className={`h-7 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:ring-1 focus:ring-primary rounded px-2 ${
+                                                    rSpan > 1 ? "w-full text-center" : "flex-1 min-w-[50px] text-center"
+                                                  }`}
+                                                  placeholder={col.type === "reading" || col.type === "trial" ? "0.00" : (col.label || "Value")}
+                                                />
+                                              </div>
+                                            </td>
+                                          );
+                                        }
                                         if (col.type === "nominal") {
                                           const cellVal =
                                             row[col.id] !== undefined
@@ -2733,25 +3408,27 @@ export function CanvasTemplateEditor({
                                                 width: col.width,
                                                 minWidth: col.width || "95px",
                                               }}
-                                               onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1)}
+                                               onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1, 1, block.rows.length)}
                                                className="py-1 px-1 relative group/cell"
                                             >
-                                               {cIdx < block.columns.length - 1 && (
-                                                 <button
+                                               {(cIdx < block.columns.length - 1 || rIdx < block.rows.length - 1) && (
+                                                  <button
                                                    type="button"
                                                    onClick={(e) =>
-                                                     handleOpenCellMenu(
-                                                       e,
-                                                       index,
-                                                       null,
-                                                       rIdx,
-                                                       col.id,
-                                                       col.label || col.id,
-                                                       cIdx,
-                                                       block.columns.length,
-                                                       1,
-                                                     )
-                                                   }
+                                                      handleOpenCellMenu(
+                                                        e,
+                                                        index,
+                                                        null,
+                                                        rIdx,
+                                                        col.id,
+                                                        col.label || col.id,
+                                                        cIdx,
+                                                        block.columns.length,
+                                                        1,
+                                                        1,
+                                                        block.rows.length,
+                                                      )
+                                                    }
                                                    className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                    title="Merge options (or right-click)"
                                                  >
@@ -2761,6 +3438,15 @@ export function CanvasTemplateEditor({
                                             <Input
                                               type="text"
                                               value={cellVal ?? ""}
+                                              onPaste={(e) =>
+                                                handleCellPaste(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                )
+                                              }
                                               onChange={(e) => {
                                                 const v = e.target.value;
                                                 if (
@@ -2827,32 +3513,56 @@ export function CanvasTemplateEditor({
                                               width: col.width,
                                               minWidth: col.width || "100px",
                                             }}
-                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1)}
+                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1, 1, block.rows.length)}
                                              className="py-1 px-1 relative group/cell"
                                           >
                                             <Input
                                               value={cellVal}
+                                              onPaste={(e) =>
+                                                handleCellPaste(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                )
+                                              }
                                               onChange={(e) => {
-                                                const newRows = [...block.rows];
-                                                newRows[rIdx] = {
-                                                  ...newRows[rIdx],
-                                                  [col.id]: e.target.value,
-                                                  ...(col.id === "description"
-                                                    ? {
-                                                        description:
-                                                          e.target.value,
-                                                      }
-                                                    : {}),
-                                                };
-                                                updateBlock(index, {
-                                                  ...block,
-                                                  rows: newRows,
-                                                });
+                                                const isSpecCol =
+                                                  col.id === "required_dimension" ||
+                                                  col.id === "specification" ||
+                                                  col.id === "description" ||
+                                                  col.id === "nominal" ||
+                                                  /spec|dimension/i.test(col.id || col.label || "");
+                                                if (isSpecCol) {
+                                                  handleTableCellChange(
+                                                    index,
+                                                    rIdx,
+                                                    col.id,
+                                                    e.target.value,
+                                                  );
+                                                } else {
+                                                  const newRows = [...block.rows];
+                                                  newRows[rIdx] = {
+                                                    ...newRows[rIdx],
+                                                    [col.id]: e.target.value,
+                                                    ...(col.id === "description"
+                                                      ? {
+                                                          description:
+                                                            e.target.value,
+                                                        }
+                                                      : {}),
+                                                  };
+                                                  updateBlock(index, {
+                                                    ...block,
+                                                    rows: newRows,
+                                                  });
+                                                }
                                               }}
                                               className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-sans text-slate-800 dark:text-slate-200 font-medium transition-colors"
                                               placeholder={col.label || "Value"}
                                             />
-                                                {cIdx < block.columns.length - 1 && (
+                                                {(cIdx < block.columns.length - 1 || rIdx < block.rows.length - 1) && (
                                                   <button
                                                     type="button"
                                                     onClick={(e) =>
@@ -2866,6 +3576,8 @@ export function CanvasTemplateEditor({
                                                         cIdx,
                                                         block.columns.length,
                                                         1,
+                                                        1,
+                                                        block.rows.length,
                                                       )
                                                     }
                                                     className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
@@ -2894,11 +3606,20 @@ export function CanvasTemplateEditor({
                                               width: col.width,
                                               minWidth: col.width || "90px",
                                             }}
-                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1)}
+                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1, 1, block.rows.length)}
                                              className="py-1 px-1 relative group/cell"
                                           >
                                             <Input
                                               value={cellVal}
+                                              onPaste={(e) =>
+                                                handleCellPaste(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                )
+                                              }
                                               onChange={(e) => {
                                                 const v = e.target.value;
                                                 if (
@@ -2948,22 +3669,24 @@ export function CanvasTemplateEditor({
                                               className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                               placeholder="0.00"
                                             />
-                                               {cIdx < block.columns.length - 1 && (
-                                                 <button
+                                               {(cIdx < block.columns.length - 1 || rIdx < block.rows.length - 1) && (
+                                                  <button
                                                    type="button"
                                                    onClick={(e) =>
-                                                     handleOpenCellMenu(
-                                                       e,
-                                                       index,
-                                                       null,
-                                                       rIdx,
-                                                       col.id,
-                                                       col.label || col.id,
-                                                       cIdx,
-                                                       block.columns.length,
-                                                       1,
-                                                     )
-                                                   }
+                                                      handleOpenCellMenu(
+                                                        e,
+                                                        index,
+                                                        null,
+                                                        rIdx,
+                                                        col.id,
+                                                        col.label || col.id,
+                                                        cIdx,
+                                                        block.columns.length,
+                                                        1,
+                                                        1,
+                                                        block.rows.length,
+                                                      )
+                                                    }
                                                    className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                    title="Merge options (or right-click)"
                                                  >
@@ -2987,11 +3710,20 @@ export function CanvasTemplateEditor({
                                               width: col.width,
                                               minWidth: col.width || "90px",
                                             }}
-                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1)}
+                                             onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1, 1, block.rows.length)}
                                              className="py-1 px-1 relative group/cell"
                                           >
                                             <Input
                                               value={cellVal}
+                                              onPaste={(e) =>
+                                                handleCellPaste(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                )
+                                              }
                                               onChange={(e) => {
                                                 const v = e.target.value;
                                                 if (
@@ -3041,22 +3773,24 @@ export function CanvasTemplateEditor({
                                               className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                               placeholder="±Tol"
                                             />
-                                               {cIdx < block.columns.length - 1 && (
-                                                 <button
+                                               {(cIdx < block.columns.length - 1 || rIdx < block.rows.length - 1) && (
+                                                  <button
                                                    type="button"
                                                    onClick={(e) =>
-                                                     handleOpenCellMenu(
-                                                       e,
-                                                       index,
-                                                       null,
-                                                       rIdx,
-                                                       col.id,
-                                                       col.label || col.id,
-                                                       cIdx,
-                                                       block.columns.length,
-                                                       1,
-                                                     )
-                                                   }
+                                                      handleOpenCellMenu(
+                                                        e,
+                                                        index,
+                                                        null,
+                                                        rIdx,
+                                                        col.id,
+                                                        col.label || col.id,
+                                                        cIdx,
+                                                        block.columns.length,
+                                                        1,
+                                                        1,
+                                                        block.rows.length,
+                                                      )
+                                                    }
                                                    className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                    title="Merge options (or right-click)"
                                                  >
@@ -3125,11 +3859,11 @@ export function CanvasTemplateEditor({
                                           </span>
                                         </td>
                                       );
-                                        });
-                                      })()}
-                                  </tr>
-                                );
-                              })}
+                                    })}
+                                    </tr>
+                                  );
+                                });
+                              })()}
                             </tbody>
                             </table>
                           </div>
@@ -3144,16 +3878,55 @@ export function CanvasTemplateEditor({
                                 variant="outline"
                                 size="sm"
                                 onClick={() => {
+                                  const paramRows = block.rows.filter(
+                                    (r) => !r.is_merged && !r.isMerged,
+                                  );
+                                  const lastParamRow =
+                                    paramRows[paramRows.length - 1];
+                                  const isSpecTable = block.columns.some(
+                                    (c) =>
+                                      c &&
+                                      (c.id === "specification" ||
+                                        c.id === "required_dimension" ||
+                                        /spec/i.test(c.label || c.id)),
+                                  );
+                                  const lastNominal =
+                                    typeof lastParamRow?.nominal === "number"
+                                      ? lastParamRow.nominal
+                                      : parseFloat(
+                                          String(lastParamRow?.nominal || 0),
+                                        );
+                                  const newNominal = isSpecTable
+                                    ? 0
+                                    : isNaN(lastNominal) || lastNominal === 0
+                                      ? 0
+                                      : lastNominal + 10;
+
                                   const newRow: CanvasRowData = {
                                     point_number: block.rows.length + 1,
-                                    nominal:
-                                      (block.rows[block.rows.length - 1]?.nominal ||
-                                        0) + 10,
+                                    nominal: newNominal,
                                     unit: block.unit || "mm",
+                                    tolerance: block.tolerance ?? 0.02,
                                   };
+                                  const tol =
+                                    parseFloat(
+                                      String(block.tolerance ?? 0.02),
+                                    ) || 0.02;
+                                  const dec =
+                                    block.decimal_places ??
+                                    decimalPlaces ??
+                                    3;
+                                  const evaluatedRow =
+                                    evaluateCanvasRowFormulas(
+                                      newRow,
+                                      block.columns,
+                                      tol,
+                                      dec,
+                                      (block as TableGridBlock).nominal,
+                                    );
                                   updateBlock(index, {
                                     ...block,
-                                    rows: [...block.rows, newRow],
+                                    rows: [...block.rows, evaluatedRow],
                                   });
                                 }}
                                 className="h-8 px-4 text-xs font-bold text-primary hover:text-primary hover:bg-primary/10 border-dashed border-primary/40 rounded-lg gap-2 shadow-2xs transition-all flex items-center"
@@ -3212,6 +3985,20 @@ export function CanvasTemplateEditor({
                         <SplitSquareVertical className="w-3.5 h-3.5" />
                         Side-by-Side Split ({block.children.length} Columns)
                       </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleUnmergeSplitRow(block.id);
+                        }}
+                        className="h-6 px-2 text-2xs font-semibold gap-1 text-indigo-700 hover:text-indigo-900 hover:bg-indigo-100 dark:text-indigo-300 dark:hover:bg-indigo-950/60 rounded cursor-pointer"
+                        title="Separate side-by-side section back into standalone individual tables"
+                      >
+                        <ArrowRightLeft className="w-3 h-3" />
+                        <span>Unmerge to Separate Tables</span>
+                      </Button>
                     </div>
 
                     <div
@@ -3255,6 +4042,72 @@ export function CanvasTemplateEditor({
                                       </span>
                                     </div>
                                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                                      {block.children.length > 1 && cIdx > 0 && (
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleMirrorSibling(index, cIdx);
+                                          }}
+                                          className="h-6 px-2 text-2xs font-bold gap-1 text-indigo-700 dark:text-indigo-300 bg-indigo-50/70 hover:bg-indigo-100 border-indigo-200 dark:bg-indigo-950/40 dark:border-indigo-800 rounded"
+                                          title="Copy specification/nominal values from the left section table"
+                                        >
+                                          <Copy className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
+                                          <span>Copy Specs from Left</span>
+                                        </Button>
+                                      )}
+                                      <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={(e) => e.stopPropagation()}
+                                            className="h-6 px-1.5 text-2xs font-semibold gap-1 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-600 hover:bg-slate-200/80 dark:hover:bg-slate-700 rounded"
+                                            title="Copy or paste column values for this section"
+                                          >
+                                            <MoreHorizontal className="w-3 h-3 text-primary" />
+                                            <span>Table Options</span>
+                                            <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                                          </Button>
+                                        </DropdownMenuTrigger>
+                                         <DropdownMenuContent align="end" className="w-56 max-h-80 overflow-y-auto">
+                                           <DropdownMenuItem
+                                             onClick={() => handleOpenPasteModal(index, cIdx, child, "nominal")}
+                                             className="text-xs cursor-pointer gap-2 font-medium text-primary focus:text-primary"
+                                           >
+                                             <ClipboardPaste className="w-3.5 h-3.5 text-primary" />
+                                             <span>Paste Values into Column...</span>
+                                           </DropdownMenuItem>
+                                           <DropdownMenuSeparator />
+                                           <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                             Copy Column to Clipboard
+                                           </DropdownMenuLabel>
+                                           {(child.columns || [])
+                                             .filter((col) => col && col.id !== "point_number" && col.id !== "sl_no")
+                                             .map((col) => (
+                                               <DropdownMenuItem
+                                                 key={col.id}
+                                                 onClick={() => handleCopyColumn(child, col.id, col.label || col.id)}
+                                                 className="text-xs cursor-pointer gap-2"
+                                               >
+                                                 <ClipboardCopy className="w-3.5 h-3.5 text-slate-500" />
+                                                 <span className="truncate">Copy "{col.label || col.id}"</span>
+                                               </DropdownMenuItem>
+                                             ))}
+                                           {(child.columns || []).some((col) => col.id === "point_number" || col.id === "sl_no") && (
+                                             <DropdownMenuItem
+                                               onClick={() => handleCopyColumn(child, "point_number", "Sl No / Points")}
+                                               className="text-xs cursor-pointer gap-2 text-muted-foreground"
+                                             >
+                                               <ClipboardCopy className="w-3.5 h-3.5" />
+                                               <span>Copy Points / Sl.No.</span>
+                                             </DropdownMenuItem>
+                                           )}
+                                         </DropdownMenuContent>
+                                      </DropdownMenu>
                                       {onOpenTableConfig && (
                                         <Button
                                           type="button"
@@ -3273,12 +4126,75 @@ export function CanvasTemplateEditor({
                                           <span>Configure Table</span>
                                         </Button>
                                       )}
-                                      <Badge
+                                                                            <Badge
                                         variant="outline"
                                         className="text-2xs py-0 px-1 font-semibold bg-slate-50 dark:bg-slate-900 border-slate-300 dark:border-slate-700"
                                       >
                                         Unit: {child.unit || defaultUnit || "mm"}
                                       </Badge>
+                                      {/* Section Master Nominal Popover Quick-Editor */}
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border transition-all cursor-pointer bg-amber-50/80 hover:bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:hover:bg-amber-900/50 dark:text-amber-300 dark:border-amber-800 shadow-2xs"
+                                            title="Click to set or change master Nominal for this section"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span className="font-medium text-amber-700 dark:text-amber-400">Nom:</span>
+                                            <span className="font-bold">
+                                              {child.nominal !== undefined && child.nominal !== ""
+                                                ? `${child.nominal} ${child.unit || defaultUnit || "mm"}`
+                                                : "Not Set"}
+                                            </span>
+                                            <Pencil className="w-2.5 h-2.5 opacity-60 hover:opacity-100 ml-0.5" />
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent align="center" className="w-64 p-3 shadow-lg z-50">
+                                          <div className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                              <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                                Section Master Nominal
+                                              </h4>
+                                              <span className="text-[10px] text-muted-foreground uppercase font-semibold">
+                                                {child.unit || defaultUnit || "mm"}
+                                              </span>
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground leading-tight">
+                                              Master nominal size applied to rows in this section without a dedicated nominal column.
+                                            </p>
+                                            <div className="flex items-center gap-1.5 pt-1">
+                                              <Input
+                                                type="text"
+                                                placeholder="e.g. 10.0000"
+                                                defaultValue={String(child.nominal ?? "")}
+                                                id={`nominal-input-${child.id}`}
+                                                className="h-8 text-xs font-mono"
+                                                onKeyDown={(e) => {
+                                                  if (e.key === "Enter") {
+                                                    const val = (e.currentTarget as HTMLInputElement).value;
+                                                    handleUpdateTableNominal(index, cIdx, val);
+                                                    document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                  }
+                                                }}
+                                              />
+                                              <Button
+                                                size="sm"
+                                                className="h-8 px-2.5 text-xs font-bold"
+                                                onClick={(e) => {
+                                                  const input = document.getElementById(`nominal-input-${child.id}`) as HTMLInputElement;
+                                                  if (input) {
+                                                    handleUpdateTableNominal(index, cIdx, input.value);
+                                                  }
+                                                  document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                }}
+                                              >
+                                                Save
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
                                       <Badge
                                         variant="outline"
                                         className="text-2xs py-0 px-1 font-semibold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
@@ -3673,6 +4589,32 @@ export function CanvasTemplateEditor({
                                                           <ChevronRight className="w-2.5 h-2.5" />
                                                         </button>
                                                       )}
+                                                     {!isPointNo && (
+                                                       <button
+                                                         type="button"
+                                                         onClick={(e) => {
+                                                           e.stopPropagation();
+                                                           handleCopyColumn(child, col.id, col.label || col.id);
+                                                         }}
+                                                         className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                                                         title={`Copy all values from "${col.label || col.id}"`}
+                                                       >
+                                                         <ClipboardCopy className="w-2.5 h-2.5" />
+                                                       </button>
+                                                     )}
+                                                     {!isPointNo && col.type !== "formula" && col.type !== "status" && (
+                                                       <button
+                                                         type="button"
+                                                         onClick={(e) => {
+                                                           e.stopPropagation();
+                                                           handleOpenPasteModal(index, cIdx, child, col.id);
+                                                         }}
+                                                         className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
+                                                         title={`Paste values into "${col.label || col.id}"`}
+                                                       >
+                                                         <ClipboardPaste className="w-2.5 h-2.5" />
+                                                       </button>
+                                                     )}
                                                   </div>
                                                 </th>
                                               );
@@ -3680,7 +4622,9 @@ export function CanvasTemplateEditor({
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
-                                          {child.rows.map((row, rIdx) => {
+                                          {(() => {
+                                            const coveredCells = getCoveredCells(child.rows, child.columns);
+                                            return child.rows.map((row, rIdx) => {
                                             if (row.is_merged || row.isMerged) {
                                               const isPointNoCol =
                                                 child.columns.find(
@@ -3827,17 +4771,15 @@ export function CanvasTemplateEditor({
                                                 key={rIdx}
                                                 className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-slate-50/50 group/row"
                                               >
-                                                {(() => {
-                                                  let skipCols = 0;
-                                                  return child.columns.map((col, colIdx) => {
-                                                    if (skipCols > 0) {
-                                                      skipCols--;
-                                                      return null;
-                                                    }
-                                                    const span = row.cellSpans?.[col.id]?.colSpan || 1;
-                                                    if (span > 1) {
-                                                      skipCols = span - 1;
-                                                    }
+                                                {child.columns.map((col, colIdx) => {
+                                                  if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                                                    return null;
+                                                  }
+                                                  const spanInfo = row.cellSpans?.[col.id];
+                                                  const span = spanInfo?.colSpan || 1;
+                                                  const rSpan = spanInfo?.rowSpan || 1;
+                                                  const isMergedCell = span > 1 || rSpan > 1;
+
                                                   const isPointNo =
                                                     col.id === "point_number" ||
                                                     col.id === "sl_no" ||
@@ -3846,7 +4788,8 @@ export function CanvasTemplateEditor({
                                                     return (
                                                       <td
                                                         key={col.id}
-                                                        colSpan={span}
+                                                        colSpan={span > 1 ? span : undefined}
+                                                        rowSpan={rSpan > 1 ? rSpan : undefined}
                                                         className="py-1 px-1.5 font-bold text-slate-700 dark:text-slate-300 text-xs text-center"
                                                       >
                                                         <div className="flex items-center justify-center gap-1">
@@ -3915,75 +4858,127 @@ export function CanvasTemplateEditor({
                                                     );
                                                   }
 
-                                                    // MERGED CELL (colSpan > 1)
-                                                    if (span > 1) {
-                                                      const maxRemaining = child.columns.length - colIdx;
-                                                      const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
-                                                      return (
-                                                        <td
-                                                          key={col.id}
-                                                           colSpan={span}
-                                                           onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, span)}
-                                                          className="py-1 px-1.5 bg-amber-50/50 dark:bg-amber-950/20 border-2 border-dashed border-amber-400/80"
-                                                        >
-                                                          <div className="flex items-center gap-1.5 w-full">
-                                                            <Badge
-                                                              variant="outline"
-                                                              className="shrink-0 text-[10px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700"
-                                                              title={`Merged across ${span} columns`}
+                                                  // MERGED CELL (span > 1 || rSpan > 1)
+                                                  if (isMergedCell) {
+                                                    const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                                    const borderClass = (span > 1 && rSpan > 1)
+                                                      ? "border-2 border-dashed border-purple-500/80 bg-purple-50/50 dark:bg-purple-950/20"
+                                                      : span > 1
+                                                      ? "border-2 border-dashed border-amber-400/80 bg-amber-50/50 dark:bg-amber-950/20"
+                                                      : "border-2 border-dashed border-indigo-400/80 bg-indigo-50/50 dark:bg-indigo-950/20";
+                                                    return (
+                                                      <td
+                                                        key={col.id}
+                                                        colSpan={span > 1 ? span : undefined}
+                                                        rowSpan={rSpan > 1 ? rSpan : undefined}
+                                                        onContextMenu={(e) =>
+                                                          handleOpenCellMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            colIdx,
+                                                            child.columns.length,
+                                                            span,
+                                                            rSpan,
+                                                            child.rows.length,
+                                                          )
+                                                        }
+                                                        className={`py-1 px-1.5 align-middle relative group/cell ${borderClass}`}
+                                                      >
+                                                        {/* Action buttons pinned to top right so they never squeeze inputs */}
+                                                        <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-40 group-hover/cell:opacity-100 transition-opacity z-10 bg-white/80 dark:bg-slate-900/80 rounded px-0.5 shadow-xs">
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                colIdx,
+                                                                child.columns.length,
+                                                                span,
+                                                                rSpan,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="p-0.5 text-slate-500 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 rounded transition-colors"
+                                                            title="Cell merge menu (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-3 h-3" />
+                                                          </button>
+                                                          <button
+                                                            type="button"
+                                                            onClick={() => handleResetCellSpans(index, cIdx, rIdx, col.id)}
+                                                            className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors"
+                                                            title="Unmerge cells back to normal individual cells"
                                                             >
-                                                              {span} Cols
-                                                            </Badge>
-                                                            <Input
-                                                              type="text"
-                                                              value={cellVal ?? ""}
-                                                              onChange={(e) => {
-                                                                handleChildTableCellChange(
-                                                                  index,
-                                                                  cIdx,
-                                                                  rIdx,
-                                                                  col.id,
-                                                                  e.target.value,
-                                                                );
-                                                              }}
-                                                              className="h-7 w-full text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700/80 focus:ring-1 focus:ring-amber-500 rounded px-2"
-                                                              placeholder={`Merged label (e.g. "AIR PLUG Symmetry")`}
-                                                            />
-                                                            <div className="flex items-center gap-0.5 shrink-0">
-                                                              {span < maxRemaining && (
-                                                                <button
-                                                                  type="button"
-                                                                  onClick={() => handleSetCellColSpan(index, cIdx, rIdx, col.id, span + 1)}
-                                                                  className="h-6 px-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 rounded"
-                                                                  title="Expand merge by 1 column (+1)"
-                                                                >
-                                                                  +1
-                                                                </button>
-                                                              )}
-                                                              {span > 2 && (
-                                                                <button
-                                                                  type="button"
-                                                                  onClick={() => handleSetCellColSpan(index, cIdx, rIdx, col.id, span - 1)}
-                                                                  className="h-6 px-1.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 rounded"
-                                                                  title="Reduce merge by 1 column (-1)"
-                                                                >
-                                                                  -1
-                                                                </button>
-                                                              )}
-                                                              <button
-                                                                type="button"
-                                                                onClick={() => handleSetCellColSpan(index, cIdx, rIdx, col.id, 1)}
-                                                                className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors"
-                                                                title="Unmerge cells back to normal individual columns"
-                                                              >
-                                                                <X className="w-3.5 h-3.5" />
-                                                              </button>
-                                                            </div>
-                                                          </div>
-                                                        </td>
-                                                      );
-                                                    }
+                                                            <X className="w-3 h-3" />
+                                                          </button>
+                                                        </div>
 
+                                                        <div className={`w-full flex ${rSpan > 1 ? "flex-col items-center justify-center gap-1.5 py-1" : "items-center gap-1.5 pr-12"}`}>
+                                                          <div className="flex items-center gap-1 shrink-0 flex-wrap justify-center">
+                                                            {span > 1 && (
+                                                              <Badge
+                                                                variant="outline"
+                                                                className="shrink-0 text-[10px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 border-amber-300 dark:border-amber-700"
+                                                                title={`Merged across ${span} columns`}
+                                                              >
+                                                                {span} Cols
+                                                              </Badge>
+                                                            )}
+                                                            {rSpan > 1 && (
+                                                              <Badge
+                                                                variant="outline"
+                                                                className="shrink-0 text-[10px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 border-indigo-300 dark:border-indigo-700"
+                                                                title={`Merged down ${rSpan} rows`}
+                                                              >
+                                                                {rSpan} Rows
+                                                              </Badge>
+                                                            )}
+                                                          </div>
+                                                          <Input
+                                                            type="text"
+                                                            value={cellVal ?? ""}
+                                                            onChange={(e) => {
+                                                              handleChildTableCellChange(
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                e.target.value,
+                                                              );
+                                                            }}
+                                                            onBlur={(e) => {
+                                                              const raw = e.target.value.trim();
+                                                              if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                              const parsed = parseFloat(raw);
+                                                              if (!isNaN(parsed) && (col.type === "reading" || col.type === "trial" || col.type === "nominal")) {
+                                                                const colDec =
+                                                                  col.decimal_places ??
+                                                                  col.decimalPrecision ??
+                                                                  child.decimal_places ??
+                                                                  decimalPlaces ??
+                                                                  3;
+                                                                const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                                handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
+                                                              }
+                                                            }}
+                                                            className={`h-7 text-xs font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 focus:ring-1 focus:ring-primary rounded px-2 ${
+                                                              rSpan > 1 ? "w-full text-center" : "flex-1 min-w-[50px] text-center"
+                                                            }`}
+                                                            placeholder={col.type === "reading" || col.type === "trial" ? "0.00" : (col.label || "Value")}
+                                                          />
+                                                        </div>
+                                                      </td>
+                                                    );
+                                                  }
                                                 if (col.type === "nominal") {
                                                   const cellVal =
                                                     row[col.id] !== undefined
@@ -3993,10 +4988,10 @@ export function CanvasTemplateEditor({
                                                     <td
                                                       key={col.id}
                                                       style={{ width: col.width, minWidth: col.width || "70px" }}
-                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1)}
+                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1, 1, child.rows.length)}
                                                        className="py-1 px-1 relative group/cell"
                                                       >
-                                                         {colIdx < child.columns.length - 1 && (
+                                                         {(colIdx < child.columns.length - 1 || rIdx < child.rows.length - 1) && (
                                                            <button
                                                              type="button"
                                                              onClick={(e) =>
@@ -4010,6 +5005,8 @@ export function CanvasTemplateEditor({
                                                                  colIdx,
                                                                  child.columns.length,
                                                                  1,
+                                                                 1,
+                                                                 child.rows.length,
                                                                )
                                                              }
                                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
@@ -4020,6 +5017,15 @@ export function CanvasTemplateEditor({
                                                          )}
                                                       <Input
                                                         value={cellVal}
+                                                        onPaste={(e) =>
+                                                          handleCellPaste(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                          )
+                                                        }
                                                         onChange={(e) => {
                                                           const v = e.target.value;
                                                           if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
@@ -4058,33 +5064,44 @@ export function CanvasTemplateEditor({
                                                     <td
                                                       key={col.id}
                                                       style={{ width: col.width, minWidth: col.width || "90px" }}
-                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1)}
+                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1, 1, child.rows.length)}
                                                        className="py-1 px-1 relative group/cell"
                                                     >
                                                       <Input
                                                         value={cellVal}
+                                                        onPaste={(e) =>
+                                                          handleCellPaste(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                          )
+                                                        }
                                                         onChange={(e) => {
                                                           handleChildTableCellChange(index, cIdx, rIdx, col.id, e.target.value);
                                                         }}
                                                         className="h-7 w-full text-xs text-left bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-sans text-slate-800 dark:text-slate-200 font-medium transition-colors"
                                                         placeholder="Text..."
                                                       />
-                                                        {colIdx < child.columns.length - 1 && (
-                                                          <button
+                                                        {(colIdx < child.columns.length - 1 || rIdx < child.rows.length - 1) && (
+                                                           <button
                                                             type="button"
                                                             onClick={(e) =>
-                                                              handleOpenCellMenu(
-                                                                e,
-                                                                index,
-                                                                cIdx,
-                                                                rIdx,
-                                                                col.id,
-                                                                col.label || col.id,
-                                                                colIdx,
-                                                                child.columns.length,
-                                                                1,
-                                                              )
-                                                            }
+                                                               handleOpenCellMenu(
+                                                                 e,
+                                                                 index,
+                                                                 cIdx,
+                                                                 rIdx,
+                                                                 col.id,
+                                                                 col.label || col.id,
+                                                                 colIdx,
+                                                                 child.columns.length,
+                                                                 1,
+                                                                 1,
+                                                                 child.rows.length,
+                                                               )
+                                                             }
                                                             className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                             title="Merge options (or right-click)"
                                                           >
@@ -4104,11 +5121,20 @@ export function CanvasTemplateEditor({
                                                     <td
                                                       key={col.id}
                                                       style={{ width: col.width, minWidth: col.width || "70px" }}
-                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1)}
+                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1, 1, child.rows.length)}
                                                        className="py-1 px-1 relative group/cell"
                                                     >
                                                       <Input
                                                         value={cellVal}
+                                                        onPaste={(e) =>
+                                                          handleCellPaste(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                          )
+                                                        }
                                                         onChange={(e) => {
                                                           const v = e.target.value;
                                                           if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
@@ -4134,22 +5160,24 @@ export function CanvasTemplateEditor({
                                                         className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                                         placeholder="0.00"
                                                       />
-                                                        {colIdx < child.columns.length - 1 && (
-                                                          <button
+                                                        {(colIdx < child.columns.length - 1 || rIdx < child.rows.length - 1) && (
+                                                           <button
                                                             type="button"
                                                             onClick={(e) =>
-                                                              handleOpenCellMenu(
-                                                                e,
-                                                                index,
-                                                                cIdx,
-                                                                rIdx,
-                                                                col.id,
-                                                                col.label || col.id,
-                                                                colIdx,
-                                                                child.columns.length,
-                                                                1,
-                                                              )
-                                                            }
+                                                               handleOpenCellMenu(
+                                                                 e,
+                                                                 index,
+                                                                 cIdx,
+                                                                 rIdx,
+                                                                 col.id,
+                                                                 col.label || col.id,
+                                                                 colIdx,
+                                                                 child.columns.length,
+                                                                 1,
+                                                                 1,
+                                                                 child.rows.length,
+                                                               )
+                                                             }
                                                             className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                             title="Merge options (or right-click)"
                                                           >
@@ -4169,11 +5197,20 @@ export function CanvasTemplateEditor({
                                                     <td
                                                       key={col.id}
                                                       style={{ width: col.width, minWidth: col.width || "70px" }}
-                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1)}
+                                                       onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1, 1, child.rows.length)}
                                                        className="py-1 px-1 relative group/cell"
                                                     >
                                                       <Input
                                                         value={cellVal}
+                                                        onPaste={(e) =>
+                                                          handleCellPaste(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                          )
+                                                        }
                                                         onChange={(e) => {
                                                           const v = e.target.value;
                                                           if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
@@ -4199,22 +5236,24 @@ export function CanvasTemplateEditor({
                                                         className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold transition-colors"
                                                         placeholder="±Tol"
                                                       />
-                                                        {colIdx < child.columns.length - 1 && (
-                                                          <button
+                                                        {(colIdx < child.columns.length - 1 || rIdx < child.rows.length - 1) && (
+                                                           <button
                                                             type="button"
                                                             onClick={(e) =>
-                                                              handleOpenCellMenu(
-                                                                e,
-                                                                index,
-                                                                cIdx,
-                                                                rIdx,
-                                                                col.id,
-                                                                col.label || col.id,
-                                                                colIdx,
-                                                                child.columns.length,
-                                                                1,
-                                                              )
-                                                            }
+                                                               handleOpenCellMenu(
+                                                                 e,
+                                                                 index,
+                                                                 cIdx,
+                                                                 rIdx,
+                                                                 col.id,
+                                                                 col.label || col.id,
+                                                                 colIdx,
+                                                                 child.columns.length,
+                                                                 1,
+                                                                 1,
+                                                                 child.rows.length,
+                                                               )
+                                                             }
                                                             className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/60 dark:hover:text-amber-300 rounded-[3px] transition-all z-10"
                                                             title="Merge options (or right-click)"
                                                           >
@@ -4270,12 +5309,12 @@ export function CanvasTemplateEditor({
                                                     {evaluated}
                                                   </td>
                                                 );
-                                                });
-                                              })()}
+                                              })}
                                             </tr>
                                           );
-                                        })}
-                                      </tbody>
+                                        });
+                                      })()}
+                                    </tbody>
                                     </table>
                                   </div>
                                 )}
@@ -4290,15 +5329,39 @@ export function CanvasTemplateEditor({
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         const newPointNum = child.rows.length + 1;
+                                        const paramRows = child.rows.filter(
+                                          (r) => !r.is_merged && !r.isMerged,
+                                        );
+                                        const lastParamRow =
+                                          paramRows[paramRows.length - 1];
+                                        const isSpecTable = child.columns.some(
+                                          (c) =>
+                                            c &&
+                                            (c.id === "specification" ||
+                                              c.id === "required_dimension" ||
+                                              /spec/i.test(c.label || c.id)),
+                                        );
+                                        const lastNominal =
+                                          typeof lastParamRow?.nominal === "number"
+                                            ? lastParamRow.nominal
+                                            : parseFloat(
+                                                String(lastParamRow?.nominal || 0),
+                                              );
+                                        const newNominal = isSpecTable
+                                          ? 0
+                                          : isNaN(lastNominal) || lastNominal === 0
+                                            ? 0
+                                            : lastNominal + 10;
+
                                         const rawRow: CanvasRowData = {
                                           point_number: newPointNum,
-                                          nominal:
-                                            (child.rows[child.rows.length - 1]?.nominal || 0) + 10,
+                                          nominal: newNominal,
                                           unit: child.unit || "mm",
+                                          tolerance: child.tolerance ?? 0.02,
                                         };
                                         const tol = parseFloat(String(child.tolerance ?? 0.02)) || 0.02;
                                         const dec = child.decimal_places ?? decimalPlaces ?? 3;
-                                        const evaluatedNewRow = evaluateCanvasRowFormulas(rawRow, child.columns, tol, dec);
+                                        const evaluatedNewRow = evaluateCanvasRowFormulas(rawRow, child.columns, tol, dec, child.nominal);
                                         const newChildren = block.children.map((c, i) =>
                                           i === cIdx && c.type === "table_grid"
                                             ? { ...c, rows: [...c.rows, evaluatedNewRow] }
@@ -4723,6 +5786,30 @@ export function CanvasTemplateEditor({
         onAddColumn={handleAddTableColumn}
       />
 
+      {/* MODAL: Merge Tables Side-by-Side (50/50 Split) */}
+      <MergeTablesModal
+        open={showMergeModal}
+        onOpenChange={setShowMergeModal}
+        sourceTable={mergeSourceTable}
+        availableTables={
+          blocks.filter(
+            (b) => b.type === "table_grid" && b.id !== mergeSourceTable?.id
+          ) as TableGridBlock[]
+        }
+        onMerge={handleExecuteMerge}
+      />
+
+      {/* MODAL: Paste Column Values */}
+      <PasteValuesModal
+        open={showPasteValuesModal}
+        onOpenChange={setShowPasteValuesModal}
+        tableTitle={pasteTargetTable?.table?.title}
+        columns={pasteTargetTable?.table?.columns || []}
+        rowsCount={pasteTargetTable?.table?.rows?.length || 0}
+        initialColId={pasteTargetTable?.colId}
+        onApplyPaste={handleApplyModalPaste}
+      />
+
       {/* Floating Cell Context Menu for Merging / Unmerging */}
       {cellContextMenu && (
         <div
@@ -4746,11 +5833,44 @@ export function CanvasTemplateEditor({
             </span>
           </div>
 
-          <div className="py-1 flex flex-col gap-0.5">
+          {/* SECTION 1: HORIZONTAL MERGE (ACROSS COLUMNS) */}
+          <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <ArrowRightLeft className="w-3 h-3" />
+              Horizontal Merge (Cols)
+            </span>
+            {cellContextMenu.currentSpan > 1 && (
+              <span className="text-[10px] font-mono px-1 py-0.2 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
+                {cellContextMenu.currentSpan} Cols Active
+              </span>
+            )}
+          </div>
+          <div className="py-0.5 px-1 flex flex-col gap-0.5">
             {cellContextMenu.currentSpan <= 1 ? (
-              <>
-                {cellContextMenu.colIdx < cellContextMenu.totalCols - 1 ? (
-                  <>
+              cellContextMenu.colIdx < cellContextMenu.totalCols - 1 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetCellColSpan(
+                        cellContextMenu.blockIndex,
+                        cellContextMenu.childIndex,
+                        cellContextMenu.rowIndex,
+                        cellContextMenu.colId,
+                        2,
+                      );
+                      setCellContextMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
+                  >
+                    <Merge className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+                    <span className="flex-1">Merge with Next Column</span>
+                    <span className="text-[10px] font-mono px-1 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
+                      2 Cols
+                    </span>
+                  </button>
+
+                  {cellContextMenu.maxRemaining >= 3 && (
                     <button
                       type="button"
                       onClick={() => {
@@ -4759,73 +5879,50 @@ export function CanvasTemplateEditor({
                           cellContextMenu.childIndex,
                           cellContextMenu.rowIndex,
                           cellContextMenu.colId,
-                          2,
+                          3,
                         );
                         setCellContextMenu(null);
                       }}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
                     >
                       <Merge className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
-                      <span className="flex-1">Merge with Next Column</span>
+                      <span className="flex-1">Merge 3 Columns</span>
                       <span className="text-[10px] font-mono px-1 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
-                        2 Cols
+                        3 Cols
                       </span>
                     </button>
+                  )}
 
-                    {cellContextMenu.maxRemaining >= 3 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleSetCellColSpan(
-                            cellContextMenu.blockIndex,
-                            cellContextMenu.childIndex,
-                            cellContextMenu.rowIndex,
-                            cellContextMenu.colId,
-                            3,
-                          );
-                          setCellContextMenu(null);
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
-                      >
-                        <Merge className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
-                        <span className="flex-1">Merge 3 Columns</span>
-                        <span className="text-[10px] font-mono px-1 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
-                          3 Cols
-                        </span>
-                      </button>
-                    )}
-
-                    {cellContextMenu.maxRemaining > 3 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          handleSetCellColSpan(
-                            cellContextMenu.blockIndex,
-                            cellContextMenu.childIndex,
-                            cellContextMenu.rowIndex,
-                            cellContextMenu.colId,
-                            cellContextMenu.maxRemaining,
-                          );
-                          setCellContextMenu(null);
-                        }}
-                        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
-                      >
-                        <Combine className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
-                        <span className="flex-1">Merge to End of Row</span>
-                        <span className="text-[10px] font-mono px-1 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
-                          {cellContextMenu.maxRemaining} Cols
-                        </span>
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <div className="px-2.5 py-1.5 text-[11px] text-slate-400 dark:text-slate-500 italic">
-                    Last column cannot be merged to right
-                  </div>
-                )}
-              </>
+                  {cellContextMenu.maxRemaining > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSetCellColSpan(
+                          cellContextMenu.blockIndex,
+                          cellContextMenu.childIndex,
+                          cellContextMenu.rowIndex,
+                          cellContextMenu.colId,
+                          cellContextMenu.maxRemaining,
+                        );
+                        setCellContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
+                    >
+                      <Combine className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
+                      <span className="flex-1">Merge to End of Row</span>
+                      <span className="text-[10px] font-mono px-1 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
+                        {cellContextMenu.maxRemaining} Cols
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="px-2.5 py-1 text-[11px] text-slate-400 dark:text-slate-500 italic">
+                  Last column cannot be merged right
+                </div>
+              )
             ) : (
-              <>
+              <div className="flex items-center gap-1 px-1 py-0.5">
                 {cellContextMenu.currentSpan < cellContextMenu.maxRemaining && (
                   <button
                     type="button"
@@ -4839,16 +5936,11 @@ export function CanvasTemplateEditor({
                       );
                       setCellContextMenu(null);
                     }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-md hover:bg-amber-50 hover:text-amber-900 dark:hover:bg-amber-950/60 dark:hover:text-amber-200 transition-colors font-medium group cursor-pointer"
+                    className="flex-1 px-1.5 py-1 text-xs text-amber-800 dark:text-amber-300 bg-amber-100/70 dark:bg-amber-900/40 hover:bg-amber-200/60 rounded text-center font-bold"
                   >
-                    <Plus className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
-                    <span className="flex-1">Expand Merge (+1 Col)</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
-                      {cellContextMenu.currentSpan + 1} Cols
-                    </span>
+                    +1 Col
                   </button>
                 )}
-
                 {cellContextMenu.currentSpan > 2 && (
                   <button
                     type="button"
@@ -4862,16 +5954,11 @@ export function CanvasTemplateEditor({
                       );
                       setCellContextMenu(null);
                     }}
-                    className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left rounded-md hover:bg-slate-100 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition-colors font-medium group cursor-pointer"
+                    className="flex-1 px-1.5 py-1 text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded text-center font-bold"
                   >
-                    <Minus className="w-3.5 h-3.5 text-slate-500 group-hover:scale-110 transition-transform shrink-0" />
-                    <span className="flex-1">Shrink Merge (-1 Col)</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded font-bold">
-                      {cellContextMenu.currentSpan - 1} Cols
-                    </span>
+                    -1 Col
                   </button>
                 )}
-
                 <button
                   type="button"
                   onClick={() => {
@@ -4884,17 +5971,189 @@ export function CanvasTemplateEditor({
                     );
                     setCellContextMenu(null);
                   }}
-                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-xs text-left text-rose-600 dark:text-rose-400 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors font-medium group cursor-pointer"
+                  className="flex-1 px-1.5 py-1 text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 rounded text-center font-semibold"
+                >
+                  Reset Col
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-slate-100 dark:border-slate-800/80 my-1" />
+
+          {/* SECTION 2: VERTICAL MERGE (DOWN ROWS) */}
+          <div className="px-2.5 pt-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <ArrowDown className="w-3 h-3" />
+              Vertical Merge (Rows)
+            </span>
+            {cellContextMenu.currentRowSpan > 1 && (
+              <span className="text-[10px] font-mono px-1 py-0.2 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded font-bold">
+                {cellContextMenu.currentRowSpan} Rows Active
+              </span>
+            )}
+          </div>
+          <div className="py-0.5 px-1 flex flex-col gap-0.5">
+            {cellContextMenu.currentRowSpan <= 1 ? (
+              cellContextMenu.rowIndex < cellContextMenu.totalRows - 1 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetCellRowSpan(
+                        cellContextMenu.blockIndex,
+                        cellContextMenu.childIndex,
+                        cellContextMenu.rowIndex,
+                        cellContextMenu.colId,
+                        2,
+                      );
+                      setCellContextMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium group cursor-pointer"
+                  >
+                    <ArrowDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0" />
+                    <span className="flex-1">Merge with Row Below</span>
+                    <span className="text-[10px] font-mono px-1 py-0.5 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded font-bold">
+                      2 Rows
+                    </span>
+                  </button>
+
+                  {cellContextMenu.maxRemainingRows >= 3 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSetCellRowSpan(
+                          cellContextMenu.blockIndex,
+                          cellContextMenu.childIndex,
+                          cellContextMenu.rowIndex,
+                          cellContextMenu.colId,
+                          3,
+                        );
+                        setCellContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium group cursor-pointer"
+                    >
+                      <ArrowDown className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0" />
+                      <span className="flex-1">Merge 3 Rows</span>
+                      <span className="text-[10px] font-mono px-1 py-0.5 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded font-bold">
+                        3 Rows
+                      </span>
+                    </button>
+                  )}
+
+                  {cellContextMenu.maxRemainingRows > 3 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleSetCellRowSpan(
+                          cellContextMenu.blockIndex,
+                          cellContextMenu.childIndex,
+                          cellContextMenu.rowIndex,
+                          cellContextMenu.colId,
+                          cellContextMenu.maxRemainingRows,
+                        );
+                        setCellContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium group cursor-pointer"
+                    >
+                      <Combine className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 group-hover:scale-110 transition-transform shrink-0" />
+                      <span className="flex-1">Merge to Bottom of Column</span>
+                      <span className="text-[10px] font-mono px-1 py-0.5 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded font-bold">
+                        {cellContextMenu.maxRemainingRows} Rows
+                      </span>
+                    </button>
+                  )}
+                </>
+              ) : (
+                <div className="px-2.5 py-1 text-[11px] text-slate-400 dark:text-slate-500 italic">
+                  Last row cannot be merged down
+                </div>
+              )
+            ) : (
+              <div className="flex items-center gap-1 px-1 py-0.5">
+                {cellContextMenu.currentRowSpan < cellContextMenu.maxRemainingRows && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetCellRowSpan(
+                        cellContextMenu.blockIndex,
+                        cellContextMenu.childIndex,
+                        cellContextMenu.rowIndex,
+                        cellContextMenu.colId,
+                        cellContextMenu.currentRowSpan + 1,
+                      );
+                      setCellContextMenu(null);
+                    }}
+                    className="flex-1 px-1.5 py-1 text-xs text-indigo-800 dark:text-indigo-300 bg-indigo-100/70 dark:bg-indigo-900/40 hover:bg-indigo-200/60 rounded text-center font-bold"
+                  >
+                    +1 Row
+                  </button>
+                )}
+                {cellContextMenu.currentRowSpan > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleSetCellRowSpan(
+                        cellContextMenu.blockIndex,
+                        cellContextMenu.childIndex,
+                        cellContextMenu.rowIndex,
+                        cellContextMenu.colId,
+                        cellContextMenu.currentRowSpan - 1,
+                      );
+                      setCellContextMenu(null);
+                    }}
+                    className="flex-1 px-1.5 py-1 text-xs text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 rounded text-center font-bold"
+                  >
+                    -1 Row
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSetCellRowSpan(
+                      cellContextMenu.blockIndex,
+                      cellContextMenu.childIndex,
+                      cellContextMenu.rowIndex,
+                      cellContextMenu.colId,
+                      1,
+                    );
+                    setCellContextMenu(null);
+                  }}
+                  className="flex-1 px-1.5 py-1 text-xs text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 rounded text-center font-semibold"
+                >
+                  Reset Row
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* SECTION 3: UNMERGE ALL */}
+          {(cellContextMenu.currentSpan > 1 || cellContextMenu.currentRowSpan > 1) && (
+            <>
+              <div className="border-t border-slate-100 dark:border-slate-800/80 my-1" />
+              <div className="px-1 py-0.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleResetCellSpans(
+                      cellContextMenu.blockIndex,
+                      cellContextMenu.childIndex,
+                      cellContextMenu.rowIndex,
+                      cellContextMenu.colId,
+                    );
+                    setCellContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left text-rose-600 dark:text-rose-400 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors font-semibold group cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform shrink-0" />
-                  <span className="flex-1">Unmerge / Split Cell</span>
+                  <span className="flex-1">Unmerge All (Reset Cell)</span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 rounded font-bold">
                     Reset
                   </span>
                 </button>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

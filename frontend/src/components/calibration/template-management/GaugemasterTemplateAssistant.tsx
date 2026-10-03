@@ -2667,7 +2667,8 @@ export const GaugemasterTemplateAssistant: React.FC<GaugemasterTemplateAssistant
                   </div>
                 )}
               </div>
-            )))}
+            ))
+          )}
 
             {/* Thinking / Streaming Indicator */}
             {loading && (

@@ -1,4 +1,5 @@
 import { Instrument } from "./instrument";
+import type { CanvasBlock } from "./template";
 
 /**
  * A single calibration data point.
@@ -14,7 +15,7 @@ export interface CalibrationPoint {
   unit: string;
   tolerance?: number;
   status?: "PASS" | "FAIL";
-  customFields?: Record<string, any>;
+  customFields?: Record<string, unknown>;
 }
 
 /**
@@ -34,7 +35,7 @@ export interface CalibrationRecord {
   reference_standard_validity?: string;
   reference_standard_range?: string;
   reference_standard_least_count?: string;
-  reference_standards?: any[];
+  reference_standards?: Record<string, unknown>[];
 
   // Environmental
   environmental_conditions: {
@@ -63,17 +64,17 @@ export interface CalibrationRecord {
 
   // Data
   is_canvas_template?: boolean;
-  layout_blocks?: any[];
+  layout_blocks?: CanvasBlock[] | Record<string, unknown>[];
   calibration_points: CalibrationPoint[];
-  custom_columns?: any[];
-  standard_columns_config?: Record<string, any>;
-  acceptance_criteria?: any;
+  custom_columns?: Record<string, unknown>[];
+  standard_columns_config?: Record<string, unknown>;
+  acceptance_criteria?: Record<string, unknown> | string;
   decimal_places?: number;
   column_order?: string[];
   hidden_columns?: string[];
   template_id?: string;
   template_name?: string;
-  template?: any;
+  template?: Record<string, unknown>;
   diagram_image?: string;
   diagram_image_width?: number;
   diagram_image_height?: number;
@@ -109,7 +110,7 @@ export interface CalibrationRecord {
 
   // Audit
   companyId?: string;
-  created_by?: any;
+  created_by?: string | Record<string, unknown>;
   created_at?: string;
   updated_at?: string;
 }
@@ -261,8 +262,8 @@ export interface CalibrationAuditLog {
   calibration_id: string;
   edited_by_id?: string;
   edited_by_name?: string;
-  edited_by?: any;
-  changes_summary: { field: string; oldValue: any; newValue: any }[];
+  edited_by?: string | Record<string, unknown>;
+  changes_summary: { field: string; oldValue: unknown; newValue: unknown }[];
   remarks?: string;
   edited_at: string;
 }

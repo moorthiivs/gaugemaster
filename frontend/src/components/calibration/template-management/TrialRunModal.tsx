@@ -25,6 +25,7 @@ import { CanvasBlock, TableGridBlock, SplitRowBlock, MatrixTableBlock, TextBlock
 import { CalibrationRecord } from "@/types/calibration";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { evaluateCanvasRowFormulas, buildRowContext } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
@@ -553,109 +554,161 @@ export function TrialRunModal({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-black">
-                                {tbl.rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                    {(() => {
-                                      let skipCols = 0;
-                                      return tbl.columns.map((col, colIdx) => {
-                                        if (skipCols > 0) {
-                                          skipCols--;
-                                          return null;
-                                        }
-                                        const span = (row as any).cellSpans?.[col.id]?.colSpan || 1;
-                                        if (span > 1) {
-                                          skipCols = span - 1;
-                                        }
-                                      const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
-                                      if (col.id === "point_number" || col.id === "sl_no") {
-                                        return <td key={col.id} colSpan={span} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
-                                      }
-                                        // MERGED CELL (colSpan > 1)
-                                        if (span > 1) {
-                                          const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
-                                          return (
-                                            <td
-                                              key={col.id}
-                                              colSpan={span}
-                                              className="py-1 px-2 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs"
-                                            >
-                                              <span className="font-semibold text-slate-800 dark:text-slate-100">
-                                                {cellVal}
-                                              </span>
-                                            </td>
-                                          );
-                                        }
-                                      if (col.type === "nominal") {
-                                        const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
-                                        const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
-                                        return (
-                                          <td key={col.id} className="py-1 px-2 font-bold font-mono">
-                                            {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
+                                {(() => {
+                                  const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                                  return tbl.rows.map((row, rIdx) => {
+                                    if (row.is_merged || row.isMerged) {
+                                      return (
+                                        <tr key={rIdx} className="bg-amber-50/40 dark:bg-amber-950/20">
+                                          <td
+                                            colSpan={tbl.columns.length}
+                                            className="py-1.5 px-3 font-semibold text-left text-slate-800 dark:text-slate-200 text-xs italic"
+                                          >
+                                            {row.statement || row.merged_text || row.description || row.required_dimension || "All the jaws are free from dent and damages"}
                                           </td>
-                                        );
-                                      }
-                                      if (
-                                        col.type === "reading" ||
-                                        col.type === "trial" ||
-                                        col.role === "READING" ||
-                                        col.dataType === "MEASUREMENT" ||
-                                        (col.role as string) === "MEASUREMENT" ||
-                                        /actual|reading|trial|observed/i.test(col.id) ||
-                                        /actual|reading|trial|observed/i.test(col.label)
-                                      ) {
-                                        return (
-                                          <td key={col.id} className="p-1">
-                                            <Input
-                                              type="text"
-                                              inputMode="decimal"
-                                              value={row[col.id] ?? ""}
-                                              onChange={(e) => {
-                                                const v = e.target.value;
-                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
-                                                  handleCellChange(bIdx, rIdx, col.id, v);
-                                                }
-                                              }}
-                                              onBlur={(e) => {
-                                                const raw = e.target.value.trim();
-                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
-                                                const parsed = parseFloat(raw);
-                                                if (!isNaN(parsed)) {
-                                                  const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
-                                                  handleCellChange(bIdx, rIdx, col.id, formatted);
-                                                }
-                                              }}
-                                              className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
-                                              placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
-                                            />
-                                          </td>
-                                        );
-                                      }
-                                      if (col.type === "formula") {
-                                        return (
-                                          <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
-                                            {row[col.id] ?? "-"}
-                                          </td>
-                                        );
-                                      }
-                                      if (col.type === "status") {
-                                        const isPass = row[col.id] === "PASS";
-                                        return (
-                                          <td key={col.id} className="py-1 px-2">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                              isPass
-                                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
-                                            }`}>
-                                              {row[col.id] || "-"}
-                                            </span>
-                                          </td>
-                                        );
-                                      }
-                                      return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
-                                    });
-                                  })()}
-                                  </tr>
-                                ))}
+                                        </tr>
+                                      );
+                                    }
+
+                                    return (
+                                      <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                        {tbl.columns.map((col, colIdx) => {
+                                          if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                                            return null;
+                                          }
+                                          const spanInfo = (row as any).cellSpans?.[col.id];
+                                          const span = spanInfo?.colSpan || 1;
+                                          const rSpan = spanInfo?.rowSpan || 1;
+                                          const isMerged = span > 1 || rSpan > 1;
+
+                                          const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
+                                          if (col.id === "point_number" || col.id === "sl_no") {
+                                            return (
+                                              <td
+                                                key={col.id}
+                                                colSpan={span > 1 ? span : undefined}
+                                                rowSpan={rSpan > 1 ? rSpan : undefined}
+                                                className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300"
+                                              >
+                                                {row.point_number ?? (rIdx + 1)}
+                                              </td>
+                                            );
+                                          }
+                                          // MERGED CELL (span > 1 || rSpan > 1)
+                                          if (isMerged) {
+                                            const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                            return (
+                                              <td
+                                                key={col.id}
+                                                colSpan={span > 1 ? span : undefined}
+                                                rowSpan={rSpan > 1 ? rSpan : undefined}
+                                                className="py-1 px-2 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs align-middle"
+                                              >
+                                                {rSpan > 1 ? (
+                                                  <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[36px] py-0.5">
+                                                    <div className="flex items-center gap-1 flex-wrap justify-center">
+                                                      {span > 1 && (
+                                                        <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0">
+                                                          {span} Cols
+                                                        </Badge>
+                                                      )}
+                                                      {rSpan > 1 && (
+                                                        <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0">
+                                                          {rSpan} Rows
+                                                        </Badge>
+                                                      )}
+                                                    </div>
+                                                    <span className="font-semibold text-slate-800 dark:text-slate-100">
+                                                      {cellVal}
+                                                    </span>
+                                                  </div>
+                                                ) : (
+                                                  <div className="flex items-center justify-center gap-1.5">
+                                                    {span > 1 && (
+                                                      <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0">
+                                                        {span} Cols
+                                                      </Badge>
+                                                    )}
+                                                    <span className="font-semibold text-slate-800 dark:text-slate-100">
+                                                      {cellVal}
+                                                    </span>
+                                                  </div>
+                                                )}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "nominal") {
+                                            const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
+                                            const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
+                                            return (
+                                              <td key={col.id} className="py-1 px-2 font-bold font-mono">
+                                                {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
+                                              </td>
+                                            );
+                                          }
+                                          if (
+                                            col.type === "reading" ||
+                                            col.type === "trial" ||
+                                            col.role === "READING" ||
+                                            col.dataType === "MEASUREMENT" ||
+                                            (col.role as string) === "MEASUREMENT" ||
+                                            /actual|reading|trial|observed/i.test(col.id) ||
+                                            /actual|reading|trial|observed/i.test(col.label)
+                                          ) {
+                                            return (
+                                              <td key={col.id} className="p-1">
+                                                <Input
+                                                  type="text"
+                                                  inputMode="decimal"
+                                                  value={row[col.id] ?? ""}
+                                                  onChange={(e) => {
+                                                    const v = e.target.value;
+                                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                      handleCellChange(bIdx, rIdx, col.id, v);
+                                                    }
+                                                  }}
+                                                  onBlur={(e) => {
+                                                    const raw = e.target.value.trim();
+                                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                    const parsed = parseFloat(raw);
+                                                    if (!isNaN(parsed)) {
+                                                      const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+                                                      handleCellChange(bIdx, rIdx, col.id, formatted);
+                                                    }
+                                                  }}
+                                                  className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                                  placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
+                                                />
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "formula") {
+                                            return (
+                                              <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
+                                                {row[col.id] ?? "-"}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "status") {
+                                            const isPass = row[col.id] === "PASS";
+                                            return (
+                                              <td key={col.id} className="py-1 px-2">
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                  isPass
+                                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                    : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                }`}>
+                                                  {row[col.id] || "-"}
+                                                </span>
+                                              </td>
+                                            );
+                                          }
+                                          return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
+                                        })}
+                                      </tr>
+                                    );
+                                  });
+                                })()}
                               </tbody>
                             </table>
                           </div>

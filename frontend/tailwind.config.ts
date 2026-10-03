@@ -20,8 +20,8 @@ export default {
 		},
 		extend: {
 			fontFamily: {
-				sans: ['var(--font-sans)', 'sans-serif'],
-				mono: ['var(--font-mono)', 'monospace'],
+				sans: ['var(--font-sans)', 'Geist', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+				mono: ['var(--font-mono)', 'Geist Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
 			},
 			fontSize: {
 				'3xs': ['0.5rem', { lineHeight: '0.75rem' }],
@@ -46,6 +46,18 @@ export default {
 				destructive: {
 					DEFAULT: 'hsl(var(--destructive))',
 					foreground: 'hsl(var(--destructive-foreground))'
+				},
+				success: {
+					DEFAULT: 'hsl(var(--success, 142.1 76.2% 36.3%))',
+					foreground: 'hsl(var(--success-foreground, 0 0% 100%))'
+				},
+				warning: {
+					DEFAULT: 'hsl(var(--warning, 38 92% 50%))',
+					foreground: 'hsl(var(--warning-foreground, 48 96% 12%))'
+				},
+				info: {
+					DEFAULT: 'hsl(var(--info, 217.2 91.2% 59.8%))',
+					foreground: 'hsl(var(--info-foreground, 0 0% 100%))'
 				},
 				muted: {
 					DEFAULT: 'hsl(var(--muted))',
@@ -72,12 +84,24 @@ export default {
 					'accent-foreground': 'hsl(var(--sidebar-accent-foreground))',
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
+				},
+				chart: {
+					'1': 'hsl(var(--chart-1))',
+					'2': 'hsl(var(--chart-2))',
+					'3': 'hsl(var(--chart-3))',
+					'4': 'hsl(var(--chart-4))',
+					'5': 'hsl(var(--chart-5))'
 				}
 			},
 			borderRadius: {
+				xl: 'calc(var(--radius) + 4px)',
 				lg: 'var(--radius)',
 				md: 'calc(var(--radius) - 2px)',
 				sm: 'calc(var(--radius) - 4px)'
+			},
+			boxShadow: {
+				'2xs': '0 1px 2px 0 rgba(0, 0, 0, 0.03)',
+				'xs': '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
 			},
 			keyframes: {
 				'accordion-down': {

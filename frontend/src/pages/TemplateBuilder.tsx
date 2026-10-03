@@ -59,6 +59,7 @@ import { getTemplates, createTemplate, deleteTemplate } from "@/lib/templateActi
 import { TemplateExportModal } from "@/components/calibration/template-management/TemplateExportModal";
 import { TemplateImportModal } from "@/components/calibration/template-management/TemplateImportModal";
 import { TemplateBulkDeleteModal } from "@/components/calibration/template-management/TemplateBulkDeleteModal";
+import { PageHeader } from "@/components/common/PageHeader";
 
 const TYPE_ICONS: Record<string, any> = {
   dimensional: Ruler,
@@ -618,76 +619,66 @@ export default function TemplateBuilder() {
 
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/60 pb-5">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
+      {/* Page Header */}
+      <PageHeader
+        title="Calibration Template Builder"
+        description="Create, manage, export, and import reusable calibration formats across organizations with automated metrology calculation rules."
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            {(canAccess("template_import", "create") || canAccess("template_import", "view")) && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setImportModalOpen(true)}
+                className="gap-1.5 text-xs h-8 px-3 font-semibold"
+              >
+                <Upload className="w-3.5 h-3.5 text-primary" />
+                Import
+              </Button>
+            )}
+
+            {canAccess("template_export", "view") && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setExportModalOpen(true)}
+                className="gap-1.5 text-xs h-8 px-3 font-semibold"
+              >
+                <Download className="w-3.5 h-3.5 text-primary" />
+                Export
+                {selectedIds.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.2 bg-primary/10 text-primary text-[10px] font-bold rounded-full">
+                    {selectedIds.length}
+                  </span>
+                )}
+              </Button>
+            )}
+
+            {canAccess("templates", "delete") && selectedIds.length > 0 && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteModalOpen(true)}
+                className="gap-1.5 text-xs h-8 px-3 font-semibold shadow-2xs"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Selected ({selectedIds.length})
+              </Button>
+            )}
+
+            {canAccess("templates", "create") && (
+              <Button
+                onClick={handleOpenNewModal}
+                size="sm"
+                className="gap-2 text-xs h-8 px-3.5 font-semibold shadow-2xs"
+              >
+                <PlusCircle className="w-4 h-4" />
+                Create Template
+              </Button>
+            )}
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-3">
-            <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary shadow-xs">
-              <Layers className="w-6 h-6" />
-            </div>
-            <span>Calibration Template Builder</span>
-          </h1>
-          <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl leading-relaxed">
-            Create, manage, export, and import reusable calibration formats across organizations with automated metrology calculation rules.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {(canAccess("template_import", "create") || canAccess("template_import", "view")) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setImportModalOpen(true)}
-              className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
-            >
-              <Upload className="w-3.5 h-3.5 text-primary" />
-              Import Templates
-            </Button>
-          )}
-
-          {canAccess("template_export", "view") && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setExportModalOpen(true)}
-              className="gap-1.5 text-xs h-9 px-3.5 border-border/80 hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-all"
-            >
-              <Download className="w-3.5 h-3.5 text-primary" />
-              Export Packages
-              {selectedIds.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 bg-primary/15 text-primary text-[10px] font-bold rounded-full">
-                  {selectedIds.length}
-                </span>
-              )}
-            </Button>
-          )}
-
-          {canAccess("templates", "delete") && selectedIds.length > 0 && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => setBulkDeleteModalOpen(true)}
-              className="gap-1.5 text-xs h-9 px-3.5 shadow-sm animate-in fade-in zoom-in-95"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete Selected ({selectedIds.length})
-            </Button>
-          )}
-
-          {canAccess("templates", "create") && (
-            <Button
-              onClick={handleOpenNewModal}
-              size="sm"
-              className="gap-2 shadow-sm text-xs h-9 px-4 font-semibold hover:shadow-md transition-all"
-            >
-              <PlusCircle className="w-4 h-4" />
-              Create New Template
-            </Button>
-          )}
-        </div>
-      </div>
+        }
+      />
 
       {/* Category Filter Tabs */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">

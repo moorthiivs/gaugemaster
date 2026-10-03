@@ -60,15 +60,11 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { format } from "date-fns";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/common/PageHeader";
+import { EmptyState } from "@/components/common/EmptyState";
 
 // ─── Inline Mini Animated Sparklines & Radial Progress ──────────────────
 const MiniSparkline = ({
@@ -212,84 +208,78 @@ const KPICard = ({
   const variantStyles = {
     critical: {
       chartType: "wave" as const,
-      chartColor: "#f43f5e",
-      border: "border-rose-500/30 dark:border-rose-500/25 hover:border-rose-500/60",
-      cardBg: "bg-card/90 hover:bg-rose-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(244, 63, 94, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-rose-600 to-red-500 text-white shadow-lg shadow-rose-500/25",
-      progressBar: "bg-gradient-to-r from-rose-500 to-red-500",
+      chartColor: "hsl(var(--destructive))",
+      border: "border-border hover:border-destructive/50",
+      cardBg: "bg-card hover:bg-destructive/[0.02]",
+      badge: "bg-destructive/10 text-destructive border border-destructive/20",
+      progressBar: "bg-destructive",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-rose-600 dark:text-rose-400 font-black"
+          ? "text-destructive font-black"
           : "text-foreground font-bold",
-      footerHover: "group-hover:text-rose-600 dark:group-hover:text-rose-400",
+      footerHover: "group-hover:text-destructive",
     },
     primary: {
       chartType: "bars" as const,
-      chartColor: "#3b82f6",
-      border: "border-blue-500/30 dark:border-blue-500/25 hover:border-blue-500/60",
-      cardBg: "bg-card/90 hover:bg-blue-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(59, 130, 246, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-blue-600 to-indigo-500 text-white shadow-lg shadow-blue-500/25",
-      progressBar: "bg-gradient-to-r from-blue-500 to-indigo-500",
+      chartColor: "hsl(var(--primary))",
+      border: "border-border hover:border-primary/50",
+      cardBg: "bg-card hover:bg-primary/[0.02]",
+      badge: "bg-primary/10 text-primary border border-primary/20",
+      progressBar: "bg-primary",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-blue-600 dark:text-blue-400 font-black"
+          ? "text-primary font-black"
           : "text-foreground font-bold",
-      footerHover: "group-hover:text-blue-600 dark:group-hover:text-blue-400",
+      footerHover: "group-hover:text-primary",
     },
     info: {
       chartType: "radial" as const,
-      chartColor: "#a855f7",
-      border: "border-purple-500/30 dark:border-purple-500/25 hover:border-purple-500/60",
-      cardBg: "bg-card/90 hover:bg-purple-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(168, 85, 247, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-purple-600 to-violet-500 text-white shadow-lg shadow-purple-500/25",
-      progressBar: "bg-gradient-to-r from-purple-500 to-violet-500",
-      valueTxt: () => "text-purple-600 dark:text-purple-400 font-black",
-      footerHover: "group-hover:text-purple-600 dark:group-hover:text-purple-400",
+      chartColor: "hsl(var(--info))",
+      border: "border-border hover:border-info/50",
+      cardBg: "bg-card hover:bg-info/[0.02]",
+      badge: "bg-info/10 text-info border border-info/20",
+      progressBar: "bg-info",
+      valueTxt: () => "text-info font-black",
+      footerHover: "group-hover:text-info",
     },
     warning: {
       chartType: "curve" as const,
-      chartColor: "#f59e0b",
-      border: "border-amber-500/30 dark:border-amber-500/25 hover:border-amber-500/60",
-      cardBg: "bg-card/90 hover:bg-amber-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(245, 158, 11, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/25",
-      progressBar: "bg-gradient-to-r from-amber-500 to-orange-500",
+      chartColor: "hsl(var(--warning))",
+      border: "border-border hover:border-warning/50",
+      cardBg: "bg-card hover:bg-warning/[0.02]",
+      badge: "bg-warning/10 text-warning border border-warning/20",
+      progressBar: "bg-warning",
       valueTxt: (val: number) =>
         val > 0
-          ? "text-amber-600 dark:text-amber-400 font-black"
+          ? "text-warning font-black"
           : "text-foreground font-bold",
-      footerHover: "group-hover:text-amber-600 dark:group-hover:text-amber-400",
+      footerHover: "group-hover:text-warning",
     },
     success: {
       chartType: "arc" as const,
-      chartColor: "#10b981",
-      border: "border-emerald-500/30 dark:border-emerald-500/25 hover:border-emerald-500/60",
-      cardBg: "bg-card/90 hover:bg-emerald-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(16, 185, 129, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-emerald-600 to-teal-500 text-white shadow-lg shadow-emerald-500/25",
-      progressBar: "bg-gradient-to-r from-emerald-500 to-teal-500",
-      valueTxt: () => "text-emerald-600 dark:text-emerald-400 font-black",
-      footerHover: "group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
+      chartColor: "hsl(var(--success))",
+      border: "border-border hover:border-success/50",
+      cardBg: "bg-card hover:bg-success/[0.02]",
+      badge: "bg-success/10 text-success border border-success/20",
+      progressBar: "bg-success",
+      valueTxt: () => "text-success font-black",
+      footerHover: "group-hover:text-success",
     },
     neutral: {
       chartType: "trend" as const,
-      chartColor: "#06b6d4",
-      border: "border-cyan-500/30 dark:border-cyan-500/25 hover:border-cyan-500/60",
-      cardBg: "bg-card/90 hover:bg-cyan-500/[0.04]",
-      glow: "radial-gradient(130px circle at top right, rgba(6, 182, 212, 0.15), transparent 70%)",
-      badge: "bg-gradient-to-tr from-cyan-600 to-blue-500 text-white shadow-lg shadow-cyan-500/25",
-      progressBar: "bg-gradient-to-r from-cyan-500 to-blue-500",
+      chartColor: "hsl(var(--muted-foreground))",
+      border: "border-border hover:border-primary/40",
+      cardBg: "bg-card hover:bg-muted/30",
+      badge: "bg-muted text-muted-foreground border border-border",
+      progressBar: "bg-primary/70",
       valueTxt: () => "text-foreground font-bold",
-      footerHover: "group-hover:text-cyan-600 dark:group-hover:text-cyan-400",
+      footerHover: "group-hover:text-foreground",
     },
   };
   const styles = variantStyles[variant];
 
   if (loading) {
-    return <Skeleton className="h-[136px] rounded-2xl" />;
+    return <Skeleton className="h-[136px] rounded-xl" />;
   }
 
   const rawNum =
@@ -299,44 +289,37 @@ const KPICard = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{
-        type: "spring",
-        stiffness: 380,
-        damping: 26,
-        delay: index * 0.04,
-      }}
-      whileHover={{ y: -3, scale: 1.015 }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, delay: index * 0.03 }}
       className="h-[138px]"
     >
       <Card
         className={cn(
-          "h-full p-3.5 flex flex-col justify-between rounded-2xl shadow-sm transition-all duration-300 group relative overflow-hidden border backdrop-blur-xl",
+          "h-full p-3.5 flex flex-col justify-between rounded-xl shadow-xs transition-all duration-200 group relative overflow-hidden border",
           styles.cardBg,
           styles.border,
           onClick && "cursor-pointer",
         )}
-        style={{ backgroundImage: styles.glow }}
         aria-label={title}
         onClick={onClick}
       >
         {/* Top Header Row */}
         <div className="flex items-center justify-between gap-1.5 pt-0.5 z-10">
           <span
-            className="text-tiny font-extrabold uppercase tracking-wider text-muted-foreground truncate"
+            className="text-sm font-medium text-muted-foreground truncate"
             title={title}
           >
             {title}
           </span>
           <div
             className={cn(
-              "p-1.5 rounded-xl transition-transform shrink-0 relative",
+              "p-1.5 rounded-lg transition-transform shrink-0 relative",
               styles.badge,
               pulse && "pulse-dot",
             )}
           >
-            <Icon className="h-3.5 w-3.5 shrink-0" />
+            <Icon className="h-4 w-4 shrink-0" />
           </div>
         </div>
 
@@ -345,13 +328,8 @@ const KPICard = ({
           <div className="flex items-center justify-between gap-1.5">
             <div
               className={cn(
-                "tracking-tight tabular-nums truncate font-black",
-                typeof value === "string" && value.length > 9
-                  ? "text-lg sm:text-xl"
-                  : typeof value === "string" && value.length > 6
-                    ? "text-xl sm:text-2xl"
-                    : "text-2xl",
-                valueColorClass,
+                "text-2xl font-bold tracking-tight tabular-nums truncate text-foreground",
+                typeof value === "string" && value.length > 9 && "text-xl sm:text-2xl",
               )}
               title={String(value)}
             >
@@ -365,18 +343,18 @@ const KPICard = ({
           </div>
 
           {subtitle ? (
-            <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 font-medium" title={subtitle}>
+            <p className="text-xs text-muted-foreground line-clamp-1 mt-1 font-normal" title={subtitle}>
               {subtitle}
             </p>
           ) : null}
 
           {progressPercent !== undefined && !isNaN(progressPercent) ? (
-            <div className="w-full bg-muted/60 h-1.5 rounded-full overflow-hidden mt-1.5">
+            <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden mt-1.5">
               <motion.div
                 className={cn("h-full rounded-full", styles.progressBar)}
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(100, Math.max(0, Number(progressPercent)))}%` }}
-                transition={{ duration: 0.8, ease: "easeOut" }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
               />
             </div>
           ) : null}
@@ -385,12 +363,12 @@ const KPICard = ({
         {/* Footer Link / Action Hint */}
         <div
           className={cn(
-            "flex items-center justify-between pt-1.5 border-t border-border/40 text-[11px] font-semibold text-muted-foreground transition-colors z-10",
+            "flex items-center justify-between pt-1.5 border-t border-border/50 text-[11px] font-medium text-muted-foreground transition-colors z-10",
             styles.footerHover,
           )}
         >
           <span className="truncate">{actionLabel}</span>
-          <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform shrink-0" />
+          <ArrowRight className="h-3 w-3 group-hover:translate-x-0.5 transition-transform shrink-0" />
         </div>
       </Card>
     </motion.div>
@@ -537,7 +515,7 @@ const Index = () => {
         const res = await httpClient.get('/settings/fetchmailconfig', {
           params: { userId: user?.id, companyId: user?.companyId }
         });
-        return res.status === 200 ? res.data?.dashboardConfig : null;
+        return res.status === 200 ? (res.data?.dashboardConfig ?? null) : null;
       } catch {
         return null;
       }
@@ -763,159 +741,138 @@ const Index = () => {
 
   return (
     <div className="space-y-6">
-      {/* ─── Dashboard Header & Controls ─────────────────────── */}
-      <header className="flex flex-col gap-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live Monitoring
-              </span>
+      {/* ─── Dashboard Page Header ─────────────────────────── */}
+      <PageHeader
+        title="Calibration Action Center"
+        description={`Real-time calibration monitoring & action dashboard · ${dateRangeLabel}`}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isFetching}
+            className="h-8 gap-1.5 text-xs font-semibold"
+            onClick={() => refetch()}
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5 text-primary", isFetching && "animate-spin")} />
+            Refresh Data
+          </Button>
+        }
+      />
+
+      {/* ─── Action Plan Banner (Highlights Today & Critical Actions) ── */}
+      <AnimatePresence>
+        {hasActionPlanData && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className={cn(
+              "rounded-xl p-4 border relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 shadow-2xs",
+              (data?.overdue || 0) > 0
+                ? "bg-destructive/5 border-destructive/30"
+                : "bg-primary/5 border-primary/20",
+            )}
+          >
+            <div className="flex items-start sm:items-center gap-3 z-10 min-w-0">
+              <div
+                className={cn(
+                  "p-2.5 rounded-lg shrink-0",
+                  (data?.overdue || 0) > 0
+                    ? "bg-destructive/10 text-destructive"
+                    : "bg-primary/10 text-primary",
+                )}
+              >
+                <Target className="h-5 w-5" />
+              </div>
+              <div className="space-y-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold tracking-tight text-foreground">
+                    Today's Action Plan
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="text-[11px] font-mono font-medium bg-background/80 text-foreground border-border px-2 py-0.5"
+                  >
+                    {format(new Date(), "EEEE, dd MMM yyyy")}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                  <span>
+                    {data?.dueTodayCount
+                      ? `${data.workingDueTodayCount || 0} Gauge(s) · ${data.referenceDueTodayCount || 0} Ref Standard(s) due today`
+                      : "No calibrations due today"}
+                  </span>
+                  <span className="hidden sm:inline opacity-40">•</span>
+                  <span className={(data?.overdue || 0) > 0 ? "font-semibold text-destructive" : ""}>
+                    {data?.overdue
+                      ? `${data.workingOverdue || 0} Gauge(s) · ${data.referenceOverdue || 0} Ref Standard(s) overdue`
+                      : "0 overdue"}
+                  </span>
+                  <span className="hidden sm:inline opacity-40">•</span>
+                  <span className="font-semibold text-foreground/80">
+                    {Math.max(0, plannedCount - completedCount)} Pending ({completedCount} / {plannedCount} Done)
+                  </span>
+                </div>
+              </div>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-2.5 text-foreground leading-snug mt-1">
-              <span className="text-gradient-primary">Calibration Action Center</span>
-              {loading && (
-                <Loader2 className="h-4.5 w-4.5 text-primary animate-spin ml-1 shrink-0" />
-              )}
-            </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 font-medium leading-normal">
-              Real-time calibration monitoring & action dashboard ·{" "}
-              <span className="font-semibold text-foreground/90">{dateRangeLabel}</span>
-            </p>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={isFetching}
-              className="h-8 gap-1.5 text-xs font-bold rounded-xl shadow-xs border-border/80 hover:border-primary/50 hover:bg-card/80 transition-all"
-              onClick={() => refetch()}
-            >
-              <RefreshCw className={`h-3.5 w-3.5 text-primary ${isFetching ? "animate-spin" : ""}`} /> Refresh Data
-            </Button>
-          </div>
-        </div>
-
-        {/* ─── Action Plan Banner (Highlights Today & Critical Actions - Motion & Gradient Enabled) ── */}
-        <AnimatePresence>
-          {hasActionPlanData && (
-            <motion.div
-              initial={{ opacity: 0, y: -12, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -12, scale: 0.98 }}
-              transition={{ duration: 0.35, ease: "easeOut" }}
-              className={cn(
-                "rounded-2xl p-4 sm:p-5 shadow-lg border backdrop-blur-xl relative overflow-hidden flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4",
-                (data?.overdue || 0) > 0
-                  ? "bg-gradient-to-r from-rose-500/15 via-red-500/10 to-amber-500/10 border-rose-500/35 shadow-rose-500/5"
-                  : "bg-gradient-to-r from-blue-500/15 via-indigo-500/10 to-violet-500/10 border-blue-500/35 shadow-blue-500/5",
-              )}
-            >
-              {/* Shimmer line on top edge */}
-              <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/40 dark:via-white/20 to-transparent" />
-              {/* Animated background glow */}
-              <div className="absolute -right-10 -bottom-10 w-48 h-48 rounded-full bg-primary/15 blur-3xl pointer-events-none" />
-
-              <div className="flex items-start sm:items-center gap-3.5 z-10 min-w-0">
-                <div
-                  className={cn(
-                    "p-3 rounded-2xl text-white shadow-lg shrink-0 mt-0.5 sm:mt-0",
-                    (data?.overdue || 0) > 0
-                      ? "bg-gradient-to-tr from-red-600 to-rose-500 shadow-red-500/30"
-                      : "bg-gradient-to-tr from-blue-600 to-indigo-500 shadow-blue-500/30",
-                  )}
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto shrink-0 justify-start xl:justify-end z-10 pt-2 xl:pt-0 border-t xl:border-t-0 border-border/40">
+              {(data?.dueTodayCount || 0) > 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => handleCardClick("today")}
+                  className="flex-1 sm:flex-initial h-8 px-3.5 text-xs font-semibold gap-1.5"
                 >
-                  <Target className="h-5 w-5" />
-                </div>
-                <div className="space-y-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base font-black tracking-tight text-foreground">
-                      Today's Action Plan
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className="text-[11px] font-mono font-extrabold bg-background/90 text-primary border-primary/30 px-2 py-0.5 rounded-lg shadow-2xs"
-                    >
-                      {format(new Date(), "EEEE, dd MMM yyyy")}
-                    </Badge>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground font-medium">
-                    <span>
-                      {data?.dueTodayCount
-                        ? `${data.workingDueTodayCount || 0} Gauge(s) · ${data.referenceDueTodayCount || 0} Ref Standard(s) due today`
-                        : "No calibrations due today"}
-                    </span>
-                    <span className="hidden sm:inline opacity-40">•</span>
-                    <span>
-                      {data?.overdue
-                        ? `${data.workingOverdue || 0} Gauge(s) · ${data.referenceOverdue || 0} Ref Standard(s) overdue`
-                        : "0 overdue"}
-                    </span>
-                    <span className="hidden sm:inline opacity-40">•</span>
-                    <span className="font-bold text-purple-700 dark:text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-md border border-purple-500/20">
-                      {Math.max(0, plannedCount - completedCount)} Pending ({completedCount} / {plannedCount} Done)
-                    </span>
-                  </div>
-                </div>
-              </div>
+                  <Calendar className="h-3.5 w-3.5" />
+                  View Today ({data?.dueTodayCount || 0})
+                </Button>
+              )}
 
-              <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full xl:w-auto shrink-0 justify-start xl:justify-end z-10 pt-2 xl:pt-0 border-t xl:border-t-0 border-border/40">
-                {(data?.dueTodayCount || 0) > 0 && (
-                  <Button
-                    size="sm"
-                    onClick={() => handleCardClick("today")}
-                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md gap-1.5 transition-transform hover:scale-102"
-                  >
-                    <Calendar className="h-3.5 w-3.5" />
-                    View Today's ({data?.dueTodayCount || 0})
-                  </Button>
-                )}
+              {(data?.overdue || 0) > 0 && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => handleCardClick("overdue")}
+                  className="flex-1 sm:flex-initial h-8 px-3.5 text-xs font-semibold gap-1.5"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Resolve Overdue ({data?.overdue})
+                </Button>
+              )}
 
-                {(data?.overdue || 0) > 0 && (
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => handleCardClick("overdue")}
-                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 text-white rounded-xl shadow-md shadow-red-500/20 gap-1.5 transition-transform hover:scale-102"
-                  >
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    Resolve Overdue ({data?.overdue})
-                  </Button>
-                )}
-
-                {Math.max(0, plannedCount - completedCount) > 0 && (
-                  <Button
-                    size="sm"
-                    onClick={() => handleCardClick("pending")}
-                    className="flex-1 sm:flex-initial h-9 px-4 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md shadow-purple-500/20 gap-1.5 transition-transform hover:scale-102"
-                  >
-                    <Target className="h-3.5 w-3.5" />
-                    View Pending ({Math.max(0, plannedCount - completedCount)})
-                  </Button>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              {Math.max(0, plannedCount - completedCount) > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleCardClick("pending")}
+                  className="flex-1 sm:flex-initial h-8 px-3.5 text-xs font-semibold gap-1.5"
+                >
+                  <Target className="h-3.5 w-3.5" />
+                  View Pending ({Math.max(0, plannedCount - completedCount)})
+                </Button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
         {/* ─── Filter Toolbar ─────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2.5 bg-card/90 backdrop-blur-xl border border-border/70 rounded-2xl p-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 bg-card border border-border rounded-xl p-2 shadow-2xs">
           {/* Filter Icon Only with Badge at Top-Right Corner */}
           <div
-            className="relative inline-flex items-center justify-center p-1.5 rounded-xl bg-primary/10 text-primary shrink-0 mr-1"
+            className="relative inline-flex items-center justify-center p-1.5 rounded-lg bg-muted text-muted-foreground shrink-0 mr-1"
             title="Filters"
           >
-            <Filter className="h-4 w-4" />
+            <Filter className="h-3.5 w-3.5" />
             {activeFilterCount > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-extrabold text-primary-foreground shadow-sm tabular-nums">
+              <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-extrabold text-primary-foreground shadow-2xs tabular-nums">
                 {activeFilterCount}
               </span>
             )}
           </div>
 
-          <div className="h-4 w-px bg-border/70 hidden sm:block" />
+          <div className="h-4 w-px bg-border hidden sm:block" />
 
           {/* Category Filter (Working Gauges vs Ref Standards) */}
           <Select
@@ -925,8 +882,8 @@ const Index = () => {
               setPage(1);
             }}
           >
-            <SelectTrigger className="h-7 w-[155px] text-xs font-medium border-primary/40 bg-primary/5">
-              <Gauge className="h-3 w-3 mr-1 text-primary" />
+            <SelectTrigger className="h-8 w-[150px] text-xs font-medium">
+              <Gauge className="h-3.5 w-3.5 mr-1 text-primary" />
               <SelectValue placeholder="All Inventory" />
             </SelectTrigger>
             <SelectContent>
@@ -942,7 +899,7 @@ const Index = () => {
             </SelectContent>
           </Select>
 
-          <div className="h-4 w-px bg-border/70 hidden sm:block" />
+          <div className="h-4 w-px bg-border hidden sm:block" />
 
           {/* Quick Date Presets */}
           <DatePresets
@@ -955,7 +912,7 @@ const Index = () => {
             }}
           />
 
-          <div className="h-4 w-px bg-border/70 hidden sm:block" />
+          <div className="h-4 w-px bg-border hidden sm:block" />
 
           {/* Custom Date Pickers */}
           <div className="flex items-center gap-1.5">
@@ -964,7 +921,7 @@ const Index = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 text-xs font-medium hover:border-primary/50 transition-all px-2.5"
+                  className="h-8 text-xs font-medium px-2.5"
                 >
                   <CalendarIcon className="mr-1 h-3 w-3 text-muted-foreground" />
                   {startDate ? format(startDate, "dd MMM yyyy") : "Start"}
@@ -989,7 +946,7 @@ const Index = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 text-xs font-medium hover:border-primary/50 transition-all px-2.5"
+                  className="h-8 text-xs font-medium px-2.5"
                 >
                   <CalendarIcon className="mr-1 h-3 w-3 text-muted-foreground" />
                   {endDate ? format(endDate, "dd MMM yyyy") : "End"}
@@ -1010,7 +967,7 @@ const Index = () => {
             </Popover>
           </div>
 
-          <div className="h-4 w-px bg-border/70 hidden sm:block" />
+          <div className="h-4 w-px bg-border hidden sm:block" />
 
           {/* Item Status Filter */}
           <Select
@@ -1020,7 +977,7 @@ const Index = () => {
               setPage(1);
             }}
           >
-            <SelectTrigger className="h-7 w-[130px] text-xs font-medium">
+            <SelectTrigger className="h-8 w-[130px] text-xs font-medium">
               <Activity className="h-3 w-3 mr-1 text-muted-foreground" />
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
@@ -1048,7 +1005,7 @@ const Index = () => {
               setPage(1);
             }}
           >
-            <SelectTrigger className="h-7 w-[130px] text-xs font-medium">
+            <SelectTrigger className="h-8 w-[130px] text-xs font-medium">
               <MapPin className="h-3 w-3 mr-1 text-muted-foreground" />
               <SelectValue placeholder="All Plants" />
             </SelectTrigger>
@@ -1071,13 +1028,12 @@ const Index = () => {
               size="icon"
               title="Clear filters"
               onClick={handleClearFilters}
-              className="h-7 w-7 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-50/70 border border-red-200/50 dark:border-red-900/30 shrink-0"
+              className="h-8 w-8 text-destructive hover:bg-destructive/10 shrink-0"
             >
               <RotateCcw className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
-      </header>
 
       {/* ─── Error State ──────────────────────────────────────── */}
       {error && !loading && (
@@ -1329,26 +1285,26 @@ const Index = () => {
       {/* ─── Grid Row 3: Recent Activity Logs ── */}
       <section aria-label="Recent logs" className="grid grid-cols-1 gap-4">
         {/* Recent Activity Card */}
-        <Card className="world-class-card-static h-full flex flex-col justify-between">
-          <CardHeader className="pb-2 pt-3.5 px-5">
+        <Card className="rounded-xl border border-border bg-card shadow-xs h-full flex flex-col justify-between">
+          <CardHeader className="pb-3 pt-4 px-6">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-sm font-extrabold tracking-tight flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                <CardTitle className="text-base font-semibold tracking-tight flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-muted text-foreground">
                     <Activity className="h-4 w-4" />
                   </div>
                   <span>Recent Activity Logs</span>
                 </CardTitle>
-                <CardDescription className="text-xs">
+                <CardDescription className="text-sm mt-1">
                   Last 10 calibration events and updates
                 </CardDescription>
               </div>
-              <Badge variant="outline" className="text-[10px] font-mono font-bold bg-primary/5 text-primary border-primary/20 px-2 py-0.5 rounded-md">
+              <Badge variant="outline" className="text-xs font-normal text-muted-foreground px-2.5 py-0.5 rounded-full">
                 Live Feed
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="px-5 pb-4 flex-1 overflow-y-auto">
+          <CardContent className="px-6 pb-4 flex-1 overflow-y-auto">
             {loading ? (
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -1356,26 +1312,22 @@ const Index = () => {
                 ))}
               </div>
             ) : !data?.recentActivity?.length ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <div className="h-12 w-12 rounded-2xl bg-muted/30 flex items-center justify-center mb-3">
-                  <Activity className="h-6 w-6 opacity-30" />
-                </div>
-                <p className="text-sm font-semibold">No recent activity</p>
-                <p className="text-xs opacity-60 mt-0.5">
-                  Calibration events will appear here
-                </p>
-              </div>
+              <EmptyState
+                icon={Activity}
+                title="No recent activity"
+                description="Calibration events will appear here as calibrations are performed."
+              />
             ) : (
               <div className="space-y-1.5">
                 {data.recentActivity.map((r) => (
                   <div
                     key={r.id}
-                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-muted/70 transition-all group cursor-pointer border border-transparent hover:border-border/60"
+                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/60 transition-colors group cursor-pointer border border-transparent"
                     onClick={() => navigate(`/instruments`)}
                   >
                     <div
                       className={cn(
-                        "p-2 rounded-xl shrink-0 border shadow-xs",
+                        "p-2 rounded-md shrink-0 border shadow-2xs",
                         r.action === "Calibrated" || r.action === "OK"
                           ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/25"
                           : r.action === "Overdue"
@@ -1389,20 +1341,20 @@ const Index = () => {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold truncate group-hover:text-primary transition-colors">
+                        <span className="text-sm font-medium truncate group-hover:text-primary transition-colors">
                           {r.name}
                         </span>
                         {r.idCode && (
                           <Badge
                             variant="outline"
-                            className="text-[9px] font-mono font-bold px-1.5 py-0 shrink-0 bg-background/80"
+                            className="text-xs font-mono font-medium px-1.5 py-0 shrink-0 bg-background/80"
                           >
                             {r.idCode}
                           </Badge>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5 font-medium">
-                        <span className="font-semibold text-foreground/80">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
+                        <span className="font-medium text-foreground/80">
                           {r.action}
                         </span>
                         {r.location && (
@@ -1413,7 +1365,7 @@ const Index = () => {
                         )}
                       </div>
                     </div>
-                    <span className="text-[11px] text-muted-foreground tabular-nums shrink-0 font-mono font-semibold">
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0 font-medium">
                       {new Date(r.at).toLocaleDateString("en-GB", {
                         day: "2-digit",
                         month: "short",
@@ -1430,7 +1382,7 @@ const Index = () => {
 
       {/* ─── Grid Row 3: Due Soon / Due in Selected Range Instruments Table ── */}
       <section aria-label="Instruments due soon">
-        <Card className="world-class-card-static">
+        <Card className="rounded-xl border border-border bg-card shadow-2xs">
           <CardHeader className="pb-2 pt-3.5 px-5">
             <div className="flex items-center justify-between">
               <div>
@@ -1467,17 +1419,11 @@ const Index = () => {
                 ))}
               </div>
             ) : !data?.dueSoonList?.length ? (
-              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                <div className="h-12 w-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center mb-3 text-emerald-500">
-                  <CheckCircle2 className="h-6 w-6" />
-                </div>
-                <p className="text-sm font-semibold">
-                  All instruments up to date
-                </p>
-                <p className="text-xs opacity-60 mt-0.5">
-                  No calibrations due in this period
-                </p>
-              </div>
+              <EmptyState
+                icon={CheckCircle2}
+                title="All instruments up to date"
+                description="No instruments require calibration within this time period."
+              />
             ) : (
               <>
                 <Table aria-label="Due soon instruments">

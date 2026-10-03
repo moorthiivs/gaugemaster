@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Calibration, CalibrationPoint } from './calibration.entity';
 import PdfPrinter from 'pdfmake';
 import { SettingsService } from '../settings/settings.service';
@@ -8,7 +8,13 @@ const htmlToPdfmake = require('html-to-pdfmake');
 const { JSDOM } = require('jsdom');
 const path = require('path');
 const fs = require('fs');
-import { removeWhiteBackground, normalizeDiagramImage } from './utils/png-encoder.util';
+import {
+  removeWhiteBackground,
+  normalizeDiagramImage,
+  resolvePdfDiagram,
+  ResolvedPdfDiagram,
+} from './utils/png-encoder.util';
+import { getCoveredCells } from './utils/table-span.util';
 import { getPdfFonts } from '../lib/pdf-fonts';
 
 const fonts = getPdfFonts();
@@ -25,6 +31,8 @@ import { DEFAULT_APPROVAL_SEAL_BASE64 } from '../assets/default-seal';
 
 @Injectable()
 export class CertificateService {
+  private readonly logger = new Logger(CertificateService.name);
+
   private get printer(): PdfPrinter {
     return new PdfPrinter(getPdfFonts());
   }
@@ -363,8 +371,8 @@ export class CertificateService {
       rawCanvasBlocks.map(async (b: any) => {
         if ((b.type === 'diagram_block' || b.type === 'diagram') && (b.imageUrl || b.image)) {
           const rawUrl = b.imageUrl || b.image;
-          const cleanUrl = await normalizeDiagramImage(rawUrl);
-          return { ...b, imageUrl: cleanUrl, image: cleanUrl };
+          const resolved = await resolvePdfDiagram(rawUrl);
+          return { ...b, resolvedDiagram: resolved };
         }
         return b;
       }),
@@ -878,9 +886,9 @@ export class CertificateService {
       ((calibration as any).template as any)?.diagram_image_alignment ||
       'center';
 
-    let diagramDataUrl: string | null = null;
+    let resolvedDiagram: ResolvedPdfDiagram | null = null;
     if (rawDiagram && typeof rawDiagram === 'string' && rawDiagram.trim()) {
-      diagramDataUrl = await normalizeDiagramImage(rawDiagram);
+      resolvedDiagram = await resolvePdfDiagram(rawDiagram);
     }
 
     const targetDiagramWidth = Math.min(diagramWidth, 545);
@@ -1296,7 +1304,8 @@ export class CertificateService {
         );
 
         // Data Rows
-        (tbl.rows || []).forEach((row: any) => {
+        const coveredCells = getCoveredCells(tbl.rows || [], tbl.columns || []);
+        (tbl.rows || []).forEach((row: any, rIdx: number) => {
           if (row.is_merged || row.isMerged) {
             tblBody.push([
               {
@@ -1313,26 +1322,35 @@ export class CertificateService {
             return;
           }
           const rowCells: any[] = [];
-          let skipCols = 0;
           tbl.columns.forEach((col: any) => {
-            if (skipCols > 0) {
-              skipCols--;
+            if (coveredCells.has(`${rIdx}_${col.id}`)) {
               rowCells.push({});
               return;
             }
-            const span = row.cellSpans?.[col.id]?.colSpan || 1;
-            if (span > 1) {
-              skipCols = span - 1;
+            const spanInfo = row.cellSpans?.[col.id];
+            const span = spanInfo?.colSpan || 1;
+            const rSpan = spanInfo?.rowSpan || 1;
+            const isMerged = span > 1 || rSpan > 1;
+
+            if (isMerged) {
               const val = (row[col.id] !== undefined && row[col.id] !== '')
                 ? row[col.id]
                 : (col.id === 'nominal' ? row.nominal : '') ?? '';
+              const numLines = String(val).split('\n').length;
+              const extraTextHeight = (numLines - 1) * (effectiveContentFontSize * 1.18);
+              const rowHeight = effectiveContentFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight - extraTextHeight) / 2)
+                : 0.5;
               rowCells.push({
                 text: String(val),
-                colSpan: span,
+                colSpan: span > 1 ? span : undefined,
+                rowSpan: rSpan > 1 ? rSpan : undefined,
                 style: 'tdCell',
                 fontSize: effectiveContentFontSize,
-                margin: [0, 0.5, 0, 0.5],
+                margin: [0, topPad, 0, 0.5],
                 alignment: 'center',
+                verticalAlignment: 'middle',
                 bold: true,
                 fillColor: '#f8fafc',
               });
@@ -1342,7 +1360,23 @@ export class CertificateService {
             let val: any = row[col.id];
             if (isPointNo) {
               val = row.point_number ?? row[col.id] ?? (tblBody.length - 1);
-            } else if (col.type === 'nominal') {
+              const rowHeight = effectiveContentFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight) / 2)
+                : 0.5;
+              rowCells.push({
+                text: String(val),
+                colSpan: span > 1 ? span : undefined,
+                rowSpan: rSpan > 1 ? rSpan : undefined,
+                style: 'tdCellMono',
+                fontSize: effectiveContentFontSize,
+                margin: [0, topPad, 0, 0.5],
+                alignment: 'center',
+                verticalAlignment: 'middle',
+              });
+              return;
+            }
+            if (col.type === 'nominal') {
               const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
               val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : '-';
             } else if (col.type === 'text') {
@@ -1521,6 +1555,10 @@ export class CertificateService {
 
               const cSpan = Math.min(cell.colSpan || 1, matrixCols - cIdx);
               const rSpan = Math.min(cell.rowSpan || 1, numHeaderRows - rIdx);
+              const rowHeight = tableHeaderFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight) / 2)
+                : 0.5;
 
               // Set the origin cell
               headerGrid[rIdx][cIdx] = {
@@ -1530,6 +1568,9 @@ export class CertificateService {
                 fillColor: '#f1f5f9',
                 colSpan: cSpan,
                 rowSpan: rSpan,
+                margin: [0, topPad, 0, 0.5],
+                alignment: 'center',
+                verticalAlignment: 'middle',
               };
 
               // Fill dummy objects for spanned slots
@@ -1613,22 +1654,31 @@ export class CertificateService {
             margin: [0, mt, 0, mb],
           });
         } else if (block.type === 'diagram_block' || block.type === 'diagram') {
-          const dImg = block.imageUrl || block.image;
-          if (dImg) {
+          const dResolved: ResolvedPdfDiagram | null = block.resolvedDiagram;
+          if (dResolved) {
+            const blockWidth = block.width ? Math.min(Number(block.width), 360) : 240;
+            const blockAlign = block.alignment || 'center';
+            const cellNode =
+              dResolved.type === 'svg'
+                ? {
+                    svg: dResolved.content,
+                    width: blockWidth,
+                    alignment: blockAlign,
+                    margin: [2, 2, 2, 2],
+                  }
+                : {
+                    image: dResolved.dataUrl,
+                    width: blockWidth,
+                    alignment: blockAlign,
+                    margin: [2, 2, 2, 2],
+                  };
+
             resultElements.push({
+              __isDiagramNode: true,
               unbreakable: true,
               table: {
                 widths: ['*'],
-                body: [
-                  [
-                    {
-                      image: dImg,
-                      width: block.width ? Math.min(Number(block.width), 360) : 240,
-                      alignment: block.alignment || 'center',
-                      margin: [2, 2, 2, 2],
-                    },
-                  ],
-                ],
+                body: [[cellNode]],
               },
               layout: {
                 hLineWidth: () => 0.5,
@@ -2681,22 +2731,33 @@ export class CertificateService {
         },
 
         // ── Optional Diagram / Schematic Image (Printed above calibration results) ──
-        ...(diagramDataUrl
+        ...(resolvedDiagram
           ? [
               {
+                __isDiagramNode: true,
                 table: {
                   widths: ['*'],
                   body: [
                     [
-                      {
-                        image: diagramDataUrl,
-                        fit: [targetDiagramWidth, targetDiagramHeight] as [
-                          number,
-                          number,
-                        ],
-                        alignment: diagramAlignment,
-                        margin: [0, 2, 0, 2],
-                      },
+                      resolvedDiagram.type === 'svg'
+                        ? {
+                            svg: resolvedDiagram.content,
+                            fit: [targetDiagramWidth, targetDiagramHeight] as [
+                              number,
+                              number,
+                            ],
+                            alignment: diagramAlignment,
+                            margin: [0, 2, 0, 2],
+                          }
+                        : {
+                            image: resolvedDiagram.dataUrl,
+                            fit: [targetDiagramWidth, targetDiagramHeight] as [
+                              number,
+                              number,
+                            ],
+                            alignment: diagramAlignment,
+                            margin: [0, 2, 0, 2],
+                          },
                     ],
                   ],
                 },
@@ -2912,7 +2973,21 @@ export class CertificateService {
       },
     };
 
-    const pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    let pdfDoc: any;
+    try {
+      pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to compile PDF document with image/diagram elements: ${err?.message || err}. Attempting fallback certificate generation...`,
+      );
+      // Remove any diagram table nodes from content to guarantee certificate issuance never fails
+      const fallbackContent = (docDefinition.content as any[]).filter(
+        (node: any) => !node?.__isDiagramNode,
+      );
+      docDefinition.content = fallbackContent;
+      pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    }
+
     const chunks: Buffer[] = [];
 
     return new Promise((resolve, reject) => {

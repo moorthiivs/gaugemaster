@@ -124,27 +124,27 @@ export function AppSidebar() {
     : navigationGroups;
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border/60 bg-sidebar/90 backdrop-blur-md shadow-lg transition-all duration-300">
-      <SidebarHeader className="p-5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-4">
-        <div className="flex items-center gap-3 overflow-hidden group-data-[collapsible=icon]:justify-center">
-          <div className="flex-shrink-0 p-2 bg-primary/10 rounded-lg border border-primary/20 group-data-[collapsible=icon]:p-1.5 group-data-[collapsible=icon]:mx-auto">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border bg-sidebar shadow-xs transition-all duration-200">
+      <SidebarHeader className="p-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
+        <div className="flex items-center gap-2.5 overflow-hidden group-data-[collapsible=icon]:justify-center">
+          <div className="flex-shrink-0 p-1.5 bg-primary/10 rounded-md border border-primary/20 group-data-[collapsible=icon]:mx-auto">
             <ShieldCheck className="h-5 w-5 text-primary group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4" />
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-            <span className="text-base font-bold tracking-tight text-sidebar-foreground">Gaugemaster</span>
-            <span className="text-xs uppercase tracking-wider text-primary font-bold">Calibration Suite</span>
+            <span className="text-sm font-bold tracking-tight text-sidebar-foreground">Gaugemaster</span>
+            <span className="text-xs text-muted-foreground font-normal">Calibration Suite</span>
           </div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-3 space-y-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
+      <SidebarContent className="px-2 space-y-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
         {activeGroups.map((group) => {
           const visibleItems = group.items.filter((item) => canAccess(item.module, item.action as any));
           if (visibleItems.length === 0) return null;
 
           return (
             <SidebarGroup key={group.label} className="group-data-[collapsible=icon]:px-0 py-0">
-              <SidebarGroupLabel className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-3 mb-1.5 group-data-[collapsible=icon]:hidden">
+              <SidebarGroupLabel className="text-xs font-medium text-muted-foreground px-2 py-1 group-data-[collapsible=icon]:hidden">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
@@ -153,20 +153,22 @@ export function AppSidebar() {
                     const isActive = isNavActive(item.url);
                     return (
                       <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
-                        <SidebarMenuButton asChild tooltip={item.title} className="h-9 relative group/btn group-data-[collapsible=icon]:mx-auto">
+                        <SidebarMenuButton 
+                          asChild 
+                          isActive={isActive}
+                          tooltip={item.title} 
+                          className="h-8.5 rounded-md"
+                        >
                           <NavLink 
                             to={item.url} 
                             className={cn(
-                              "flex items-center gap-3 px-3 w-full h-full rounded-md text-[13.5px] font-medium transition-all duration-200 relative group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
+                              "flex items-center gap-2.5 px-2.5 w-full h-full rounded-md text-sm font-medium transition-colors group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:mx-auto",
                               isActive 
-                                ? "bg-primary/15 text-primary font-semibold shadow-xs" 
-                                : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                                ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold" 
+                                : "text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
                             )}
                           >
-                            {isActive && (
-                              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-primary rounded-r-sm group-data-[collapsible=icon]:h-3" />
-                            )}
-                            <item.icon className={cn("h-4 w-4 shrink-0 transition-transform group-hover/btn:scale-105", isActive && "text-primary")} />
+                            <item.icon className="h-4 w-4 shrink-0 transition-colors" />
                             <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
                           </NavLink>
                         </SidebarMenuButton>

@@ -65,7 +65,7 @@ export function DashboardChart({
       type: 'bar',
       toolbar: { show: false },
       background: 'transparent',
-      fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
+      fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       animations: {
         enabled: true,
         easing: 'easeinout',

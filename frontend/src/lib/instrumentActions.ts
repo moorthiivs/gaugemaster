@@ -74,3 +74,14 @@ export async function getFilterParams(userId: string, companyId?: string) {
   });
   return res.data;
 }
+
+/** Parse frequency string (e.g., "12 Months", "1 Year") into total number of months */
+export function parseFrequencyMonths(freq: string | undefined | null): number {
+  if (!freq) return 0;
+  const match = freq.match(/(\d+)/);
+  if (!match) return 0;
+  let val = parseInt(match[1], 10);
+  if (freq.toLowerCase().includes("year")) val *= 12;
+  return val;
+}
+

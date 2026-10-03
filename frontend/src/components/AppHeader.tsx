@@ -471,7 +471,7 @@ export function AppHeader() {
             </PopoverTrigger>
             <PopoverContent 
               align="start" 
-              className="w-[var(--radix-popover-trigger-width)] p-0 overflow-hidden glass-popover rounded-xl shadow-2xl border border-border/80 mt-1.5"
+              className="w-[var(--radix-popover-trigger-width)] p-0 overflow-hidden bg-popover rounded-lg shadow-lg border border-border mt-1"
               onOpenAutoFocus={(e) => e.preventDefault()}
             >
               <div className="p-2.5 border-b border-border/50 bg-muted/30 flex items-center justify-between">
@@ -506,14 +506,14 @@ export function AppHeader() {
                         aria-selected={isSelected}
                         className={cn(
                           "p-3 transition-colors cursor-pointer flex items-center justify-between gap-3 group",
-                          isSelected ? "bg-primary/20 border-l-2 border-l-primary" : "hover:bg-primary/10"
+                          isSelected ? "bg-primary/10 border-l-2 border-l-primary" : "hover:bg-muted/50"
                         )}
                         onClick={() => handleSelectSuggestion(item)}
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                           <div className={cn(
-                            "p-2 rounded-xl border shrink-0 transition-transform",
-                            isSelected ? "bg-primary text-primary-foreground border-primary scale-105" : "bg-primary/10 border-primary/20 text-primary group-hover:scale-105"
+                            "p-2 rounded-lg border shrink-0 transition-transform",
+                            isSelected ? "bg-primary text-primary-foreground border-primary" : "bg-primary/10 border-primary/20 text-primary"
                           )}>
                             <Gauge className="h-4 w-4" />
                           </div>
@@ -537,12 +537,7 @@ export function AppHeader() {
                         <div className="flex items-center gap-2 shrink-0">
                           <Badge 
                             variant={item.status === 'Overdue' ? 'destructive' : item.status === 'Calibrated' || item.status === 'Pass' ? 'default' : 'secondary'} 
-                            className={cn(
-                              "text-[10px] px-2 py-0.5 font-semibold capitalize shrink-0 shadow-xs",
-                              item.status === 'Overdue' && "bg-red-500/15 text-red-600 border border-red-500/30 hover:bg-red-500/20",
-                              (item.status === 'Calibrated' || item.status === 'Pass') && "bg-green-500/15 text-green-700 border border-green-500/30 hover:bg-green-500/20",
-                              item.status === 'Due Soon' && "bg-amber-500/15 text-amber-700 border border-amber-500/30 hover:bg-amber-500/20"
-                            )}
+                            className="text-[10px] px-2 py-0.5 font-semibold capitalize shrink-0 shadow-2xs"
                           >
                             {item.status || 'Active'}
                           </Badge>
@@ -559,7 +554,7 @@ export function AppHeader() {
                 onClick={handleSearchSubmit}
               >
                 <span className="truncate pr-2">Search all inventory matching <strong>"{searchQuery}"</strong></span>
-                <kbd className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-mono font-bold bg-primary text-primary-foreground rounded shadow-xs shrink-0">
+                <kbd className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-mono font-bold bg-primary text-primary-foreground rounded shadow-2xs shrink-0">
                   Enter ↵
                 </kbd>
               </div>
@@ -589,13 +584,13 @@ export function AppHeader() {
           {/* Dynamic Permission-Based Quick Actions Dropdown Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button size="sm" className="h-9 px-3.5 gap-2 text-xs font-semibold bg-primary hover:bg-primary/90 shadow-md transition-all rounded-lg">
+              <Button size="sm" className="h-9 px-3 gap-2 text-xs font-medium bg-primary hover:bg-primary/90 shadow-xs transition-colors rounded-md">
                 <Zap className="h-3.5 w-3.5 text-amber-400 fill-amber-400" />
                 <span className="hidden sm:inline">Quick Actions</span>
                 <ChevronDown className="h-3.5 w-3.5 opacity-70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-72 p-1.5 glass-popover rounded-xl shadow-2xl border-border/70">
+            <DropdownMenuContent align="end" className="w-72 p-1.5 bg-popover rounded-lg shadow-lg border border-border">
               <div className="px-2.5 py-1.5 flex items-center justify-between border-b border-border/50">
                 <span className="text-[11px] font-bold text-foreground uppercase tracking-wider flex items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />

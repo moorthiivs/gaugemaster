@@ -36,6 +36,11 @@ import { InstrumentsColumnModal } from "@/components/instruments/InstrumentsColu
 import { InstrumentsDeleteModals } from "@/components/instruments/InstrumentsDeleteModals";
 import { InstrumentsReviewSelectedModal } from "@/components/instruments/InstrumentsReviewSelectedModal";
 import { InstrumentsHistoryModal } from "@/components/instruments/InstrumentsHistoryModal";
+import { InstrumentsDateUpdateModal } from "@/components/instruments/InstrumentsDateUpdateModal";
+import { InstrumentsSendCalibrationModal } from "@/components/instruments/InstrumentsSendCalibrationModal";
+import { InstrumentsUploadModal } from "@/components/instruments/InstrumentsUploadModal";
+import { PageHeader } from "@/components/common/PageHeader";
+import { StatusBadge } from "@/components/common/StatusBadge";
 
 export interface ColumnConfig {
   id: string;
@@ -1052,50 +1057,12 @@ export default function Instruments() {
     status: {
       accessorKey: "status",
       header: "Status",
-      cell: ({ row }) => {
-        const status = row.original.status;
-        return (
-          <Badge
-            variant={
-              status === "OK"
-                ? "success"
-                : status === "Overdue"
-                  ? "destructive"
-                  : status === "Sent for Calibration"
-                    ? "premium"
-                    : "warning"
-            }
-            className="capitalize"
-          >
-            {status}
-          </Badge>
-        );
-      },
+      cell: ({ row }) => <StatusBadge status={row.original.status} />,
     },
     item_status: {
       accessorKey: "item_status",
       header: "Item Status",
-      cell: ({ row }) => {
-        const rawStatus = row.original.item_status || "Active";
-        const itemStatus = normalizeItemStatus(rawStatus);
-        const lower = itemStatus.toLowerCase();
-        const getBadgeStyle = () => {
-          if (lower === "active") return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
-          if (lower === "spare") return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
-          if (lower === "stock") return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
-          if (lower === "inactive") return "bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20";
-          if (lower === "scrapped" || lower === "rejected") return "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20";
-          return "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20";
-        };
-        return (
-          <Badge 
-            variant="outline" 
-            className={`border font-semibold text-[11px] ${getBadgeStyle()}`}
-          >
-            {itemStatus}
-          </Badge>
-        );
-      },
+      cell: ({ row }) => <StatusBadge status={row.original.item_status || "Active"} />,
     },
     agency: { accessorKey: "agency", header: "Agency" },
     range: { accessorKey: "range", header: "Range" },
@@ -1209,6 +1176,7 @@ export default function Instruments() {
       header: "Action",
       cell: ({ row }) => {
         const isUploading = uploadingId === row.original.id;
+        const instrumentLabel = row.original.name || row.original.id_code;
         return (
           <div className="flex items-center gap-2">
             {canAccess("calibrations", "create") && (
@@ -1217,6 +1185,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Calibrate instrument ${instrumentLabel}`}
                   className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1233,6 +1202,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Log external calibration for ${instrumentLabel}`}
                   className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1248,6 +1218,7 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 disabled={isUploading}
+                aria-label={`View calibration history for ${instrumentLabel}`}
                 className="h-8 w-8"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1262,6 +1233,7 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 disabled={isUploading}
+                aria-label={`Print label for ${instrumentLabel}`}
                 className="h-8 w-8 hover:text-primary"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1278,6 +1250,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Delete instrument ${instrumentLabel}`}
                   className="h-8 w-8 hover:bg-destructive/10 group"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1322,6 +1295,7 @@ export default function Instruments() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label="Selection options"
                     className="h-5 w-4 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     title="Selection Options"
                   >
@@ -1433,35 +1407,30 @@ export default function Instruments() {
   return (
     <>
       <div className="space-y-6 animate-in fade-in duration-500">
-        {/* ─── Header Banner (Industrial Precision + Subtle Glass) ─── */}
-        {/* <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Instruments Inventory</h1>
-              <Badge variant="outline" className="text-[10px] font-mono font-bold bg-background text-primary border-primary/30">
-                {data.total} Total
-              </Badge>
-            </div>
-            <p className="text-xs sm:text-sm text-muted-foreground font-medium">
-              Manage and track your calibration inventory with precision.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            {canAccess("instruments", "create") && (
+        {/* ─── Page Header ─── */}
+        <PageHeader
+          title="Instruments Inventory"
+          badge={
+            <Badge variant="outline" className="text-xs font-mono font-medium">
+              {data.total} Total
+            </Badge>
+          }
+          description="Manage and track your calibration inventory with precision."
+          actions={
+            canAccess("instruments", "create") && (
               <Button 
                 size="sm" 
-                className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl shadow-xs gap-2 w-full sm:w-auto" 
+                className="h-8 px-3.5 text-xs font-semibold gap-2" 
                 onClick={() => navigate("/instruments/new")}
               >
                 <PlusCircle className="h-4 w-4" /> Add Instrument
               </Button>
-            )}
-          </div>
-        </header> */}
+            )
+          }
+        />
 
         {/* ─── Filter Inventory Section ─── */}
-        <div className="bg-card/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-border/70 shadow-xs space-y-4">
+        <div className="bg-card p-4 sm:p-5 rounded-xl border border-border shadow-2xs space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b pb-3 border-border/50">
             <div className="flex items-center gap-2">
               <div className="h-5 w-1 bg-primary rounded-full" />
@@ -1690,6 +1659,7 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 title="Reset all filters"
+                aria-label="Reset all filters"
                 className="h-9 w-9 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50/50 border-border/70 rounded-lg transition-all"
                 onClick={() => {
                   setLocalSearch("");
@@ -1944,348 +1914,47 @@ export default function Instruments() {
         />
       </div>
 
-      <Dialog open={isOpenupload} onOpenChange={setisOpenupload}>
-        <DialogContent className="max-w-5xl max-h-[95vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileSpreadsheet size={20} className="text-primary" />
-              Bulk Upload Instruments
-            </DialogTitle>
-            <DialogDescription>
-              Upload an Excel file to add multiple instruments at once.
-            </DialogDescription>
-          </DialogHeader>
-          <ExcelUpload
-            endpoint="/instruments/bulk-upload"
-            mapRow={(row) => {
-              const getVal = (aliases: string[]) => {
-                const normAliases = aliases.map(a => a.toLowerCase().replace(/[^a-z0-9]/g, ""));
-                const key = Object.keys(row || {}).find(k => normAliases.includes(k.toLowerCase().replace(/[^a-z0-9]/g, "")));
-                return key !== undefined ? row[key] : undefined;
-              };
+      {/* Extracted Modular Modals (ARCH-01) */}
+      <InstrumentsUploadModal
+        isOpen={isOpenupload}
+        onOpenChange={setisOpenupload}
+        validationRules={validationRules}
+        rejectedFile={rejectedFile}
+        setRejectedFile={setRejectedFile}
+        onRefresh={fetchData}
+      />
 
-              return {
-                // sino is auto-generated by backend — not sent from Excel
-                name: getVal(["Name", "Description", "NAME OF INSTRUMENT", "Instrument Name"]),
-                id_code: getVal(["ID Code", "IMTE", "ID CODE", "Id", "Instrument ID"]),
-                range: getVal(["Range", "RANGE"]),
-                serial_no: getVal(["Serial No", "SERIAL NO", "Items Sl.No / Model", "Serial Number", "Sl.No"]),
-                least_count: getVal(["Least Count", "LEAST COUNT"]),
-                location: getVal(["Location", "Item Location", "LOCATION"]),
-                frequency: getVal(["Frequency", "CALIB. FREQUENCY in month", "CALIBRATION FREQUENCY", "Calib Frequency"]),
-                last_calibration_date: getVal(["Last Calibration Date", "LAST CALIBRATION DATE", "Last Cal. Date", "Last Cal Date"]),
-                due_date: getVal(["Due Date", "DUE DATE", "Next Cal. Date", "Next Cal Date"]),
-                status: (() => {
-                  const s = getVal(["Status", "Calibration Status", "STATUS"]);
-                  if (s && s.toString().trim().toLowerCase() === "active") return "OK";
-                  return s || "OK";
-                })(),
-                item_status: (() => {
-                  const s = getVal(["Item Status", "ITEM STATUS"]);
-                  return normalizeItemStatus(s);
-                })(),
-                make: getVal(["Make", "Item Make"]),
-                item_type: getVal(["Item Type", "Type"]),
-                device_type: (() => {
-                  const val = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"]);
-                  if (val) {
-                    const str = val.toString().trim();
-                    if (/reference|master/i.test(str)) return "Reference Standard";
-                    if (/gauge/i.test(str)) return "Gauge";
-                    if (/instrument/i.test(str)) return "Instrument";
-                    return str;
-                  }
-                  const isRef = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (isRef === "yes" || isRef === "true" || isRef === "1") return "Reference Standard";
-                  return "Instrument";
-                })(),
-                part_no: getVal(["Part No", "PART NO", "Part Number"]),
-                part_name: getVal(["Part Name"]),
-                agency: getVal(["Calibration Agency", "Agency", "CALIBRATION AGENCY AND TC No", "CALIBRATION AGENCY", "Agency Name"]),
-                module: getVal(["Module", "Moudle"]),
-                calibration_source: getVal(["Calibration Source", "Source"]),
-                customer: getVal(["Customer"]),
-                sector: getVal(["Sector"]),
-                criticality_level: getVal(["Criticality Level", "Criticality"]),
-                cert_no: getVal(["Cert. No.", "Cert No", "Certificate No"]),
-                notes: getVal(["Notes", "Note"]),
-                remarks: getVal(["Remarks", "Remark"]),
-                gauge_issue_date: getVal(["Gauge Issue Date", "Issue Date"]),
-                gauges_received_by: getVal(["Gauges Received By", "Received By"]),
-                gauges_issued_by: getVal(["Gauges Issued By", "Gaues Issued By", "Issued By"]),
-                calibration_procedure: getVal(["Calibration Procedure", "Calibration Procedure& Ref Std", "Procedure"]),
-                traceable: getVal(["Traceable", "Traceability"]),
-                is_reference_standard: (() => {
-                  const val = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (val === "yes" || val === "true" || val === "1") return true;
-                  const devType = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"])?.toString().toLowerCase();
-                  if (devType && (devType.includes("reference") || devType.includes("master"))) return true;
-                  return false;
-                })(),
-                custom_parameters: (() => {
-                  const params: Record<string, any> = {};
-                  const customRules = validationRules.filter(r => r.isCustom);
-                  customRules.forEach(rule => {
-                    const val = getVal([rule.displayName, rule.fieldName, ...(rule.excelAliases || [])]);
-                    if (val !== undefined && val !== null && val !== "") {
-                      params[rule.fieldName] = val;
-                    }
-                  });
-                  return params;
-                })(),
-              };
-            }}
+      <InstrumentsSendCalibrationModal
+        isOpen={isOpenCalibagency}
+        onOpenChange={setisOpenCalibagency}
+        selectedAgency={selectedAgency}
+        setSelectedAgency={setSelectedAgency}
+        emailColumns={EMAIL_COLUMNS}
+        selectedEmailColumns={selectedEmailColumns}
+        setSelectedEmailColumns={setSelectedEmailColumns}
+        selected={selected}
+        setSelected={setSelected}
+        dataItems={data.items}
+        description={description}
+        setDescription={setDescription}
+        isSendCalibration={isSendCalibration}
+        onSendMail={handleSendMail}
+      />
 
-            rejectedFile={rejectedFile}
-            setRejectedFile={setRejectedFile}
-            onRefresh={fetchData}
-            onComplete={() => {
-              fetchData();
-              setisOpenupload(false);
-            }}
-          />
-        </DialogContent>
-      </Dialog>
-
-
-
-      <Dialog open={isOpenCalibagency} onOpenChange={setisOpenCalibagency}>
-        <DialogContent className="max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
-
-          <DialogHeader>
-            <DialogTitle>Send Instruments to Calibration Agency</DialogTitle>
-            <DialogDescription>
-              Enter agency email, review selected instruments and add description.
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Agency Email Input */}
-          <div className="space-y-2">
-            <Label>Calibration Agency Email</Label>
-            <Input
-              type="email"
-              value={selectedAgency}
-              onChange={(e) => setSelectedAgency(e.target.value)}
-              placeholder="Enter agency email"
-            />
-          </div>
-
-          {/* Columns Selection */}
-          <div className="space-y-2">
-            <Label>Select Columns to Include in Email</Label>
-            <div className="flex flex-wrap gap-4 border p-3 rounded-md max-h-32 overflow-y-auto">
-              {EMAIL_COLUMNS.map(col => (
-                <div key={col.id} className="flex items-center space-x-2">
-                  <Checkbox 
-                    id={`col-${col.id}`} 
-                    checked={selectedEmailColumns.includes(col.id)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setSelectedEmailColumns(prev => [...prev, col.id]);
-                      } else {
-                        setSelectedEmailColumns(prev => prev.filter(c => c !== col.id));
-                      }
-                    }}
-                  />
-                  <label htmlFor={`col-${col.id}`} className="text-sm cursor-pointer">
-                    {col.label}
-                  </label>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Selected Instruments List */}
-          <div className="space-y-2">
-            <Label>Selected Instruments ({Object.keys(selected).filter(id => selected[id]).length})</Label>
-
-            <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
-
-              {Object.keys(selected)
-                .filter((id) => selected[id])
-                .map((id) => {
-                  const item = data.items.find((i) => i.id === id);
-                  if (!item) return null;
-
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between bg-muted p-2 rounded-md"
-                    >
-                      <div className="text-sm">
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {item.id_code}
-                        </div>
-                      </div>
-
-                      {/* Remove Button */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() =>
-                          setSelected((prev) => {
-                            const copy = { ...prev };
-                            delete copy[item.id];
-                            return copy;
-                          })
-                        }
-                      >
-                        ✕
-                      </Button>
-                    </div>
-                  );
-                })}
-
-              {Object.keys(selected).filter((id) => selected[id]).length === 0 && (
-                <p className="text-sm text-muted-foreground">No instruments selected</p>
-              )}
-            </div>
-          </div>
-
-          {/* Description */}
-          <div className="space-y-2">
-            <Label>Description</Label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter description for the agency…"
-            />
-          </div>
-
-          <DialogFooter>
-            <Button
-              disabled={isSendCalibration}
-              onClick={handleSendMail}
-            >
-              {isSendCalibration ? 'Mail Sending...' : 'Send Mail'}
-            </Button>
-          </DialogFooter>
-
-        </DialogContent>
-      </Dialog>
-
-
-      <Dialog open={dateModalOpen} onOpenChange={setDateModalOpen}>
-        <DialogContent className="max-w-md space-y-4">
-          <DialogHeader>
-            <DialogTitle>Log External Calibration</DialogTitle>
-            <DialogDescription>
-              Upload certificate and update dates for {dateUpdateInstrument?.name} ({dateUpdateInstrument?.id_code}).
-              {dateUpdateInstrument?.due_date && (
-                <span className="block mt-1 text-xs text-muted-foreground font-medium">
-                  Previous Due Date: {format(new Date(dateUpdateInstrument.due_date), 'dd-MM-yyyy')}
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Last Calibration Date</Label>
-              <Input
-                type="date"
-                value={newLastCalDate}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setNewLastCalDate(val);
-                  // Auto calculate due date if frequency exists
-                  if (val && dateUpdateInstrument) {
-                    const freqMonths = parseFrequencyMonths(dateUpdateInstrument.frequency);
-                    if (freqMonths > 0) {
-                      const [y, m, d] = val.split('-').map(Number);
-                      const due = new Date(y, m - 1, d);
-                      due.setMonth(due.getMonth() + freqMonths);
-                      setNewDueDate(format(due, 'yyyy-MM-dd'));
-                    }
-                  }
-                }}
-              />
-            </div>
-            
-            {newDueDate && (
-              <div className="space-y-2 p-3 bg-muted/50 rounded-lg border border-border">
-                <Label className="text-xs text-muted-foreground">Next Due Date (Auto-calculated)</Label>
-                <div className="font-medium flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-emerald-600" />
-                  {format(new Date(newDueDate), 'dd-MM-yyyy')}
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Based on instrument frequency: {dateUpdateInstrument?.frequency || "Not set"}
-                </p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Attach Certificate (PDF/Image)</Label>
-              <div className="relative">
-                <input
-                  type="file"
-                  id="certificate-upload"
-                  accept=".pdf,image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files.length > 0) {
-                      setCertificateFile(e.target.files[0]);
-                    }
-                  }}
-                />
-                <label
-                  htmlFor="certificate-upload"
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.add("border-primary", "bg-primary/10");
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      const droppedFile = e.dataTransfer.files[0];
-                      setCertificateFile(droppedFile);
-                    }
-                  }}
-                  className="flex items-center justify-center w-full px-4 py-3 text-sm font-medium transition-all border-2 border-dashed rounded-lg cursor-pointer border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50 text-muted-foreground"
-                >
-                  <Upload className="w-5 h-5 mr-2 text-primary/70" />
-                  {certificateFile ? (
-                    <span className="text-foreground truncate max-w-[200px]">{certificateFile.name}</span>
-                  ) : (
-                    <span>Click to browse or drag and drop</span>
-                  )}
-                </label>
-              </div>
-              {dateUpdateInstrument?.certificate_file && (
-                <div className="flex items-center mt-2 text-sm">
-                  <span className="text-muted-foreground mr-2">Current file:</span>
-                  <a 
-                    href={dateUpdateInstrument.certificate_file.startsWith("http") ? dateUpdateInstrument.certificate_file : `${BASE_URL}${dateUpdateInstrument.certificate_file}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="flex items-center text-primary hover:underline font-medium"
-                  >
-                    <FileSpreadsheet className="w-4 h-4 mr-1" />
-                    View Certificate
-                  </a>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDateModalOpen(false)}>Cancel</Button>
-            <Button disabled={updatingDates || !newLastCalDate || !certificateFile} onClick={handleUpdateDates}>
-              {updatingDates ? "Saving..." : "Save External Calibration"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <InstrumentsDateUpdateModal
+        isOpen={dateModalOpen}
+        onOpenChange={setDateModalOpen}
+        instrument={dateUpdateInstrument}
+        newLastCalDate={newLastCalDate}
+        setNewLastCalDate={setNewLastCalDate}
+        newDueDate={newDueDate}
+        setNewDueDate={setNewDueDate}
+        certificateFile={certificateFile}
+        setCertificateFile={setCertificateFile}
+        updatingDates={updatingDates}
+        onUpdateDates={handleUpdateDates}
+        baseUrl={BASE_URL}
+      />
 
       <InstrumentsHistoryModal
         isOpen={historyModalOpen}

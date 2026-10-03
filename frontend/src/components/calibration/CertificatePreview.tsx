@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Download, ImageIcon, Loader2 } from "lucide-react";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -389,7 +390,9 @@ export function CertificatePreview({
                 </tr>
               </thead>
               <tbody className="font-mono">
-                {tbl.rows.map((row: any, rIdx: number) => {
+                {(() => {
+                  const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                  return tbl.rows.map((row: any, rIdx: number) => {
                   if (row.is_merged || row.isMerged) {
                     return (
                       <tr key={rIdx}>
@@ -404,37 +407,47 @@ export function CertificatePreview({
                   }
                   return (
                     <tr key={rIdx}>
-                    {(() => {
-                      let skipCols = 0;
-                      return tbl.columns.map((col: any, colIdx: number) => {
-                        if (skipCols > 0) {
-                          skipCols--;
-                          return null;
-                        }
-                        const span = row.cellSpans?.[col.id]?.colSpan || 1;
-                        if (span > 1) {
-                          skipCols = span - 1;
-                        }
+                    {tbl.columns.map((col: any, colIdx: number) => {
+                      if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                        return null;
+                      }
+                      const spanInfo = row.cellSpans?.[col.id];
+                      const span = spanInfo?.colSpan || 1;
+                      const rSpan = spanInfo?.rowSpan || 1;
+                      const isMerged = span > 1 || rSpan > 1;
+
                       const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                       const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
                       let val: any = row[col.id];
-                        if (span > 1) {
-                          val = (row[col.id] !== undefined && row[col.id] !== "")
-                            ? row[col.id]
-                            : (col.id === "nominal" ? row.nominal : "") ?? "";
-                          return (
-                            <td
-                              key={col.id}
-                              colSpan={span}
-                              className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center bg-slate-50/50"
-                            >
-                              {val}
-                            </td>
-                          );
-                        }
+                      if (isMerged) {
+                        val = (row[col.id] !== undefined && row[col.id] !== "")
+                          ? row[col.id]
+                          : (col.id === "nominal" ? row.nominal : "") ?? "";
+                        return (
+                          <td
+                            key={col.id}
+                            colSpan={span > 1 ? span : undefined}
+                            rowSpan={rSpan > 1 ? rSpan : undefined}
+                            className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center bg-slate-50/50 align-middle"
+                          >
+                            {val}
+                          </td>
+                        );
+                      }
                       if (isPointNo) {
                         val = row.point_number ?? row[col.id] ?? (rIdx + 1);
-                      } else if (col.type === "nominal") {
+                        return (
+                          <td
+                            key={col.id}
+                            colSpan={span > 1 ? span : undefined}
+                            rowSpan={rSpan > 1 ? rSpan : undefined}
+                            className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center align-middle"
+                          >
+                            {val}
+                          </td>
+                        );
+                      }
+                      if (col.type === "nominal") {
                         val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
                       } else if (col.type === "text") {
                         val = row[col.id] || row.required_dimension || row.description || "-";
@@ -466,12 +479,12 @@ export function CertificatePreview({
                           {val}
                         </td>
                       );
-                    });
-                  })()}
+                    })}
                   </tr>
                 );
-              })}
-              </tbody>
+              });
+            })()}
+            </tbody>
             </table>
           </div>
           {tbl.footerNote && (

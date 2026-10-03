@@ -15,11 +15,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
-import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
+import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
 import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { PageHeader } from "@/components/common/PageHeader";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import {
   Dialog,
@@ -86,6 +87,9 @@ export default function Calibration() {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [calibrationToDelete, setCalibrationToDelete] = useState<CalibrationRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resequenceChoice, setResequenceChoice] = useState<"resequence" | "keep">("resequence");
+  const [resequencePreview, setResequencePreview] = useState<ResequencePreviewData | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   // Audit trail modal state
   const [auditModalOpen, setAuditModalOpen] = useState(false);
@@ -306,14 +310,40 @@ export default function Calibration() {
     fetchData();
   }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery, viewMode, overdueScope, certStatusFilter, activeTab]);
 
+  const handleOpenDeleteModal = async (cal: CalibrationRecord) => {
+    setCalibrationToDelete(cal);
+    setResequenceChoice("resequence");
+    setResequencePreview(null);
+    setDeleteModalOpen(true);
+    setLoadingPreview(true);
+    try {
+      const data = await getResequencePreview(cal.id);
+      setResequencePreview(data);
+    } catch (err) {
+      console.warn("Could not fetch resequence preview:", err);
+      setResequencePreview(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!calibrationToDelete) return;
     setDeleting(true);
     try {
-      await deleteCalibration(calibrationToDelete.id);
-      toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} deleted`);
+      const shouldResequence = resequenceChoice === "resequence";
+      await deleteCalibration(calibrationToDelete.id, shouldResequence);
+      const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
+      if (shouldResequence && affectedCount > 0) {
+        toast.success(
+          `Calibration ${calibrationToDelete.certificate_number || ""} deleted & ${affectedCount} subsequent certificates renumbered.`
+        );
+      } else {
+        toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} deleted`);
+      }
       setDeleteModalOpen(false);
       setCalibrationToDelete(null);
+      setResequencePreview(null);
       fetchData();
     } catch {
       toast.error("Failed to delete calibration record");
@@ -496,10 +526,7 @@ export default function Calibration() {
                   )}
                   {canAccess("calibrations", "delete") && (
                     <DropdownMenuItem
-                      onClick={() => {
-                        setCalibrationToDelete(cal);
-                        setDeleteModalOpen(true);
-                      }}
+                      onClick={() => handleOpenDeleteModal(cal)}
                       className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
                     >
                       <Trash2 className="w-3.5 h-3.5 text-red-600" />
@@ -644,10 +671,7 @@ export default function Calibration() {
                   )}
                   {canAccess("calibrations", "delete") && (
                     <DropdownMenuItem
-                      onClick={() => {
-                        setCalibrationToDelete(cal);
-                        setDeleteModalOpen(true);
-                      }}
+                      onClick={() => handleOpenDeleteModal(cal)}
                       className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
                     >
                       <Trash2 className="w-3.5 h-3.5 text-red-600" />
@@ -666,79 +690,86 @@ export default function Calibration() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Activity className="w-6 h-6 text-primary" />
-            Calibration
-          </h1>
-          <p className="text-sm text-muted-foreground">Calibrate instruments and generate professional certificates</p>
-        </div>
-        {canAccess("calibrations", "create") && (
-          <Button onClick={() => navigate("/calibration/new")} className="gap-2 shadow-lg">
-            <PlusCircle className="w-4 h-4" />
-            New Calibration
-          </Button>
-        )}
-      </div>
+      {/* Page Header */}
+      <PageHeader
+        title="Calibration"
+        description="Calibrate instruments and generate professional certificates"
+        actions={
+          canAccess("calibrations", "create") && (
+            <Button
+              size="sm"
+              onClick={() => navigate("/calibration/new")}
+              className="h-8 px-3.5 text-xs font-semibold gap-2"
+            >
+              <PlusCircle className="w-4 h-4" />
+              New Calibration
+            </Button>
+          )
+        }
+      />
 
       {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border-blue-200">
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/15"><Activity className="w-5 h-5 text-blue-600" /></div>
+                <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                  <Activity className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground">Total Calibrations</p>
+                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.total}</p>
+                  <p className="text-xs text-muted-foreground font-medium">Total Calibrations</p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border-emerald-200">
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-emerald-500/15"><TrendingUp className="w-5 h-5 text-emerald-600" /></div>
+                <div className="p-2 rounded-lg bg-success/10 text-success">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="text-2xl font-bold">{stats.passRate}%</p>
-                  <p className="text-xs text-muted-foreground">Pass Rate</p>
+                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.passRate}%</p>
+                  <p className="text-xs text-muted-foreground font-medium">Pass Rate</p>
                 </div>
               </div>
             </CardContent>
           </Card>
-          <Card className="bg-gradient-to-br from-red-500/10 to-red-600/5 border-red-200">
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-red-500/15"><XCircle className="w-5 h-5 text-red-600" /></div>
+                <div className="p-2 rounded-lg bg-destructive/10 text-destructive">
+                  <XCircle className="w-5 h-5" />
+                </div>
                 <div>
-                  <p className="text-2xl font-bold">{stats.failed}</p>
-                  <p className="text-xs text-muted-foreground">Failed</p>
+                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.failed}</p>
+                  <p className="text-xs text-muted-foreground font-medium">Failed</p>
                 </div>
               </div>
             </CardContent>
           </Card>
           <Card
             onClick={() => { setActiveTab("pending"); setPage(1); }}
-            className="bg-gradient-to-br from-amber-500/15 via-amber-500/10 to-amber-600/5 border-amber-300/80 hover:border-amber-500 hover:shadow-md transition-all cursor-pointer group"
+            className="rounded-xl border border-border hover:border-warning/50 bg-card shadow-2xs transition-all cursor-pointer group"
           >
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
-                  <Clock className="w-5 h-5 text-amber-600" />
+                <div className="p-2 rounded-lg bg-warning/10 text-warning group-hover:scale-105 transition-transform">
+                  <Clock className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{stats.pendingCerts}</p>
+                    <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{stats.pendingCerts}</p>
                     {stats.pendingCerts > 0 && (
-                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 uppercase bg-amber-100 text-amber-800 border-amber-300">
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase bg-warning/10 text-warning border-warning/20">
                         Pending
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Pending Certificates <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
+                    Pending Certificates <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
                   </p>
                 </div>
               </div>
@@ -746,24 +777,24 @@ export default function Calibration() {
           </Card>
           <Card
             onClick={() => { setActiveTab("overdue"); setPage(1); }}
-            className="bg-gradient-to-br from-rose-500/15 via-rose-500/10 to-rose-600/5 border-rose-300/80 hover:border-rose-500 hover:shadow-md transition-all cursor-pointer group"
+            className="rounded-xl border border-border hover:border-destructive/50 bg-card shadow-2xs transition-all cursor-pointer group"
           >
             <CardContent className="pt-5 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform">
-                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                <div className="p-2 rounded-lg bg-destructive/10 text-destructive group-hover:scale-105 transition-transform">
+                  <AlertTriangle className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{activeOverdueCount}</p>
+                    <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{activeOverdueCount}</p>
                     {activeOverdueCount > 0 && (
-                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 uppercase animate-pulse">
+                      <Badge variant="destructive" className="text-[10px] px-1.5 py-0 uppercase">
                         Overdue
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Overdue Instruments <ChevronRight className="w-3 h-3 text-rose-500 group-hover:translate-x-0.5 transition-transform" />
+                    Overdue Instruments <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
                   </p>
                 </div>
               </div>
@@ -1297,7 +1328,7 @@ export default function Calibration() {
                     <div className="flex items-center justify-between border-b pb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px]">
-                          Edited by {log.edited_by_name || log.edited_by?.name || "User"}
+                          Edited by {log.edited_by_name || (typeof log.edited_by === "object" && log.edited_by && "name" in log.edited_by ? String((log.edited_by as any).name) : (typeof log.edited_by === "string" ? log.edited_by : "User"))}
                         </Badge>
                       </div>
                       <span className="text-[10px] text-muted-foreground font-mono">
@@ -1351,27 +1382,225 @@ export default function Calibration() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Modal */}
+      {/* Smart Delete Confirmation Modal with Resequence Options & Preview */}
       <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="w-5 h-5" />
-              Delete Calibration Record
-            </DialogTitle>
-            <DialogDescription className="text-xs pt-1">
-              Are you sure you want to permanently delete calibration record{" "}
-              <strong className="font-mono text-foreground">{calibrationToDelete?.certificate_number || calibrationToDelete?.id}</strong>?
-              This action cannot be undone.
-            </DialogDescription>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="p-4 border-b bg-red-50/50 dark:bg-red-950/20">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-red-700 dark:text-red-400">
+                  Delete Calibration Record
+                </DialogTitle>
+                <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
+                  Certificate: <strong className="font-mono text-foreground font-bold">{calibrationToDelete?.certificate_number || calibrationToDelete?.id}</strong>
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" size="sm" onClick={() => setDeleteModalOpen(false)} disabled={deleting}>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+            {loadingPreview ? (
+              <div className="py-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                <p className="text-xs">Analyzing certificate sequence and subsequent records...</p>
+              </div>
+            ) : resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 ? (
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <p className="font-semibold text-foreground">Sequence Reassignment Options</p>
+                  <p className="text-muted-foreground text-xs">
+                    This calibration is followed by <strong>{resequencePreview.affectedCalibrations.length}</strong> subsequent certificate(s). Select how you would like to handle downstream sequence numbers:
+                  </p>
+                </div>
+
+                {/* Option Choice Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                    onClick={() => setResequenceChoice("resequence")}
+                    className={`cursor-pointer p-3 rounded-xl border-2 transition-all ${
+                      resequenceChoice === "resequence"
+                        ? "border-primary bg-primary/5 shadow-xs"
+                        : "border-border hover:border-primary/40 bg-card"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="radio"
+                        name="resequenceChoice"
+                        checked={resequenceChoice === "resequence"}
+                        onChange={() => setResequenceChoice("resequence")}
+                        className="mt-0.5 cursor-pointer"
+                      />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-foreground">Reassign Sequence</p>
+                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-semibold px-1.5 py-0">
+                            Recommended
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          Shifts downstream certificate numbers back by 1 from deleted record to end. Prevents sequence gaps.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setResequenceChoice("keep")}
+                    className={`cursor-pointer p-3 rounded-xl border-2 transition-all ${
+                      resequenceChoice === "keep"
+                        ? "border-amber-500 bg-amber-50/20 dark:bg-amber-950/20 shadow-xs"
+                        : "border-border hover:border-amber-400/40 bg-card"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="radio"
+                        name="resequenceChoice"
+                        checked={resequenceChoice === "keep"}
+                        onChange={() => setResequenceChoice("keep")}
+                        className="mt-0.5 cursor-pointer"
+                      />
+                      <div className="space-y-1">
+                        <p className="font-bold text-foreground">Keep Existing Numbers</p>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          Leaves downstream certificates as-is. Creates an intentional gap in the certificate number sequence.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preview Diff Table if resequence selected */}
+                {resequenceChoice === "resequence" ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">
+                        Sequence Number Shift Preview ({resequencePreview.affectedCalibrations.length + 1} Records)
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        Next Counter: <strong className="text-foreground font-mono">{resequencePreview.currentNextSeq}</strong> → <strong className="text-primary font-mono">{resequencePreview.newNextSeq}</strong>
+                      </span>
+                    </div>
+
+                    <div className="border rounded-xl overflow-hidden shadow-2xs">
+                      <Table className="text-xs">
+                        <TableHeader className="bg-muted/70">
+                          <TableRow>
+                            <TableHead className="py-2 font-bold text-foreground">Instrument</TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">Current Cert No</TableHead>
+                            <TableHead className="py-2 w-6 text-center"></TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">Updated Cert No</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {/* Deleted Target Row */}
+                          <TableRow className="bg-red-50/30 dark:bg-red-950/20 border-b">
+                            <TableCell className="py-2 font-medium">
+                              <div>
+                                <p className="font-semibold text-foreground">{resequencePreview.targetCalibration.instrumentName || "Selected Item"}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono">{resequencePreview.targetCalibration.idCode || ""}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2 font-mono font-bold text-red-600">
+                              {resequencePreview.targetCalibration.certificate_number}
+                            </TableCell>
+                            <TableCell className="py-2 text-center text-muted-foreground">→</TableCell>
+                            <TableCell className="py-2">
+                              <Badge variant="destructive" className="text-[10px] font-bold">
+                                DELETED (REMOVED)
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Downstream Affected Rows */}
+                          {resequencePreview.affectedCalibrations.map((item) => (
+                            <TableRow key={item.id} className="hover:bg-muted/30 transition-colors">
+                              <TableCell className="py-2 font-medium">
+                                <div>
+                                  <p className="font-semibold text-foreground">{item.instrumentName || "Instrument"}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{item.idCode || ""}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-2 font-mono text-muted-foreground line-through">
+                                {item.oldCertificateNumber}
+                              </TableCell>
+                              <TableCell className="py-2 text-center text-muted-foreground font-bold">→</TableCell>
+                              <TableCell className="py-2">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300">
+                                  {item.newCertificateNumber}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-xs">
+                    <p className="font-semibold">Gap Notice:</p>
+                    <p className="text-[11px] mt-0.5">
+                      Subsequent records will retain current numbers ({resequencePreview.affectedCalibrations.map((c) => c.oldCertificateNumber).join(", ")}). The number <strong>{resequencePreview.targetCalibration.certificate_number}</strong> will be skipped permanently.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-muted-foreground">
+                  Are you sure you want to permanently delete calibration record{" "}
+                  <strong className="font-mono text-foreground font-bold">
+                    {calibrationToDelete?.certificate_number || calibrationToDelete?.id}
+                  </strong>
+                  ? This action cannot be undone.
+                </p>
+                {resequencePreview && resequencePreview.affectedCalibrations.length === 0 && (
+                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">
+                    <p className="font-semibold text-primary">Sequence Counter Adjustment</p>
+                    <p className="text-muted-foreground text-[11px]">
+                      This is the latest issued certificate in the current series. Deleting it will adjust the next sequence counter from <strong>{resequencePreview.currentNextSeq}</strong> to <strong>{resequencePreview.newNextSeq}</strong>.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Instrument Master Rollback Notice */}
+            <div className="p-2.5 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-[11px] space-y-0.5">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                Automatic Instrument History Rollback
+              </p>
+              <p className="text-muted-foreground text-[10px] leading-relaxed">
+                If this calibration was the instrument's latest record, its last calibration date and due date in Instrument Master will roll back automatically to the prior calibration.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 p-3 border-t bg-muted/30">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteModalOpen(false)}
+              disabled={deleting}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirmDelete} disabled={deleting} className="gap-1.5">
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+              className="gap-1.5 font-bold"
+            >
               {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              Delete Record
+              {resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 && resequenceChoice === "resequence"
+                ? "Confirm & Reassign Sequence"
+                : "Delete Record"}
             </Button>
           </div>
         </DialogContent>

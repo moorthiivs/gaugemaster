@@ -15,11 +15,19 @@ interface CertConfig {
   certYearFormat: string;
   certSeqLength: number;
   certNextSeq: number;
+  certResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom';
+  certCustomResetMonths?: number;
+  certStartSeq?: number;
+  certLastResetPeriod?: string;
   ulrPrefix: string;
   ulrSeparator: string;
   ulrYearFormat: string;
   ulrSeqLength: number;
   ulrNextSeq: number;
+  ulrResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom';
+  ulrCustomResetMonths?: number;
+  ulrStartSeq?: number;
+  ulrLastResetPeriod?: string;
   headerCompanyName: string;
   headerCompanySubtitle: string;
   headerRightBoxText1: string;
@@ -51,11 +59,19 @@ const DEFAULTS: CertConfig = {
   certYearFormat: "YYYY",
   certSeqLength: 5,
   certNextSeq: 0,
+  certResetFrequency: "never",
+  certCustomResetMonths: 1,
+  certStartSeq: 0,
+  certLastResetPeriod: "",
   ulrPrefix: "ULR",
   ulrSeparator: "/",
   ulrYearFormat: "YYYY",
   ulrSeqLength: 5,
   ulrNextSeq: 0,
+  ulrResetFrequency: "never",
+  ulrCustomResetMonths: 1,
+  ulrStartSeq: 0,
+  ulrLastResetPeriod: "",
   headerCompanyName: "Company Name",
   headerCompanySubtitle: "(CALIBRATION LABORATORY)",
   headerRightBoxText1: "NABL / LAB",
@@ -144,6 +160,86 @@ export default function CertificateConfig() {
     }
   };
 
+  const getPeriodBadge = (freq?: string, customMonths?: number) => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const formatDate = (d: Date) => `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`;
+
+    if (freq === "monthly") {
+      const startDate = new Date(year, month, 1);
+      const endDate = new Date(year, month + 1, 0);
+      return {
+        title: "Monthly Reset",
+        dateRange: `${formatDate(startDate)} to ${formatDate(endDate)}`,
+        desc: "Resets to start sequence automatically on the 1st of every month",
+      };
+    }
+    if (freq === "yearly") {
+      const startDate = new Date(year, 0, 1);
+      const endDate = new Date(year, 12, 0);
+      return {
+        title: "Yearly Reset",
+        dateRange: `${formatDate(startDate)} to ${formatDate(endDate)}`,
+        desc: "Resets to start sequence automatically on January 1st every year",
+      };
+    }
+    if (freq === "financial_year") {
+      const isAfterApril = month >= 3;
+      const fyStart = isAfterApril ? year : year - 1;
+      const fyEnd = fyStart + 1;
+      const startDate = new Date(fyStart, 3, 1);
+      const endDate = new Date(fyEnd, 3, 0);
+      return {
+        title: `Financial Year Reset (FY ${fyStart}-${fyEnd})`,
+        dateRange: `${formatDate(startDate)} to ${formatDate(endDate)}`,
+        desc: "Resets to start sequence automatically on April 1st every financial year",
+      };
+    }
+    if (freq === "custom") {
+      const interval = Math.max(1, customMonths || 1);
+      let startDate: Date;
+      let endDate: Date;
+
+      if (interval <= 12) {
+        const pIdx = Math.floor(month / interval);
+        const sMonth = pIdx * interval;
+        startDate = new Date(year, sMonth, 1);
+        endDate = new Date(year, sMonth + interval, 0);
+      } else {
+        const baseYear = 2026;
+        const totalMonths = (year - baseYear) * 12 + month;
+        const pIdx = Math.floor(totalMonths / interval);
+        const startTotalMonths = pIdx * interval;
+        startDate = new Date(baseYear, startTotalMonths, 1);
+        endDate = new Date(baseYear, startTotalMonths + interval, 0);
+      }
+
+      let durationText = `${interval} month(s)`;
+      if (interval >= 12) {
+        const yrs = Math.floor(interval / 12);
+        const rem = interval % 12;
+        if (rem === 0) {
+          durationText = `${interval} months (${yrs} ${yrs === 1 ? "year" : "years"})`;
+        } else {
+          durationText = `${interval} months (${yrs} ${yrs === 1 ? "yr" : "yrs"} ${rem} ${rem === 1 ? "mo" : "mos"})`;
+        }
+      }
+
+      return {
+        title: `Custom Reset (Every ${interval} Months)`,
+        dateRange: `${formatDate(startDate)} to ${formatDate(endDate)}`,
+        desc: `Resets automatically every ${durationText}`,
+      };
+    }
+    return {
+      title: "Continuous (Never Reset)",
+      dateRange: "All time continuous sequence",
+      desc: "Sequence increments continuously without resetting",
+    };
+  };
+
   const previewCert = () => {
     const year = config.certYearFormat === "YY"
       ? String(new Date().getFullYear()).slice(-2)
@@ -164,6 +260,9 @@ export default function CertificateConfig() {
     setConfig((prev) => ({ ...prev, [field]: value }));
   };
 
+  const certPeriodInfo = getPeriodBadge(config.certResetFrequency, config.certCustomResetMonths);
+  const ulrPeriodInfo = getPeriodBadge(config.ulrResetFrequency, config.ulrCustomResetMonths);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -181,7 +280,7 @@ export default function CertificateConfig() {
             <FileText className="w-5 h-5 text-primary" />
             <div>
               <CardTitle className="text-base">Certificate Number Format</CardTitle>
-              <CardDescription className="text-xs">Configure how certificate numbers are generated</CardDescription>
+              <CardDescription className="text-xs">Configure how certificate numbers are generated and reset</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -237,13 +336,134 @@ export default function CertificateConfig() {
             </div>
           </div>
 
+          {/* Reset Options Row */}
+          <div className="pt-3 border-t border-border/60 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Sequence Reset Frequency</Label>
+              <Select
+                value={config.certResetFrequency || "never"}
+                onValueChange={(v: any) => update("certResetFrequency", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="never">Continuous (Never Reset)</SelectItem>
+                  <SelectItem value="monthly">Monthly Reset (01 to end of month)</SelectItem>
+                  <SelectItem value="yearly">Yearly Reset (Once a Year, Jan 1)</SelectItem>
+                  <SelectItem value="financial_year">Financial Year (Apr 1 - Mar 31)</SelectItem>
+                  <SelectItem value="custom">Custom Interval (Every N Months)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {config.certResetFrequency === "custom" && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Custom Interval (Months)</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {(config.certCustomResetMonths ?? 1) >= 12
+                      ? `${Math.floor((config.certCustomResetMonths ?? 1) / 12)}y ${(config.certCustomResetMonths ?? 1) % 12}m`
+                      : `${config.certCustomResetMonths ?? 1} mo`}
+                  </span>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={config.certCustomResetMonths ?? 1}
+                  onChange={(e) => update("certCustomResetMonths", Math.min(120, Math.max(1, parseInt(e.target.value) || 1)))}
+                  placeholder="e.g. 3 for quarterly"
+                />
+                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                  {[
+                    { label: "1M", val: 1 },
+                    { label: "2M", val: 2 },
+                    { label: "3M (Q)", val: 3 },
+                    { label: "6M (Half)", val: 6 },
+                    { label: "12M (1Y)", val: 12 },
+                    { label: "24M (2Y)", val: 24 },
+                    { label: "36M (3Y)", val: 36 },
+                  ].map((chip) => (
+                    <button
+                      key={chip.val}
+                      type="button"
+                      onClick={() => update("certCustomResetMonths", chip.val)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                        config.certCustomResetMonths === chip.val
+                          ? "bg-primary text-primary-foreground border-primary font-semibold"
+                          : "bg-muted/50 hover:bg-muted text-muted-foreground border-border"
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Start Sequence Base</Label>
+              <Input
+                type="number"
+                min={0}
+                value={config.certStartSeq ?? 0}
+                onChange={(e) => update("certStartSeq", Math.max(0, parseInt(e.target.value) || 0))}
+                placeholder="0 (starts from 1)"
+              />
+              <p className="text-[10px] text-muted-foreground">0 issues 0001 upon reset</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Current Sequence Counter</Label>
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  min={0}
+                  value={config.certNextSeq ?? 0}
+                  onChange={(e) => update("certNextSeq", Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="Current counter"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  title="Reset counter to start sequence"
+                  className="h-9 px-2.5 text-xs gap-1 whitespace-nowrap text-amber-600 hover:text-amber-700"
+                  onClick={() => {
+                    const start = config.certStartSeq ?? 0;
+                    update("certNextSeq", start);
+                    toast.success(`Certificate sequence counter reset to ${start}. Click Save to apply.`);
+                  }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Issued count in active period</p>
+            </div>
+          </div>
+
           {/* Preview */}
-          <div className="rounded-lg bg-primary/5 border border-primary/20 p-4">
-            <p className="text-xs text-muted-foreground mb-1">Next Certificate Number Preview</p>
-            <p className="text-lg font-mono font-bold text-primary tracking-wider">{previewCert()}</p>
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Current sequence: {config.certNextSeq || 0} issued
-            </p>
+          <div className="rounded-lg bg-primary/5 border border-primary/20 p-4 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground">Next Certificate Number Preview</p>
+                <p className="text-xl font-mono font-bold text-primary tracking-wider">{previewCert()}</p>
+              </div>
+              <div className="sm:text-right">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+                  {certPeriodInfo.title}
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">{certPeriodInfo.dateRange}</p>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-primary/10 text-[11px] text-muted-foreground gap-1">
+              <span>{certPeriodInfo.desc}</span>
+              <span className="font-mono font-semibold text-foreground">
+                Current sequence: {config.certNextSeq || 0} issued
+              </span>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -255,7 +475,7 @@ export default function CertificateConfig() {
             <ShieldCheck className="w-5 h-5 text-emerald-600" />
             <div>
               <CardTitle className="text-base">ULR Number Format</CardTitle>
-              <CardDescription className="text-xs">Configure how ULR (Unique Lab Reference) numbers are generated</CardDescription>
+              <CardDescription className="text-xs">Configure how ULR (Unique Lab Reference) numbers are generated and reset</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -311,13 +531,134 @@ export default function CertificateConfig() {
             </div>
           </div>
 
+          {/* ULR Reset Options Row */}
+          <div className="pt-3 border-t border-border/60 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Sequence Reset Frequency</Label>
+              <Select
+                value={config.ulrResetFrequency || "never"}
+                onValueChange={(v: any) => update("ulrResetFrequency", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="never">Continuous (Never Reset)</SelectItem>
+                  <SelectItem value="monthly">Monthly Reset (01 to end of month)</SelectItem>
+                  <SelectItem value="yearly">Yearly Reset (Once a Year, Jan 1)</SelectItem>
+                  <SelectItem value="financial_year">Financial Year (Apr 1 - Mar 31)</SelectItem>
+                  <SelectItem value="custom">Custom Interval (Every N Months)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {config.ulrResetFrequency === "custom" && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs font-semibold">Custom Interval (Months)</Label>
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {(config.ulrCustomResetMonths ?? 1) >= 12
+                      ? `${Math.floor((config.ulrCustomResetMonths ?? 1) / 12)}y ${(config.ulrCustomResetMonths ?? 1) % 12}m`
+                      : `${config.ulrCustomResetMonths ?? 1} mo`}
+                  </span>
+                </div>
+                <Input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={config.ulrCustomResetMonths ?? 1}
+                  onChange={(e) => update("ulrCustomResetMonths", Math.min(120, Math.max(1, parseInt(e.target.value) || 1)))}
+                  placeholder="e.g. 3 for quarterly"
+                />
+                <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                  {[
+                    { label: "1M", val: 1 },
+                    { label: "2M", val: 2 },
+                    { label: "3M (Q)", val: 3 },
+                    { label: "6M (Half)", val: 6 },
+                    { label: "12M (1Y)", val: 12 },
+                    { label: "24M (2Y)", val: 24 },
+                    { label: "36M (3Y)", val: 36 },
+                  ].map((chip) => (
+                    <button
+                      key={chip.val}
+                      type="button"
+                      onClick={() => update("ulrCustomResetMonths", chip.val)}
+                      className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${
+                        config.ulrCustomResetMonths === chip.val
+                          ? "bg-primary text-primary-foreground border-primary font-semibold"
+                          : "bg-muted/50 hover:bg-muted text-muted-foreground border-border"
+                      }`}
+                    >
+                      {chip.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Start Sequence Base</Label>
+              <Input
+                type="number"
+                min={0}
+                value={config.ulrStartSeq ?? 0}
+                onChange={(e) => update("ulrStartSeq", Math.max(0, parseInt(e.target.value) || 0))}
+                placeholder="0 (starts from 1)"
+              />
+              <p className="text-[10px] text-muted-foreground">0 issues 0001 upon reset</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Current Sequence Counter</Label>
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  min={0}
+                  value={config.ulrNextSeq ?? 0}
+                  onChange={(e) => update("ulrNextSeq", Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="Current counter"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  title="Reset ULR counter to start sequence"
+                  className="h-9 px-2.5 text-xs gap-1 whitespace-nowrap text-amber-600 hover:text-amber-700"
+                  onClick={() => {
+                    const start = config.ulrStartSeq ?? 0;
+                    update("ulrNextSeq", start);
+                    toast.success(`ULR sequence counter reset to ${start}. Click Save to apply.`);
+                  }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">Issued count in active period</p>
+            </div>
+          </div>
+
           {/* Preview */}
-          <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-4">
-            <p className="text-xs text-muted-foreground mb-1">Next ULR Number Preview</p>
-            <p className="text-lg font-mono font-bold text-emerald-600 tracking-wider">{previewUlr()}</p>
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Current sequence: {config.ulrNextSeq || 0} issued
-            </p>
+          <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-4 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Next ULR Number Preview</p>
+                <p className="text-xl font-mono font-bold text-emerald-600 tracking-wider">{previewUlr()}</p>
+              </div>
+              <div className="sm:text-right">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                  {ulrPeriodInfo.title}
+                </span>
+                <p className="text-[11px] text-muted-foreground mt-0.5 font-medium">{ulrPeriodInfo.dateRange}</p>
+              </div>
+            </div>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-emerald-500/10 text-[11px] text-muted-foreground gap-1">
+              <span>{ulrPeriodInfo.desc}</span>
+              <span className="font-mono font-semibold text-foreground">
+                Current sequence: {config.ulrNextSeq || 0} issued
+              </span>
+            </div>
           </div>
         </CardContent>
       </Card>

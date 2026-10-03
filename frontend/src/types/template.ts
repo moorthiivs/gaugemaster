@@ -109,7 +109,16 @@ export interface CanvasRowData {
   point_number?: number;
   nominal?: number;
   description?: string;
+  specification?: string;
   tolerance?: number;
+  lower_tolerance?: number;
+  upper_tolerance?: number;
+  lowerTolerance?: number;
+  upperTolerance?: number;
+  lower_limit?: number;
+  upper_limit?: number;
+  lowerLimit?: number;
+  upperLimit?: number;
   unit?: string;
   status?: "PASS" | "FAIL";
   customFields?: Record<string, any>;
@@ -128,6 +137,8 @@ export interface TableGridBlock {
   width?: "100%" | "50%" | "33%" | "66%";
   orientation?: "vertical" | "horizontal" | "auto";
   unit?: string;
+  nominal?: number | string;
+  default_nominal?: number | string;
   tolerance?: number;
   decimal_places?: number;
   toleranceType?: "symmetric" | "asymmetric" | "mixed" | "row_specific";

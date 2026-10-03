@@ -137,7 +137,42 @@ export async function getCalibrationAuditLogs(calibrationId: string) {
   return res.data;
 }
 
-/** Delete a completed calibration record */
-export async function deleteCalibration(id: string): Promise<void> {
-  await httpClient.delete(`/calibrations/${id}`);
+export interface ResequencePreviewData {
+  canResequence: boolean;
+  message?: string;
+  targetCalibration: {
+    id: string;
+    certificate_number: string;
+    ulr_number?: string;
+    instrumentName?: string;
+    idCode?: string;
+    targetSeq: number;
+  };
+  affectedCalibrations: Array<{
+    id: string;
+    instrumentName?: string;
+    idCode?: string;
+    calibration_date?: string;
+    oldCertificateNumber: string;
+    newCertificateNumber: string;
+    oldUlrNumber?: string;
+    newUlrNumber?: string;
+    oldSeq: number;
+    newSeq: number;
+  }>;
+  currentNextSeq: number;
+  newNextSeq: number;
+}
+
+/** Get resequence preview before deleting a calibration */
+export async function getResequencePreview(id: string): Promise<ResequencePreviewData> {
+  const res = await httpClient.get(`/calibrations/${id}/resequence-preview`);
+  return res.data;
+}
+
+/** Delete a completed calibration record, optionally shifting subsequent sequence numbers */
+export async function deleteCalibration(id: string, resequence: boolean = false): Promise<void> {
+  await httpClient.delete(`/calibrations/${id}`, {
+    params: { resequence: resequence ? 'true' : 'false' },
+  });
 }

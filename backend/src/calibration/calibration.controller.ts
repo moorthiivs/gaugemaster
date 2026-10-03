@@ -174,10 +174,20 @@ export class CalibrationController {
     return this.calibrationService.getAuditLogs(id);
   }
 
+  @Get(':id/resequence-preview')
+  @RequirePermission('calibrations', 'delete')
+  async getResequencePreview(@Param('id') id: string) {
+    return this.calibrationService.getResequencePreview(id);
+  }
+
   @Delete(':id')
   @RequirePermission('calibrations', 'delete')
-  async remove(@Param('id') id: string) {
-    return this.calibrationService.remove(id);
+  async remove(
+    @Param('id') id: string,
+    @Query('resequence') resequence?: string,
+  ) {
+    const shouldResequence = resequence === 'true' || resequence === '1';
+    return this.calibrationService.remove(id, shouldResequence);
   }
 
   /**

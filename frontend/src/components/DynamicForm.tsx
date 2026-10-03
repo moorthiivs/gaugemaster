@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useForm, Controller, UseFormSetValue, UseFormGetValues } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -54,11 +54,9 @@ export default function DynamicForm({
   isSubmitting = false,
   onChangeEffects,
 }: DynamicFormProps) {
-  // 1. Generate Zod Schema Dynamically
-  const [dynamicSchema, setDynamicSchema] = useState<z.ZodObject<any> | null>(null);
-
-  useEffect(() => {
-    const schemaShape: Record<string, any> = {};
+  // 1. Generate Zod Schema Dynamically & Synchronously
+  const dynamicSchema = useMemo(() => {
+    const schemaShape: Record<string, z.ZodTypeAny> = {};
 
     fields.forEach((field) => {
       // Find database validation settings for this field
@@ -67,7 +65,7 @@ export default function DynamicForm({
       const displayName = rule?.displayName || field.label;
       const valType = rule?.validationType || (field.type === "number" ? "number" : field.type === "date" ? "date" : "text");
 
-      let fieldSchema: any = z.string().trim();
+      let fieldSchema: z.ZodTypeAny = z.string().trim();
 
       if (valType === "number") {
         if (isRequired) {
@@ -109,7 +107,7 @@ export default function DynamicForm({
       schemaShape[field.name] = fieldSchema;
     });
 
-    setDynamicSchema(z.object(schemaShape));
+    return z.object(schemaShape);
   }, [fields, validationRules]);
 
   // 2. Initialize React Hook Form once schema is built
@@ -124,7 +122,7 @@ export default function DynamicForm({
     watch,
     formState: { errors },
   } = useForm({
-    resolver: dynamicSchema ? zodResolver(dynamicSchema) : undefined,
+    resolver: zodResolver(dynamicSchema),
     defaultValues,
   });
 
@@ -225,8 +223,8 @@ export default function DynamicForm({
                   type={field.type}
                   {...register(field.name)}
                   placeholder={field.placeholder || `Enter ${labelText.toLowerCase()}`}
-                  className={`h-11 bg-background/50 border-muted-foreground/20 focus:ring-primary/20 transition-all ${
-                    fieldError ? "border-destructive focus:ring-destructive/20" : ""
+                  className={`h-9 bg-background border-input focus-visible:ring-1 focus-visible:ring-primary/30 transition-all ${
+                    fieldError ? "border-destructive focus-visible:ring-destructive/20" : ""
                   }`}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -244,8 +242,8 @@ export default function DynamicForm({
                   id={field.name}
                   {...register(field.name)}
                   placeholder={field.placeholder || `Enter ${labelText.toLowerCase()}...`}
-                  className={`bg-background/50 border-muted-foreground/20 focus:ring-primary/20 transition-all min-h-[90px] ${
-                    fieldError ? "border-destructive focus:ring-destructive/20" : ""
+                  className={`bg-background border-input focus-visible:ring-1 focus-visible:ring-primary/30 transition-all min-h-[80px] ${
+                    fieldError ? "border-destructive focus-visible:ring-destructive/20" : ""
                   }`}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -309,7 +307,7 @@ export default function DynamicForm({
                         value={effectiveValue || ""}
                       >
                         <SelectTrigger
-                          className={`h-11 bg-background/50 border-muted-foreground/20 ${
+                          className={`h-9 bg-background border-input ${
                             fieldError ? "border-destructive" : ""
                           }`}
                         >
@@ -340,7 +338,7 @@ export default function DynamicForm({
                         <PopoverTrigger asChild>
                           <Button
                             variant="outline"
-                            className={`w-full h-11 justify-start text-left font-normal bg-background/50 border-muted-foreground/20 ${
+                            className={`w-full h-9 justify-start text-left font-normal bg-background border-input ${
                               !dateValue ? "text-muted-foreground" : ""
                             } ${fieldError ? "border-destructive text-destructive" : ""}`}
                           >
@@ -382,13 +380,13 @@ export default function DynamicForm({
       })}
 
       {/* Buttons */}
-      <div className="md:col-span-12 flex gap-3 justify-end mt-4 pt-6 border-t">
+      <div className="md:col-span-12 flex gap-3 justify-end mt-4 pt-6 border-t border-border">
         {onCancel && (
-          <Button type="button" variant="ghost" size="lg" onClick={onCancel} className="font-bold">
+          <Button type="button" variant="outline" size="sm" onClick={onCancel} className="h-9 px-4 text-xs font-semibold">
             Cancel
           </Button>
         )}
-        <Button type="submit" size="lg" disabled={isSubmitting} className="px-10 font-bold shadow-lg">
+        <Button type="submit" size="sm" disabled={isSubmitting} className="h-9 px-6 text-xs font-semibold shadow-2xs">
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

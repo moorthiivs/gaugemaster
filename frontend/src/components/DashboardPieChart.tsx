@@ -163,7 +163,7 @@ export function DashboardPieChart({
     const options: ApexOptions = {
         chart: {
             type: 'donut',
-            fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
+            fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
             background: 'transparent',
             animations: {
                 enabled: true,
@@ -202,7 +202,7 @@ export function DashboardPieChart({
                             color: isDark ? '#f8fafc' : '#0f172a',
                             fontSize: '26px',
                             fontWeight: 800,
-                            fontFamily: "'Geist Mono', 'Plus Jakarta Sans', monospace",
+                            fontFamily: "'Geist Mono', ui-monospace, monospace",
                             formatter: (val: string) => String(val),
                         },
                         total: {

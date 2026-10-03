@@ -1,12 +1,11 @@
 import { useSEO } from "@/hooks/useSEO";
-import { Mail, Shield, Bell, Save, Palette, FileText, Award, MapPin, Sparkles } from "lucide-react";
+import { Mail, Shield, Bell, Save, Palette, Award, MapPin, Sparkles } from "lucide-react";
 import MailConfig from "./settings/MailConfig";
 import ThemeSettings from "./settings/ThemeSettings";
 import ReminderConfig from "./settings/ReminderConfig";
 import SettingsLayout, { SettingsTabItem } from "./settings/SettingsLayout";
 import ValidationSettings from "./settings/ValidationSettings";
 import BackupSettings from "./settings/BackupSettings";
-import ReportConfig from "./settings/ReportConfig";
 import CertificateConfig from "./settings/CertificateConfig";
 import LocationSettings from "./settings/LocationSettings";
 import AiConfig from "./settings/AiConfig";
@@ -45,13 +44,6 @@ export default function Settings() {
       label: "Field Validation & Custom Columns",
       icon: <Shield className="w-4 h-4 text-emerald-500" />,
       content: <ValidationSettings />,
-    },
-    {
-      category: "Templates & Data Fields",
-      value: "report",
-      label: "Report Format",
-      icon: <FileText className="w-4 h-4 text-violet-500" />,
-      content: <ReportConfig />,
     },
     {
       category: "Templates & Data Fields",

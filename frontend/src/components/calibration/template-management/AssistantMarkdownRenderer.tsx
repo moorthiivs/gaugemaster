@@ -525,7 +525,7 @@ const DiagramView: React.FC<{ code: string }> = ({ code }) => {
           startOnLoad: false,
           theme: isDark ? "dark" : "neutral",
           securityLevel: "loose",
-          fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+          fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
           flowchart: {
             curve: "basis",
             useMaxWidth: true,

@@ -1,4 +1,18 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import {
+  TOKEN_KEY,
+  REFRESH_TOKEN_KEY,
+  getStoredAccessToken,
+  setStoredAccessToken,
+  getStoredRefreshToken,
+  setStoredRefreshToken,
+  clearStoredTokens,
+} from "./tokenStorage";
+
+export { TOKEN_KEY, REFRESH_TOKEN_KEY };
+export const USER_KEY = "auth_user";
+export const SETUP_KEY = "setupCompleted";
+export const INSPECTED_COMPANY_KEY = "inspected_company";
 
 const rawBaseUrl = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
 const normalizedSubpath = rawBaseUrl.endsWith("/") ? rawBaseUrl.slice(0, -1) : rawBaseUrl;
@@ -13,12 +27,6 @@ const rawApiBase =
 // Normalize: remove trailing slash to avoid double slashes when appending endpoints
 export const API_BASE_URL = rawApiBase.replace(/\/+$/, "");
 export const API_URL = API_BASE_URL;
-
-export const TOKEN_KEY = "auth_token";
-export const REFRESH_TOKEN_KEY = "refresh_token";
-export const USER_KEY = "auth_user";
-export const SETUP_KEY = "setupCompleted";
-export const INSPECTED_COMPANY_KEY = "inspected_company";
 
 const httpClient = axios.create({
   baseURL: API_BASE_URL,
@@ -45,8 +53,7 @@ const processQueue = (error: any, token: string | null = null) => {
 
 /** Clear all local auth state and broadcast session expired event */
 export const handleSessionExpired = () => {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  clearStoredTokens();
   localStorage.removeItem(USER_KEY);
   localStorage.removeItem(SETUP_KEY);
   localStorage.removeItem(INSPECTED_COMPANY_KEY);
@@ -79,7 +86,7 @@ export const handleSessionExpired = () => {
 // Request interceptor to attach bearer token
 httpClient.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem(TOKEN_KEY);
+    const token = getStoredAccessToken();
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -149,7 +156,7 @@ httpClient.interceptors.response.use(
     originalRequest._retry = true;
     isRefreshing = true;
 
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+    const refreshToken = getStoredRefreshToken();
 
     if (!refreshToken) {
       isRefreshing = false;
@@ -172,9 +179,9 @@ httpClient.interceptors.response.use(
       }
 
       // Store refreshed tokens
-      localStorage.setItem(TOKEN_KEY, newAccessToken);
+      setStoredAccessToken(newAccessToken);
       if (newRefreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
+        setStoredRefreshToken(newRefreshToken);
       }
       if (updatedUser) {
         localStorage.setItem(USER_KEY, JSON.stringify(updatedUser));

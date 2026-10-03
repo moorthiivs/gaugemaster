@@ -55,6 +55,7 @@ import { ColumnDef } from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { deduplicateItemStatuses } from "@/lib/itemStatus";
+import { StatusBadge } from "@/components/common/StatusBadge";
 
 export interface ColumnConfig {
   id: string;
@@ -412,13 +413,30 @@ export default function Reports() {
           responseType: "text",
         });
 
-        const printWindow = window.open("", "_blank");
+        const blob = new Blob([response.data], { type: "text/html;charset=utf-8" });
+        const blobUrl = URL.createObjectURL(blob);
+        const printWindow = window.open(blobUrl, "_blank", "noopener,noreferrer");
         if (printWindow) {
-          printWindow.document.write(response.data);
-          printWindow.document.close();
-          printWindow.focus();
-          printWindow.setTimeout(() => printWindow.print(), 500);
+          printWindow.onload = () => {
+            printWindow.focus();
+            try {
+              printWindow.print();
+            } catch (err) {
+              console.error("Print invocation failed:", err);
+            }
+            URL.revokeObjectURL(blobUrl);
+          };
+          printWindow.setTimeout(() => {
+            try {
+              printWindow.focus();
+              printWindow.print();
+            } catch {
+              // Ignore if already printed
+            }
+            URL.revokeObjectURL(blobUrl);
+          }, 600);
         } else {
+          URL.revokeObjectURL(blobUrl);
           toast({
             title: "Pop-up Blocked",
             description: "Please allow pop-ups to print the report.",
@@ -507,17 +525,7 @@ export default function Reports() {
           enableFilter: true,
           filterOptions: statusOptions,
         },
-        cell: ({ row }) => {
-          const status = row.getValue("status") as string;
-          return (
-            <Badge
-              variant={status === "OK" ? "success" : status === "Overdue" ? "destructive" : status === "Sent for Calibration" ? "premium" : "warning"}
-              className="font-bold"
-            >
-              {status}
-            </Badge>
-          );
-        },
+        cell: ({ row }) => <StatusBadge status={row.getValue("status") as string} />,
       },
       item_status: {
         id: "item_status",
@@ -527,11 +535,7 @@ export default function Reports() {
           enableFilter: true,
           filterOptions: itemStatusOptions,
         },
-        cell: ({ row }) => (
-          <Badge variant="outline" className="opacity-80">
-            {row.getValue("item_status") || "Active"}
-          </Badge>
-        ),
+        cell: ({ row }) => <StatusBadge status={row.getValue("item_status") || "Active"} />,
       },
       frequency: { id: "frequency", accessorKey: "frequency", header: "Frequency" },
       device_type: { id: "device_type", accessorKey: "device_type", header: "Device Type" },
@@ -620,12 +624,12 @@ export default function Reports() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <Card className="overflow-hidden border-0 shadow-lg bg-gradient-to-br from-card to-muted/20">
-        <CardHeader className="border-b border-muted/20 bg-muted/50">
+      <Card className="overflow-hidden border border-border shadow-2xs bg-card rounded-xl">
+        <CardHeader className="border-b border-border bg-muted/30 p-4 sm:p-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                <FileText className="h-6 w-6 text-primary" />
+              <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                <FileText className="h-5 w-5 text-primary" />
               </div>
               <div>
                 <CardTitle className="text-xl">Generate Calibration Report</CardTitle>

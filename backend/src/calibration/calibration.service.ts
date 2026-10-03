@@ -70,17 +70,117 @@ export class CalibrationService {
     return format === 'YY' ? String(year).slice(-2) : String(year);
   }
 
-  private async getMaxCertSequence(companyId: string, userId: string): Promise<number> {
-    const userIds = await this.getCompanyUserIds(userId, companyId);
-    const calibrations = await this.calibrationRepository.find({
-      where: userIds.length > 0 ? userIds.map((id) => ({ created_by: { id } })) : [],
-      select: ['certificate_number'],
-    });
+  /**
+   * Calculates the active period key and date range for a given reset frequency.
+   */
+  getPeriodInfo(
+    frequency: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom' = 'never',
+    customMonths: number = 1,
+    refDate: Date = new Date(),
+  ): { periodKey: string; dateFrom?: Date; dateTo?: Date } {
+    const d = new Date(refDate);
+    const year = d.getFullYear();
+    const month = d.getMonth(); // 0-indexed: 0 = Jan, 11 = Dec
 
+    if (frequency === 'monthly') {
+      const periodKey = `${year}-${String(month + 1).padStart(2, '0')}`;
+      const dateFrom = new Date(year, month, 1, 0, 0, 0, 0);
+      const dateTo = new Date(year, month + 1, 0, 23, 59, 59, 999);
+      return { periodKey, dateFrom, dateTo };
+    }
+
+    if (frequency === 'yearly') {
+      const periodKey = `${year}`;
+      const dateFrom = new Date(year, 0, 1, 0, 0, 0, 0);
+      const dateTo = new Date(year, 11, 31, 23, 59, 59, 999);
+      return { periodKey, dateFrom, dateTo };
+    }
+
+    if (frequency === 'financial_year') {
+      let fyStartYear: number;
+      let fyEndYear: number;
+      if (month >= 3) {
+        // April to December
+        fyStartYear = year;
+        fyEndYear = year + 1;
+      } else {
+        // January to March
+        fyStartYear = year - 1;
+        fyEndYear = year;
+      }
+      const periodKey = `FY${fyStartYear}-${fyEndYear}`;
+      const dateFrom = new Date(fyStartYear, 3, 1, 0, 0, 0, 0);
+      const dateTo = new Date(fyEndYear, 2, 31, 23, 59, 59, 999);
+      return { periodKey, dateFrom, dateTo };
+    }
+
+    if (frequency === 'custom') {
+      const interval = Math.max(1, Number(customMonths) || 1);
+      let dateFrom: Date;
+      let dateTo: Date;
+      let periodKey: string;
+
+      if (interval <= 12) {
+        const periodIndex = Math.floor(month / interval);
+        const startMonth = periodIndex * interval;
+        dateFrom = new Date(year, startMonth, 1, 0, 0, 0, 0);
+        dateTo = new Date(year, startMonth + interval, 0, 23, 59, 59, 999);
+        periodKey = `${year}-C${interval}M-P${periodIndex + 1}`;
+      } else {
+        const baseYear = 2026;
+        const totalMonthsFromBase = (year - baseYear) * 12 + month;
+        const periodIndex = Math.floor(totalMonthsFromBase / interval);
+        const startTotalMonths = periodIndex * interval;
+
+        dateFrom = new Date(baseYear, startTotalMonths, 1, 0, 0, 0, 0);
+        dateTo = new Date(baseYear, startTotalMonths + interval, 0, 23, 59, 59, 999);
+
+        const sY = dateFrom.getFullYear();
+        const sM = String(dateFrom.getMonth() + 1).padStart(2, '0');
+        const eY = dateTo.getFullYear();
+        const eM = String(dateTo.getMonth() + 1).padStart(2, '0');
+        periodKey = `C${interval}M-${sY}${sM}-${eY}${eM}`;
+      }
+      return { periodKey, dateFrom, dateTo };
+    }
+
+    return { periodKey: 'all', dateFrom: undefined, dateTo: undefined };
+  }
+
+  private async getMaxCertSequence(
+    companyId: string,
+    userId: string,
+    dateFrom?: Date,
+    dateTo?: Date,
+    prefix?: string,
+    separator?: string,
+  ): Promise<number> {
+    const userIds = await this.getCompanyUserIds(userId, companyId);
+    if (!userIds || userIds.length === 0) return 0;
+
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoin('cal.created_by', 'user')
+      .where('user.id IN (:...userIds)', { userIds })
+      .andWhere('cal.certificate_number IS NOT NULL');
+
+    if (dateFrom && dateTo) {
+      qb.andWhere(
+        '((cal.calibration_date BETWEEN :dateFrom AND :dateTo) OR (cal.created_at BETWEEN :dateFrom AND :dateTo))',
+        { dateFrom, dateTo },
+      );
+    }
+
+    const calibrations = await qb.select(['cal.certificate_number']).getMany();
+
+    const sep = separator || this.DEFAULT_CERT_SEPARATOR;
     let maxSeq = 0;
     for (const cal of calibrations) {
       if (cal.certificate_number) {
-        const parts = cal.certificate_number.split('/');
+        if (prefix && !cal.certificate_number.startsWith(prefix)) {
+          continue;
+        }
+        const parts = cal.certificate_number.split(sep);
         const lastPart = parts[parts.length - 1];
         const num = parseInt(lastPart, 10);
         if (!isNaN(num) && num > maxSeq) {
@@ -91,17 +191,40 @@ export class CalibrationService {
     return maxSeq;
   }
 
-  private async getMaxUlrSequence(companyId: string, userId: string): Promise<number> {
+  private async getMaxUlrSequence(
+    companyId: string,
+    userId: string,
+    dateFrom?: Date,
+    dateTo?: Date,
+    prefix?: string,
+    separator?: string,
+  ): Promise<number> {
     const userIds = await this.getCompanyUserIds(userId, companyId);
-    const calibrations = await this.calibrationRepository.find({
-      where: userIds.length > 0 ? userIds.map((id) => ({ created_by: { id } })) : [],
-      select: ['ulr_number'],
-    });
+    if (!userIds || userIds.length === 0) return 0;
 
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoin('cal.created_by', 'user')
+      .where('user.id IN (:...userIds)', { userIds })
+      .andWhere('cal.ulr_number IS NOT NULL');
+
+    if (dateFrom && dateTo) {
+      qb.andWhere(
+        '((cal.calibration_date BETWEEN :dateFrom AND :dateTo) OR (cal.created_at BETWEEN :dateFrom AND :dateTo))',
+        { dateFrom, dateTo },
+      );
+    }
+
+    const calibrations = await qb.select(['cal.ulr_number']).getMany();
+
+    const sep = separator || this.DEFAULT_ULR_SEPARATOR;
     let maxSeq = 0;
     for (const cal of calibrations) {
       if (cal.ulr_number) {
-        const parts = cal.ulr_number.split('/');
+        if (prefix && !cal.ulr_number.startsWith(prefix)) {
+          continue;
+        }
+        const parts = cal.ulr_number.split(sep);
         const lastPart = parts[parts.length - 1];
         const num = parseInt(lastPart, 10);
         if (!isNaN(num) && num > maxSeq) {
@@ -112,10 +235,6 @@ export class CalibrationService {
     return maxSeq;
   }
 
-  /**
-   * Generates the next certificate number based on company settings.
-   * Increments the sequence counter atomically.
-   */
   /**
    * Generates the next certificate number based on company settings.
    * Increments the sequence counter atomically with PostgreSQL advisory locks.
@@ -155,15 +274,33 @@ export class CalibrationService {
     const yearFmt = config?.certYearFormat || this.DEFAULT_CERT_YEAR_FORMAT;
     const seqLen = config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH;
 
-    const dbMaxSeq = await this.getMaxCertSequence(companyId, userId);
-    const configSeq = config?.certNextSeq || 0;
+    const resetFreq = config?.certResetFrequency || 'never';
+    const period = this.getPeriodInfo(resetFreq, config?.certCustomResetMonths, new Date());
+
+    let configSeq = config?.certNextSeq ?? 0;
+    let lastResetPeriod = config?.certLastResetPeriod;
+
+    // Check if frequency requires a reset due to new period
+    if (resetFreq !== 'never' && lastResetPeriod !== period.periodKey) {
+      configSeq = config?.certStartSeq ?? 0;
+      lastResetPeriod = period.periodKey;
+    }
+
+    const dbMaxSeq = await this.getMaxCertSequence(
+      companyId,
+      userId,
+      period.dateFrom,
+      period.dateTo,
+      prefix,
+      sep,
+    );
     const nextSeq = Math.max(configSeq, dbMaxSeq) + 1;
 
     const year = this.formatYear(yearFmt);
     const seq = String(nextSeq).padStart(seqLen, '0');
     const certNumber = `${prefix}${sep}${year}${sep}${seq}`;
 
-    // Persist the incremented sequence
+    // Persist the incremented sequence and active period identifier
     await this.settingsService.create({
       userId,
       companyId,
@@ -174,11 +311,19 @@ export class CalibrationService {
         certYearFormat: yearFmt,
         certSeqLength: seqLen,
         certNextSeq: nextSeq,
+        certResetFrequency: resetFreq,
+        certCustomResetMonths: config?.certCustomResetMonths,
+        certStartSeq: config?.certStartSeq ?? 0,
+        certLastResetPeriod: lastResetPeriod,
         ulrPrefix: config?.ulrPrefix || this.DEFAULT_ULR_PREFIX,
         ulrSeparator: config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR,
         ulrYearFormat: config?.ulrYearFormat || this.DEFAULT_ULR_YEAR_FORMAT,
         ulrSeqLength: config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH,
         ulrNextSeq: config?.ulrNextSeq || 0,
+        ulrResetFrequency: config?.ulrResetFrequency || 'never',
+        ulrCustomResetMonths: config?.ulrCustomResetMonths,
+        ulrStartSeq: config?.ulrStartSeq ?? 0,
+        ulrLastResetPeriod: config?.ulrLastResetPeriod,
       },
     });
 
@@ -224,10 +369,26 @@ export class CalibrationService {
     const yearFmt = config?.ulrYearFormat || this.DEFAULT_ULR_YEAR_FORMAT;
     const seqLen = config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
 
-    const dbMaxSeq = await this.getMaxUlrSequence(companyId, userId);
-    const dbMaxCertSeq = await this.getMaxCertSequence(companyId, userId);
-    const configSeq = config?.ulrNextSeq || 0;
-    const nextSeq = Math.max(configSeq, dbMaxSeq, dbMaxCertSeq) + 1;
+    const resetFreq = config?.ulrResetFrequency || 'never';
+    const period = this.getPeriodInfo(resetFreq, config?.ulrCustomResetMonths, new Date());
+
+    let configSeq = config?.ulrNextSeq ?? 0;
+    let lastResetPeriod = config?.ulrLastResetPeriod;
+
+    if (resetFreq !== 'never' && lastResetPeriod !== period.periodKey) {
+      configSeq = config?.ulrStartSeq ?? 0;
+      lastResetPeriod = period.periodKey;
+    }
+
+    const dbMaxSeq = await this.getMaxUlrSequence(
+      companyId,
+      userId,
+      period.dateFrom,
+      period.dateTo,
+      prefix,
+      sep,
+    );
+    const nextSeq = Math.max(configSeq, dbMaxSeq) + 1;
 
     const year = this.formatYear(yearFmt);
     const seq = String(nextSeq).padStart(seqLen, '0');
@@ -244,11 +405,19 @@ export class CalibrationService {
         certYearFormat: config?.certYearFormat || this.DEFAULT_CERT_YEAR_FORMAT,
         certSeqLength: config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH,
         certNextSeq: config?.certNextSeq || 0,
+        certResetFrequency: config?.certResetFrequency || 'never',
+        certCustomResetMonths: config?.certCustomResetMonths,
+        certStartSeq: config?.certStartSeq ?? 0,
+        certLastResetPeriod: config?.certLastResetPeriod,
         ulrPrefix: prefix,
         ulrSeparator: sep,
         ulrYearFormat: yearFmt,
         ulrSeqLength: seqLen,
         ulrNextSeq: nextSeq,
+        ulrResetFrequency: resetFreq,
+        ulrCustomResetMonths: config?.ulrCustomResetMonths,
+        ulrStartSeq: config?.ulrStartSeq ?? 0,
+        ulrLastResetPeriod: lastResetPeriod,
       },
     });
 
@@ -257,37 +426,74 @@ export class CalibrationService {
 
   /**
    * Preview what the next certificate and ULR numbers will look like
-   * without incrementing.
+   * without incrementing, accounting for active reset periods.
    */
   async getNextNumbers(
     userId: string,
     companyId: string,
-  ): Promise<{ nextCertNumber: string; nextUlrNumber: string }> {
+  ): Promise<{
+    nextCertNumber: string;
+    nextUlrNumber: string;
+    currentCertPeriod?: string;
+    currentUlrPeriod?: string;
+  }> {
     const settings = await this.settingsService.findOne(userId, companyId);
     const config = settings?.certificateConfig;
 
-    const dbMaxCertSeq = await this.getMaxCertSequence(companyId, userId);
-    const dbMaxUlrSeq = await this.getMaxUlrSequence(companyId, userId);
-
     // Certificate
+    const certResetFreq = config?.certResetFrequency || 'never';
+    const certPeriod = this.getPeriodInfo(certResetFreq, config?.certCustomResetMonths, new Date());
+    let certConfigSeq = config?.certNextSeq ?? 0;
+    if (certResetFreq !== 'never' && config?.certLastResetPeriod !== certPeriod.periodKey) {
+      certConfigSeq = config?.certStartSeq ?? 0;
+    }
+
     const certPrefix = config?.certPrefix || this.DEFAULT_CERT_PREFIX;
     const certSep = config?.certSeparator || this.DEFAULT_CERT_SEPARATOR;
     const certYearFmt = config?.certYearFormat || this.DEFAULT_CERT_YEAR_FORMAT;
     const certSeqLen = config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH;
-    const certNextSeq = Math.max(config?.certNextSeq || 0, dbMaxCertSeq) + 1;
+    const dbMaxCertSeq = await this.getMaxCertSequence(
+      companyId,
+      userId,
+      certPeriod.dateFrom,
+      certPeriod.dateTo,
+      certPrefix,
+      certSep,
+    );
+    const certNextSeq = Math.max(certConfigSeq, dbMaxCertSeq) + 1;
     const certYear = this.formatYear(certYearFmt);
     const nextCertNumber = `${certPrefix}${certSep}${certYear}${certSep}${String(certNextSeq).padStart(certSeqLen, '0')}`;
 
     // ULR
+    const ulrResetFreq = config?.ulrResetFrequency || 'never';
+    const ulrPeriod = this.getPeriodInfo(ulrResetFreq, config?.ulrCustomResetMonths, new Date());
+    let ulrConfigSeq = config?.ulrNextSeq ?? 0;
+    if (ulrResetFreq !== 'never' && config?.ulrLastResetPeriod !== ulrPeriod.periodKey) {
+      ulrConfigSeq = config?.ulrStartSeq ?? 0;
+    }
+
     const ulrPrefix = config?.ulrPrefix || this.DEFAULT_ULR_PREFIX;
     const ulrSep = config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR;
     const ulrYearFmt = config?.ulrYearFormat || this.DEFAULT_ULR_YEAR_FORMAT;
     const ulrSeqLen = config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
-    const ulrNextSeq = Math.max(config?.ulrNextSeq || 0, dbMaxUlrSeq, dbMaxCertSeq) + 1;
+    const dbMaxUlrSeq = await this.getMaxUlrSequence(
+      companyId,
+      userId,
+      ulrPeriod.dateFrom,
+      ulrPeriod.dateTo,
+      ulrPrefix,
+      ulrSep,
+    );
+    const ulrNextSeq = Math.max(ulrConfigSeq, dbMaxUlrSeq) + 1;
     const ulrYear = this.formatYear(ulrYearFmt);
     const nextUlrNumber = `${ulrPrefix}${ulrSep}${ulrYear}${ulrSep}${String(ulrNextSeq).padStart(ulrSeqLen, '0')}`;
 
-    return { nextCertNumber, nextUlrNumber };
+    return {
+      nextCertNumber,
+      nextUlrNumber,
+      currentCertPeriod: certPeriod.periodKey,
+      currentUlrPeriod: ulrPeriod.periodKey,
+    };
   }
 
   // ── CRUD ─────────────────────────────────────────────────────
@@ -909,44 +1115,318 @@ export class CalibrationService {
     });
   }
 
-  async remove(id: string): Promise<void> {
-    const calibration = await this.findOne(id);
-    if (calibration) {
+  async getResequencePreview(id: string): Promise<{
+    canResequence: boolean;
+    message?: string;
+    targetCalibration: {
+      id: string;
+      certificate_number: string;
+      ulr_number?: string;
+      instrumentName?: string;
+      idCode?: string;
+      targetSeq: number;
+    };
+    affectedCalibrations: Array<{
+      id: string;
+      instrumentName?: string;
+      idCode?: string;
+      calibration_date?: string;
+      oldCertificateNumber: string;
+      newCertificateNumber: string;
+      oldUlrNumber?: string;
+      newUlrNumber?: string;
+      oldSeq: number;
+      newSeq: number;
+    }>;
+    currentNextSeq: number;
+    newNextSeq: number;
+  }> {
+    const target = await this.calibrationRepository.findOne({
+      where: { id },
+      relations: ['instrument', 'created_by'],
+    });
+
+    if (!target) {
+      throw new NotFoundException(`Calibration with ID ${id} not found`);
+    }
+
+    const userId = target.created_by?.id || '';
+    const companyId = (target as any).companyId || target.created_by?.companyId || '';
+    const settings = await this.settingsService.findOne(userId, companyId);
+    const config = settings?.certificateConfig;
+
+    if (!target.certificate_number) {
+      return {
+        canResequence: false,
+        message: 'Calibration does not have a certificate number to resequence.',
+        targetCalibration: {
+          id: target.id,
+          certificate_number: '',
+          targetSeq: 0,
+        },
+        affectedCalibrations: [],
+        currentNextSeq: config?.certNextSeq || 0,
+        newNextSeq: config?.certNextSeq || 0,
+      };
+    }
+
+    const sep = config?.certSeparator || this.DEFAULT_CERT_SEPARATOR;
+    const parts = target.certificate_number.split(sep);
+    const lastPart = parts[parts.length - 1];
+    const targetSeq = parseInt(lastPart, 10);
+
+    if (isNaN(targetSeq)) {
+      return {
+        canResequence: false,
+        message: 'Certificate number format cannot be sequentially parsed.',
+        targetCalibration: {
+          id: target.id,
+          certificate_number: target.certificate_number,
+          targetSeq: 0,
+        },
+        affectedCalibrations: [],
+        currentNextSeq: config?.certNextSeq || 0,
+        newNextSeq: config?.certNextSeq || 0,
+      };
+    }
+
+    const seqLen = lastPart.length || config?.certSeqLength || this.DEFAULT_CERT_SEQ_LENGTH;
+    const certPrefix = parts.slice(0, parts.length - 1).join(sep) + sep;
+
+    const userIds = await this.getCompanyUserIds(userId, companyId);
+
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoinAndSelect('cal.instrument', 'instrument')
+      .leftJoin('cal.created_by', 'user')
+      .where('cal.id != :targetId', { targetId: id })
+      .andWhere('cal.certificate_number IS NOT NULL');
+
+    if (userIds.length > 0) {
+      qb.andWhere('user.id IN (:...userIds)', { userIds });
+    }
+
+    const allCalibrations = await qb.getMany();
+
+    const affectedCalibrations: Array<{
+      id: string;
+      instrumentName?: string;
+      idCode?: string;
+      calibration_date?: string;
+      oldCertificateNumber: string;
+      newCertificateNumber: string;
+      oldUlrNumber?: string;
+      newUlrNumber?: string;
+      oldSeq: number;
+      newSeq: number;
+    }> = [];
+
+    const ulrSep = config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR;
+
+    for (const cal of allCalibrations) {
+      if (!cal.certificate_number || !cal.certificate_number.startsWith(certPrefix)) {
+        continue;
+      }
+      const cParts = cal.certificate_number.split(sep);
+      const cSeq = parseInt(cParts[cParts.length - 1], 10);
+      if (!isNaN(cSeq) && cSeq > targetSeq) {
+        const newSeq = cSeq - 1;
+        const newCertNo = `${certPrefix}${String(newSeq).padStart(seqLen, '0')}`;
+
+        let newUlrNo: string | undefined = undefined;
+        if (cal.ulr_number) {
+          const uParts = cal.ulr_number.split(ulrSep);
+          const uSeq = parseInt(uParts[uParts.length - 1], 10);
+          if (!isNaN(uSeq) && uSeq > 1) {
+            const uPrefix = uParts.slice(0, uParts.length - 1).join(ulrSep) + ulrSep;
+            const uLen = uParts[uParts.length - 1].length || config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
+            newUlrNo = `${uPrefix}${String(uSeq - 1).padStart(uLen, '0')}`;
+          }
+        }
+
+        affectedCalibrations.push({
+          id: cal.id,
+          instrumentName: cal.instrument?.name,
+          idCode: cal.instrument?.id_code,
+          calibration_date: cal.calibration_date ? new Date(cal.calibration_date).toISOString() : undefined,
+          oldCertificateNumber: cal.certificate_number,
+          newCertificateNumber: newCertNo,
+          oldUlrNumber: cal.ulr_number,
+          newUlrNumber: newUlrNo,
+          oldSeq: cSeq,
+          newSeq: newSeq,
+        });
+      }
+    }
+
+    affectedCalibrations.sort((a, b) => a.oldSeq - b.oldSeq);
+
+    const currentNextSeq = config?.certNextSeq ?? 0;
+    const newNextSeq = currentNextSeq > targetSeq ? currentNextSeq - 1 : currentNextSeq;
+
+    return {
+      canResequence: true,
+      targetCalibration: {
+        id: target.id,
+        certificate_number: target.certificate_number,
+        ulr_number: target.ulr_number,
+        instrumentName: target.instrument?.name,
+        idCode: target.instrument?.id_code,
+        targetSeq,
+      },
+      affectedCalibrations,
+      currentNextSeq,
+      newNextSeq,
+    };
+  }
+
+  async remove(id: string, resequence: boolean = false): Promise<{ success: boolean; affectedCount: number }> {
+    const calibration = await this.calibrationRepository.findOne({
+      where: { id },
+      relations: ['instrument', 'created_by'],
+    });
+
+    if (!calibration) {
+      throw new NotFoundException(`Calibration with ID ${id} not found`);
+    }
+
+    const userId = calibration.created_by?.id || '';
+    const companyId = (calibration as any).companyId || calibration.created_by?.companyId || '';
+
+    let affectedCalibrations: Array<{
+      id: string;
+      newCertificateNumber: string;
+      newUlrNumber?: string;
+      oldCertificateNumber: string;
+      oldUlrNumber?: string;
+    }> = [];
+    let shouldUpdateConfig = false;
+    let newNextSeq = 0;
+
+    if (resequence && calibration.certificate_number) {
+      const preview = await this.getResequencePreview(id);
+      if (preview.canResequence && preview.affectedCalibrations.length > 0) {
+        affectedCalibrations = preview.affectedCalibrations;
+        shouldUpdateConfig = true;
+        newNextSeq = preview.newNextSeq;
+      }
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      if (companyId) {
+        await queryRunner.query(
+          `SELECT pg_advisory_lock(hashtext('company_cert_' || $1))`,
+          [companyId],
+        );
+      }
+
+      // If resequencing was selected, shift subsequent certificates atomically
+      if (resequence && affectedCalibrations.length > 0) {
+        for (const aff of affectedCalibrations) {
+          const updatePayload: Partial<Calibration> = {
+            certificate_number: aff.newCertificateNumber,
+          };
+          if (aff.newUlrNumber) {
+            updatePayload.ulr_number = aff.newUlrNumber;
+          }
+          await queryRunner.manager.update(Calibration, aff.id, updatePayload);
+
+          const audit = queryRunner.manager.create(CalibrationAuditLog, {
+            calibration_id: aff.id,
+            edited_by_id: userId,
+            edited_by_name: 'System (Sequence Shift on Delete)',
+            changes_summary: [
+              {
+                field: 'certificate_number',
+                oldValue: aff.oldCertificateNumber,
+                newValue: aff.newCertificateNumber,
+              },
+              ...(aff.newUlrNumber ? [{
+                field: 'ulr_number',
+                oldValue: aff.oldUlrNumber,
+                newValue: aff.newUlrNumber,
+              }] : []),
+            ],
+          });
+          await queryRunner.manager.save(CalibrationAuditLog, audit);
+        }
+
+        // Adjust settings counter down if appropriate
+        if (shouldUpdateConfig && userId && companyId) {
+          const settings = await this.settingsService.findOne(userId, companyId);
+          if (settings?.certificateConfig) {
+            await this.settingsService.create({
+              userId,
+              companyId,
+              certificateConfig: {
+                ...settings.certificateConfig,
+                certNextSeq: Math.max(0, newNextSeq),
+              },
+            });
+          }
+        }
+      }
+
       const instrumentId = calibration.instrument_id || calibration.instrument?.id;
       const calDate = calibration.calibration_date;
       const nextDate = calibration.next_calibration_date;
 
-      await this.auditLogRepository.delete({ calibration_id: id });
-      await this.calibrationRepository.remove(calibration);
+      await queryRunner.manager.delete(CalibrationAuditLog, { calibration_id: id });
+      await queryRunner.manager.remove(Calibration, calibration);
 
+      await queryRunner.commitTransaction();
+
+      // Revert/sync instrument master dates outside the lock
       if (instrumentId) {
-        const latestRemainingCal = await this.calibrationRepository.findOne({
-          where: { instrument_id: instrumentId },
-          order: { calibration_date: 'DESC' },
-        });
+        try {
+          const latestRemainingCal = await this.calibrationRepository.findOne({
+            where: { instrument_id: instrumentId },
+            order: { calibration_date: 'DESC' },
+          });
 
-        if (latestRemainingCal) {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const isOverdue = latestRemainingCal.next_calibration_date
-            ? new Date(latestRemainingCal.next_calibration_date) <= today
-            : false;
+          if (latestRemainingCal) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const isOverdue = latestRemainingCal.next_calibration_date
+              ? new Date(latestRemainingCal.next_calibration_date) <= today
+              : false;
 
-          await this.instrumentsService.update(instrumentId, {
-            last_calibration_date: latestRemainingCal.calibration_date ? new Date(latestRemainingCal.calibration_date).toISOString() : undefined,
-            due_date: latestRemainingCal.next_calibration_date ? new Date(latestRemainingCal.next_calibration_date).toISOString() : undefined,
-            status: latestRemainingCal.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
-            calibration_source: 'In-House',
-          } as any);
-        } else {
-          // If no other calibration exists in calibrations table, revert instrument dates & clean up history
-          await this.instrumentsService.syncInstrumentAfterCalibrationDeleted(
-            instrumentId,
-            calDate,
-            nextDate,
-          );
+            await this.instrumentsService.update(instrumentId, {
+              last_calibration_date: latestRemainingCal.calibration_date ? new Date(latestRemainingCal.calibration_date).toISOString() : undefined,
+              due_date: latestRemainingCal.next_calibration_date ? new Date(latestRemainingCal.next_calibration_date).toISOString() : undefined,
+              status: latestRemainingCal.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
+              calibration_source: 'In-House',
+            } as any);
+          } else {
+            await this.instrumentsService.syncInstrumentAfterCalibrationDeleted(
+              instrumentId,
+              calDate,
+              nextDate,
+            );
+          }
+        } catch (err) {
+          console.warn('Failed to update instrument status on calibration remove:', err);
         }
       }
+
+      return { success: true, affectedCount: affectedCalibrations.length };
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      if (companyId) {
+        try {
+          await queryRunner.query(
+            `SELECT pg_advisory_unlock(hashtext('company_cert_' || $1))`,
+            [companyId],
+          );
+        } catch {}
+      }
+      await queryRunner.release();
     }
   }
 }

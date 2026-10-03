@@ -62,6 +62,7 @@ interface AppUser {
 }
 
 import { usePermissions } from "@/hooks/usePermissions";
+import { PageHeader } from "@/components/common/PageHeader";
 
 export default function UserManagement() {
   const { user: currentUser, setUser } = useAuth();
@@ -539,28 +540,34 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-6">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-muted/20 p-6 rounded-2xl border">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-            <UserCheck className="h-7 w-7 text-primary" /> User & Role Management
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage system users, assign roles, define granular module permissions, and draw digital signatures.
-          </p>
-        </div>
-
-        {canAccess("users", "create") && (
-          <div className="flex items-center gap-3">
-            <Button onClick={handleOpenCreateUser} className="gap-2 bg-primary hover:bg-primary/90">
-              <Plus className="h-4 w-4" /> Add New User
-            </Button>
-            <Button onClick={handleOpenCreateRole} variant="outline" className="gap-2 border-primary/30">
-              <ShieldCheck className="h-4 w-4 text-primary" /> Create Custom Role
-            </Button>
-          </div>
-        )}
-      </div>
+      {/* Page Header */}
+      <PageHeader
+        title="User & Role Management"
+        description="Manage system users, assign roles, define granular module permissions, and draw digital signatures."
+        actions={
+          canAccess("users", "create") && (
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleOpenCreateRole}
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-semibold"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                <span>Create Role</span>
+              </Button>
+              <Button
+                onClick={handleOpenCreateUser}
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-semibold shadow-2xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add User</span>
+              </Button>
+            </div>
+          )
+        }
+      />
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">

@@ -63,7 +63,7 @@ export class SettingsController {
             }
         }
     }
-    console.log("RECEIVED SETTINGS PAYLOAD: ", createSettingDto);
+    //console.log("RECEIVED SETTINGS PAYLOAD: ", createSettingDto);
     return this.settingsService.create(createSettingDto);
   }
 

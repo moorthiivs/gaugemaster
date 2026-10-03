@@ -213,12 +213,31 @@ export function resolveVariableSemanticRole(
       } else if (col && typeof col === "object") {
         if (col.id?.toLowerCase() === lower || col.label?.toLowerCase() === lower) {
           let role: SemanticVariableRole = "COLUMN";
-          if (col.role === "READING" || col.type === "reading") role = "READING";
-          else if (col.role === "SPECIFICATION" || col.type === "nominal") role = "SPECIFICATION";
-          else if (col.role === "CALCULATED" || col.type === "formula") role = "CALCULATED";
-          else if (col.role === "JUDGEMENT" || col.type === "status") role = "CALCULATED";
-          else if (col.type === "trial") role = "TRIAL";
-          else if (col.type === "tolerance") role = "TOLERANCE";
+          const colIdLower = (col.id || "").toLowerCase().trim();
+          const colLabelLower = (col.label || "").toLowerCase().trim();
+          if (
+            col.role === "SPECIFICATION" ||
+            col.type === "nominal" ||
+            colIdLower === "nominal" ||
+            colIdLower === "nom" ||
+            colIdLower === "std" ||
+            colIdLower === "spec" ||
+            colIdLower === "std_spec" ||
+            colLabelLower.includes("spec") ||
+            colLabelLower.includes("nominal")
+          ) {
+            role = "SPECIFICATION";
+          } else if (col.role === "READING" || col.type === "reading") {
+            role = "READING";
+          } else if (col.role === "CALCULATED" || col.type === "formula") {
+            role = "CALCULATED";
+          } else if (col.role === "JUDGEMENT" || col.type === "status") {
+            role = "CALCULATED";
+          } else if (col.type === "trial") {
+            role = "TRIAL";
+          } else if (col.type === "tolerance") {
+            role = "TOLERANCE";
+          }
           return {
             canonicalName: col.id,
             role,
@@ -849,11 +868,19 @@ export function evaluateAST(
       const evaluatedArgs = node.args.map((a) => evalNode(a));
 
       switch (node.name) {
-        case "AND":
+        case "AND": {
+          if (options.isBlankDetection && evaluatedArgs.some((arg) => arg === null)) return null;
           return evaluatedArgs.every((arg) => Boolean(arg) && arg !== null);
-        case "OR":
+        }
+        case "OR": {
+          if (options.isBlankDetection && evaluatedArgs.some((arg) => arg === null)) {
+            if (evaluatedArgs.some((arg) => arg === true)) return true;
+            return null;
+          }
           return evaluatedArgs.some((arg) => Boolean(arg) && arg !== null);
+        }
         case "NOT":
+          if (options.isBlankDetection && evaluatedArgs[0] === null) return null;
           return !Boolean(evaluatedArgs[0]);
         case "ISBLANK": {
           const raw = evaluatedArgs[0];
@@ -884,6 +911,7 @@ export function evaluateAST(
             .filter((a) => a !== null && a !== undefined && !isBlankValue(a))
             .map(Number)
             .filter((n) => !isNaN(n));
+          if (options.isBlankDetection && nums.length === 0) return null;
           return nums.length ? Math.min(...nums) : 0;
         }
         case "MAX": {
@@ -891,6 +919,7 @@ export function evaluateAST(
             .filter((a) => a !== null && a !== undefined && !isBlankValue(a))
             .map(Number)
             .filter((n) => !isNaN(n));
+          if (options.isBlankDetection && nums.length === 0) return null;
           return nums.length ? Math.max(...nums) : 0;
         }
         case "AVERAGE":
@@ -899,6 +928,7 @@ export function evaluateAST(
             .filter((a) => a !== null && a !== undefined && !isBlankValue(a))
             .map(Number)
             .filter((n) => !isNaN(n));
+          if (options.isBlankDetection && nums.length === 0) return null;
           return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0;
         }
         case "SUM": {
@@ -906,6 +936,7 @@ export function evaluateAST(
             .filter((a) => a !== null && a !== undefined && !isBlankValue(a))
             .map(Number)
             .filter((n) => !isNaN(n));
+          if (options.isBlankDetection && nums.length === 0) return null;
           return nums.reduce((a, b) => a + b, 0);
         }
         case "STDEV":
@@ -1755,7 +1786,8 @@ export function buildRowContext(
   columns: any[] = [],
   tableTol: number = 0.02,
   tableDec: number = 3,
-  acceptanceCriteriaValue: number = 0
+  acceptanceCriteriaValue: number = 0,
+  tableNominal?: number | string
 ): RowEvaluationContext {
   const dec = tableDec;
 
@@ -1790,13 +1822,35 @@ export function buildRowContext(
           ? parseFloat(String(row.upper_limit ?? row.upperLimit))
           : NaN;
 
-  if (specText && (isNaN(nom) || lowerTol === undefined || upperTol === undefined)) {
+  const hasDedicatedNomCol = columns.some(
+    (c) => c && (c.id === "nominal" || c.id === "std_spec" || c.id === "spec" || c.type === "nominal" || c.role === "SPECIFICATION" || c.role === "NOMINAL")
+  );
+
+  const parsedTableNom =
+    tableNominal !== undefined && !isBlankValue(tableNominal) && !isNaN(Number(tableNominal))
+      ? parseFloat(String(tableNominal))
+      : (row.table_nominal !== undefined || row.tableNominal !== undefined) && !isBlankValue(row.table_nominal ?? row.tableNominal)
+        ? parseFloat(String(row.table_nominal ?? row.tableNominal))
+        : undefined;
+
+  if (specText) {
     const parsed = parseSpecification(specText, row.unit || "mm", tableTol, dec);
     if (parsed.isValid) {
-      if (isNaN(nom) || nom === 0) nom = parsed.nominal;
-      if (lowerTol === undefined) lowerTol = parsed.lowerTolerance;
-      if (upperTol === undefined) upperTol = parsed.upperTolerance;
+      if (!hasDedicatedNomCol || isNaN(nom) || nom === 0) {
+        nom = parsed.nominal;
+      }
+      if (lowerTol === undefined || !columns.some((c) => c && c.type === "tolerance")) {
+        lowerTol = parsed.lowerTolerance;
+      }
+      if (upperTol === undefined || !columns.some((c) => c && c.type === "tolerance")) {
+        upperTol = parsed.upperTolerance;
+      }
     }
+  }
+
+  // Fallback to table-level nominal when row has no dedicated nominal or is undefined/0
+  if ((!hasDedicatedNomCol || isNaN(nom) || nom === 0) && parsedTableNom !== undefined && !isNaN(parsedTableNom)) {
+    nom = parsedTableNom;
   }
 
   if (isNaN(nom)) nom = 0;
@@ -1856,7 +1910,27 @@ export function buildRowContext(
 
   // Also check any column explicitly marked as trial or reading
   columns.forEach((col) => {
-    if (col && (col.type === "trial" || col.type === "reading" || col.role === "READING" || /^t\d+$/i.test(col.id))) {
+    if (!col) return;
+    const cid = (col.id || "").toLowerCase().trim();
+    const clabel = (col.label || "").toLowerCase().trim();
+    if (
+      cid === "nominal" ||
+      cid === "nom" ||
+      cid === "std" ||
+      cid === "spec" ||
+      cid === "std_spec" ||
+      cid === "point_number" ||
+      cid === "sl_no" ||
+      col.type === "nominal" ||
+      col.role === "NOMINAL" ||
+      col.role === "SPECIFICATION" ||
+      clabel.includes("spec") ||
+      clabel.includes("nominal") ||
+      clabel.includes("sl.no")
+    ) {
+      return;
+    }
+    if (col.type === "trial" || col.type === "reading" || col.role === "READING" || /^t\d+$/i.test(col.id)) {
       const v = row[col.id];
       if (!isBlankValue(v)) {
         const num = parseFloat(String(v));
@@ -2286,7 +2360,8 @@ export function evaluateCanvasRowFormulas(
   row: any,
   columns: any[] = [],
   tableTol: number = 0.02,
-  tableDec: number = 3
+  tableDec: number = 3,
+  tableNominal?: number | string
 ): any {
   if (!row) return row;
   if (row.is_merged || row.isMerged) return row;
@@ -2297,7 +2372,7 @@ export function evaluateCanvasRowFormulas(
   syncTrialAliases(newRow, columns);
 
   // 2. Build initial row context
-  let ctx = buildRowContext(newRow, columns, tableTol, dec);
+  let ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal);
 
   newRow.nominal =
     (typeof row.nominal === "string" && isNaN(Number(row.nominal)) && row.nominal.trim() !== "") ||
@@ -2404,6 +2479,36 @@ export function evaluateCanvasRowFormulas(
           isBlankInput = true;
           break;
         }
+      }
+    } else if (formula) {
+      const fDeps = extractFormulaDependencies(formula);
+      const measurementDeps = fDeps.filter((d) => {
+        const dClean = d.toLowerCase().trim();
+        return (
+          /^t\d+$/i.test(dClean) ||
+          /^trial\d*$/i.test(dClean) ||
+          /^reading\d*$/i.test(dClean) ||
+          /^actual\d*$/i.test(dClean) ||
+          dClean === "reading" ||
+          dClean === "actual" ||
+          dClean === "observation" ||
+          dClean === "avg" ||
+          dClean === "average" ||
+          dClean === "error" ||
+          dClean === "deviation"
+        );
+      });
+      if (measurementDeps.length > 0) {
+        const hasAnyMeasurement = measurementDeps.some((dep) => {
+          const val = newRow[dep] ?? ctx.valuesMap[dep] ?? ctx.valuesMap[dep.toLowerCase()];
+          return !isBlankValue(val);
+        });
+        if (!hasAnyMeasurement) {
+          isBlankInput = true;
+        }
+      } else if (!ctx.hasReading) {
+        if (isError || isStatus) isBlankInput = true;
+        if (isAvg && ctx.trialValues.length === 0) isBlankInput = true;
       }
     } else if (!ctx.hasReading) {
       if (isError || isStatus) isBlankInput = true;

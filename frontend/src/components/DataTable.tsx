@@ -52,6 +52,9 @@ import {
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover"
 
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
@@ -127,40 +130,47 @@ export function DataTable<TData, TValue>({
     const lowerFilter = globalFilter.toLowerCase();
     const results = new Set<string>();
     
-    // Use the table columns to ensure we only suggest things that can actually be searched
-    const searchCols = columns.map(c => (c as any).accessorKey || c.id).filter(Boolean);
+    // Filter out non-searchable columns
+    const searchCols = columns
+      .map(c => (c as any).accessorKey || c.id)
+      .filter((k): k is string => Boolean(k) && k !== "select" && k !== "actions");
     
-    data.forEach((row: any) => {
-      searchCols.forEach(colKey => {
-        if (!colKey) return;
+    // Bounded scan: evaluate up to 100 rows or until 6 distinct suggestions are collected
+    const scanLimit = Math.min(data.length, 100);
+    for (let i = 0; i < scanLimit; i++) {
+      const row = data[i] as any;
+      if (!row) continue;
+
+      for (const colKey of searchCols) {
         const val = row[colKey];
-        if (val == null) return;
-        
-        if (typeof val === 'string' && val.length > 0 && val.length < 60) {
+        if (val == null) continue;
+
+        if (typeof val === "string" && val.length > 0 && val.length < 60) {
+          if (UUID_REGEX.test(val)) continue;
+
           let displayVal = val;
-          // Check if it's an ISO date string
-          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(val)) {
+          if (val.includes("T") && ISO_DATE_REGEX.test(val)) {
             const d = new Date(val);
             if (!isNaN(d.getTime())) {
-              displayVal = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth()+1).padStart(2, '0')}-${d.getFullYear()}`;
+              displayVal = `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}`;
             }
-          } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)) {
-            // Exclude UUIDs
-            return;
           }
 
           if (displayVal.toLowerCase().includes(lowerFilter)) {
             results.add(displayVal);
+            if (results.size >= 6) return Array.from(results);
           }
-        } else if (typeof val === 'number') {
-          if (String(val).toLowerCase().includes(lowerFilter)) {
-            results.add(String(val));
+        } else if (typeof val === "number") {
+          const numStr = String(val);
+          if (numStr.includes(lowerFilter)) {
+            results.add(numStr);
+            if (results.size >= 6) return Array.from(results);
           }
         }
-      });
-    });
+      }
+    }
     
-    return Array.from(results).slice(0, 6);
+    return Array.from(results);
   }, [globalFilter, data, columns, hideSearch]);
 
   const columnVisibility = externalColumnVisibility ?? localColumnVisibility
@@ -255,9 +265,10 @@ export function DataTable<TData, TValue>({
                       Suggestions
                     </div>
                     {suggestions.map((suggestion, i) => (
-                      <button
+                      <Button
                         key={i}
-                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-primary/10 focus:bg-primary/10 focus:outline-none transition-colors flex items-center gap-3"
+                        variant="ghost"
+                        className="w-full justify-start px-4 py-2 h-auto text-sm font-normal hover:bg-muted focus:bg-muted transition-colors flex items-center gap-3 rounded-none"
                         onClick={() => {
                           setGlobalFilter(suggestion);
                           setSearchOpen(false);
@@ -265,7 +276,7 @@ export function DataTable<TData, TValue>({
                       >
                         <Search className="h-3.5 w-3.5 text-muted-foreground/70" />
                         <span className="truncate">{suggestion}</span>
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </PopoverContent>

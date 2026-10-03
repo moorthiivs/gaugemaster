@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { API_URL, TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY, SETUP_KEY, INSPECTED_COMPANY_KEY } from "./httpClient";
+import {
+  getStoredAccessToken,
+  setStoredAccessToken,
+  getStoredRefreshToken,
+  setStoredRefreshToken,
+  clearStoredTokens,
+} from "./tokenStorage";
 
 export type User = {
   id: string;
@@ -95,7 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = useCallback(async () => {
-    const currentToken = token || localStorage.getItem(TOKEN_KEY);
+    const currentToken = token || getStoredAccessToken();
     try {
       if (currentToken) {
         await axios.post(
@@ -110,8 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn("Failed to notify backend on logout", err);
     }
 
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    clearStoredTokens();
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(SETUP_KEY);
     localStorage.removeItem("setupData");
@@ -126,7 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Validate session against backend /api/auth/me
   const validateSession = useCallback(async (): Promise<boolean> => {
-    const currentToken = localStorage.getItem(TOKEN_KEY);
+    const currentToken = getStoredAccessToken();
     if (!currentToken) return false;
 
     try {
@@ -179,8 +185,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let isMounted = true;
 
     const initAuth = async () => {
-      const storedToken = localStorage.getItem(TOKEN_KEY);
-      const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+      const storedToken = getStoredAccessToken();
+      const storedRefreshToken = getStoredRefreshToken();
       const storedUser = localStorage.getItem(USER_KEY);
       const setupCompleted = localStorage.getItem(SETUP_KEY);
 
@@ -208,8 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (isTokenExpired(storedToken) && storedRefreshToken) {
         if (isTokenExpired(storedRefreshToken)) {
           // Both access and refresh tokens are expired
-          localStorage.removeItem(TOKEN_KEY);
-          localStorage.removeItem(REFRESH_TOKEN_KEY);
+          clearStoredTokens();
           localStorage.removeItem(USER_KEY);
           localStorage.removeItem(SETUP_KEY);
           localStorage.removeItem(INSPECTED_COMPANY_KEY);
@@ -223,9 +228,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             const { accessToken: newAccessToken, refreshToken: newRefreshToken, user: authUser } = response.data;
             if (newAccessToken) {
               activeToken = newAccessToken;
-              localStorage.setItem(TOKEN_KEY, newAccessToken);
+              setStoredAccessToken(newAccessToken);
               if (newRefreshToken) {
-                localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
+                setStoredRefreshToken(newRefreshToken);
               }
               if (authUser) {
                 parsedUser = {
@@ -246,8 +251,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             }
           } catch (err) {
             console.warn("Silent refresh failed on startup:", err);
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(REFRESH_TOKEN_KEY);
+            clearStoredTokens();
             localStorage.removeItem(USER_KEY);
             localStorage.removeItem(SETUP_KEY);
             localStorage.removeItem(INSPECTED_COMPANY_KEY);
@@ -295,8 +299,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Listen for custom token refresh, session expired, and cross-tab storage events
   useEffect(() => {
     const handleSessionExpiredEvent = () => {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(REFRESH_TOKEN_KEY);
+      clearStoredTokens();
       localStorage.removeItem(USER_KEY);
       localStorage.removeItem(SETUP_KEY);
       localStorage.removeItem("setupData");
@@ -336,7 +339,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (e.key === TOKEN_KEY && !e.newValue) {
         handleSessionExpiredEvent();
       } else if (e.key === TOKEN_KEY && e.newValue) {
-        setToken(e.newValue);
+        const freshToken = getStoredAccessToken() || e.newValue;
+        setToken(freshToken);
         const storedUser = localStorage.getItem(USER_KEY);
         if (storedUser) {
           try {
@@ -349,7 +353,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Back-forward cache (bfcache) check
     const handlePageShow = (e: PageTransitionEvent) => {
       if (e.persisted) {
-        const currentToken = localStorage.getItem(TOKEN_KEY);
+        const currentToken = getStoredAccessToken();
         if (!currentToken) {
           handleSessionExpiredEvent();
         }
@@ -370,9 +374,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (userData: User, accessToken: string, refreshToken?: string) => {
-    localStorage.setItem(TOKEN_KEY, accessToken);
+    setStoredAccessToken(accessToken);
     if (refreshToken) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+      setStoredRefreshToken(refreshToken);
     }
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
     localStorage.setItem(SETUP_KEY, userData.isNewCustomer ? "false" : "true");

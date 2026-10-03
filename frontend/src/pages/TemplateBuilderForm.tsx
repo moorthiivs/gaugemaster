@@ -110,6 +110,7 @@ import { GeneratedTemplateResult } from "@/lib/geminiService";
 import { CanvasRowData, SplitRowBlock } from "@/types/template";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
+import { DatePicker } from "@/components/ui/year-month-date-picker";
 import { SlidersHorizontal, LayoutGrid } from "lucide-react";
 import { validateTemplatePreSave } from "@/lib/templatePreSaveValidator";
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
@@ -1949,14 +1950,16 @@ export default function TemplateBuilderForm() {
                               <Label className="text-tiny text-muted-foreground">
                                 Date
                               </Label>
-                              <Input
-                                placeholder="DD/MM/YYYY"
+                              <DatePicker
                                 value={docDate}
-                                onChange={(e) => {
-                                  setDocDate(e.target.value);
+                                onChange={(newDate) => {
+                                  setDocDate(newDate);
                                   markDirty();
                                 }}
+                                placeholder="DD-MM-YYYY"
                                 className="text-xs font-medium h-8"
+                                formatPattern="dd-MMM-yyyy"
+                                clearable
                               />
                             </div>
                             <div className="space-y-1">
@@ -2032,14 +2035,16 @@ export default function TemplateBuilderForm() {
                               <Label className="text-tiny text-muted-foreground">
                                 Date
                               </Label>
-                              <Input
-                                placeholder="DD-MM-YYYY"
+                              <DatePicker
                                 value={procedureDate}
-                                onChange={(e) => {
-                                  setProcedureDate(e.target.value);
+                                onChange={(newDate) => {
+                                  setProcedureDate(newDate);
                                   markDirty();
                                 }}
-                                className="text-xs h-8"
+                                placeholder="DD-MM-YYYY"
+                                className="text-xs font-medium h-8"
+                                formatPattern="dd-MMM-yyyy"
+                                clearable
                               />
                             </div>
                             <div className="space-y-1">
@@ -2089,14 +2094,16 @@ export default function TemplateBuilderForm() {
                               <Label className="text-tiny text-muted-foreground">
                                 Date
                               </Label>
-                              <Input
-                                placeholder="DD-MM-YYYY"
+                              <DatePicker
                                 value={acceptanceCriteriaDate}
-                                onChange={(e) => {
-                                  setAcceptanceCriteriaDate(e.target.value);
+                                onChange={(newDate) => {
+                                  setAcceptanceCriteriaDate(newDate);
                                   markDirty();
                                 }}
-                                className="text-xs h-8"
+                                placeholder="DD-MM-YYYY"
+                                className="text-xs font-medium h-8"
+                                formatPattern="dd-MMM-yyyy"
+                                clearable
                               />
                             </div>
                             <div className="space-y-1">
@@ -4045,54 +4052,58 @@ export default function TemplateBuilderForm() {
               {/* Document Control Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Card 1: Document Control */}
-                <Card className="border shadow-xs bg-card">
+                <Card className="border shadow-xs bg-card flex flex-col justify-between">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-primary" />
                       Document Control
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-3.5 space-y-2.5">
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Document Number</Label>
-                      <Input
-                        value={docNo}
-                        onChange={(e) => {
-                          setDocNo(e.target.value);
-                          markDirty();
-                        }}
-                        placeholder="e.g. DOC-CAL-001"
-                        className="text-xs h-7.5"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
+                  <CardContent className="p-3.5 space-y-2.5 flex-1 flex flex-col justify-between">
+                    <div className="space-y-2.5">
                       <div className="space-y-1">
-                        <Label className="text-tiny">Rev No.</Label>
+                        <Label className="text-tiny">Document Number</Label>
                         <Input
-                          value={docRev}
+                          value={docNo}
                           onChange={(e) => {
-                            setDocRev(e.target.value);
+                            setDocNo(e.target.value);
                             markDirty();
                           }}
-                          placeholder="01"
-                          className="text-xs h-7.5"
+                          placeholder="e.g. DOC-CAL-001"
+                          className="text-xs h-8 font-medium"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-tiny">Issue Date</Label>
-                        <Input
-                          type="date"
-                          value={docDate}
-                          onChange={(e) => {
-                            setDocDate(e.target.value);
-                            markDirty();
-                          }}
-                          className="text-xs h-7.5"
-                        />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Rev No.</Label>
+                          <Input
+                            value={docRev}
+                            onChange={(e) => {
+                              setDocRev(e.target.value);
+                              markDirty();
+                            }}
+                            placeholder="01"
+                            className="text-xs h-8 font-medium"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Issue Date</Label>
+                          <DatePicker
+                            value={docDate}
+                            onChange={(newDate) => {
+                              setDocDate(newDate);
+                              markDirty();
+                            }}
+                            placeholder="DD-MM-YYYY"
+                            className="text-xs h-8 font-medium"
+                            formatPattern="dd-MMM-yyyy"
+                            clearable
+                          />
+                        </div>
                       </div>
                     </div>
-                    <div className="pt-1">
-                      <span className="text-xxs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold inline-block">
+                    <div className="pt-1 flex items-center h-8">
+                      <span className="text-xxs px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 border border-emerald-500/20">
                         ✓ ISO/IEC 17025 Accredited
                       </span>
                     </div>
@@ -4100,26 +4111,56 @@ export default function TemplateBuilderForm() {
                 </Card>
 
                 {/* Card 2: Calibration SOP Reference */}
-                <Card className="border shadow-xs bg-card">
+                <Card className="border shadow-xs bg-card flex flex-col justify-between">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
                       Calibration Procedure (SOP)
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-3.5 space-y-2.5">
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Procedure No</Label>
-                      <Input
-                        value={procedureNo}
-                        onChange={(e) => {
-                          setProcedureNo(e.target.value);
-                          setProcedureReference(e.target.value);
-                          markDirty();
-                        }}
-                        placeholder="e.g. PC-01"
-                        className="text-xs h-7.5"
-                      />
+                  <CardContent className="p-3.5 space-y-2.5 flex-1 flex flex-col justify-between">
+                    <div className="space-y-2.5">
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Procedure No</Label>
+                        <Input
+                          value={procedureNo}
+                          onChange={(e) => {
+                            setProcedureNo(e.target.value);
+                            setProcedureReference(e.target.value);
+                            markDirty();
+                          }}
+                          placeholder="e.g. PC-01"
+                          className="text-xs h-8 font-medium"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Rev</Label>
+                          <Input
+                            value={procedureRev}
+                            onChange={(e) => {
+                              setProcedureRev(e.target.value);
+                              markDirty();
+                            }}
+                            placeholder="00"
+                            className="text-xs h-8 font-medium"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Date</Label>
+                          <DatePicker
+                            value={procedureDate}
+                            onChange={(newDate) => {
+                              setProcedureDate(newDate);
+                              markDirty();
+                            }}
+                            placeholder="DD-MM-YYYY"
+                            className="text-xs h-8 font-medium"
+                            formatPattern="dd-MMM-yyyy"
+                            clearable
+                          />
+                        </div>
+                      </div>
                     </div>
                     <div className="space-y-1">
                       <Label className="text-tiny">Procedure Name</Label>
@@ -4130,83 +4171,61 @@ export default function TemplateBuilderForm() {
                           markDirty();
                         }}
                         placeholder="e.g. Master procedure"
-                        className="text-xs h-7.5"
+                        className="text-xs h-8 font-medium"
                       />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-tiny">Rev</Label>
-                        <Input
-                          value={procedureRev}
-                          onChange={(e) => {
-                            setProcedureRev(e.target.value);
-                            markDirty();
-                          }}
-                          placeholder="00"
-                          className="text-xs h-7.5"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-tiny">Date</Label>
-                        <Input
-                          type="date"
-                          value={procedureDate}
-                          onChange={(e) => {
-                            setProcedureDate(e.target.value);
-                            markDirty();
-                          }}
-                          className="text-xs h-7.5"
-                        />
-                      </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* Card 3: Acceptance Reference */}
-                <Card className="border shadow-xs bg-card">
+                <Card className="border shadow-xs bg-card flex flex-col justify-between">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <FileCheck2 className="w-3.5 h-3.5 text-amber-500" />
                       Acceptance Criteria Reference
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-3.5 space-y-2.5">
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Criteria Doc No.</Label>
-                      <Input
-                        value={acceptanceCriteriaDocNo}
-                        onChange={(e) => {
-                          setAcceptanceCriteriaDocNo(e.target.value);
-                          markDirty();
-                        }}
-                        placeholder="e.g. IS 3651 / QA-SPEC-02"
-                        className="text-xs h-7.5"
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
+                  <CardContent className="p-3.5 space-y-2.5 flex-1 flex flex-col justify-between">
+                    <div className="space-y-2.5">
                       <div className="space-y-1">
-                        <Label className="text-tiny">Rev</Label>
+                        <Label className="text-tiny">Criteria Doc No.</Label>
                         <Input
-                          value={acceptanceCriteriaRev}
+                          value={acceptanceCriteriaDocNo}
                           onChange={(e) => {
-                            setAcceptanceCriteriaRev(e.target.value);
+                            setAcceptanceCriteriaDocNo(e.target.value);
                             markDirty();
                           }}
-                          placeholder="02"
-                          className="text-xs h-7.5"
+                          placeholder="e.g. IS 3651 / QA-SPEC-02"
+                          className="text-xs h-8 font-medium"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-tiny">Date</Label>
-                        <Input
-                          type="date"
-                          value={acceptanceCriteriaDate}
-                          onChange={(e) => {
-                            setAcceptanceCriteriaDate(e.target.value);
-                            markDirty();
-                          }}
-                          className="text-xs h-7.5"
-                        />
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Rev</Label>
+                          <Input
+                            value={acceptanceCriteriaRev}
+                            onChange={(e) => {
+                              setAcceptanceCriteriaRev(e.target.value);
+                              markDirty();
+                            }}
+                            placeholder="02"
+                            className="text-xs h-8 font-medium"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-tiny">Date</Label>
+                          <DatePicker
+                            value={acceptanceCriteriaDate}
+                            onChange={(newDate) => {
+                              setAcceptanceCriteriaDate(newDate);
+                              markDirty();
+                            }}
+                            placeholder="DD-MM-YYYY"
+                            className="text-xs h-8 font-medium"
+                            formatPattern="dd-MMM-yyyy"
+                            clearable
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-1">
@@ -4218,7 +4237,7 @@ export default function TemplateBuilderForm() {
                           markDirty();
                         }}
                         placeholder="e.g. Table 1 Permissible Deviations"
-                        className="text-xs h-7.5"
+                        className="text-xs h-8 font-medium"
                       />
                     </div>
                   </CardContent>

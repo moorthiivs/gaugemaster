@@ -2,42 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Geist - Vercel Sans Font */
+/* Geist - Vercel Sans Variable & Static Font Definition */
 @font-face {
   font-family: 'Geist';
-  src: url('./fonts/Geist-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('./fonts/Geist-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('./fonts/Geist-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('./fonts/Geist-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist';
-  src: url('./fonts/geist-font/Geist/webfonts/Geist[wght].woff2') format('woff2');
+  src: url('./fonts/geist-font/Geist/webfonts/Geist[wght].woff2') format('woff2-variations'),
+       url('./fonts/Geist-Regular.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -45,7 +14,8 @@
 
 @font-face {
   font-family: 'Geist';
-  src: url('./fonts/Geist-Italic[wght].woff2') format('woff2');
+  src: url('./fonts/Geist-Italic[wght].woff2') format('woff2-variations'),
+       url('./fonts/Geist-Italic.woff2') format('woff2');
   font-weight: 100 900;
   font-style: italic;
   font-display: swap;
@@ -54,39 +24,8 @@
 /* Geist Mono - Vercel Monospace Font */
 @font-face {
   font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono-Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono-Medium.woff2') format('woff2');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono-SemiBold.woff2') format('woff2');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono-Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Geist Mono';
-  src: url('./fonts/geist-font/GeistMono/webfonts/GeistMono[wght].woff2') format('woff2');
+  src: url('./fonts/geist-font/GeistMono/webfonts/GeistMono[wght].woff2') format('woff2-variations'),
+       url('./fonts/GeistMono-Regular.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -94,62 +33,12 @@
 
 @font-face {
   font-family: 'Geist Mono';
-  src: url('./fonts/GeistMono-Italic[wght].woff2') format('woff2');
+  src: url('./fonts/GeistMono-Italic[wght].woff2') format('woff2-variations'),
+       url('./fonts/GeistMono-Italic.woff2') format('woff2');
   font-weight: 100 900;
   font-style: italic;
   font-display: swap;
 }
-
-@font-face {
-  font-family: 'Inter';
-  src: url('./fonts/Inter_Regular.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Inter';
-  src: url('./fonts/Inter_Bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('./fonts/PlusJakartaSans-Regular.woff2') format('woff2'),
-       url('./fonts/PlusJakartaSans-Regular.ttf') format('truetype');
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('./fonts/PlusJakartaSans-Medium.ttf') format('truetype');
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('./fonts/PlusJakartaSans-SemiBold.ttf') format('truetype');
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Plus Jakarta Sans';
-  src: url('./fonts/PlusJakartaSans-Bold.woff2') format('woff2'),
-       url('./fonts/PlusJakartaSans-Bold.ttf') format('truetype');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
 */
@@ -158,105 +47,135 @@ All colors MUST be HSL.
   :root {
     --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    --background: 210 40% 98%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 0 0% 100%;
+    --foreground: 200 14.3% 4.1%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 200 14.3% 4.1%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 200 14.3% 4.1%;
 
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 161.8 100% 23.9%;
+    --primary-foreground: 151.8 81% 95.9%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 180 7.7% 94.9%;
+    --muted-foreground: 191.4 9.3% 44.5%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 180 7.7% 94.9%;
+    --accent-foreground: 197.1 13.7% 10%;
 
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 357.1 100% 45.3%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
+    --success: 142.1 76.2% 36.3%;
+    --success-foreground: 0 0% 100%;
 
-    --radius: 0.75rem;
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 12%;
 
-    /* World-class Lighting & Glow Tokens */
-    --brand: 221 83% 53%;
+    --info: 217.2 91.2% 59.8%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 192 9.8% 90%;
+    --input: 192 9.8% 90%;
+    --ring: 192 8.2% 64.1%;
+
+    --radius: 0.625rem;
+
+    /* Enterprise Precision & Lighting Tokens (Mist Palette) */
+    --brand: 161.8 100% 23.9%;
     --brand-cyan: 188 95% 43%;
     --brand-emerald: 158 75% 40%;
     --brand-amber: 38 92% 50%;
     --brand-rose: 350 89% 60%;
     --brand-indigo: 239 84% 67%;
 
-    --primary-glow: 221 83% 65%;
-    --gradient-primary: linear-gradient(135deg, hsl(221 83% 53%), hsl(199 89% 48%));
-    --gradient-surface: radial-gradient(1200px 600px at 50% -10%, hsl(var(--primary) / 0.08), transparent 70%);
+    --primary-glow: 161.8 100% 35%;
+    --gradient-primary: linear-gradient(135deg, hsl(161.8 100% 23.9%), hsl(160 100% 30%));
+    --gradient-surface: radial-gradient(1200px 600px at 50% -10%, hsl(var(--primary) / 0.04), transparent 70%);
 
-    --shadow-elev: 0 10px 30px -10px hsl(var(--primary) / 0.12), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
-    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04);
-    --shadow-card-hover: 0 12px 28px -6px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
-    --transition-smooth: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    --shadow-elev: 0 4px 20px -4px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05);
+    --shadow-card-hover: 0 4px 12px -2px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+    --transition-smooth: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 
     /* Sidebar tokens */
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222.2 47.4% 18%;
-    --sidebar-primary: 221.2 83.2% 53.3%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 210 40% 96.1%;
-    --sidebar-accent-foreground: 222.2 47.4% 11.2%;
-    --sidebar-border: 214.3 31.8% 91.4%;
-    --sidebar-ring: 221.2 83.2% 53.3%;
+    --sidebar-background: 180 20% 98%;
+    --sidebar-foreground: 200 14.3% 4.1%;
+    --sidebar-primary: 160 100% 30%;
+    --sidebar-primary-foreground: 151.8 81% 95.9%;
+    --sidebar-accent: 180 7.7% 94.9%;
+    --sidebar-accent-foreground: 197.1 13.7% 10%;
+    --sidebar-border: 192 9.8% 90%;
+    --sidebar-ring: 192 8.2% 64.1%;
+    --chart-1: 195 9.3% 83.1%;
+    --chart-2: 191.4 9.3% 44.5%;
+    --chart-3: 191.3 9.6% 32.5%;
+    --chart-4: 192.9 10.9% 25.1%;
+    --chart-5: 193.3 11.7% 15.1%;
+    --sidebar: 180 20% 98%;
   }
 
   .dark {
-    --background: 222 47% 7%;
-    --foreground: 210 40% 98%;
+    --background: 200 14.3% 4.1%;
+    --foreground: 180 20% 98%;
 
-    --card: 222 44% 9.5%;
-    --card-foreground: 210 40% 98%;
+    --card: 197.1 13.7% 10%;
+    --card-foreground: 180 20% 98%;
 
-    --popover: 222 44% 10%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 197.1 13.7% 10%;
+    --popover-foreground: 180 20% 98%;
 
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 163.1 100% 18.8%;
+    --primary-foreground: 151.8 81% 95.9%;
 
-    --secondary: 217.2 32.6% 15%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
 
-    --muted: 217.2 32.6% 14%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 193.3 11.7% 15.1%;
+    --muted-foreground: 192 8.2% 64.1%;
 
-    --accent: 217.2 32.6% 17%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 193.3 11.7% 15.1%;
+    --accent-foreground: 180 20% 98%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 358.8 100% 69.6%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 217.2 32.6% 16%;
-    --input: 217.2 32.6% 16%;
-    --ring: 217.2 91.2% 59.8%;
+    --success: 142.1 70.6% 45.3%;
+    --success-foreground: 144 80% 10%;
 
-    --shadow-elev: 0 20px 40px -15px rgba(0, 0, 0, 0.5), 0 0 30px -10px hsl(var(--primary) / 0.15);
-    --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
-    --shadow-card-hover: 0 16px 36px -4px rgba(0, 0, 0, 0.5), 0 0 20px 0 hsl(var(--primary) / 0.1);
+    --warning: 38 92% 50%;
+    --warning-foreground: 48 96% 12%;
 
-    --sidebar-background: 223 47% 8%;
-    --sidebar-foreground: 210 40% 96%;
-    --sidebar-primary: 217.2 91.2% 59.8%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217.2 32.6% 14%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 217.2 32.6% 14%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --info: 217.2 91.2% 59.8%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 193.3 11.7% 20%;
+    --input: 193.3 11.7% 22%;
+    --ring: 191.4 9.3% 44.5%;
+
+    --shadow-elev: 0 8px 24px -4px rgba(0, 0, 0, 0.4), 0 0 16px -8px hsl(var(--primary) / 0.1);
+    --shadow-card: 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+    --shadow-card-hover: 0 4px 16px -2px rgba(0, 0, 0, 0.4), 0 0 12px 0 hsl(var(--primary) / 0.08);
+
+    --sidebar-background: 197.1 13.7% 10%;
+    --sidebar-foreground: 180 20% 98%;
+    --sidebar-primary: 159.9 100% 36.9%;
+    --sidebar-primary-foreground: 166.4 100% 8.6%;
+    --sidebar-accent: 193.3 11.7% 15.1%;
+    --sidebar-accent-foreground: 180 20% 98%;
+    --sidebar-border: 193.3 11.7% 20%;
+    --sidebar-ring: 191.4 9.3% 44.5%;
+    --chart-1: 195 9.3% 83.1%;
+    --chart-2: 191.4 9.3% 44.5%;
+    --chart-3: 191.3 9.6% 32.5%;
+    --chart-4: 192.9 10.9% 25.1%;
+    --chart-5: 193.3 11.7% 15.1%;
+    --sidebar: 197.1 13.7% 10%;
   }
 }
 
@@ -270,12 +189,10 @@ All colors MUST be HSL.
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    letter-spacing: -0.015em;
   }
 
   body {
     font-family: var(--font-sans);
-    letter-spacing: -0.015em;
     @apply bg-background text-foreground transition-colors duration-300 antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "calt";
     -webkit-font-smoothing: antialiased;
@@ -284,7 +201,7 @@ All colors MUST be HSL.
   }
 
   h1, h2, h3, h4, h5, h6 {
-    letter-spacing: -0.03em;
+    letter-spacing: -0.025em;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11", "calt";
   }
 
@@ -336,26 +253,26 @@ All colors MUST be HSL.
 
 /* Industrial Precision & Subtle Glass Utility Classes */
 @layer utilities {
-  /* World-Class Metric Card Container */
+  /* Enterprise Metric Card Container */
   .world-class-card {
-    @apply relative overflow-hidden rounded-2xl border border-border/60 bg-card/90 backdrop-blur-xl shadow-sm transition-all duration-300 hover:border-primary/40 hover:shadow-lg hover:-translate-y-0.5;
+    @apply relative overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-all duration-200 hover:border-primary/40 hover:shadow-sm;
   }
 
   .world-class-card-static {
-    @apply relative overflow-hidden rounded-2xl border border-border/60 bg-card/90 backdrop-blur-xl shadow-sm transition-all duration-300;
+    @apply relative overflow-hidden rounded-xl border border-border bg-card shadow-xs;
   }
 
-  /* Ambient Glow Utilities */
+  /* Ambient Glow Utilities (Subtle) */
   .glow-blue {
-    background: radial-gradient(140px circle at var(--x, 80%) var(--y, 20%), rgba(59, 130, 246, 0.15), transparent 70%);
+    background: radial-gradient(120px circle at var(--x, 80%) var(--y, 20%), hsl(var(--primary) / 0.04), transparent 70%);
   }
 
   .glow-emerald {
-    background: radial-gradient(140px circle at var(--x, 80%) var(--y, 20%), rgba(16, 185, 129, 0.15), transparent 70%);
+    background: radial-gradient(120px circle at var(--x, 80%) var(--y, 20%), hsl(var(--success) / 0.04), transparent 70%);
   }
 
   .glow-amber {
-    background: radial-gradient(140px circle at var(--x, 80%) var(--y, 20%), rgba(245, 158, 11, 0.15), transparent 70%);
+    background: radial-gradient(120px circle at var(--x, 80%) var(--y, 20%), hsl(var(--warning) / 0.04), transparent 70%);
   }
 
   .glow-rose {

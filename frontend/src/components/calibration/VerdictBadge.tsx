@@ -1,44 +1,22 @@
-import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { StatusBadge } from "@/components/common/StatusBadge";
 
 interface VerdictBadgeProps {
   verdict: string;
   size?: "sm" | "md" | "lg";
+  className?: string;
 }
 
 /**
  * Reusable verdict badge with color-coded icons for PASS/FAIL/CONDITIONAL.
  */
-export function VerdictBadge({ verdict, size = "md" }: VerdictBadgeProps) {
-  const upper = (verdict || "").toUpperCase();
-  const sizeClasses = {
-    sm: "text-xs px-2 py-0.5",
-    md: "text-sm px-3 py-1",
-    lg: "text-base px-4 py-1.5",
-  };
-
-  if (upper === "PASS") {
-    return (
-      <Badge className={`bg-emerald-500/15 text-emerald-600 border-emerald-300 hover:bg-emerald-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
-        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-        PASS
-      </Badge>
-    );
-  }
-
-  if (upper === "FAIL") {
-    return (
-      <Badge className={`bg-red-500/15 text-red-600 border-red-300 hover:bg-red-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
-        <XCircle className="w-3.5 h-3.5 shrink-0" />
-        FAIL
-      </Badge>
-    );
-  }
-
+export function VerdictBadge({ verdict, size = "md", className }: VerdictBadgeProps) {
+  const mappedSize = size === "lg" ? "md" : size === "sm" ? "xs" : "sm";
   return (
-    <Badge className={`bg-amber-500/15 text-amber-600 border-amber-300 hover:bg-amber-500/20 gap-1.5 whitespace-nowrap inline-flex items-center shrink-0 ${sizeClasses[size]}`}>
-      <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-      {upper || "PENDING"}
-    </Badge>
+    <StatusBadge
+      status={verdict}
+      category="verdict"
+      size={mappedSize}
+      className={className}
+    />
   );
 }

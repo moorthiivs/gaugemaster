@@ -17,6 +17,7 @@ import { deduplicateItemStatuses } from "@/lib/itemStatus";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/common/PageHeader";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAYS_OF_WEEK = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -162,25 +163,15 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <Card className="border-0 shadow-none bg-transparent">
-        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-              <CalendarDays className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">Calibration Schedule</h1>
-              <p className="text-sm text-muted-foreground">
-                Monitor and manage instrument calibration due dates
-              </p>
-            </div>
-          </div>
-
+      {/* Page Header */}
+      <PageHeader
+        title="Calibration Schedule"
+        description="Monitor and manage instrument calibration due dates across departments and plants."
+        actions={
           <div className="flex flex-wrap items-center gap-2">
             {/* Category Filter */}
             <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger className="h-9 w-[150px] text-xs font-medium bg-background">
+              <SelectTrigger className="h-8 w-[140px] text-xs font-medium bg-background">
                 <Gauge className="h-3.5 w-3.5 mr-1 text-primary" />
                 <SelectValue placeholder="All Inventory" />
               </SelectTrigger>
@@ -193,7 +184,7 @@ export default function CalendarPage() {
 
             {/* Item Status Filter */}
             <Select value={itemStatus} onValueChange={setItemStatus}>
-              <SelectTrigger className="h-9 w-[130px] text-xs font-medium bg-background">
+              <SelectTrigger className="h-8 w-[130px] text-xs font-medium bg-background">
                 <Activity className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
                 <SelectValue placeholder="Active Only" />
               </SelectTrigger>
@@ -209,7 +200,7 @@ export default function CalendarPage() {
 
             {/* Location Filter */}
             <Select value={location} onValueChange={setLocation}>
-              <SelectTrigger className="h-9 w-[130px] text-xs font-medium bg-background">
+              <SelectTrigger className="h-8 w-[130px] text-xs font-medium bg-background">
                 <MapPin className="h-3.5 w-3.5 mr-1 text-muted-foreground" />
                 <SelectValue placeholder="All Plants" />
               </SelectTrigger>
@@ -225,7 +216,7 @@ export default function CalendarPage() {
 
             {/* Year Selector */}
             <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-              <SelectTrigger className="h-9 w-[90px] text-xs font-semibold bg-background">
+              <SelectTrigger className="h-8 w-[88px] text-xs font-semibold bg-background">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -237,12 +228,12 @@ export default function CalendarPage() {
               </SelectContent>
             </Select>
           </div>
-        </div>
-      </Card>
+        }
+      />
 
       {/* Month tabs + Legend */}
-      <Card>
-        <CardContent className="pt-6">
+      <Card className="rounded-xl border border-border bg-card shadow-2xs">
+        <CardContent className="pt-5 pb-5">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-6">
             {/* Month tabs */}
             <div className="flex flex-wrap gap-1">
@@ -254,9 +245,9 @@ export default function CalendarPage() {
                     key={m}
                     onClick={() => setMonth(monthNum)}
                     className={cn(
-                      "px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200",
+                      "px-2.5 py-1 rounded-lg text-xs font-semibold transition-all duration-150",
                       isActive
-                        ? "bg-primary text-primary-foreground shadow-md"
+                        ? "bg-primary text-primary-foreground shadow-2xs"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >

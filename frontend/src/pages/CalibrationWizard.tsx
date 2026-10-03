@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -21,6 +21,7 @@ import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveD
 import { getTemplates, getTemplate } from "@/lib/templateActions";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
 import { parseSpecification } from "@/lib/specificationParser";
@@ -213,8 +214,8 @@ export default function CalibrationWizard() {
     const validTables = tables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
     if (validTables.length === 0) return;
 
-    const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string) => {
-      if (!s) return evaluateCanvasRowFormulas(existingRow, columns, tol, dec);
+        const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
+      if (!s) return evaluateCanvasRowFormulas(existingRow, columns, tol, dec, tableNominal);
 
       const specText = s.specification || s.required_dimension || s.description || existingRow.specification || existingRow.required_dimension || existingRow.description || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
@@ -248,10 +249,10 @@ export default function CalibrationWizard() {
         });
       }
 
-      return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec);
+            return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec, tableNominal);
     };
 
-    const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string) => {
+        const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
       const specText = s.specification || s.required_dimension || s.description || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
       const rowObj: any = {
@@ -270,7 +271,7 @@ export default function CalibrationWizard() {
         unit: s.unit || tableUnit || defaultUnit,
         actual: s.actual ?? "",
       };
-      return evaluateCanvasRowFormulas(rowObj, columns, tol, dec);
+            return evaluateCanvasRowFormulas(rowObj, columns, tol, dec, tableNominal);
     };
 
     if (validTables.length === 1) {
@@ -283,11 +284,11 @@ export default function CalibrationWizard() {
       if (existingRows.length > 0) {
         primaryTable.rows = existingRows.map((existingRow: any, idx: number) => {
           const s = specs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || specs[idx];
-          return mergeSpecIntoRow(existingRow, s, primaryTable.columns, tol, dec, primaryTable.unit);
+                    return mergeSpecIntoRow(existingRow, s, primaryTable.columns, tol, dec, primaryTable.unit, primaryTable.nominal);
         });
       } else {
         primaryTable.rows = specs.map((s: any, idx: number) =>
-          createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit)
+          createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit, primaryTable.nominal)
         );
       }
     } else {
@@ -313,11 +314,11 @@ export default function CalibrationWizard() {
             if (existingRows.length > 0) {
               tbl.rows = existingRows.map((existingRow: any, idx: number) => {
                 const s = matchingSpecs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || matchingSpecs[idx];
-                return mergeSpecIntoRow(existingRow, s, tbl.columns, tol, dec, tbl.unit);
+                                return mergeSpecIntoRow(existingRow, s, tbl.columns, tol, dec, tbl.unit, tbl.nominal);
               });
             } else {
               tbl.rows = matchingSpecs.map((s: any, idx: number) =>
-                createNewRowFromSpec(s, idx, tbl.columns, tol, dec, tbl.unit)
+                createNewRowFromSpec(s, idx, tbl.columns, tol, dec, tbl.unit, tbl.nominal)
               );
             }
           }
@@ -346,6 +347,9 @@ export default function CalibrationWizard() {
   // Step 4 — Results
   const [uncertainty, setUncertainty] = useState("");
   const [verdict, setVerdict] = useState<"PASS" | "FAIL" | "CONDITIONAL">("PASS");
+  const [isVerdictManuallyOverridden, setIsVerdictManuallyOverridden] = useState<boolean>(false);
+  const [autoVerdict, setAutoVerdict] = useState<"PASS" | "FAIL" | "CONDITIONAL">("PASS");
+  const [verdictStats, setVerdictStats] = useState<{ total: number; pass: number; fail: number; conditional: number }>({ total: 0, pass: 0, fail: 0, conditional: 0 });
   const [remarks, setRemarks] = useState("");
   const [calibratedBy, setCalibratedBy] = useState("");
   const [calibratedByDesignation, setCalibratedByDesignation] = useState("");
@@ -1489,7 +1493,7 @@ export default function CalibrationWizard() {
           const tol = b.tolerance ?? tpl.default_tolerance ?? 0.02;
           b.rows = b.rows
             .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-            .map((r: any) => evaluateCanvasRowFormulas(r, b.columns, tol, dec));
+                        .map((r: any) => evaluateCanvasRowFormulas(r, b.columns, tol, dec, b.nominal));
         } else if (b.type === "split_row" && Array.isArray(b.children)) {
           b.children.forEach((c: any) => {
             if (c && c.type === "table_grid" && Array.isArray(c.rows)) {
@@ -1497,7 +1501,7 @@ export default function CalibrationWizard() {
               const tol = c.tolerance ?? tpl.default_tolerance ?? 0.02;
               c.rows = c.rows
                 .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-                .map((r: any) => evaluateCanvasRowFormulas(r, c.columns, tol, dec));
+                                .map((r: any) => evaluateCanvasRowFormulas(r, c.columns, tol, dec, c.nominal));
             }
           });
         }
@@ -1823,7 +1827,7 @@ export default function CalibrationWizard() {
           if ((cal as any).status_formula) setStatusFormula((cal as any).status_formula);
         }
 
-        if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns);
+        if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns as unknown as CustomColumn[]);
         if ((cal as any).standard_columns_config) setWizardStandardColumnConfigs((cal as any).standard_columns_config);
         if (cal.column_order && cal.column_order.length > 0) setWizardColumnOrder(cal.column_order);
         if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
@@ -1869,8 +1873,9 @@ export default function CalibrationWizard() {
         if ((cal as any).diagram_image_height) setWizardDiagramHeight((cal as any).diagram_image_height);
         if ((cal as any).diagram_image_alignment) setWizardDiagramAlignment((cal as any).diagram_image_alignment);
 
-        setUncertainty(cal.uncertainty || "");
+                setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
+        setIsVerdictManuallyOverridden(false);
         if (cal.remarks) setRemarks(cal.remarks);
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
@@ -1951,8 +1956,9 @@ export default function CalibrationWizard() {
         wizardAcceptanceCriteria,
         calUnit,
         calTolerance,
-        uncertainty,
+                uncertainty,
         verdict,
+        isVerdictManuallyOverridden,
         remarks,
         calibratedBy,
         calibratedByDesignation,
@@ -1976,7 +1982,7 @@ export default function CalibrationWizard() {
     step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envSoakingTime, envSoakingStartTime, envSoakingEndTime, docNo, procedureReference,
     receiptCondition, customReceiptCondition,
     calPoints, wizardIsCanvas, wizardLayoutBlocks, selectedTemplateId, wizardDiagramImage, wizardDiagramWidth, wizardDiagramHeight, wizardDiagramAlignment,
-    wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
+    wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, isVerdictManuallyOverridden, remarks, calibratedBy, calibratedByDesignation,
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
 
@@ -2025,7 +2031,8 @@ export default function CalibrationWizard() {
           setCalUnit(d.calUnit || "");
           setCalTolerance(d.calTolerance || 0);
           setUncertainty(d.uncertainty || "");
-          setVerdict(d.verdict || "PASS");
+                    setVerdict(d.verdict || "PASS");
+          setIsVerdictManuallyOverridden(Boolean(d.isVerdictManuallyOverridden));
           setRemarks(d.remarks || "");
           setCalibratedBy(d.calibratedBy || "");
           setCalibratedByDesignation(d.calibratedByDesignation || "");
@@ -2156,37 +2163,85 @@ export default function CalibrationWizard() {
     proceedWithInstrumentSelect(inst);
   };
 
-  // Auto-determine verdict from points or canvas blocks
+  // Auto-determine verdict from points or canvas blocks with full telemetry
   useEffect(() => {
+    let computed: "PASS" | "FAIL" | "CONDITIONAL" = "PASS";
+    let totalPts = 0;
+    let passPts = 0;
+    let failPts = 0;
+    let condPts = 0;
+
     if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
       const allTables = getAllCanvasTables(wizardLayoutBlocks);
-      const allRows: any[] = [];
+      const nonMergedRows: any[] = [];
       allTables.forEach((tbl) => {
         if (Array.isArray(tbl.rows)) {
-          allRows.push(...tbl.rows);
+          tbl.rows.forEach((r: any) => {
+            if (!r.is_merged && !r.isMerged) {
+              nonMergedRows.push(r);
+            }
+          });
         }
       });
-      if (allRows.length > 0) {
-        const statuses = allRows
-          .map((r) => String(r.status || r.judgement || "").trim().toUpperCase())
-          .filter((s) => s === "PASS" || s === "FAIL" || s === "OK" || s === "REJECT");
 
-        if (statuses.length > 0) {
-          const anyFail = statuses.some((s) => s === "FAIL" || s === "REJECT");
-          const allPass = statuses.every((s) => s === "PASS" || s === "OK");
-          if (anyFail) setVerdict("FAIL");
-          else if (allPass) setVerdict("PASS");
-          else setVerdict("CONDITIONAL");
+      if (nonMergedRows.length > 0) {
+        nonMergedRows.forEach((r) => {
+          const rawStatus = String(
+            r.status || r.judgement || r.result || r.verdict || r.decision || r.acceptance || ""
+          ).trim().toUpperCase();
+
+          if (rawStatus === "FAIL" || rawStatus === "REJECT" || rawStatus === "NG" || rawStatus === "NOT OK") {
+            failPts++;
+            totalPts++;
+          } else if (rawStatus === "PASS" || rawStatus === "OK" || rawStatus === "ACCEPT" || rawStatus === "ACCEPTED") {
+            passPts++;
+            totalPts++;
+          } else if (rawStatus === "CONDITIONAL" || rawStatus === "HOLD" || rawStatus === "DERATED") {
+            condPts++;
+            totalPts++;
+          } else if (typeof r.reading === "number" && typeof r.nominal === "number") {
+            // Fallback numeric tolerance check if no explicit status text column
+            const tol = typeof r.tolerance === "number" ? r.tolerance : 0;
+            const dev = Math.abs(r.reading - r.nominal);
+            totalPts++;
+            if (tol > 0 && dev > tol) {
+              failPts++;
+            } else {
+              passPts++;
+            }
+          }
+        });
+
+        if (failPts > 0) {
+          computed = "FAIL";
+        } else if (condPts > 0) {
+          computed = "CONDITIONAL";
+        } else if (passPts > 0) {
+          computed = "PASS";
         }
       }
-    } else if (calPoints.length > 0 && calTolerance > 0) {
-      const allPass = calPoints.every((p) => p.status === "PASS");
-      const anyFail = calPoints.some((p) => p.status === "FAIL");
-      if (allPass) setVerdict("PASS");
-      else if (anyFail) setVerdict("FAIL");
-      else setVerdict("CONDITIONAL");
+    } else if (calPoints.length > 0) {
+      totalPts = calPoints.length;
+      calPoints.forEach((p) => {
+        const st = String(p.status || "").trim().toUpperCase();
+        if (st === "FAIL" || st === "REJECT") failPts++;
+        else if (st === "CONDITIONAL") condPts++;
+        else passPts++;
+      });
+
+      if (failPts > 0) computed = "FAIL";
+      else if (condPts > 0) computed = "CONDITIONAL";
+      else computed = "PASS";
     }
-  }, [wizardIsCanvas, wizardLayoutBlocks, calPoints, calTolerance]);
+
+    setAutoVerdict(computed);
+    setVerdictStats({ total: totalPts, pass: passPts, fail: failPts, conditional: condPts });
+
+    // Only auto-update verdict if user has not manually overridden it
+    if (!isVerdictManuallyOverridden) {
+      setVerdict(computed);
+    }
+  }, [wizardIsCanvas, wizardLayoutBlocks, calPoints, calTolerance, isVerdictManuallyOverridden]);
 
   // Auto-calculate next calibration due date based on frequency
   useEffect(() => {
@@ -2420,7 +2475,16 @@ export default function CalibrationWizard() {
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
     // If editing a specification / required_dimension, dynamically parse nominal & tolerance limits
-    if (colId === "required_dimension" || colId === "specification" || colId === "description" || colId === "nominal") {
+    const isSpecCol =
+      colId === "required_dimension" ||
+      colId === "specification" ||
+      colId === "spec" ||
+      colId === "description" ||
+      colId === "nominal" ||
+      /spec|dimension/i.test(colId) ||
+      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && /spec|dimension/i.test(c.label || c.id || "")));
+
+    if (isSpecCol) {
       const specText = String(val ?? "").trim();
       const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
       if (parsed.isValid) {
@@ -2453,7 +2517,7 @@ export default function CalibrationWizard() {
     if (!targetTbl.columns.some((c: any) => c.id === "reading")) delete row.reading;
 
     // Deterministic formula evaluation (topological order, formula string parsing, blank propagation)
-    const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
+        const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec, targetTbl.nominal);
 
     targetTbl.rows[rowIndex] = evaluatedRow;
     setWizardLayoutBlocks(updatedBlocks);
@@ -2491,7 +2555,7 @@ export default function CalibrationWizard() {
 
     const tol = parseFloat(String(newRow.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
-    const evaluatedRow = evaluateCanvasRowFormulas(newRow, targetTbl.columns || [], tol, dec);
+        const evaluatedRow = evaluateCanvasRowFormulas(newRow, targetTbl.columns || [], tol, dec, targetTbl.nominal);
 
     targetTbl.rows.push(evaluatedRow);
     setWizardLayoutBlocks(updatedBlocks);
@@ -2591,9 +2655,16 @@ export default function CalibrationWizard() {
               <Table className="w-3.5 h-3.5 text-primary" />
               {tbl.title}
             </span>
-            <span className="text-[10px] text-muted-foreground font-mono">
-              Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
-            </span>
+                        <div className="flex items-center gap-2">
+              {tbl.nominal !== undefined && tbl.nominal !== "" && (
+                <Badge variant="outline" className="text-2xs font-semibold px-2 py-0 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
+                  Nominal: {tbl.nominal} {tbl.unit || "mm"}
+                </Badge>
+              )}
+              <span className="text-[10px] text-muted-foreground font-mono">
+                Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
+              </span>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-center border-collapse">
@@ -2749,9 +2820,16 @@ export default function CalibrationWizard() {
             <Table className="w-3.5 h-3.5 text-primary" />
             {tbl.title}
           </span>
-          <span className="text-[10px] text-muted-foreground font-mono">
-            Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
-          </span>
+                    <div className="flex items-center gap-2">
+            {tbl.nominal !== undefined && tbl.nominal !== "" && (
+              <Badge variant="outline" className="text-2xs font-semibold px-2 py-0 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
+                Nominal: {tbl.nominal} {tbl.unit || "mm"}
+              </Badge>
+            )}
+            <span className="text-[10px] text-muted-foreground font-mono">
+              Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
+            </span>
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
           <table className="w-full text-xs text-center border-collapse">
@@ -2766,7 +2844,9 @@ export default function CalibrationWizard() {
               </tr>
             </thead>
             <tbody className="divide-y font-mono text-xs">
-              {tbl.rows.map((row: any, rIdx: number) => {
+              {(() => {
+                const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                return tbl.rows.map((row: any, rIdx: number) => {
                 if (row.is_merged || row.isMerged) {
                   const statementVal =
                     row.statement ??
@@ -2834,27 +2914,30 @@ export default function CalibrationWizard() {
 
                 return (
                   <tr key={rIdx} className="divide-x hover:bg-muted/20">
-                  {(() => {
-                    let skipCols = 0;
-                    return tbl.columns.map((col: any, colIdx: number) => {
-                      if (skipCols > 0) {
-                        skipCols--;
-                        return null;
-                      }
-                      const span = row.cellSpans?.[col.id]?.colSpan || 1;
-                      if (span > 1) {
-                        skipCols = span - 1;
-                      }
+                  {tbl.columns.map((col: any, colIdx: number) => {
+                    if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                      return null;
+                    }
+                    const spanInfo = row.cellSpans?.[col.id];
+                    const span = spanInfo?.colSpan || 1;
+                    const rSpan = spanInfo?.rowSpan || 1;
+                    const isMerged = span > 1 || rSpan > 1;
+
                     const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                     if (isPointNo) {
                       return (
-                        <td key={col.id} colSpan={span} className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]">
+                        <td
+                          key={col.id}
+                          colSpan={span > 1 ? span : undefined}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]"
+                        >
                           {row.point_number ?? row[col.id] ?? (rIdx + 1)}
                         </td>
                       );
                     }
-                    // MERGED CELL (colSpan > 1) across parameter columns
-                    if (span > 1) {
+                    // MERGED CELL (span > 1 || rSpan > 1) across parameter columns
+                    if (isMerged) {
                       const cellVal = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                         ? row[col.id]
                         : (col.id === "nominal" ? row.nominal : "") ?? "";
@@ -2869,60 +2952,144 @@ export default function CalibrationWizard() {
                       return (
                         <td
                           key={col.id}
-                          colSpan={span}
-                          className="py-1 px-1.5 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs"
+                          colSpan={span > 1 ? span : undefined}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          className="py-1 px-1.5 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs align-middle"
                         >
                           {isReadingOrTrial ? (
-                            <div className="flex items-center gap-1.5 w-full justify-center">
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
-                              >
-                                {span} Cols
-                              </Badge>
-                              <Input
-                                type="text"
-                                inputMode="decimal"
-                                value={row[col.id] ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
-                                    handleWizardCanvasCellChange(
-                                      bIdx,
-                                      isSplit,
-                                      cIdx,
-                                      rIdx,
-                                      col.id,
-                                      v
-                                    );
-                                  }
-                                }}
-                                onBlur={(e) => {
-                                  const raw = e.target.value.trim();
-                                  if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
-                                  const parsed = parseFloat(raw);
-                                  if (!isNaN(parsed)) {
-                                    const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
-                                    const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
-                                    handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
-                                  }
-                                }}
-                                className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-2 w-full max-w-xs"
-                                placeholder="0.000"
-                              />
-                            </div>
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row[col.id] ?? ""}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        v
+                                      );
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                    const parsed = parseFloat(raw);
+                                    if (!isNaN(parsed)) {
+                                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                                      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                      handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                    }
+                                  }}
+                                  className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1.5 w-full"
+                                  placeholder="0.000"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 w-full justify-center">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row[col.id] ?? ""}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        v
+                                      );
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                    const parsed = parseFloat(raw);
+                                    if (!isNaN(parsed)) {
+                                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                                      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                      handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                    }
+                                  }}
+                                  className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-2 flex-1 min-w-[50px]"
+                                  placeholder="0.000"
+                                />
+                              </div>
+                            )
                           ) : (
-                            <div className="flex items-center justify-center gap-1.5">
-                              <Badge
-                                variant="outline"
-                                className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
-                              >
-                                {span} Cols
-                              </Badge>
-                              <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
-                                {cellVal || "-"}
-                              </span>
-                            </div>
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                                  {cellVal || "-"}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1.5">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                                  {cellVal || "-"}
+                                </span>
+                              </div>
+                            )
                           )}
                         </td>
                       );
@@ -3057,8 +3224,7 @@ export default function CalibrationWizard() {
                       );
                     }
                     return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}</td>;
-                  });
-                })()}
+                  })}
                   <td className="p-0.5 text-center">
                     <Button
                       type="button"
@@ -3073,7 +3239,8 @@ export default function CalibrationWizard() {
                   </td>
                 </tr>
               );
-            })}
+            });
+            })()}
             </tbody>
           </table>
         </div>
@@ -3635,14 +3802,17 @@ export default function CalibrationWizard() {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-semibold">Validity / Due Date</Label>
-                      <Input 
-                        type="date" 
-                        value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""} 
-                        onChange={(e) => {
+                      <YearMonthDatePicker
+                        value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""}
+                        onChange={(newDate) => {
                           const newRefs = [...referenceStandards];
-                          newRefs[index].validity = e.target.value;
+                          newRefs[index].validity = newDate;
                           setReferenceStandards(newRefs);
-                        }} 
+                        }}
+                        placeholder="Select validity date"
+                        className="h-9 text-xs"
+                        formatPattern="dd-MMM-yyyy"
+                        clearable
                       />
                     </div>
                   </div>
@@ -3943,9 +4113,16 @@ export default function CalibrationWizard() {
                             <Label className="text-xs font-semibold">Template Doc No</Label>
                             <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
                           </div>
-                          <div className="space-y-1.5 w-28">
+                          <div className="space-y-1.5 min-w-[130px] w-36">
                             <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
-                            <Input value={docDate} onChange={(e) => setDocDate(e.target.value)} placeholder="DD-MM-YYYY" className="text-xs font-medium text-center" />
+                            <YearMonthDatePicker
+                              value={docDate}
+                              onChange={(newDate) => setDocDate(newDate)}
+                              placeholder="DD-MM-YYYY"
+                              className="text-xs font-medium h-9"
+                              formatPattern="dd-MMM-yyyy"
+                              clearable
+                            />
                           </div>
                           <div className="space-y-1.5 w-20">
                             <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
@@ -3995,11 +4172,13 @@ export default function CalibrationWizard() {
                           </div>
                           <div className="space-y-1 col-span-6 md:col-span-2">
                             <Label className="text-[11px] font-semibold text-foreground">Date</Label>
-                            <Input
+                            <YearMonthDatePicker
                               value={procedureDate}
-                              onChange={(e) => setProcedureDate(e.target.value)}
+                              onChange={(newDate) => setProcedureDate(newDate)}
                               placeholder="DD-MM-YYYY"
-                              className="text-xs h-8 font-medium text-center"
+                              className="text-xs h-8 font-medium"
+                              formatPattern="dd-MMM-yyyy"
+                              clearable
                             />
                           </div>
 
@@ -4011,7 +4190,14 @@ export default function CalibrationWizard() {
                             <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
                             <div className="flex gap-1.5 items-center">
                               <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
-                              <Input value={acceptanceCriteriaDate} onChange={(e) => setAcceptanceCriteriaDate(e.target.value)} placeholder="Date" className="text-xs h-8 w-28 shrink-0 font-medium text-center" />
+                              <YearMonthDatePicker
+                                value={acceptanceCriteriaDate}
+                                onChange={(newDate) => setAcceptanceCriteriaDate(newDate)}
+                                placeholder="Date"
+                                className="text-xs h-8 w-40 min-w-[150px] shrink-0 font-medium"
+                                formatPattern="dd-MMM-yyyy"
+                                clearable
+                              />
                               <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
                             </div>
                           </div>
@@ -4601,17 +4787,152 @@ export default function CalibrationWizard() {
                   <Input value={uncertainty} onChange={(e) => setUncertainty(e.target.value)} placeholder="e.g., ±0.03 Bar" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Verdict</Label>
-                  <Select value={verdict} onValueChange={(v) => setVerdict(v as any)}>
-                    <SelectTrigger>
-                      <SelectValue />
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold flex items-center gap-1.5">
+                      Calibration Verdict
+                      {isVerdictManuallyOverridden ? (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium text-amber-700 bg-amber-50 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400">
+                          Manual Override
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium text-primary bg-primary/5 border-primary/20 flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5 text-primary" /> Auto-evaluated
+                        </Badge>
+                      )}
+                    </Label>
+                    {isVerdictManuallyOverridden && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVerdict(autoVerdict);
+                          setIsVerdictManuallyOverridden(false);
+                          toast.info(`Verdict reset to auto-evaluated (${autoVerdict})`);
+                        }}
+                        className="text-[11px] text-primary hover:text-primary/80 hover:underline flex items-center gap-1 font-semibold cursor-pointer transition-colors"
+                        title="Reset to automatically calculated verdict based on calibration test points"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset to Auto ({autoVerdict})
+                      </button>
+                    )}
+                  </div>
+                  <Select
+                    value={verdict}
+                    onValueChange={(v) => {
+                      const selectedVal = v as "PASS" | "FAIL" | "CONDITIONAL";
+                      setVerdict(selectedVal);
+                      if (selectedVal !== autoVerdict) {
+                        setIsVerdictManuallyOverridden(true);
+                      } else {
+                        setIsVerdictManuallyOverridden(false);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        "h-10 text-xs font-semibold rounded-lg transition-all border shadow-2xs",
+                        verdict === "PASS" &&
+                          "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 focus:ring-emerald-500",
+                        verdict === "FAIL" &&
+                          "bg-rose-50/80 dark:bg-rose-950/30 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-200 focus:ring-rose-500",
+                        verdict === "CONDITIONAL" &&
+                          "bg-amber-50/80 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 focus:ring-amber-500"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        {verdict === "PASS" && (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            <span className="font-bold tracking-wide">PASS</span>
+                            <span className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Conforms to Specifications
+                            </span>
+                          </>
+                        )}
+                        {verdict === "FAIL" && (
+                          <>
+                            <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                            <span className="font-bold tracking-wide">FAIL</span>
+                            <span className="text-[11px] text-rose-700/80 dark:text-rose-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Non-Conforming / Out of Tolerance
+                            </span>
+                          </>
+                        )}
+                        {verdict === "CONDITIONAL" && (
+                          <>
+                            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                            <span className="font-bold tracking-wide">CONDITIONAL</span>
+                            <span className="text-[11px] text-amber-700/80 dark:text-amber-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Conditional Acceptance / Derated
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="PASS">✅ PASS</SelectItem>
-                      <SelectItem value="FAIL">❌ FAIL</SelectItem>
-                      <SelectItem value="CONDITIONAL">⚠️ CONDITIONAL</SelectItem>
+                    <SelectContent className="p-1">
+                      <SelectItem
+                        value="PASS"
+                        className="cursor-pointer py-2 focus:bg-emerald-50 dark:focus:bg-emerald-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 shrink-0">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-emerald-800 dark:text-emerald-300">PASS</span>
+                            <span className="text-[10px] text-muted-foreground">All measurement points conform to tolerance limits</span>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem
+                        value="FAIL"
+                        className="cursor-pointer py-2 focus:bg-rose-50 dark:focus:bg-rose-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-rose-100 dark:bg-rose-900/60 text-rose-600 dark:text-rose-400 shrink-0">
+                            <XCircle className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-rose-800 dark:text-rose-300">FAIL</span>
+                            <span className="text-[10px] text-muted-foreground">One or more points exceed tolerance or instrument rejected</span>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem
+                        value="CONDITIONAL"
+                        className="cursor-pointer py-2 focus:bg-amber-50 dark:focus:bg-amber-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400 shrink-0">
+                            <AlertTriangle className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-amber-800 dark:text-amber-300">CONDITIONAL</span>
+                            <span className="text-[10px] text-muted-foreground">Derated accuracy, limited range, or conditional approval</span>
+                          </div>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
+                  {verdictStats.total > 0 && (
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-0.5 font-medium">
+                      <span>Data telemetry:</span>
+                      <span className="text-emerald-700 dark:text-emerald-400 font-semibold">{verdictStats.pass} passed</span>
+                      {verdictStats.fail > 0 && (
+                        <>
+                          <span>&bull;</span>
+                          <span className="text-rose-600 dark:text-rose-400 font-semibold">{verdictStats.fail} failed</span>
+                        </>
+                      )}
+                      {verdictStats.conditional > 0 && (
+                        <>
+                          <span>&bull;</span>
+                          <span className="text-amber-600 dark:text-amber-400 font-semibold">{verdictStats.conditional} conditional</span>
+                        </>
+                      )}
+                      <span>out of {verdictStats.total} test points</span>
+                    </p>
+                  )}
                 </div>
               </div>
 

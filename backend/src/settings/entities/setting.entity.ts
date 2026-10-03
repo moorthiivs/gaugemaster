@@ -69,6 +69,10 @@ export class Setting {
         certYearFormat: string;   // Default: "YYYY" (or "YY")
         certSeqLength: number;    // Default: 5
         certNextSeq: number;      // Auto-incremented, starts at 0
+        certResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom'; // Default: "never"
+        certCustomResetMonths?: number; // In months if custom
+        certStartSeq?: number;    // Starting sequence (e.g. 0, so next is 1)
+        certLastResetPeriod?: string; // e.g. "2026-10", "2026", "FY2026"
 
         // ULR Number Format
         ulrPrefix: string;        // Default: "ULR"
@@ -76,6 +80,10 @@ export class Setting {
         ulrYearFormat: string;    // Default: "YYYY"
         ulrSeqLength: number;     // Default: 5
         ulrNextSeq: number;       // Auto-incremented, starts at 0
+        ulrResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom'; // Default: "never"
+        ulrCustomResetMonths?: number;
+        ulrStartSeq?: number;
+        ulrLastResetPeriod?: string;
 
         headerCompanyName?: string;
         headerCompanySubtitle?: string;

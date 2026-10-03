@@ -60,7 +60,7 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
   const options: ApexOptions = {
     chart: {
       type: 'donut',
-      fontFamily: "'Geist', 'Plus Jakarta Sans', 'Inter', sans-serif",
+      fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
       background: 'transparent',
       animations: {
         enabled: true,
@@ -99,7 +99,7 @@ export function ModuleDistributionCard({ data = [], loading = false, onModuleCli
               color: isDark ? '#f8fafc' : '#0f172a',
               fontSize: '24px',
               fontWeight: 800,
-              fontFamily: "'Geist Mono', 'Plus Jakarta Sans', monospace",
+              fontFamily: "'Geist Mono', ui-monospace, monospace",
               formatter: (val) => String(val),
             },
             total: {

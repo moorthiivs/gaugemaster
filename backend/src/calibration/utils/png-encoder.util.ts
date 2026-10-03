@@ -89,6 +89,123 @@ export async function removeWhiteBackground(fileBuffer: Buffer): Promise<Buffer>
   });
 }
 
+export type ResolvedPdfDiagram =
+  | { type: 'svg'; content: string }
+  | { type: 'image'; dataUrl: string }
+  | null;
+
+export async function resolvePdfDiagram(
+  rawDiagram: string | null | undefined,
+): Promise<ResolvedPdfDiagram> {
+  if (!rawDiagram || typeof rawDiagram !== 'string') return null;
+  const trimmed = rawDiagram.trim();
+  if (!trimmed) return null;
+
+  try {
+    // 1. Check for SVG Data URL: data:image/svg+xml;base64,... or data:image/svg+xml,...
+    if (trimmed.startsWith('data:image/svg+xml')) {
+      let svgContent = '';
+      if (trimmed.includes(';base64,')) {
+        const base64Data = trimmed.split(';base64,')[1]?.trim();
+        if (base64Data) {
+          svgContent = Buffer.from(base64Data, 'base64').toString('utf8').trim();
+        }
+      } else {
+        const parts = trimmed.split(',');
+        svgContent = decodeURIComponent(parts.slice(1).join(',')).trim();
+      }
+      if (svgContent && svgContent.includes('<svg')) {
+        return { type: 'svg', content: svgContent };
+      }
+    }
+
+    // 2. Check for Raw inline SVG XML string: <svg ... or <?xml ... <svg
+    if (trimmed.startsWith('<svg') || (trimmed.startsWith('<?xml') && trimmed.includes('<svg'))) {
+      return { type: 'svg', content: trimmed };
+    }
+
+    // 3. Check for standard raster base64 (PNG, JPEG)
+    if (trimmed.startsWith('data:image/png')) {
+      const cleanDataUrl = await normalizeDiagramImage(trimmed);
+      return { type: 'image', dataUrl: cleanDataUrl };
+    }
+
+    if (trimmed.startsWith('data:image/jpeg') || trimmed.startsWith('data:image/jpg')) {
+      return { type: 'image', dataUrl: trimmed };
+    }
+
+    // 4. Other data URLs (e.g. webp, gif)
+    if (trimmed.startsWith('data:image/')) {
+      const cleanDataUrl = await normalizeDiagramImage(trimmed);
+      if (cleanDataUrl && cleanDataUrl.startsWith('data:image/png')) {
+        return { type: 'image', dataUrl: cleanDataUrl };
+      }
+      return null;
+    }
+
+    // 5. File path on disk (relative / absolute / uploads URL)
+    let candidatePath = trimmed;
+    // Strip URL scheme/host if present, e.g. http://localhost:5000/uploads/...
+    if (/^https?:\/\/[^/]+/i.test(candidatePath)) {
+      candidatePath = candidatePath.replace(/^https?:\/\/[^/]+/i, '');
+    }
+    candidatePath = candidatePath.split('?')[0].split('#')[0];
+    const strippedPath = candidatePath.startsWith('/') ? candidatePath.slice(1) : candidatePath;
+
+    const possibleAbsPaths = [
+      candidatePath,
+      strippedPath,
+      path.resolve(process.cwd(), strippedPath),
+      path.resolve(process.cwd(), 'uploads', strippedPath),
+      path.resolve(process.cwd(), 'backend', 'uploads', strippedPath),
+      path.resolve(process.cwd(), '..', strippedPath),
+    ];
+
+    let foundPath: string | null = null;
+    for (const p of possibleAbsPaths) {
+      if (fs.existsSync(p) && fs.statSync(p).isFile()) {
+        foundPath = p;
+        break;
+      }
+    }
+
+    if (foundPath) {
+      const lower = foundPath.toLowerCase();
+      if (lower.endsWith('.svg')) {
+        const svgContent = fs.readFileSync(foundPath, 'utf8').trim();
+        if (svgContent.includes('<svg')) {
+          return { type: 'svg', content: svgContent };
+        }
+      }
+
+      const fileBuf = fs.readFileSync(foundPath);
+      if (fileBuf.length >= 8) {
+        const isPng =
+          fileBuf[0] === 0x89 &&
+          fileBuf[1] === 0x50 &&
+          fileBuf[2] === 0x4e &&
+          fileBuf[3] === 0x47;
+        const isJpeg =
+          fileBuf[0] === 0xff &&
+          fileBuf[1] === 0xd8 &&
+          fileBuf[2] === 0xff;
+
+        if (isPng) {
+          const cleanBuf = await removeWhiteBackground(fileBuf);
+          return { type: 'image', dataUrl: `data:image/png;base64,${cleanBuf.toString('base64')}` };
+        }
+        if (isJpeg) {
+          return { type: 'image', dataUrl: `data:image/jpeg;base64,${fileBuf.toString('base64')}` };
+        }
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function normalizeDiagramImage(rawDiagram: string): Promise<string> {
   try {
     let fileBuffer: Buffer | null = null;
