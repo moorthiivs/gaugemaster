@@ -663,14 +663,34 @@ export class InstrumentsService {
 
             // History logic
             if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
-                const history = this.calibrationHistoryRepository.create({
-                    instrument: { id: savedInstrument.id },
-                    last_calibration_date: savedInstrument.last_calibration_date,
-                    due_date: savedInstrument.due_date,
-                    certificate_file: savedInstrument.certificate_file,
-                    calibration_source: savedInstrument.calibration_source,
-                });
-                await this.calibrationHistoryRepository.save(history);
+                // Prevent duplicate history entries for the exact same calibration date on this instrument
+                const existingHistory = savedInstrument.last_calibration_date ? await this.calibrationHistoryRepository.findOne({
+                    where: {
+                        instrument: { id: savedInstrument.id },
+                        last_calibration_date: savedInstrument.last_calibration_date,
+                    },
+                    order: { created_at: 'DESC' },
+                }) : null;
+
+                if (existingHistory) {
+                    existingHistory.due_date = savedInstrument.due_date;
+                    if (savedInstrument.certificate_file) {
+                        existingHistory.certificate_file = savedInstrument.certificate_file;
+                    }
+                    if (savedInstrument.calibration_source) {
+                        existingHistory.calibration_source = savedInstrument.calibration_source;
+                    }
+                    await this.calibrationHistoryRepository.save(existingHistory);
+                } else {
+                    const history = this.calibrationHistoryRepository.create({
+                        instrument: { id: savedInstrument.id },
+                        last_calibration_date: savedInstrument.last_calibration_date,
+                        due_date: savedInstrument.due_date,
+                        certificate_file: savedInstrument.certificate_file,
+                        calibration_source: savedInstrument.calibration_source,
+                    });
+                    await this.calibrationHistoryRepository.save(history);
+                }
             } else if (updateInstrumentDto.certificate_file) {
                 // If only certificate is uploaded, update the latest history entry
                 const latestHistory = await this.calibrationHistoryRepository.findOne({
@@ -704,10 +724,52 @@ export class InstrumentsService {
     }
 
     async getHistory(instrumentId: string) {
-        return this.calibrationHistoryRepository.find({
+        const histories = await this.calibrationHistoryRepository.find({
             where: { instrument: { id: instrumentId } },
             order: { created_at: 'DESC' },
         });
+
+        // Deduplicate history records by calibration date to ensure clean audit trail display
+        const seenCycleKeys = new Set<string>();
+        const uniqueHistories = histories.filter((h: any) => {
+            if (!h.last_calibration_date) return true;
+            const dateKey = new Date(h.last_calibration_date).toISOString().slice(0, 10);
+            if (seenCycleKeys.has(dateKey)) return false;
+            seenCycleKeys.add(dateKey);
+            return true;
+        });
+
+        try {
+            const calibrations = await this.instrumentRepository.query(
+                `SELECT id, certificate_number, calibration_date, next_calibration_date, verdict, approval_status, certificate_file, created_at 
+                 FROM calibrations 
+                 WHERE instrument_id = $1 
+                 ORDER BY created_at DESC`,
+                [instrumentId]
+            );
+
+            return uniqueHistories.map((h: any) => {
+                const match = calibrations.find((c: any) => {
+                    if (!c.calibration_date || !h.last_calibration_date) return false;
+                    const cDate = new Date(c.calibration_date).toISOString().slice(0, 10);
+                    const hDate = new Date(h.last_calibration_date).toISOString().slice(0, 10);
+                    return cDate === hDate;
+                }) || (h.calibration_source === 'In-House' && calibrations.length === 1 ? calibrations[0] : null);
+
+                return {
+                    ...h,
+                    cert_no: match?.certificate_number || null,
+                    certificate_number: match?.certificate_number || null,
+                    calibration_id: match?.id || null,
+                    approval_status: match?.approval_status || null,
+                    verdict: match?.verdict || null,
+                    certificate_file: h.certificate_file || match?.certificate_file || null,
+                };
+            });
+        } catch (err) {
+            console.warn('Failed to enrich calibration history:', err);
+            return uniqueHistories;
+        }
     }
 
     /**

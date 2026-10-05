@@ -11,6 +11,53 @@ import { CreateCalibrationTemplateDto } from './dto/create-calibration-template.
 import { UpdateCalibrationTemplateDto } from './dto/update-calibration-template.dto';
 import { BulkDeleteCalibrationTemplatesDto } from './dto/bulk-delete-calibration-templates.dto';
 
+function slugifyTableKey(title: string): string {
+  if (!title) return 'table';
+  return (
+    title
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '_')
+      .replace(/^-+|-+$/g, '') || 'table'
+  );
+}
+
+function ensureTableKeys(blocks: any[]): any[] {
+  if (!Array.isArray(blocks) || blocks.length === 0) return blocks;
+  const usedKeys = new Set<string>();
+
+  const assignKey = (table: any, defaultPrefix: string) => {
+    if (!table || typeof table !== 'object') return;
+    let key = table.tableKey || slugifyTableKey(table.title || defaultPrefix);
+    if (!key || key === 'table') {
+      key = defaultPrefix;
+    }
+    let uniqueKey = key;
+    let counter = 1;
+    while (usedKeys.has(uniqueKey)) {
+      uniqueKey = `${key}_${counter++}`;
+    }
+    usedKeys.add(uniqueKey);
+    table.tableKey = uniqueKey;
+  };
+
+  blocks.forEach((block, idx) => {
+    if (!block) return;
+    if (block.type === 'table_grid') {
+      assignKey(block, `table_${idx + 1}`);
+    } else if (block.type === 'split_row' && Array.isArray(block.children)) {
+      block.children.forEach((child: any, cIdx: number) => {
+        if (child && child.type === 'table_grid') {
+          assignKey(child, `table_${idx + 1}_${cIdx + 1}`);
+        }
+      });
+    }
+  });
+
+  return blocks;
+}
+
 @Injectable()
 export class CalibrationTemplatesService {
   constructor(
@@ -40,6 +87,9 @@ export class CalibrationTemplatesService {
     }
     if (!dto.calibration_type) {
       dto.calibration_type = 'dimensional';
+    }
+    if (dto.layout_blocks) {
+      ensureTableKeys(dto.layout_blocks as any);
     }
     const template = this.repository.create(dto);
     return this.repository.save(template);
@@ -83,7 +133,13 @@ export class CalibrationTemplatesService {
       'DESC',
     ).addOrderBy('template.createdAt', 'DESC');
 
-    return qb.getMany();
+    const templates = await qb.getMany();
+    templates.forEach((t) => {
+      if (t.layout_blocks) {
+        ensureTableKeys(t.layout_blocks as any);
+      }
+    });
+    return templates;
   }
 
   async findOne(id: string): Promise<CalibrationTemplate> {
@@ -93,6 +149,9 @@ export class CalibrationTemplatesService {
     const template = await this.repository.findOne({ where: { id } });
     if (!template) {
       throw new NotFoundException(`Calibration template with ID ${id} not found`);
+    }
+    if (template.layout_blocks) {
+      ensureTableKeys(template.layout_blocks as any);
     }
     return template;
   }
@@ -124,6 +183,9 @@ export class CalibrationTemplatesService {
           `A template with the name "${dto.name}" already exists. Please choose a unique name.`,
         );
       }
+    }
+    if (dto.layout_blocks) {
+      ensureTableKeys(dto.layout_blocks as any);
     }
     Object.assign(template, dto);
     if (dto.diagram_image !== undefined) {

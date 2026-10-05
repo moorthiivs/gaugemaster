@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
@@ -20,6 +20,7 @@ import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { PageHeader } from "@/components/common/PageHeader";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import {
@@ -386,6 +387,14 @@ export default function Calibration() {
     }
   };
 
+  const [certPreviewModalOpen, setCertPreviewModalOpen] = useState(false);
+  const [previewCalibration, setPreviewCalibration] = useState<CalibrationRecord | null>(null);
+
+  const handleOpenCertPreview = (cal: CalibrationRecord) => {
+    setPreviewCalibration(cal);
+    setCertPreviewModalOpen(true);
+  };
+
   const fmtDate = (d?: string) => {
     if (!d) return "-";
     try {
@@ -401,9 +410,15 @@ export default function Calibration() {
         accessorKey: "certificate_number",
         header: "Certificate No",
         cell: ({ row }) => (
-          <span className="font-semibold text-primary tabular-nums">
-            {row.original.certificate_number || row.original.id}
-          </span>
+          <button
+            type="button"
+            onClick={() => handleOpenCertPreview(row.original)}
+            className="font-semibold text-primary tabular-nums hover:underline flex items-center gap-1 cursor-pointer text-left font-mono"
+            title="Preview Certificate"
+          >
+            <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+            <span>{row.original.certificate_number || row.original.id}</span>
+          </button>
         ),
       },
       {
@@ -448,6 +463,66 @@ export default function Calibration() {
         accessorKey: "verdict",
         header: "Verdict",
         cell: ({ row }) => <VerdictBadge verdict={row.original.verdict} size="sm" />,
+      },
+      {
+        accessorKey: "approval_status",
+        header: "Status",
+        cell: ({ row }) => {
+          const status = row.original.approval_status || "Calibration Completed";
+          if (status === "Approved") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                Approved
+              </Badge>
+            );
+          }
+          if (status === "Reviewed") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <UserCheck className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                Reviewed
+              </Badge>
+            );
+          }
+          if (status === "Rejected") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <XCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                Rejected
+              </Badge>
+            );
+          }
+          if (status === "Pending Approval") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                Pending Approval
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+            >
+              <CheckCircle className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+              Calibration Completed
+            </Badge>
+          );
+        },
       },
       {
         accessorKey: "ulr_number",
@@ -501,20 +576,20 @@ export default function Calibration() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
-                  {cal.certificate_generated ? (
-                    <DropdownMenuItem
-                      onClick={() => handleDownload(cal)}
-                      className="gap-2 cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5 text-emerald-600" />
-                      Download PDF
-                    </DropdownMenuItem>
-                  ) : (
-                    <DropdownMenuItem disabled className="gap-2 text-muted-foreground text-[11px]">
-                      <FileText className="w-3.5 h-3.5" />
-                      No Certificate
-                    </DropdownMenuItem>
-                  )}
+                  <DropdownMenuItem
+                    onClick={() => handleOpenCertPreview(cal)}
+                    className="gap-2 cursor-pointer text-primary"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-primary" />
+                    Preview Certificate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => handleDownload(cal)}
+                    className="gap-2 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    Download PDF
+                  </DropdownMenuItem>
                   {canAccess("calibrations", "edit") && (
                     <DropdownMenuItem
                       onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
@@ -600,14 +675,40 @@ export default function Calibration() {
       {
         id: "status",
         header: "Status",
-        cell: () => (
-          <Badge
-            variant="outline"
-            className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center px-2 py-0.5"
-          >
-            Pending Generation
-          </Badge>
-        ),
+        cell: ({ row }) => {
+          const status = row.original.approval_status || "Calibration Completed";
+          if (status === "Approved") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase font-bold bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                Approved
+              </Badge>
+            );
+          }
+          if (status === "Reviewed") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase font-bold bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <UserCheck className="w-3 h-3 text-purple-600" />
+                Reviewed
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="outline"
+              className="text-[10px] uppercase font-bold bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+            >
+              <CheckCircle className="w-3 h-3 text-blue-600" />
+              Calibration Completed
+            </Badge>
+          );
+        },
       },
       {
         id: "actions",
@@ -1800,6 +1901,52 @@ export default function Calibration() {
               <div className="text-center py-10 text-muted-foreground text-xs">
                 <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
                 No pending certificates found. All completed calibrations have certificates!
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Digital Certificate Preview Modal */}
+      <Dialog open={certPreviewModalOpen} onOpenChange={setCertPreviewModalOpen}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b bg-muted/40 shrink-0">
+            <div>
+              <DialogTitle className="text-base font-bold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                Calibration Certificate Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Certificate: <span className="font-semibold text-primary font-mono">{previewCalibration?.certificate_number || previewCalibration?.id || "-"}</span> — {previewCalibration?.instrument?.name} ({previewCalibration?.instrument?.id_code})
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2 pr-8 shrink-0">
+              {previewCalibration && (
+                <Button
+                  size="sm"
+                  onClick={() => handleDownload(previewCalibration)}
+                  disabled={generatingId === previewCalibration.id}
+                  className="gap-1.5 text-xs font-semibold shadow-2xs"
+                >
+                  {generatingId === previewCalibration.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  Download PDF
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="w-full flex-1 max-h-[calc(92vh-75px)] overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950 flex justify-center">
+            {previewCalibration ? (
+              <CertificatePreview
+                calibration={previewCalibration}
+                instrumentName={previewCalibration.instrument?.name}
+              />
+            ) : (
+              <div className="p-8 text-center text-muted-foreground text-xs">
+                No calibration certificate selected.
               </div>
             )}
           </div>

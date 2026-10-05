@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw, Gauge, Pencil } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -23,15 +23,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
-import { evaluateCanvasRowFormulas } from "@/lib/formulaEngine";
+import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols } from "@/lib/matrixTableUtils";
+import { evaluateCanvasRowFormulas, evaluateAllCanvasBlocks, ensureTableKeys, buildGlobalTablesContext } from "@/lib/formulaEngine";
 import { parseSpecification } from "@/lib/specificationParser";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { getInstrument } from "@/lib/instrumentActions";
+import { formatNominalDisplay } from "@/components/calibration/CanvasTemplateEditor";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { UlrGate } from "@/components/calibration/UlrGate";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { JudgementCellControl } from "@/components/calibration/JudgementCellControl";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPicker } from "@/components/ui/calendar";
 import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
@@ -202,6 +205,67 @@ export default function CalibrationWizard() {
     return tables;
   };
 
+  // Helper: synchronize template column formulas and row cellFormulas into existing calibration blocks
+  const syncFormulasFromTemplate = (calibrationBlocks: any[], templateBlocks: any[]): any[] => {
+    if (!Array.isArray(calibrationBlocks) || !Array.isArray(templateBlocks)) return calibrationBlocks;
+
+    const calTables = getAllCanvasTables(calibrationBlocks);
+    const tplTables = getAllCanvasTables(templateBlocks);
+
+    calTables.forEach((calTbl, tIdx) => {
+      const tplTbl =
+        tplTables.find((t) => t.id && calTbl.id && t.id === calTbl.id) ||
+        tplTables.find((t) => t.tableKey && calTbl.tableKey && t.tableKey === calTbl.tableKey) ||
+        tplTables[tIdx];
+
+      if (!tplTbl) return;
+
+      // Ensure tableKey from template is preserved
+      if (tplTbl.tableKey) calTbl.tableKey = tplTbl.tableKey;
+
+      // Sync column formulas & dependency metadata
+      if (Array.isArray(calTbl.columns) && Array.isArray(tplTbl.columns)) {
+        calTbl.columns.forEach((cCol: any) => {
+          const tCol = tplTbl.columns.find((t: any) => t && t.id === cCol.id);
+          if (tCol) {
+            if (tCol.formula !== undefined) cCol.formula = tCol.formula;
+            if (tCol.dependsOn !== undefined) cCol.dependsOn = tCol.dependsOn;
+            if (tCol.formulaType !== undefined) cCol.formulaType = tCol.formulaType;
+          }
+        });
+      }
+
+      // Sync row-level cellFormulas and formula_observed_error
+      if (Array.isArray(calTbl.rows) && Array.isArray(tplTbl.rows)) {
+        calTbl.rows.forEach((cRow: any, rIdx: number) => {
+          const tRow =
+            tplTbl.rows.find(
+              (r: any) =>
+                r &&
+                cRow &&
+                ((r.parameter && cRow.parameter && r.parameter === cRow.parameter) ||
+                  (r.required_dimension && cRow.required_dimension && r.required_dimension === cRow.required_dimension))
+            ) || tplTbl.rows[rIdx];
+
+          if (tRow) {
+            if (tRow.cellFormulas && typeof tRow.cellFormulas === "object" && Object.keys(tRow.cellFormulas).length > 0) {
+              cRow.cellFormulas = { ...tRow.cellFormulas };
+            } else {
+              delete cRow.cellFormulas;
+            }
+            if (tRow.formula_observed_error) {
+              cRow.formula_observed_error = tRow.formula_observed_error;
+            } else {
+              delete cRow.formula_observed_error;
+            }
+          }
+        });
+      }
+    });
+
+    return calibrationBlocks;
+  };
+
   // Helper: bind specifications to canvas tables respecting multi-table boundaries
   const bindSpecificationsToCanvasTables = (
     tables: any[],
@@ -238,6 +302,23 @@ export default function CalibrationWizard() {
         tolerance: s.tolerance !== undefined ? s.tolerance : (existingRow.tolerance ?? tol),
         unit: s.unit || existingRow.unit || tableUnit || defaultUnit,
         actual: (s.actual !== undefined && s.actual !== "") ? s.actual : (existingRow.actual ?? ""),
+        // INVARIANT: Template formulas always take precedence over instrument custom parameter specs!
+        cellFormulas: (() => {
+          const formulas = (existingRow.cellFormulas && Object.keys(existingRow.cellFormulas).length > 0)
+            ? existingRow.cellFormulas
+            : (s.cellFormulas || existingRow.cellFormulas);
+          if (formulas && typeof formulas === "object") {
+            const clean = { ...formulas };
+            for (const [k, v] of Object.entries(clean)) {
+              if (typeof v === "string" && /^=?avg\(\s*t1\.error\s*\)$/i.test(v.trim())) {
+                clean[k] = "=SUM((t1.error)+(t2.error))";
+              }
+            }
+            return clean;
+          }
+          return formulas;
+        })(),
+        formula_observed_error: existingRow.formula_observed_error || s.formula_observed_error,
       };
 
       // Ensure all custom column values from existingRow are preserved if not provided in s
@@ -335,6 +416,7 @@ export default function CalibrationWizard() {
           );
         }
       }
+      evaluateAllCanvasBlocks(tables);
     }
   };
 
@@ -367,12 +449,19 @@ export default function CalibrationWizard() {
 
   // Template Variant & Instrument Master Custom Parameters State
   const [savingInstrumentCustom, setSavingInstrumentCustom] = useState(false);
+  const [deletingMasterTemplate, setDeletingMasterTemplate] = useState(false);
+  const [confirmDeleteMasterTemplateOpen, setConfirmDeleteMasterTemplateOpen] = useState(false);
   const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
   const [showCertPreviewModal, setShowCertPreviewModal] = useState(false);
   const [isDragOverDiagram, setIsDragOverDiagram] = useState(false);
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateDescription, setNewTemplateDescription] = useState("");
   const [savingTemplateVariant, setSavingTemplateVariant] = useState(false);
+
+  const hasMasterSavedTemplate = Boolean(
+    (selectedInstrument?.custom_parameters?.specifications && Array.isArray(selectedInstrument.custom_parameters.specifications) && selectedInstrument.custom_parameters.specifications.length > 0) ||
+    Boolean(selectedInstrument?.custom_parameters?.diagram_image)
+  );
 
   // Normalizes pasted or uploaded images using an offscreen canvas:
   // 1. Decodes any interlaced PNG formats (Adam7) into standard scanlines
@@ -549,7 +638,30 @@ export default function CalibrationWizard() {
             wizardDecimalPlaces ?? 3,
             calUnit || "mm"
           );
-          return newBlocks;
+          if (selectedTemplateId && selectedTemplateId !== "none") {
+            const currentTpl = availableTemplates.find((t) => t.id === selectedTemplateId);
+            if (currentTpl?.layout_blocks) {
+              syncFormulasFromTemplate(newBlocks, currentTpl.layout_blocks);
+            }
+          }
+          newBlocks.forEach((b: any) => {
+            const sweepRows = (rows: any[]) => {
+              rows?.forEach((r: any) => {
+                if (r.cellFormulas && typeof r.cellFormulas === "object") {
+                  for (const [k, v] of Object.entries(r.cellFormulas)) {
+                    if (typeof v === "string" && /^=?avg\(\s*t1\.error\s*\)$/i.test(v.trim())) {
+                      r.cellFormulas[k] = "=SUM((t1.error)+(t2.error))";
+                    }
+                  }
+                }
+              });
+            };
+            if (b.type === "table_grid") sweepRows(b.rows);
+            if (b.type === "split_row" && Array.isArray(b.children)) {
+              b.children.forEach((c: any) => sweepRows(c?.rows));
+            }
+          });
+          return evaluateAllCanvasBlocks(ensureTableKeys(newBlocks), { forceFull: true });
         });
       }
     }
@@ -714,6 +826,61 @@ export default function CalibrationWizard() {
     }
   };
 
+  // Delete saved specifications and diagram template from Instrument Master
+  const handleDeleteTemplateFromMaster = async () => {
+    if (!selectedInstrument) {
+      toast.error("No instrument selected");
+      return;
+    }
+    setDeletingMasterTemplate(true);
+    try {
+      const cleanedCustomParams = {
+        ...(selectedInstrument.custom_parameters || {}),
+      };
+      delete cleanedCustomParams.specifications;
+      delete cleanedCustomParams.diagram_image;
+      delete cleanedCustomParams.diagram_image_width;
+      delete cleanedCustomParams.diagram_image_height;
+      delete cleanedCustomParams.diagram_image_alignment;
+      delete cleanedCustomParams.doc_properties;
+      delete cleanedCustomParams.environmental_defaults;
+
+      await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+        custom_parameters: cleanedCustomParams,
+      });
+
+      const updatedInstrument = {
+        ...selectedInstrument,
+        custom_parameters: cleanedCustomParams,
+      };
+      setSelectedInstrument(updatedInstrument);
+
+      // Re-apply current template or fallback without master specifications
+      const targetTplId = (selectedTemplateId && selectedTemplateId !== "none" && selectedTemplateId !== "master_saved")
+        ? selectedTemplateId
+        : (availableTemplates.length > 0 ? availableTemplates[0].id : null);
+
+      if (targetTplId) {
+        const tpl = availableTemplates.find((t) => t.id === targetTplId);
+        if (tpl) {
+          applyTemplateObject(tpl, false, undefined, updatedInstrument);
+        } else {
+          handleApplyTemplate(targetTplId);
+        }
+      } else {
+        handleClearTemplate();
+      }
+
+      setConfirmDeleteMasterTemplateOpen(false);
+      toast.success(`Deleted template specifications from Instrument Master (${selectedInstrument.id_code})`);
+    } catch (err: any) {
+      console.error("Failed to delete template from Instrument Master", err);
+      toast.error(err.response?.data?.message || "Failed to delete template from Instrument Master");
+    } finally {
+      setDeletingMasterTemplate(false);
+    }
+  };
+
   // Save current configuration as a new standalone Calibration Template Variant
   const handleSaveAsNewTemplate = async () => {
     if (!newTemplateName.trim()) {
@@ -783,7 +950,7 @@ export default function CalibrationWizard() {
       toast.success(`Saved new template variant "${createdTpl.name}"`);
       if (proceedAfterTemplateVariantRef.current) {
         proceedAfterTemplateVariantRef.current = false;
-        executeSaveAndContinue();
+        executeSaveAndContinue({ skipMasterSave: true });
       }
     } catch (err: any) {
       console.error("Failed to save template variant", err);
@@ -917,12 +1084,29 @@ export default function CalibrationWizard() {
     const typeStr = selectedType?.type || "";
     getTemplates({ userId: user.id, companyId: user.companyId, calibrationType: typeStr })
       .then(async (tpls) => {
-        if (tpls && tpls.length > 0) {
-          setAvailableTemplates(tpls);
-        } else {
+        let finalTpls = tpls;
+        if (!finalTpls || finalTpls.length === 0) {
           // Fallback to fetch all company templates
-          const allTpls = await getTemplates({ userId: user.id, companyId: user.companyId });
-          setAvailableTemplates(allTpls || []);
+          finalTpls = await getTemplates({ userId: user.id, companyId: user.companyId });
+        }
+        setAvailableTemplates(finalTpls || []);
+
+        if (selectedTemplateId && selectedTemplateId !== "none" && finalTpls && finalTpls.length > 0) {
+          const activeTpl = finalTpls.find((t) => t.id === selectedTemplateId);
+          if (activeTpl?.layout_blocks) {
+            setWizardLayoutBlocks((prev) => {
+              if (!prev || prev.length === 0) return prev;
+              const cloned = JSON.parse(JSON.stringify(prev));
+              syncFormulasFromTemplate(cloned, activeTpl.layout_blocks);
+              return evaluateAllCanvasBlocks(ensureTableKeys(cloned), { forceFull: true });
+            });
+          }
+          if (activeTpl) {
+            if (activeTpl.diagram_image) setWizardDiagramImage(activeTpl.diagram_image);
+            if (activeTpl.diagram_image_width) setWizardDiagramWidth(activeTpl.diagram_image_width);
+            if (activeTpl.diagram_image_height) setWizardDiagramHeight(activeTpl.diagram_image_height);
+            if (activeTpl.diagram_image_alignment) setWizardDiagramAlignment(activeTpl.diagram_image_alignment as "center" | "left" | "right");
+          }
         }
       })
       .catch((err) => {
@@ -944,7 +1128,7 @@ export default function CalibrationWizard() {
     type?: "percentage" | "absolute";
   }>({});
   const [wizardDiagramImage, setWizardDiagramImage] = useState<string | null>(null);
-  const [wizardDiagramWidth, setWizardDiagramWidth] = useState<number>(240);
+  const [wizardDiagramWidth, setWizardDiagramWidth] = useState<number>(300);
   const [wizardDiagramHeight, setWizardDiagramHeight] = useState<number>(140);
   const [wizardDiagramAlignment, setWizardDiagramAlignment] = useState<"center" | "left" | "right">("center");
   const [step1Collapsed, setStep1Collapsed] = useState(true);
@@ -1233,7 +1417,8 @@ export default function CalibrationWizard() {
     // 5. Custom grid schema & columns & canvas layout
     if (cal.is_canvas_template || (cal.layout_blocks && cal.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
-      setWizardLayoutBlocks(cal.layout_blocks || []);
+      const blocksWithKeys = ensureTableKeys(cal.layout_blocks || []);
+      setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys));
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
@@ -1244,10 +1429,18 @@ export default function CalibrationWizard() {
     if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
     if (cal.decimal_places !== undefined) setWizardDecimalPlaces(cal.decimal_places);
     if (cal.acceptance_criteria) setWizardAcceptanceCriteria(cal.acceptance_criteria);
-    if (cal.diagram_image) setWizardDiagramImage(cal.diagram_image);
-    if (cal.diagram_image_width) setWizardDiagramWidth(cal.diagram_image_width);
-    if (cal.diagram_image_height) setWizardDiagramHeight(cal.diagram_image_height);
-    if (cal.diagram_image_alignment) setWizardDiagramAlignment(cal.diagram_image_alignment);
+    const activeTpl = availableTemplates.find(t => t.id === selectedTemplateId || t.id === cal.template_id);
+    if (activeTpl?.diagram_image) {
+      setWizardDiagramImage(activeTpl.diagram_image);
+      setWizardDiagramWidth(activeTpl.diagram_image_width || 300);
+      setWizardDiagramHeight(activeTpl.diagram_image_height || 140);
+      setWizardDiagramAlignment((activeTpl.diagram_image_alignment as any) || "center");
+    } else {
+      if (cal.diagram_image) setWizardDiagramImage(cal.diagram_image);
+      if (cal.diagram_image_width) setWizardDiagramWidth(cal.diagram_image_width);
+      if (cal.diagram_image_height) setWizardDiagramHeight(cal.diagram_image_height);
+      if (cal.diagram_image_alignment) setWizardDiagramAlignment(cal.diagram_image_alignment);
+    }
 
     // 6. Calibration Points & Tolerance / Unit
     if (cal.calibration_points && cal.calibration_points.length > 0) {
@@ -1325,13 +1518,15 @@ export default function CalibrationWizard() {
   };
 
   // Apply Calibration Template Object helper
-  const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[]) => {
+  const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[], overrideInstrument?: Instrument | null) => {
     if (!tpl) return;
+
+    const currentInst = overrideInstrument !== undefined ? overrideInstrument : selectedInstrument;
 
     setSelectedTemplateId(tpl.id);
     if (tpl.default_unit) setCalUnit(tpl.default_unit);
     if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
-    const instEnv = selectedInstrument?.custom_parameters?.environmental_defaults;
+    const instEnv = currentInst?.custom_parameters?.environmental_defaults;
     if (tpl.environmental_defaults) {
       if (tpl.environmental_defaults.temperature) setEnvTemp(tpl.environmental_defaults.temperature);
       if (tpl.environmental_defaults.humidity) setEnvHumidity(tpl.environmental_defaults.humidity);
@@ -1346,7 +1541,7 @@ export default function CalibrationWizard() {
       if (instEnv.soaking_end_time) setEnvSoakingEndTime(instEnv.soaking_end_time);
     }
 
-    const instDocProps = selectedInstrument?.custom_parameters?.doc_properties;
+    const instDocProps = currentInst?.custom_parameters?.doc_properties;
 
     const tplDocNo = (tpl as any).doc_no || (tpl as any).docNo;
     if (tplDocNo) {
@@ -1458,7 +1653,7 @@ export default function CalibrationWizard() {
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
     // SMART BINDING: Check if the selected instrument has its own saved specifications
-    const rawInstSpecs = selectedInstrument?.custom_parameters?.specifications;
+    const rawInstSpecs = currentInst?.custom_parameters?.specifications;
     const validInstSpecs = Array.isArray(rawInstSpecs)
       ? rawInstSpecs.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s))
       : [];
@@ -1485,30 +1680,27 @@ export default function CalibrationWizard() {
           tpl.default_unit || "mm"
         );
       }
+      if (tpl.layout_blocks && tpl.layout_blocks.length > 0) {
+        syncFormulasFromTemplate(sanitizedBlocks, tpl.layout_blocks);
+      }
 
       // Ensure no obsolete receipt condition rows remain inside sanitizedBlocks, and evaluate formulas across all tables
       sanitizedBlocks.forEach((b: any) => {
         if (b.type === "table_grid" && Array.isArray(b.rows)) {
-          const dec = b.decimal_places ?? tpl.decimal_places ?? 3;
-          const tol = b.tolerance ?? tpl.default_tolerance ?? 0.02;
-          b.rows = b.rows
-            .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-                        .map((r: any) => evaluateCanvasRowFormulas(r, b.columns, tol, dec, b.nominal));
+          b.rows = b.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r));
         } else if (b.type === "split_row" && Array.isArray(b.children)) {
           b.children.forEach((c: any) => {
             if (c && c.type === "table_grid" && Array.isArray(c.rows)) {
-              const dec = c.decimal_places ?? tpl.decimal_places ?? 3;
-              const tol = c.tolerance ?? tpl.default_tolerance ?? 0.02;
-              c.rows = c.rows
-                .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
-                                .map((r: any) => evaluateCanvasRowFormulas(r, c.columns, tol, dec, c.nominal));
+              c.rows = c.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r));
             }
           });
         }
       });
 
-      initialSanitizedBlocks = sanitizedBlocks;
-      setWizardLayoutBlocks(sanitizedBlocks);
+      ensureTableKeys(sanitizedBlocks);
+      const evaluatedBlocks = evaluateAllCanvasBlocks(sanitizedBlocks, { forceFull: true });
+      initialSanitizedBlocks = evaluatedBlocks;
+      setWizardLayoutBlocks(evaluatedBlocks);
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
@@ -1522,24 +1714,22 @@ export default function CalibrationWizard() {
     setWizardDecimalPlaces(tpl.decimal_places ?? 4);
     setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
 
-    // Diagram Image resolution: preserve instrument item-level diagram if saved!
-    const instCustomDiagram = selectedInstrument?.custom_parameters?.diagram_image;
-    let initialDiagram: string | null = null;
-    if (instCustomDiagram !== undefined && !isEdit) {
-      initialDiagram = instCustomDiagram || null;
-      setWizardDiagramImage(initialDiagram);
-      if (selectedInstrument?.custom_parameters?.diagram_image_width) setWizardDiagramWidth(selectedInstrument.custom_parameters.diagram_image_width);
-      if (selectedInstrument?.custom_parameters?.diagram_image_height) setWizardDiagramHeight(selectedInstrument.custom_parameters.diagram_image_height);
-      if (selectedInstrument?.custom_parameters?.diagram_image_alignment) setWizardDiagramAlignment(selectedInstrument.custom_parameters.diagram_image_alignment);
-    } else if (!isEdit) {
-      initialDiagram = tpl.diagram_image || null;
-      setWizardDiagramImage(initialDiagram);
-      if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
-      if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
-      if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
-    } else {
-      initialDiagram = tpl.diagram_image || null;
-    }
+    // Diagram Image & Sizing resolution:
+    // When a template is loaded or re-applied, its diagram image and dimensions represent the template design.
+    // Priority: Template diagram & sizing > Instrument custom_parameters diagram & sizing > defaults
+    const instCustomDiagram = currentInst?.custom_parameters?.diagram_image;
+    const diagramImgToUse = tpl.diagram_image || instCustomDiagram || null;
+    const diagramWidthToUse = tpl.diagram_image_width || currentInst?.custom_parameters?.diagram_image_width || 300;
+    const diagramHeightToUse = tpl.diagram_image_height || currentInst?.custom_parameters?.diagram_image_height || 140;
+    const diagramAlignToUse = (tpl.diagram_image_alignment as "left" | "center" | "right") || 
+      (currentInst?.custom_parameters?.diagram_image_alignment as "left" | "center" | "right") || 
+      "center";
+
+    setWizardDiagramImage(diagramImgToUse);
+    setWizardDiagramWidth(diagramWidthToUse);
+    setWizardDiagramHeight(diagramHeightToUse);
+    setWizardDiagramAlignment(diagramAlignToUse);
+    const initialDiagram = diagramImgToUse;
 
     let initialPoints: CalibrationPoint[] = [];
     if (isEdit && existingPoints && existingPoints.length > 0) {
@@ -1647,10 +1837,22 @@ export default function CalibrationWizard() {
         if ((match as any).doc_no || (match as any).docNo) {
           setDocNo((match as any).doc_no || (match as any).docNo);
         }
+        if (match.diagram_image) {
+          setWizardDiagramImage(match.diagram_image);
+        }
+        if (match.diagram_image_width) {
+          setWizardDiagramWidth(match.diagram_image_width);
+        }
+        if (match.diagram_image_height) {
+          setWizardDiagramHeight(match.diagram_image_height);
+        }
+        if (match.diagram_image_alignment) {
+          setWizardDiagramAlignment(match.diagram_image_alignment as "center" | "left" | "right");
+        }
         originalTemplateSnapshotRef.current = {
           templateId: match.id,
           templateName: match.name,
-          diagramImage: wizardDiagramImage || null,
+          diagramImage: match.diagram_image || wizardDiagramImage || null,
           blocks: JSON.parse(JSON.stringify(wizardLayoutBlocks || [])),
           points: JSON.parse(JSON.stringify(calPoints || [])),
         };
@@ -1865,13 +2067,26 @@ export default function CalibrationWizard() {
               }
               return b;
             });
-          setWizardLayoutBlocks(sanitizedBlocks);
+          if (targetTpl && targetTpl.layout_blocks && targetTpl.layout_blocks.length > 0) {
+            syncFormulasFromTemplate(sanitizedBlocks, targetTpl.layout_blocks);
+          }
+          const blocksWithKeys = ensureTableKeys(sanitizedBlocks);
+          setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
         }
 
-        if ((cal as any).diagram_image !== undefined) setWizardDiagramImage((cal as any).diagram_image || null);
-        if ((cal as any).diagram_image_width) setWizardDiagramWidth((cal as any).diagram_image_width);
-        if ((cal as any).diagram_image_height) setWizardDiagramHeight((cal as any).diagram_image_height);
-        if ((cal as any).diagram_image_alignment) setWizardDiagramAlignment((cal as any).diagram_image_alignment);
+        const calDiagram = ((cal as any).diagram_image !== undefined && (cal as any).diagram_image !== null)
+          ? (cal as any).diagram_image
+          : (targetTpl?.diagram_image || null);
+        setWizardDiagramImage(calDiagram);
+
+        const calWidth = (cal as any).diagram_image_width || targetTpl?.diagram_image_width || 300;
+        setWizardDiagramWidth(calWidth);
+
+        const calHeight = (cal as any).diagram_image_height || targetTpl?.diagram_image_height || 140;
+        setWizardDiagramHeight(calHeight);
+
+        const calAlign = (cal as any).diagram_image_alignment || targetTpl?.diagram_image_alignment || "center";
+        setWizardDiagramAlignment(calAlign as "center" | "left" | "right");
 
                 setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
@@ -1990,7 +2205,7 @@ export default function CalibrationWizard() {
   useEffect(() => {
     if (!user) return;
     if (draftIdParam) {
-      getDraft(draftIdParam).then((draft) => {
+      getDraft(draftIdParam).then(async (draft) => {
         if (draft && draft.data) {
           let d = draft.data;
           if (typeof d === "string") {
@@ -2020,7 +2235,19 @@ export default function CalibrationWizard() {
           if (d.wizardDiagramHeight) setWizardDiagramHeight(d.wizardDiagramHeight);
           if (d.wizardDiagramAlignment) setWizardDiagramAlignment(d.wizardDiagramAlignment);
           if (d.wizardIsCanvas !== undefined) setWizardIsCanvas(d.wizardIsCanvas);
-          if (d.wizardLayoutBlocks) setWizardLayoutBlocks(d.wizardLayoutBlocks);
+          if (d.wizardLayoutBlocks) {
+            let draftTpl = availableTemplates?.find((t) => t.id === d.selectedTemplateId);
+            if (!draftTpl && d.selectedTemplateId) {
+              try {
+                draftTpl = await getTemplate(d.selectedTemplateId);
+              } catch (e) {}
+            }
+            if (draftTpl && draftTpl.layout_blocks) {
+              syncFormulasFromTemplate(d.wizardLayoutBlocks, draftTpl.layout_blocks);
+            }
+            const blocksWithKeys = ensureTableKeys(d.wizardLayoutBlocks);
+            setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
+          }
           if (d.selectedTemplateId) setSelectedTemplateId(d.selectedTemplateId);
           setWizardCustomColumns(d.wizardCustomColumns || []);
           setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
@@ -2193,7 +2420,14 @@ export default function CalibrationWizard() {
           if (rawStatus === "FAIL" || rawStatus === "REJECT" || rawStatus === "NG" || rawStatus === "NOT OK") {
             failPts++;
             totalPts++;
-          } else if (rawStatus === "PASS" || rawStatus === "OK" || rawStatus === "ACCEPT" || rawStatus === "ACCEPTED") {
+          } else if (
+            rawStatus === "PASS" ||
+            rawStatus === "OK" ||
+            rawStatus === "ACCEPT" ||
+            rawStatus === "ACCEPTED" ||
+            rawStatus === "NORMAL" ||
+            (rawStatus !== "" && !rawStatus.includes("FAIL") && !rawStatus.includes("NOT") && !rawStatus.includes("REJECT") && !rawStatus.includes("NG"))
+          ) {
             passPts++;
             totalPts++;
           } else if (rawStatus === "CONDITIONAL" || rawStatus === "HOLD" || rawStatus === "DERATED") {
@@ -2290,7 +2524,7 @@ export default function CalibrationWizard() {
     await executeSaveAndContinue();
   };
 
-  async function executeSaveAndContinue() {
+  async function executeSaveAndContinue(options?: { skipMasterSave?: boolean; saveToMaster?: boolean }) {
     if (!selectedInstrument || !selectedType) return;
     if (isEditMode && !canAccess("calibrations", "edit")) {
       toast.error("You do not have permission to edit calibrations");
@@ -2390,17 +2624,19 @@ export default function CalibrationWizard() {
         toast.success("Calibration saved successfully!");
       }
 
-      // Default: silently auto-persist specifications, diagram, doc info & env to Instrument Master ("default save instrument master don't ask")
-      const updatedCustomParams = getCustomParametersPayload();
-      if (selectedInstrument && updatedCustomParams) {
-        await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
-          custom_parameters: updatedCustomParams,
-        }).catch(console.error);
+      // Auto-persist specifications, diagram, doc info & env to Instrument Master only when intended (not skipped)
+      if (!options?.skipMasterSave && (options?.saveToMaster || (!checkIsTemplateModified() && hasMasterSavedTemplate))) {
+        const updatedCustomParams = getCustomParametersPayload();
+        if (selectedInstrument && updatedCustomParams) {
+          await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+            custom_parameters: updatedCustomParams,
+          }).catch(console.error);
 
-        setSelectedInstrument(prev => prev ? {
-          ...prev,
-          custom_parameters: updatedCustomParams,
-        } : prev);
+          setSelectedInstrument(prev => prev ? {
+            ...prev,
+            custom_parameters: updatedCustomParams,
+          } : prev);
+        }
       }
 
       setCertificateGenerated(false);
@@ -2469,32 +2705,46 @@ export default function CalibrationWizard() {
 
     if (!targetTbl || !targetTbl.rows) return;
 
-    const row = { ...targetTbl.rows[rowIndex], [colId]: val };
+    const row = {
+      ...targetTbl.rows[rowIndex],
+      [colId]: val,
+      ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
+    };
 
     const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
-    // If editing a specification / required_dimension, dynamically parse nominal & tolerance limits
+    // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
     const isSpecCol =
       colId === "required_dimension" ||
       colId === "specification" ||
       colId === "spec" ||
       colId === "description" ||
       colId === "nominal" ||
-      /spec|dimension/i.test(colId) ||
-      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && /spec|dimension/i.test(c.label || c.id || "")));
+      colId === "nominal_value" ||
+      colId === "std_spec" ||
+      colId === "std_value" ||
+      /spec|dimension|nominal/i.test(colId) ||
+      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && (c.type === "nominal" || /spec|dimension|nominal/i.test(c.label || c.id || ""))));
 
     if (isSpecCol) {
       const specText = String(val ?? "").trim();
       const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
       if (parsed.isValid) {
         row.nominal = parsed.nominal;
+        row.nom = parsed.nominal;
         row.lower_tolerance = parsed.lowerTolerance;
         row.upper_tolerance = parsed.upperTolerance;
         row.lower_limit = parsed.lowerLimit;
         row.upper_limit = parsed.upperLimit;
         row.lowerLimit = parsed.lowerLimit;
         row.upperLimit = parsed.upperLimit;
+      } else {
+        const num = parseFloat(specText);
+        if (!isNaN(num)) {
+          row.nominal = num;
+          row.nom = num;
+        }
       }
     }
 
@@ -2516,11 +2766,42 @@ export default function CalibrationWizard() {
     if (!targetTbl.columns.some((c: any) => c.id === "actual_dimension")) delete row.actual_dimension;
     if (!targetTbl.columns.some((c: any) => c.id === "reading")) delete row.reading;
 
-    // Deterministic formula evaluation (topological order, formula string parsing, blank propagation)
-        const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec, targetTbl.nominal);
+    // Pre-evaluate the edited row so error/deviation/avg are immediately calculated before cross-table passes
+    const globalContext = buildGlobalTablesContext(updatedBlocks);
+    const evaluatedRow = evaluateCanvasRowFormulas(
+      row,
+      targetTbl.columns,
+      tol,
+      dec,
+      targetTbl.nominal,
+      globalContext
+    );
+    evaluatedRow[colId] = val;
+    if (/judg|status|verdict/i.test(colId)) {
+      evaluatedRow.status = val;
+      evaluatedRow.judgement = val;
+    }
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        evaluatedRow[a] = val;
+      });
+    }
 
     targetTbl.rows[rowIndex] = evaluatedRow;
-    setWizardLayoutBlocks(updatedBlocks);
+
+    // Fully re-evaluate canvas blocks with targeted cross-table dependency resolution
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks, {
+      changedBlockIndex: blockIndex,
+      changedChildIndex: isSplit ? childIndex : undefined,
+      changedRowIndex: rowIndex,
+      forceFull: true,
+    });
+    setWizardLayoutBlocks(evaluatedBlocks);
   };
 
   const handleWizardCanvasAddRow = (
@@ -2553,12 +2834,9 @@ export default function CalibrationWizard() {
       judgement: "-",
     };
 
-    const tol = parseFloat(String(newRow.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
-    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
-        const evaluatedRow = evaluateCanvasRowFormulas(newRow, targetTbl.columns || [], tol, dec, targetTbl.nominal);
-
-    targetTbl.rows.push(evaluatedRow);
-    setWizardLayoutBlocks(updatedBlocks);
+    targetTbl.rows.push(newRow);
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks);
+    setWizardLayoutBlocks(evaluatedBlocks);
     toast.success(`Added parameter row ${newPointNum}`);
   };
 
@@ -2586,7 +2864,7 @@ export default function CalibrationWizard() {
         description: "All the jaws are free from dent and damages",
       };
       targetTbl.rows.push(newRow);
-      return updatedBlocks;
+      return evaluateAllCanvasBlocks(updatedBlocks);
     });
     toast.success("Added statement row");
   };
@@ -2611,7 +2889,7 @@ export default function CalibrationWizard() {
       row.merged_text = text;
       row.description = text;
       row.required_dimension = text;
-      return updatedBlocks;
+      return evaluateAllCanvasBlocks(updatedBlocks);
     });
   };
 
@@ -2638,8 +2916,48 @@ export default function CalibrationWizard() {
       r.point_number = idx + 1;
     });
 
-    setWizardLayoutBlocks(updatedBlocks);
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks);
+    setWizardLayoutBlocks(evaluatedBlocks);
     toast.info(`Deleted row ${rowIndex + 1}`);
+  };
+
+  const handleWizardUpdateTableNominal = (
+    bIdx: number,
+    isSplit: boolean,
+    cIdx: number,
+    newNominalStr: string,
+  ) => {
+    const rawVal = newNominalStr.trim();
+    let parsedNom: string | undefined = undefined;
+    if (rawVal !== "") {
+      const cleanNumMatch = rawVal.match(/^[+-]?\d+(?:\.\d+)?/);
+      if (cleanNumMatch) {
+        parsedNom = cleanNumMatch[0];
+      } else {
+        parsedNom = rawVal;
+      }
+    }
+
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[bIdx]?.children?.[cIdx];
+    } else {
+      targetTbl = updatedBlocks[bIdx];
+    }
+    if (!targetTbl || !Array.isArray(targetTbl.rows) || !Array.isArray(targetTbl.columns)) return;
+
+    targetTbl.nominal = parsedNom;
+    const tol = parseFloat(String(targetTbl.tolerance ?? 0.02)) || 0.02;
+    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : 3;
+
+    targetTbl.rows = targetTbl.rows.map((r: any) =>
+      evaluateCanvasRowFormulas(r, targetTbl.columns, tol, dec, parsedNom)
+    );
+
+    const fullyEvaluated = evaluateAllCanvasBlocks(updatedBlocks, { forceFull: true });
+    setWizardLayoutBlocks(fullyEvaluated);
+    toast.success(`Updated Table Nominal to ${parsedNom || "Not Set"} and recalculated points`);
   };
 
   const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
@@ -2647,6 +2965,16 @@ export default function CalibrationWizard() {
     if (effOrientation === "horizontal") {
       const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
       const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+
+      const rawFirstWidth = typeof tbl.firstColWidth === "number"
+        ? tbl.firstColWidth
+        : parseInt(String(tbl.firstColWidth || tbl.parameterWidth || 150)) || 150;
+      const wizardFirstColWidth = Math.max(150, rawFirstWidth);
+      const firstColWidthVal = `${wizardFirstColWidth}px`;
+
+      const dataColWidthVal = typeof tbl.dataColWidth === "number"
+        ? `${tbl.dataColWidth}px`
+        : tbl.dataColWidth || "65px";
 
       return (
         <div key={tbl.id || `${bIdx}_${cIdx}`} className="border rounded-lg overflow-hidden bg-card shadow-xs">
@@ -2656,11 +2984,61 @@ export default function CalibrationWizard() {
               {tbl.title}
             </span>
                         <div className="flex items-center gap-2">
-              {tbl.nominal !== undefined && tbl.nominal !== "" && (
-                <Badge variant="outline" className="text-2xs font-semibold px-2 py-0 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
-                  Nominal: {tbl.nominal} {tbl.unit || "mm"}
-                </Badge>
-              )}
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border cursor-pointer bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-500/20 transition-colors shadow-2xs"
+                    title="Click to set or change master Nominal value for this table"
+                  >
+                    <span>Nominal: {(() => {
+                      const formatted = formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3);
+                      return formatted ? `${formatted} ${tbl.unit || "mm"}` : "Not Set";
+                    })()}</span>
+                    <Pencil className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-60 p-2.5 shadow-lg z-50">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground">Table Nominal Value</span>
+                      <span className="text-2xs text-muted-foreground font-mono">{tbl.unit || "mm"}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      Dynamically updates baseline nominal for all pin measurement points without altering template.
+                    </p>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <Input
+                        type="text"
+                        defaultValue={formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3)}
+                        id={`wizard-nom-input-h-${tbl.id || `${bIdx}_${cIdx}`}`}
+                        className="h-7 text-xs font-mono"
+                        placeholder="e.g. 10.0000"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const val = (e.currentTarget as HTMLInputElement).value;
+                            handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, val);
+                            document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7 px-2.5 text-xs font-bold"
+                        onClick={() => {
+                          const input = document.getElementById(`wizard-nom-input-h-${tbl.id || `${bIdx}_${cIdx}`}`) as HTMLInputElement;
+                          if (input) {
+                            handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, input.value);
+                          }
+                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                        }}
+                      >
+                        Set
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
               <span className="text-[10px] text-muted-foreground font-mono">
                 Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
               </span>
@@ -2670,11 +3048,20 @@ export default function CalibrationWizard() {
             <table className="w-full text-xs text-center border-collapse">
               <thead className="bg-muted/95 z-10">
                 <tr className="bg-muted/40 font-bold border-b divide-x text-[10.5px]">
-                  <th className="py-1 px-2 text-left w-48 min-w-[150px] bg-muted/60 sticky left-0 z-20">
-                    Parameter / Sl no
+                  <th
+                    style={{ width: firstColWidthVal, minWidth: firstColWidthVal, maxWidth: firstColWidthVal }}
+                    className={`py-1.5 px-2.5 bg-slate-200 dark:bg-slate-700 font-bold sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-300 dark:border-slate-600 select-none overflow-hidden ${
+                      tbl.columns?.[0]?.align === "left" ? "text-left" : tbl.columns?.[0]?.align === "right" ? "text-right" : "text-center"
+                    }`}
+                  >
+                    <span className="whitespace-nowrap">Parameter / Sl no</span>
                   </th>
                   {tbl.rows.map((r: any, rIdx: number) => (
-                    <th key={rIdx} className="py-1 px-1.5 min-w-[50px] font-bold text-foreground">
+                    <th
+                      key={rIdx}
+                      style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                      className="py-1 px-1.5 font-bold text-foreground text-center"
+                    >
                       {r.point_number ?? (rIdx + 1)}
                     </th>
                   ))}
@@ -2683,51 +3070,169 @@ export default function CalibrationWizard() {
               <tbody className="divide-y font-mono text-xs">
                 {displayCols.map((col: any) => (
                   <tr key={col.id} className="divide-x hover:bg-muted/20">
-                    <td className="py-1 px-2 text-left font-bold text-foreground bg-muted/30 sticky left-0 z-10 whitespace-nowrap text-[11px]">
-                      {col.label}
+                    <td
+                      style={{ width: firstColWidthVal, minWidth: firstColWidthVal, maxWidth: firstColWidthVal }}
+                      className={`py-1.5 px-2.5 font-bold text-foreground bg-card dark:bg-slate-800 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-200 dark:border-slate-700 text-[11px] overflow-hidden ${
+                        col.align === "left" ? "text-left" : col.align === "right" ? "text-right" : "text-center"
+                      }`}
+                    >
+                      <span className="truncate block" title={col.label}>
+                        {col.label}
+                      </span>
                     </td>
                     {tbl.rows.map((row: any, rIdx: number) => {
                       const colDec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? 3;
-                      if (col.type === "nominal" || col.type === "number") {
+                      const cellFormula = row.cellFormulas?.[col.id];
+                      const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                      const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                      const isFormulaCell = hasCellFormula || hasColFormula;
+
+                      if (isFormulaCell) {
+                        const val = row[col.id] ?? "-";
+                        return (
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5"
+                          >
+                            <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                              <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded">fx</span>
+                              <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      if (col.type === "nominal") {
                         const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                           ? row[col.id]
-                          : (col.id === "nominal" || col.id === "nom" ? row.nominal : "");
+                          : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
+                          ? row.nominal_value
+                          : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
                         const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
                           ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
                           : "-";
                         return (
-                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="py-0.5 px-1 font-bold text-foreground text-[11px]"
+                          >
                             {val}
                           </td>
                         );
                       }
                       if (col.type === "text") {
                         return (
-                          <td key={rIdx} className="py-0.5 px-1 font-medium text-[11px]">
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="py-0.5 px-1 font-medium text-[11px]"
+                          >
                             {row.description || row[col.id] || "-"}
                           </td>
                         );
                       }
-                      if (
+                      const cellRaw = row[col.id] ?? row.status ?? "-";
+                      const cellStr = String(cellRaw).trim().toUpperCase();
+                      const isJudgementCol =
+                        col.type === "status" ||
+                        col.role === "JUDGEMENT" ||
+                        /judg|verdict|status/i.test(col.label || col.id) ||
+                        cellStr === "PASS" ||
+                        cellStr === "FAIL" ||
+                        cellStr === "OK" ||
+                        cellStr === "REJECT";
+
+                      if (isJudgementCol) {
+                        const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
+                        const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+
+                        if (isManualJudge) {
+                          const currentVal = row[col.id] || row.status || row.judgement || "OK";
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 text-center"
+                            >
+                              <JudgementCellControl
+                                value={currentVal}
+                                onChange={(newVal) => {
+                                  handleWizardCanvasCellChange(
+                                    bIdx,
+                                    false,
+                                    0,
+                                    rIdx,
+                                    col.id,
+                                    newVal,
+                                  );
+                                }}
+                              />
+                            </td>
+                          );
+                        }
+
+                        const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
+                        const isPass = cellStr === "PASS" || cellStr === "OK" || cellStr === "NORMAL";
+                        const isFail = cellStr === "FAIL" || cellStr === "REJECT" || cellStr === "NOT OK";
+                        return (
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="py-0.5 px-1"
+                          >
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] font-bold py-0 px-1 ${
+                                isPass
+                                  ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
+                                  : isFail
+                                    ? "border-red-500 text-red-600 bg-red-500/10"
+                                    : "border-border text-muted-foreground bg-muted"
+                              }`}
+                            >
+                              {st}
+                            </Badge>
+                          </td>
+                        );
+                      }
+                      // Editable cell: reading, trial, number, measurement, or non-formula row in a formula column
+                      const isEditable =
                         col.type === "trial" ||
                         col.type === "reading" ||
+                        col.type === "number" ||
+                        col.type === "formula" ||
                         col.role === "READING" ||
                         col.dataType === "MEASUREMENT" ||
                         (col.role as string) === "MEASUREMENT" ||
                         col.semanticRole === "READING" ||
                         col.semanticRole === "TRIAL" ||
-                        /actual|reading|trial|observed/i.test(col.id) ||
-                        /actual|reading|trial|observed/i.test(col.label || "")
-                      ) {
+                        /actual|reading|trial|observed|error|val/i.test(col.id) ||
+                        /actual|reading|trial|observed|error/i.test(col.label || "");
+
+                      if (isEditable) {
                         return (
-                          <td key={rIdx} className="p-0.5 min-w-[52px]">
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="p-0.5 min-w-[52px]"
+                          >
                             <Input
                               type="text"
-                              inputMode="decimal"
+                              inputMode={
+                                col.type === "text" || /spec|dimension|desc|remark/i.test(col.id || col.label || "")
+                                  ? undefined
+                                  : "decimal"
+                              }
                               value={row[col.id] ?? ""}
                               onChange={(e) => {
                                 const v = e.target.value;
-                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                const isTextAllowed =
+                                  col.type === "text" ||
+                                  /spec|dimension|desc|remark|comment|feature|note/i.test(col.id) ||
+                                  /spec|dimension|desc|remark|comment|feature|note/i.test(col.label || "");
+                                if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
                                   handleWizardCanvasCellChange(
                                     bIdx,
                                     isSplit,
@@ -2753,48 +3258,13 @@ export default function CalibrationWizard() {
                           </td>
                         );
                       }
-                      const cellRaw = row[col.id] ?? row.status ?? "-";
-                      const cellStr = String(cellRaw).trim().toUpperCase();
-                      const isJudgementCol =
-                        col.type === "status" ||
-                        col.role === "JUDGEMENT" ||
-                        /judg|verdict|status/i.test(col.label || col.id) ||
-                        cellStr === "PASS" ||
-                        cellStr === "FAIL" ||
-                        cellStr === "OK" ||
-                        cellStr === "REJECT";
 
-                      if (isJudgementCol) {
-                        const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
-                        const isPass = cellStr === "PASS" || cellStr === "OK";
-                        const isFail = cellStr === "FAIL" || cellStr === "REJECT";
-                        return (
-                          <td key={rIdx} className="py-0.5 px-1">
-                            <Badge
-                              variant="outline"
-                              className={`text-[9px] font-bold py-0 px-1 ${
-                                isPass
-                                  ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                  : isFail
-                                    ? "border-red-500 text-red-600 bg-red-500/10"
-                                    : "border-border text-muted-foreground bg-muted"
-                              }`}
-                            >
-                              {st}
-                            </Badge>
-                          </td>
-                        );
-                      }
-                      if (col.type === "formula") {
-                        const val = row[col.id] ?? "-";
-                        return (
-                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
-                            {val}
-                          </td>
-                        );
-                      }
                       return (
-                        <td key={rIdx} className="py-0.5 px-1 text-[11px]">
+                        <td
+                          key={rIdx}
+                          style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                          className="py-0.5 px-1 text-[11px]"
+                        >
                           {row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}
                         </td>
                       );
@@ -2821,11 +3291,61 @@ export default function CalibrationWizard() {
             {tbl.title}
           </span>
                     <div className="flex items-center gap-2">
-            {tbl.nominal !== undefined && tbl.nominal !== "" && (
-              <Badge variant="outline" className="text-2xs font-semibold px-2 py-0 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800">
-                Nominal: {tbl.nominal} {tbl.unit || "mm"}
-              </Badge>
-            )}
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border cursor-pointer bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-500/20 transition-colors shadow-2xs"
+                  title="Click to set or change master Nominal value for this table"
+                >
+                  <span>Nominal: {(() => {
+                    const formatted = formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3);
+                    return formatted ? `${formatted} ${tbl.unit || "mm"}` : "Not Set";
+                  })()}</span>
+                  <Pencil className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="center" className="w-60 p-2.5 shadow-lg z-50">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground">Table Nominal Value</span>
+                    <span className="text-2xs text-muted-foreground font-mono">{tbl.unit || "mm"}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    Dynamically updates baseline nominal for all pin measurement points without altering template.
+                  </p>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <Input
+                      type="text"
+                      defaultValue={formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3)}
+                      id={`wizard-nom-input-v-${tbl.id || `${bIdx}_${cIdx}`}`}
+                      className="h-7 text-xs font-mono"
+                      placeholder="e.g. 10.0000"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const val = (e.currentTarget as HTMLInputElement).value;
+                          handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, val);
+                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 px-2.5 text-xs font-bold"
+                      onClick={() => {
+                        const input = document.getElementById(`wizard-nom-input-v-${tbl.id || `${bIdx}_${cIdx}`}`) as HTMLInputElement;
+                        if (input) {
+                          handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, input.value);
+                        }
+                        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                      }}
+                    >
+                      Set
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
             <span className="text-[10px] text-muted-foreground font-mono">
               Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
             </span>
@@ -2834,14 +3354,60 @@ export default function CalibrationWizard() {
         <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
           <table className="w-full text-xs text-center border-collapse">
             <thead className="sticky top-0 bg-muted/95 z-10 backdrop-blur-xs">
-              <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
-                {tbl.columns.map((col: any) => (
-                  <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
-                    {col.label}
-                  </th>
-                ))}
-                <th className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground">Action</th>
-              </tr>
+              {(() => {
+                const headerGroups = computeHeaderGroups(tbl.columns || []);
+                if (!headerGroups.hasGroups) {
+                  return (
+                    <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
+                      {tbl.columns.map((col: any) => (
+                        <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                          {col.label}
+                        </th>
+                      ))}
+                      <th className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground">Action</th>
+                    </tr>
+                  );
+                }
+
+                return (
+                  <>
+                    <tr className="bg-muted/50 font-bold border-b divide-x text-[10.5px]">
+                      {headerGroups.topRow.map((topItem, topIdx) => {
+                        if (topItem.type === "group") {
+                          return (
+                            <th
+                              key={`grp_${topIdx}`}
+                              colSpan={topItem.colSpan}
+                              className="py-1 px-1.5 text-center font-bold uppercase tracking-wider bg-muted/70 text-foreground border-b"
+                            >
+                              {topItem.groupName}
+                            </th>
+                          );
+                        }
+                        const col = topItem.columns[0];
+                        return (
+                          <th
+                            key={col.id}
+                            rowSpan={2}
+                            style={{ width: col.width }}
+                            className="py-1 px-1.5 font-semibold align-middle"
+                          >
+                            {col.label}
+                          </th>
+                        );
+                      })}
+                      <th rowSpan={2} className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground align-middle">Action</th>
+                    </tr>
+                    <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
+                      {headerGroups.subRowColumns.map((col: any) => (
+                        <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                          {col.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </>
+                );
+              })()}
             </thead>
             <tbody className="divide-y font-mono text-xs">
               {(() => {
@@ -3098,7 +3664,9 @@ export default function CalibrationWizard() {
                     if (col.type === "nominal" || col.type === "number") {
                       const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                         ? row[col.id]
-                        : (col.id === "nominal" || col.id === "nom" ? row.nominal : "");
+                        : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
+                        ? row.nominal_value
+                        : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
                       const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
                         ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
                         : "-";
@@ -3138,26 +3706,111 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    if (
+                    const cellFormula = row.cellFormulas?.[col.id];
+                    const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                    const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                    const isFormulaCell = hasCellFormula || hasColFormula;
+
+                    if (isFormulaCell) {
+                      const val = row[col.id] ?? "-";
+                      return (
+                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5">
+                          <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                            <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded">fx</span>
+                            <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    const cellRaw = row[col.id] ?? row.status ?? "-";
+                    const cellStr = String(cellRaw).trim().toUpperCase();
+                    const isJudgementCol =
+                      col.type === "status" ||
+                      col.role === "JUDGEMENT" ||
+                      /judg|verdict|status/i.test(col.label || col.id) ||
+                      cellStr === "PASS" ||
+                      cellStr === "FAIL" ||
+                      cellStr === "OK" ||
+                      cellStr === "REJECT";
+
+                    if (isJudgementCol) {
+                      const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
+                      const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+
+                      if (isManualJudge) {
+                        const currentVal = row[col.id] || row.status || row.judgement || "OK";
+                        return (
+                          <td key={col.id} className="py-0.5 px-1 text-center min-w-[100px]">
+                            <JudgementCellControl
+                              value={currentVal}
+                              onChange={(newVal) => {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  newVal,
+                                );
+                              }}
+                            />
+                          </td>
+                        );
+                      }
+                      const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
+                      const isPass = cellStr === "PASS" || cellStr === "OK";
+                      const isFail = cellStr === "FAIL" || cellStr === "REJECT";
+                      return (
+                        <td key={col.id} className="py-0.5 px-1">
+                          <Badge
+                            variant="outline"
+                            className={`text-[9px] font-bold py-0 px-1.5 ${
+                              isPass
+                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
+                                : isFail
+                                  ? "border-red-500 text-red-600 bg-red-500/10"
+                                  : "border-border text-muted-foreground bg-muted"
+                            }`}
+                          >
+                            {st}
+                          </Badge>
+                        </td>
+                      );
+                    }
+
+                    // Editable cell: reading, trial, number, measurement, or non-formula row in a formula column
+                    const isEditable =
                       col.type === "trial" ||
                       col.type === "reading" ||
+                      col.type === "number" ||
+                      col.type === "formula" ||
                       col.role === "READING" ||
                       col.dataType === "MEASUREMENT" ||
                       (col.role as string) === "MEASUREMENT" ||
                       col.semanticRole === "READING" ||
                       col.semanticRole === "TRIAL" ||
-                      /actual|reading|trial|observed/i.test(col.id) ||
-                      /actual|reading|trial|observed/i.test(col.label || "")
-                    ) {
+                      /actual|reading|trial|observed|error|val/i.test(col.id) ||
+                      /actual|reading|trial|observed|error/i.test(col.label || "");
+
+                    if (isEditable) {
                       return (
                         <td key={col.id} className="p-0.5">
                           <Input
                             type="text"
-                            inputMode="decimal"
+                            inputMode={
+                              col.type === "text" || /spec|dimension|desc|remark/i.test(col.id || col.label || "")
+                                ? undefined
+                                : "decimal"
+                            }
                             value={row[col.id] ?? ""}
                             onChange={(e) => {
                               const v = e.target.value;
-                              if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                              const isTextAllowed =
+                                col.type === "text" ||
+                                /spec|dimension|desc|remark|comment|feature|note/i.test(col.id) ||
+                                /spec|dimension|desc|remark|comment|feature|note/i.test(col.label || "");
+                              if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
                                 handleWizardCanvasCellChange(
                                   bIdx,
                                   isSplit,
@@ -3183,46 +3836,7 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    const cellRaw = row[col.id] ?? row.status ?? "-";
-                    const cellStr = String(cellRaw).trim().toUpperCase();
-                    const isJudgementCol =
-                      col.type === "status" ||
-                      col.role === "JUDGEMENT" ||
-                      /judg|verdict|status/i.test(col.label || col.id) ||
-                      cellStr === "PASS" ||
-                      cellStr === "FAIL" ||
-                      cellStr === "OK" ||
-                      cellStr === "REJECT";
 
-                    if (isJudgementCol) {
-                      const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
-                      const isPass = cellStr === "PASS" || cellStr === "OK";
-                      const isFail = cellStr === "FAIL" || cellStr === "REJECT";
-                      return (
-                        <td key={col.id} className="py-0.5 px-1">
-                          <Badge
-                            variant="outline"
-                            className={`text-[9px] font-bold py-0 px-1.5 ${
-                              isPass
-                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                : isFail
-                                  ? "border-red-500 text-red-600 bg-red-500/10"
-                                  : "border-border text-muted-foreground bg-muted"
-                            }`}
-                          >
-                            {st}
-                          </Badge>
-                        </td>
-                      );
-                    }
-                    if (col.type === "formula") {
-                      const val = row[col.id] ?? "-";
-                      return (
-                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
-                          {val}
-                        </td>
-                      );
-                    }
                     return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}</td>;
                   })}
                   <td className="p-0.5 text-center">
@@ -3891,6 +4505,58 @@ export default function CalibrationWizard() {
                       />
                     </div>
                     <div className="max-h-60 overflow-y-auto divide-y">
+                      {/* Option: Template Saved with Instrument Master */}
+                      {selectedInstrument && hasMasterSavedTemplate && (
+                        <div
+                          className={cn(
+                            "p-2.5 text-xs transition-colors flex items-center justify-between border-b bg-amber-500/5 hover:bg-amber-500/10",
+                            selectedTemplateId === "master_saved" && "bg-amber-500/15 font-bold"
+                          )}
+                        >
+                          <div
+                            className="flex-1 cursor-pointer"
+                            onClick={() => {
+                              if (selectedInstrument) {
+                                const targetTpl = availableTemplates.find(t => t.id === selectedTemplateId && t.id !== "none") || availableTemplates[0];
+                                if (targetTpl) {
+                                  applyTemplateObject(targetTpl, false, undefined, selectedInstrument);
+                                  toast.success(`Loaded template saved with Instrument Master (${selectedInstrument.id_code})`);
+                                }
+                              }
+                              setTemplatePopoverOpen(false);
+                              setTemplateSearchQuery("");
+                            }}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <p className="font-semibold text-foreground">Template Saved with Master</p>
+                              <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-700 border-amber-500/30">
+                                {selectedInstrument.id_code}
+                              </Badge>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {selectedInstrument.custom_parameters?.specifications?.length || 0} custom specifications &amp; diagram
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1 ml-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteMasterTemplateOpen(true);
+                              }}
+                              className="h-7 w-7 text-destructive hover:bg-destructive/15 hover:text-destructive"
+                              title="Delete saved template from Instrument Master"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
                       <div
                         onClick={() => {
                           handleApplyTemplate("none");
@@ -4284,7 +4950,7 @@ export default function CalibrationWizard() {
                       </div>
                       <p className="text-xs font-medium text-foreground mt-0.5">
                         {wizardDiagramImage
-                          ? `${wizardDiagramWidth || 350}px × ${wizardDiagramHeight || 160}px • Align ${wizardDiagramAlignment || "center"}`
+                          ? `${wizardDiagramWidth}px × ${wizardDiagramHeight}px • Align ${wizardDiagramAlignment || "center"}`
                           : "No schematic image uploaded yet for this calibration"}
                       </p>
                     </div>
@@ -4383,7 +5049,7 @@ export default function CalibrationWizard() {
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
                             <span className="font-semibold text-foreground">Live Certificate Preview</span>
-                            <span className="font-mono text-[10px]">{wizardDiagramWidth || 350}px × {wizardDiagramHeight || 160}px • {wizardDiagramAlignment || "center"}</span>
+                            <span className="font-mono text-[10px]">{wizardDiagramWidth}px × {wizardDiagramHeight}px • {wizardDiagramAlignment || "center"}</span>
                           </div>
                           <div
                             onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
@@ -4402,8 +5068,8 @@ export default function CalibrationWizard() {
                               src={wizardDiagramImage}
                               alt="Diagram Preview"
                               style={{
-                                width: `${wizardDiagramWidth || 350}px`,
-                                maxHeight: `${wizardDiagramHeight || 160}px`,
+                                width: `${wizardDiagramWidth}px`,
+                                maxHeight: `${wizardDiagramHeight}px`,
                                 objectFit: "contain",
                               }}
                               className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
@@ -4415,28 +5081,28 @@ export default function CalibrationWizard() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                           <div>
                             <div className="flex justify-between items-center mb-1">
-                              <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth || 350}px</span></Label>
+                              <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth}px</span></Label>
                             </div>
                             <input
                               type="range"
                               min={80}
                               max={540}
                               step={5}
-                              value={wizardDiagramWidth || 350}
+                              value={wizardDiagramWidth}
                               onChange={(e) => setWizardDiagramWidth(parseInt(e.target.value, 10))}
                               className="w-full accent-primary h-1.5 cursor-pointer"
                             />
                           </div>
                           <div>
                             <div className="flex justify-between items-center mb-1">
-                              <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight || 160}px</span></Label>
+                              <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight}px</span></Label>
                             </div>
                             <input
                               type="range"
                               min={40}
                               max={280}
                               step={5}
-                              value={wizardDiagramHeight || 160}
+                              value={wizardDiagramHeight}
                               onChange={(e) => setWizardDiagramHeight(parseInt(e.target.value, 10))}
                               className="w-full accent-primary h-1.5 cursor-pointer"
                             />
@@ -4557,16 +5223,45 @@ export default function CalibrationWizard() {
               {/* ═══ Template Variant & Instrument Master Action Bar ═══ */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-muted/50 via-card to-muted/50 border rounded-xl shadow-xs mb-4">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
-                    <Check className="w-3 h-3 text-emerald-600" />
-                    Auto-saved to Instrument Master
-                  </Badge>
+                  {hasMasterSavedTemplate ? (
+                    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-amber-600" />
+                      Template Saved with Master ({selectedInstrument?.id_code})
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      Auto-saved to Instrument Master
+                    </Badge>
+                  )}
                   <span className="text-xs text-muted-foreground hidden sm:inline">
-                    {selectedInstrument ? `Custom diagram & specifications save directly to ${selectedInstrument.id_code} on calibration completion` : "Specifications & drawing save automatically to instrument master"}
+                    {hasMasterSavedTemplate
+                      ? `Custom template & specifications are currently active on ${selectedInstrument?.id_code}`
+                      : selectedInstrument ? `Custom diagram & specifications save directly to ${selectedInstrument.id_code} on calibration completion` : "Specifications & drawing save automatically to instrument master"}
                   </span>
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  {/* Delete Template from Master Button (when template is saved with master) */}
+                  {selectedInstrument && hasMasterSavedTemplate && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDeleteMasterTemplateOpen(true)}
+                      disabled={deletingMasterTemplate}
+                      className="text-xs h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive font-medium"
+                      title="Delete saved template specifications and diagram from this Instrument Master"
+                    >
+                      {deletingMasterTemplate ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                      Delete Template from Master
+                    </Button>
+                  )}
+
                   {selectedInstrument && (
                     <Button
                       type="button"
@@ -4655,37 +5350,101 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (block.type === "matrix_table") {
+                      const totalCols = getMatrixTotalCols(block as any);
+                      const { coveredCells: coveredHeaders } = computeMatrix2DGrid(block.headers || [], totalCols);
+                      const { coveredCells: coveredRows } = computeMatrix2DGrid(block.rows || [], totalCols);
+
                       return (
-                        <div key={block.id || bIdx} className="border rounded-lg overflow-hidden bg-card shadow-xs">
-                          <div className="bg-muted px-3 py-1.5 font-bold text-xs border-b">
-                            {block.title} (Reference Matrix)
+                        <div key={block.id || bIdx} className={`border rounded-lg overflow-hidden bg-card shadow-xs ${block.width === "50%" ? "max-w-xl mx-auto" : "w-full"}`}>
+                          <div className="bg-muted px-3 py-1.5 font-bold text-xs border-b flex items-center justify-between">
+                            <span>{block.title || "Reference Matrix"}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase font-mono">Reference</span>
                           </div>
                           <div className="overflow-x-auto">
                             <table className="w-full text-xs text-center border-collapse">
                               <thead>
-                                {block.headers?.map((hRow: any[], hIdx: number) => (
-                                  <tr key={hIdx} className="bg-muted/40 font-bold border-b divide-x text-[11px]">
-                                    {hRow.map((cell: any, cIdx: number) => (
-                                      <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="p-1.5">
-                                        {cell.text}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                ))}
+                                {block.headers?.map((hRow: any[], hIdx: number) => {
+                                  const cells = Array.isArray(hRow) ? hRow : [hRow];
+                                  let colPointer = 0;
+                                  return (
+                                    <tr key={hIdx} className="bg-muted/40 font-bold border-b divide-x text-[11px]">
+                                      {cells.map((rawCell: any, cIdx: number) => {
+                                        while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
+                                          colPointer++;
+                                        }
+                                        const actualCol = colPointer;
+                                        const cell = normalizeMatrixCell(rawCell);
+                                        colPointer += (cell.colSpan || 1);
+
+                                        if (coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                                          return null;
+                                        }
+
+                                        return (
+                                          <th
+                                            key={cIdx}
+                                            colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                            rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                            style={{ textAlign: cell.align || "center" }}
+                                            className="p-1.5 border"
+                                          >
+                                            {cell.text}
+                                          </th>
+                                        );
+                                      })}
+                                    </tr>
+                                  );
+                                })}
                               </thead>
                               <tbody className="divide-y font-mono text-[11px]">
-                                {block.rows?.map((row: any[], rIdx: number) => (
-                                  <tr key={rIdx} className="divide-x hover:bg-muted/20">
-                                    {row.map((cellVal: any, cIdx: number) => (
-                                      <td key={cIdx} className="p-1.5">
-                                        {cellVal}
-                                      </td>
-                                    ))}
+                                {(!block.rows || block.rows.length === 0) ? (
+                                  <tr>
+                                    <td colSpan={totalCols} className="p-3 text-center text-muted-foreground italic border">
+                                      -
+                                    </td>
                                   </tr>
-                                ))}
+                                ) : (
+                                  block.rows.map((row: any[], rIdx: number) => {
+                                    const cells = Array.isArray(row) ? row : [row];
+                                    let colPointer = 0;
+                                    return (
+                                      <tr key={rIdx} className="divide-x hover:bg-muted/20">
+                                        {cells.map((rawCell: any, cIdx: number) => {
+                                          while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
+                                            colPointer++;
+                                          }
+                                          const actualCol = colPointer;
+                                          const cell = normalizeMatrixCell(rawCell);
+                                          colPointer += (cell.colSpan || 1);
+
+                                          if (coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                            return null;
+                                          }
+
+                                          return (
+                                            <td
+                                              key={cIdx}
+                                              colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                              rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                              style={{ textAlign: cell.align || "center" }}
+                                              className="p-1.5 border"
+                                            >
+                                              {cell.text}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    );
+                                  })
+                                )}
                               </tbody>
                             </table>
                           </div>
+                          {block.footerNote && (
+                            <div className="text-[10px] italic text-muted-foreground px-3 py-1.5 border-t bg-muted/20 text-center">
+                              {block.footerNote}
+                            </div>
+                          )}
                         </div>
                       );
                     }
@@ -5371,47 +6130,52 @@ export default function CalibrationWizard() {
 
       {/* ═══ Template Modifications Detected Modal ═══ */}
       <Dialog open={templateModifiedModalOpen} onOpenChange={setTemplateModifiedModalOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
               <Layers className="w-5 h-5 text-primary shrink-0" />
-              Template Modifications Detected
+              Original Template Modified
             </DialogTitle>
-            <DialogDescription className="space-y-3 pt-2 text-xs text-foreground">
+            <DialogDescription className="space-y-2 pt-2 text-xs text-foreground">
               <p>
-                You modified the specifications or diagram drawing from original template{" "}
+                You made modifications to the specifications or diagram drawing from template{" "}
                 <strong>
                   "{availableTemplates.find((t) => t.id === selectedTemplateId)?.name || "Original Template"}"
                 </strong>.
               </p>
-              <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg space-y-1.5 text-xs">
-                <div className="text-foreground font-medium">
-                  ✓ These changes are <strong>automatically saved to this instrument ({selectedInstrument?.id_code})</strong>.
-                </div>
-                <div className="text-muted-foreground pt-1">
-                  Would you also like to save these changes as a <strong>New Reusable Template Variant</strong> for other gauges to use?
-                </div>
-              </div>
+              <p className="text-muted-foreground">
+                How would you like to save these changes?
+              </p>
             </DialogDescription>
           </DialogHeader>
 
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
+          <div className="grid gap-3 py-2">
+            {/* Option 1: Save to Instrument Master */}
+            <div
               onClick={() => {
                 setTemplateModifiedModalOpen(false);
-                executeSaveAndContinue();
+                executeSaveAndContinue({ saveToMaster: true });
               }}
-              className="text-xs"
+              className="group p-3 rounded-lg border border-border hover:border-emerald-500/50 hover:bg-emerald-500/5 cursor-pointer transition-all flex items-start gap-3"
             >
-              Save for this Instrument Only
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
+              <div className="p-2 rounded-md bg-emerald-500/10 text-emerald-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <Save className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span>Save to Instrument Master</span>
+                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
+                    Recommended
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Update <strong>{selectedInstrument?.id_code}</strong> master with these specifications &amp; diagram for future calibrations of this gauge.
+                </p>
+              </div>
+            </div>
+
+            {/* Option 2: Save as New Template */}
+            <div
               onClick={() => {
                 setTemplateModifiedModalOpen(false);
                 proceedAfterTemplateVariantRef.current = true;
@@ -5420,10 +6184,124 @@ export default function CalibrationWizard() {
                 }
                 setSaveTemplateModalOpen(true);
               }}
+              className="group p-3 rounded-lg border border-border hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all flex items-start gap-3"
+            >
+              <div className="p-2 rounded-md bg-primary/10 text-primary shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <Copy className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground">
+                  Save as New Template
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Create a new reusable calibration template variant available for all instruments in your company.
+                </p>
+              </div>
+            </div>
+
+            {/* Option 3: Skip */}
+            <div
+              onClick={() => {
+                setTemplateModifiedModalOpen(false);
+                executeSaveAndContinue({ skipMasterSave: true });
+              }}
+              className="group p-3 rounded-lg border border-border hover:border-amber-500/50 hover:bg-amber-500/5 cursor-pointer transition-all flex items-start gap-3"
+            >
+              <div className="p-2 rounded-md bg-amber-500/10 text-amber-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <ArrowRight className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span>Skip (Do Not Save to Master or Template)</span>
+                  <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground border-border">
+                    This calibration only
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Proceed with this calibration only. Instrument Master ({selectedInstrument?.id_code}) will <strong>not</strong> be modified.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 justify-between items-center">
+            {hasMasterSavedTemplate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setTemplateModifiedModalOpen(false);
+                  setConfirmDeleteMasterTemplateOpen(true);
+                }}
+                className="text-xs text-destructive hover:bg-destructive/10 gap-1.5 h-8 mr-auto"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Template from Master
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setTemplateModifiedModalOpen(false)}
+              className="text-xs h-8"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Confirm Delete Template from Master Modal ═══ */}
+      <Dialog open={confirmDeleteMasterTemplateOpen} onOpenChange={setConfirmDeleteMasterTemplateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive font-bold text-base">
+              <Trash2 className="w-5 h-5 text-destructive shrink-0" />
+              Delete Template from Instrument Master?
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2 text-xs text-foreground">
+              <p>
+                Are you sure you want to delete the custom template specifications, diagram image, and metadata saved directly to Instrument Master{" "}
+                <strong>"{selectedInstrument?.name} ({selectedInstrument?.id_code})"</strong>?
+              </p>
+              <p className="text-muted-foreground">
+                Future calibrations for this instrument will revert to the standard template. This action will clear the instrument's custom parameters and reload the base template.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmDeleteMasterTemplateOpen(false)}
+              className="text-xs"
+              disabled={deletingMasterTemplate}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteTemplateFromMaster}
+              disabled={deletingMasterTemplate}
               className="text-xs gap-1.5 font-semibold"
             >
-              <Copy className="w-3.5 h-3.5" />
-              Save as New Template Variant
+              {deletingMasterTemplate ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete from Master
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

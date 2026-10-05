@@ -141,3 +141,38 @@ export const clearStoredTokens = (): void => {
     // Fallback in environments with blocked storage
   }
 };
+
+/**
+ * Resolves an uploaded or static asset file path to an authenticated URL.
+ * Automatically appends the JWT access token for protected routes (/uploads/)
+ * so that opening in new tabs, iframes, and downloads are authenticated.
+ */
+export const getSecureFileUrl = (filePath?: string | null): string => {
+  if (!filePath) return "";
+  const token = getStoredAccessToken();
+  let fullUrl = filePath;
+  if (!fullUrl.startsWith("http://") && !fullUrl.startsWith("https://")) {
+    const rawBase = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+    const normalizedBase = rawBase.endsWith("/") ? rawBase.slice(0, -1) : rawBase;
+    fullUrl = `${normalizedBase}${filePath.startsWith("/") ? "" : "/"}${filePath}`;
+  }
+
+  if (fullUrl.includes("/uploads/") && token) {
+    try {
+      const hasProtocol = fullUrl.startsWith("http://") || fullUrl.startsWith("https://");
+      const urlObj = new URL(fullUrl, "http://localhost");
+      urlObj.searchParams.set("token", token);
+      if (hasProtocol) {
+        fullUrl = urlObj.toString();
+      } else {
+        fullUrl = `${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+      }
+    } catch {
+      if (!fullUrl.includes("token=")) {
+        fullUrl = `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+      }
+    }
+  }
+  return fullUrl;
+};
+

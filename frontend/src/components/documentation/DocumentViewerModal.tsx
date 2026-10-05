@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, ZoomIn, ZoomOut, RotateCcw, FileText, Image as ImageIcon } from "lucide-react";
+import { getSecureFileUrl } from "@/lib/tokenStorage";
 
 interface DocumentViewerModalProps {
   isOpen: boolean;
@@ -37,11 +38,7 @@ export function DocumentViewerModal({
 
   if (!isOpen || !filePath) return null;
 
-  const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
-  const authenticatedFilePath =
-    filePath.startsWith("/uploads/") && token && !filePath.includes("token=")
-      ? `${filePath}${filePath.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`
-      : filePath;
+  const authenticatedFilePath = getSecureFileUrl(filePath);
 
   const isPdf =
     fileType?.toLowerCase().includes("pdf") ||

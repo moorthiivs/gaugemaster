@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Download, ImageIcon, Loader2 } from "lucide-react";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
+import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols } from "@/lib/matrixTableUtils";
+import { resolveCertificateCellValue } from "@/lib/cellValueResolver";
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -21,6 +23,893 @@ export function formatUncertainty(val?: string | null, unit?: string): string {
   }
 
   return `±${trimmed}${activeUnit ? ` ${activeUnit}` : ""}`;
+}
+
+function getTextAlignClass(align?: string): string {
+  if (align === "left") return "text-left";
+  if (align === "right") return "text-right";
+  return "text-center";
+}
+
+export interface CanvasBlocksRendererProps {
+  blocks: any[];
+  isScreen?: boolean;
+}
+
+/**
+ * Renders canvas-based layout blocks (multi-table, split-row, matrix-table, diagram, text, page break).
+ * Supports both print certificate styling (isScreen=false) and responsive dashboard/review modal styling (isScreen=true).
+ */
+export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksRendererProps) {
+  if (!blocks || blocks.length === 0) return null;
+
+  const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01, dec: number = 3): any => {
+    if (!formula) return "";
+    try {
+      let expr = formula.trim();
+      const rawNom = (row.nominal_value !== undefined && row.nominal_value !== null && String(row.nominal_value).trim() !== "")
+        ? row.nominal_value
+        : (row.nominal !== undefined && row.nominal !== null && String(row.nominal).trim() !== "" && row.nominal !== 0 && row.nominal !== "0")
+        ? row.nominal
+        : row.nom ?? row.std_spec ?? row.std_value ?? row.nominal ?? 0;
+      const nominal = parseFloat(String(rawNom)) || 0;
+      const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.01;
+
+      // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
+      const isSubtraction = expr.includes("-") || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
+      const avgMatch = !isSubtraction && expr.match(/^=?AVERAGE\(([^)]+)\)/i);
+      if (avgMatch || (!isSubtraction && (expr.toLowerCase() === "avg" || expr.toLowerCase() === "average"))) {
+        let trials: number[] = [];
+        if (avgMatch) {
+          const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
+          varNames.forEach((v: string) => {
+            const rawVal = row[v] ?? row[`col_${v}`] ?? row[`t${v}`];
+            if (rawVal !== undefined && String(rawVal).trim() !== "") {
+              const val = parseFloat(String(rawVal));
+              if (!isNaN(val)) trials.push(val);
+            }
+          });
+        }
+        if (trials.length === 0) {
+          const candidateKeys = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5];
+          trials = candidateKeys
+            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+            .map((v) => parseFloat(String(v)))
+            .filter((v) => !isNaN(v));
+        }
+        if (trials.length === 0) return "-";
+        const avg = trials.reduce((a, b) => a + b, 0) / trials.length;
+        return avg.toFixed(dec);
+      }
+
+      // 2. ERROR (measured - nominal or nominal - measured)
+      const isError =
+        /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr) ||
+        /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr) ||
+        (/error/i.test(expr) && !/PASS.*FAIL/i.test(expr));
+
+      if (isError) {
+        const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr);
+        let measuredVal: number | undefined = undefined;
+
+        if (row.avg !== undefined && row.avg !== "-" && String(row.avg).trim() !== "") {
+          measuredVal = parseFloat(String(row.avg));
+        } else if (row.average !== undefined && row.average !== "-" && String(row.average).trim() !== "") {
+          measuredVal = parseFloat(String(row.average));
+        } else {
+          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
+            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
+            .map((v) => parseFloat(String(v)))
+            .filter((v) => !isNaN(v));
+          if (trials.length > 0) {
+            measuredVal = trials.reduce((a, b) => a + b, 0) / trials.length;
+          } else if (row.actual_value !== undefined && String(row.actual_value).trim() !== "") {
+            measuredVal = parseFloat(String(row.actual_value));
+          } else if (row.reading !== undefined && String(row.reading).trim() !== "") {
+            measuredVal = parseFloat(String(row.reading));
+          } else if (row.ascending_reading !== undefined && String(row.ascending_reading).trim() !== "") {
+            measuredVal = parseFloat(String(row.ascending_reading));
+          } else if (row.t1 !== undefined && String(row.t1).trim() !== "") {
+            measuredVal = parseFloat(String(row.t1));
+          }
+        }
+
+        if (measuredVal === undefined || isNaN(measuredVal)) return "-";
+        const err = isInverted ? nominal - measuredVal : measuredVal - nominal;
+        return (err >= 0 ? "+" : "") + err.toFixed(dec);
+      }
+
+      // 3. STATUS / JUDGEMENT
+      if (
+        /IF\(.*PASS.*FAIL.*\)/i.test(expr) ||
+        /PASS.*FAIL/i.test(expr) ||
+        expr.toLowerCase() === "status" ||
+        expr.toLowerCase() === "judgement" ||
+        expr.toLowerCase() === "verdict"
+      ) {
+        const limitMatch = expr.match(/<=\s*([0-9.]+)/i) || expr.match(/<\s*([0-9.]+)/i);
+        const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
+
+        const hasReading =
+          (row.error !== undefined && row.error !== "" && row.error !== "-") ||
+          (row.avg !== undefined && row.avg !== "" && row.avg !== "-") ||
+          (row.average !== undefined && row.average !== "" && row.average !== "-") ||
+          (row.reading !== undefined && String(row.reading).trim() !== "" && row.reading !== "-") ||
+          (row.t1 !== undefined && String(row.t1).trim() !== "" && row.t1 !== "-");
+        if (!hasReading) return "-";
+
+        let errVal: number;
+        if (row.error !== undefined && row.error !== "-") {
+          errVal = Math.abs(typeof row.error === "number" ? row.error : parseFloat(String(row.error).replace("+", "")) || 0);
+        } else {
+          const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal));
+          errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
+        }
+        return errVal <= tolLimit + 1e-9 ? "PASS" : "FAIL";
+      }
+
+      return row[expr] ?? row[formula] ?? "-";
+    } catch {
+      return "-";
+    }
+  };
+
+  const renderCellContent = (val: any) => {
+    const upperVal = String(val).trim().toUpperCase();
+    const isPass = upperVal === "PASS" || upperVal === "OK" || upperVal === "NORMAL";
+    const isFail = upperVal === "FAIL" || upperVal === "REJECT" || upperVal === "NOT OK" || upperVal === "NG";
+
+    if (isScreen) {
+      if (isPass) {
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">
+            {val}
+          </span>
+        );
+      }
+      if (isFail) {
+        return (
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-700 dark:text-red-400 border border-red-500/30">
+            {val}
+          </span>
+        );
+      }
+      if (val === "-" || val === "" || val === undefined || val === null) {
+        return <span className="text-muted-foreground/50">-</span>;
+      }
+      return <span>{val}</span>;
+    }
+
+    if (val === "-" || val === "" || val === undefined || val === null) {
+      return <span>-</span>;
+    }
+
+    return (
+      <span
+        className={
+          isPass
+            ? "text-emerald-700 font-bold"
+            : isFail
+            ? "text-red-600 font-bold"
+            : "text-black"
+        }
+      >
+        {val}
+      </span>
+    );
+  };
+
+  const computeColPercentages = (columns: any[], isHalfRow: boolean = false): string[] => {
+    if (!columns || columns.length === 0) return [];
+    const netBudget = isHalfRow ? 340 : 700;
+    const rawWeights = columns.map((col: any) => {
+      if (typeof col.width === "number" && !isNaN(col.width) && col.width > 0) {
+        return col.width;
+      }
+      if (typeof col.width === "string" && col.width.trim() !== "") {
+        const s = col.width.trim();
+        if (s.endsWith("%")) {
+          const pct = parseFloat(s);
+          if (!isNaN(pct) && pct > 0) return (pct / 100) * netBudget;
+        }
+        const parsed = parseFloat(s);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+      const cId = String(col.id || col.key || "").toLowerCase();
+      const cType = String(col.type || "").toLowerCase();
+      if (cId === "point_number" || cId === "sl_no" || cId === "sino" || cId === "sr_no") return 25;
+      if (cType === "status" || cId === "judgement" || cId === "status") return 35;
+      if (cType === "text" || cId === "specification" || cId === "description" || cId === "parameter") return 70;
+      if (cId.includes("master")) return 45;
+      return 45;
+    });
+
+    const sumRawWeights = rawWeights.reduce((a: number, b: number) => a + b, 0) || 1;
+    return rawWeights.map((w: number) => `${((w / sumRawWeights) * 100).toFixed(2)}%`);
+  };
+
+  const renderSingleTableGrid = (tbl: any, isHalf: boolean = false) => {
+    const unitStr = tbl.unit ? String(tbl.unit).trim() : "";
+    const hasTitle = Boolean(tbl.title && String(tbl.title).trim() !== "");
+    const titleText = hasTitle
+      ? `${String(tbl.title).trim()}${unitStr ? ` (ALL VALUES ARE IN ${unitStr})` : ""}`
+      : "";
+    const effOrientation = getEffectiveTableOrientation(tbl);
+
+    if (effOrientation === "horizontal") {
+      const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
+      const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+      const numDataCols = tbl.rows?.length || 0;
+
+      // Dynamic sizing based on column density
+      const isUltraDense = !isScreen && numDataCols > 14;
+      const isDense = !isScreen && numDataCols > 8 && numDataCols <= 14;
+
+      const firstColWidthStyle = tbl.firstColWidth
+        ? (typeof tbl.firstColWidth === "number" ? `${Math.min(tbl.firstColWidth, isUltraDense ? 100 : isDense ? 115 : 135)}px` : tbl.firstColWidth)
+        : tbl.parameterWidth
+          ? (typeof tbl.parameterWidth === "number" ? `${Math.min(tbl.parameterWidth, isUltraDense ? 100 : isDense ? 115 : 135)}px` : tbl.parameterWidth)
+          : isScreen ? "22%" : isUltraDense ? "14%" : isDense ? "16%" : "18%";
+
+      const dataColWidthStyle = tbl.dataColWidth
+        ? (typeof tbl.dataColWidth === "number" ? `${tbl.dataColWidth}px` : tbl.dataColWidth)
+        : undefined;
+
+      const dynamicTableTextSize = isScreen
+        ? "text-xs"
+        : isUltraDense
+        ? "text-[6.5px]"
+        : isDense
+        ? "text-[7px]"
+        : "text-[7.5px]";
+
+      const cellPaddingHeader = isScreen
+        ? "py-1.5 px-2"
+        : isUltraDense
+        ? "py-0.5 px-0.5"
+        : "py-1 px-1";
+
+      const cellPaddingData = isScreen
+        ? "py-1 px-1"
+        : isUltraDense
+        ? "py-0.5 px-0.5"
+        : "py-1 px-1";
+
+      const dataColPercent = numDataCols > 0
+        ? `${((100 - (isUltraDense ? 14 : isDense ? 16 : 18)) / numDataCols).toFixed(2)}%`
+        : undefined;
+
+      return (
+        <div
+          key={tbl.id}
+          className={
+            isScreen
+              ? "border border-border/80 rounded-lg overflow-hidden bg-card flex flex-col mb-3 shadow-xs"
+              : "border border-black flex flex-col bg-white overflow-hidden"
+          }
+        >
+          {hasTitle && (
+            <div
+              className={
+                isScreen
+                  ? "bg-muted/70 text-foreground text-xs font-semibold py-1.5 px-3 text-center uppercase tracking-wide border-b border-border"
+                  : "bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black"
+              }
+            >
+              {titleText}
+            </div>
+          )}
+          <div
+            className={isScreen ? "w-full overflow-x-auto" : "w-full overflow-hidden"}
+            style={!isScreen ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
+          >
+            <table
+              className={`w-full border-collapse text-center ${dynamicTableTextSize}`}
+              style={{ tableLayout: isScreen && dataColWidthStyle ? "auto" : "fixed" }}
+            >
+              <thead>
+                <tr className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                  <th
+                    className={`${cellPaddingHeader} ${
+                      isScreen
+                        ? "bg-muted/50 border border-border/70 text-foreground font-semibold"
+                        : "bg-slate-200/60 border border-black font-bold text-black"
+                    } ${getTextAlignClass(tbl.columns?.[0]?.align || 'center')} break-words whitespace-normal leading-tight`}
+                    style={{ width: firstColWidthStyle, minWidth: firstColWidthStyle }}
+                  >
+                    Parameter / Sl no
+                  </th>
+                  {tbl.rows.map((r: any, rIdx: number) => (
+                    <th
+                      key={rIdx}
+                      className={`${cellPaddingHeader} font-semibold ${
+                        isScreen
+                          ? "border border-border/70 text-foreground font-semibold"
+                          : "border border-black text-black font-bold"
+                      } whitespace-nowrap text-center font-mono`}
+                      style={
+                        isScreen && dataColWidthStyle
+                          ? { width: dataColWidthStyle, minWidth: dataColWidthStyle }
+                          : dataColPercent
+                          ? { width: dataColPercent }
+                          : undefined
+                      }
+                    >
+                      {r.point_number ?? (rIdx + 1)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {displayCols.map((col: any) => {
+                  const colAlignClass = getTextAlignClass(col.align || 'center');
+                  return (
+                    <tr key={col.id} className={isScreen ? "hover:bg-muted/20" : undefined}>
+                      <td
+                        className={`font-semibold ${
+                          isScreen
+                            ? "bg-muted/20 text-xs border border-border/70 text-foreground font-sans py-1.5 px-2"
+                            : `${isUltraDense ? "text-[6.5px] py-0.5 px-1 leading-tight" : "text-[7px] py-1 px-1.5 leading-snug"} font-sans border border-black text-black font-bold break-words whitespace-normal`
+                        } ${colAlignClass}`}
+                        style={{ width: firstColWidthStyle, minWidth: firstColWidthStyle }}
+                      >
+                        {col.label}
+                      </td>
+                      {tbl.rows.map((row: any, rIdx: number) => {
+                        const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                        const val = resolveCertificateCellValue(row, col, {
+                          tableTolerance: tbl.tolerance,
+                          tableDecimals: colDec,
+                          evalFormula: evalCanvasFormula,
+                          rowIndex: rIdx,
+                        });
+
+                        return (
+                          <td
+                            key={rIdx}
+                            className={`border ${
+                              isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
+                            } ${cellPaddingData} whitespace-nowrap text-center font-mono tabular-nums leading-tight`}
+                            style={
+                              isScreen && dataColWidthStyle
+                                ? { width: dataColWidthStyle, minWidth: dataColWidthStyle }
+                                : dataColPercent
+                                ? { width: dataColPercent }
+                                : undefined
+                            }
+                          >
+                            {renderCellContent(val)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {tbl.footerNote && (
+            <div
+              className={
+                isScreen
+                  ? "p-2 text-xs italic text-center bg-muted/20 border-t border-border text-muted-foreground"
+                  : "p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black"
+              }
+            >
+              {tbl.footerNote}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div
+        key={tbl.id}
+        className={
+          isScreen
+            ? "border border-border/80 rounded-lg overflow-hidden bg-card flex flex-col mb-3 shadow-xs"
+            : "border border-black flex flex-col bg-white overflow-hidden"
+        }
+      >
+        {hasTitle && (
+          <div
+            className={
+              isScreen
+                ? "bg-muted/70 text-foreground text-xs font-semibold py-1.5 px-3 text-center uppercase tracking-wide border-b border-border"
+                : "bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black"
+            }
+          >
+            {titleText}
+          </div>
+        )}
+        <div
+          className={isScreen ? "w-full overflow-x-auto" : "w-full overflow-hidden"}
+          style={!isScreen ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
+        >
+          <table
+            className={`w-full border-collapse text-center ${
+              isScreen
+                ? "text-xs"
+                : tbl.columns?.length > 11
+                ? "text-[6.5px]"
+                : tbl.columns?.length > 8
+                ? "text-[7.5px]"
+                : "text-[8px]"
+            }`}
+            style={{ tableLayout: "fixed" }}
+          >
+            <colgroup>
+              {computeColPercentages(tbl.columns || [], isHalf).map((pct, cIdx) => (
+                <col key={cIdx} style={{ width: pct }} />
+              ))}
+            </colgroup>
+            <thead>
+              {(() => {
+                const headerGroups = computeHeaderGroups(tbl.columns || []);
+                const colPercentages = computeColPercentages(tbl.columns || [], isHalf);
+
+                if (!headerGroups.hasGroups) {
+                  return (
+                    <tr className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                      {tbl.columns.map((col: any, colIdx: number) => (
+                        <th
+                          key={col.id}
+                          style={{ width: colPercentages[colIdx] }}
+                          className={`py-1.5 px-1 border ${
+                            isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
+                          } ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
+                        >
+                          {col.label}
+                        </th>
+                      ))}
+                    </tr>
+                  );
+                }
+
+                return (
+                  <>
+                    <tr className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                      {headerGroups.topRow.map((topItem, topIdx) => {
+                        if (topItem.type === "group") {
+                          return (
+                            <th
+                              key={`grp_${topIdx}`}
+                              colSpan={topItem.colSpan}
+                              className={`py-1 px-1 border ${
+                                isScreen
+                                  ? "border-border/70 text-foreground font-bold uppercase tracking-wider bg-muted/60"
+                                  : "border border-black text-black font-bold uppercase tracking-wider bg-slate-200"
+                              } break-words whitespace-normal leading-tight`}
+                            >
+                              {topItem.groupName}
+                            </th>
+                          );
+                        }
+                        const col = topItem.columns[0];
+                        const colIdx = tbl.columns.findIndex((c: any) => c.id === col.id);
+                        return (
+                          <th
+                            key={col.id}
+                            rowSpan={2}
+                            style={{ width: colIdx >= 0 ? colPercentages[colIdx] : undefined }}
+                            className={`py-1.5 px-1 border ${
+                              isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
+                            } align-middle ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
+                          >
+                            {col.label}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                    <tr className={isScreen ? "bg-muted/30 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                      {headerGroups.subRowColumns.map((col: any) => {
+                        const colIdx = tbl.columns.findIndex((c: any) => c.id === col.id);
+                        return (
+                          <th
+                            key={col.id}
+                            style={{ width: colIdx >= 0 ? colPercentages[colIdx] : undefined }}
+                            className={`py-1.5 px-1 border ${
+                              isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
+                            } ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
+                          >
+                            {col.label}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </>
+                );
+              })()}
+            </thead>
+            <tbody className="font-mono">
+              {(() => {
+                const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                return tbl.rows.map((row: any, rIdx: number) => {
+                  if (row.is_merged || row.isMerged) {
+                    return (
+                      <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
+                        <td
+                          colSpan={tbl.columns.length}
+                          className={`py-1.5 px-2 border ${
+                            isScreen
+                              ? "border-border/70 font-semibold text-left text-foreground bg-muted/20 text-xs"
+                              : "border border-black font-semibold text-left text-black bg-slate-50/50"
+                          }`}
+                        >
+                          {row.statement || row.merged_text || row.description || row.required_dimension || "All the jaws are free from dent and damages"}
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return (
+                    <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
+                      {tbl.columns.map((col: any) => {
+                        if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                          return null;
+                        }
+                        const spanInfo = row.cellSpans?.[col.id];
+                        const span = spanInfo?.colSpan || 1;
+                        const rSpan = spanInfo?.rowSpan || 1;
+                        const isMerged = span > 1 || rSpan > 1;
+
+                        const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
+                        const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                        let val: any = undefined;
+
+                        if (isMerged) {
+                          val = (row[col.id] !== undefined && row[col.id] !== "")
+                            ? row[col.id]
+                            : (col.id === "nominal" ? row.nominal : "") ?? "";
+                          return (
+                            <td
+                              key={col.id}
+                              colSpan={span > 1 ? span : undefined}
+                              rowSpan={rSpan > 1 ? rSpan : undefined}
+                              className={`py-1 px-1 border ${
+                                isScreen ? "border-border/70 text-foreground bg-muted/10" : "border border-black text-black bg-slate-50/50"
+                              } leading-snug whitespace-pre-line font-semibold text-center align-middle`}
+                            >
+                              {val}
+                            </td>
+                          );
+                        }
+
+                        if (isPointNo) {
+                          val = row.point_number ?? row[col.id] ?? (rIdx + 1);
+                          return (
+                            <td
+                              key={col.id}
+                              colSpan={span > 1 ? span : undefined}
+                              rowSpan={rSpan > 1 ? rSpan : undefined}
+                              className={`py-1 px-1 border ${
+                                isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
+                              } leading-snug whitespace-pre-line font-semibold text-center align-middle`}
+                            >
+                              {val}
+                            </td>
+                          );
+                        }
+
+                        val = resolveCertificateCellValue(row, col, {
+                          tableTolerance: tbl.tolerance,
+                          tableDecimals: colDec,
+                          evalFormula: evalCanvasFormula,
+                          rowIndex: rIdx,
+                        });
+
+                        return (
+                          <td
+                            key={col.id}
+                            className={`py-1.5 px-1 border ${
+                              isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
+                            } leading-tight break-words whitespace-normal ${getTextAlignClass(col.align || 'center')}`}
+                          >
+                            {renderCellContent(val)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                });
+              })()}
+            </tbody>
+          </table>
+        </div>
+        {tbl.footerNote && (
+          <div
+            className={
+              isScreen
+                ? "p-2 text-xs italic text-center bg-muted/20 border-t border-border text-muted-foreground"
+                : "p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black"
+            }
+          >
+            {tbl.footerNote}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex flex-col">
+      {blocks.map((block: any, idx: number) => {
+        const mt = block.marginTop !== undefined ? Number(block.marginTop) : 0;
+        const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : (block.type === "page_break" ? 0 : 6);
+        const blockSpacingStyle: React.CSSProperties = {
+          marginTop: `${mt}px`,
+          marginBottom: `${mb}px`,
+        };
+        if (block.type === "table_grid") {
+          return (
+            <div key={block.id || idx} style={blockSpacingStyle}>
+              {renderSingleTableGrid(block, false)}
+            </div>
+          );
+        }
+        if (block.type === "split_row") {
+          const numCols = block.children?.length || 2;
+          return (
+            <div
+              key={block.id || idx}
+              style={{
+                ...blockSpacingStyle,
+                display: "grid",
+                gridTemplateColumns: isScreen ? undefined : `repeat(${numCols}, minmax(0, 1fr))`,
+              }}
+              className={`grid ${isScreen ? `grid-cols-1 md:grid-cols-${numCols} gap-3` : "gap-2"} items-start w-full`}
+            >
+              {block.children?.map((child: any, cIdx: number) => {
+                const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
+                return (
+                  <div key={child?.id || cIdx} className="min-w-0 w-full overflow-hidden">
+                    {child?.type === "table_grid" && renderSingleTableGrid(child, true)}
+                    {child?.type === "text_block" && child.content?.trim() && (
+                      <div
+                        className={
+                          isScreen
+                            ? "p-2.5 border border-border rounded-lg text-xs bg-muted/30 text-foreground text-center font-medium"
+                            : "p-1.5 border border-black text-[8px] bg-slate-50 text-center font-medium"
+                        }
+                      >
+                        {child.content}
+                      </div>
+                    )}
+                    {(child?.type === "diagram_block" || child?.type === "diagram") && (child.imageUrl || child.image) && (
+                      <div
+                        className={`w-full border ${
+                          isScreen ? "border-border rounded-lg bg-card p-2" : "border border-black bg-white p-1.5"
+                        } flex ${
+                          child.alignment === "left"
+                            ? "justify-start"
+                            : child.alignment === "right"
+                            ? "justify-end"
+                            : "justify-center"
+                        } items-center`}
+                      >
+                        <img
+                          src={child.imageUrl || child.image}
+                          alt={child.caption || "Calibration Diagram"}
+                          style={{
+                            width: child.width ? `${child.width}px` : "240px",
+                            maxWidth: "100%",
+                            maxHeight: child.height ? `${child.height}px` : "140px",
+                            objectFit: "contain",
+                          }}
+                          className="block rounded"
+                        />
+                      </div>
+                    )}
+                    {isBlank && <div className="w-full min-h-[20px]" />}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }
+        if (block.type === "matrix_table") {
+          const totalCols = getMatrixTotalCols(block as any);
+          const { coveredCells: coveredHeaders } = computeMatrix2DGrid(block.headers || [], totalCols);
+          const { coveredCells: coveredRows } = computeMatrix2DGrid(block.rows || [], totalCols);
+
+          return (
+            <div
+              key={block.id || idx}
+              style={{
+                ...blockSpacingStyle,
+                width: block.width === "50%" ? "50%" : "100%",
+                marginLeft: block.width === "50%" ? "auto" : undefined,
+                marginRight: block.width === "50%" ? "auto" : undefined,
+              }}
+              className={
+                isScreen
+                  ? "border border-border/80 rounded-lg overflow-hidden bg-card flex flex-col mb-3 shadow-xs"
+                  : "border border-black flex flex-col bg-white overflow-hidden"
+              }
+            >
+              {Boolean(block.title && String(block.title).trim() !== "") && (
+                <div
+                  className={
+                    isScreen
+                      ? "bg-muted/70 text-foreground text-xs font-semibold py-1.5 px-3 text-center uppercase tracking-wide border-b border-border"
+                      : "bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black"
+                  }
+                >
+                  {String(block.title).trim()}
+                </div>
+              )}
+              <div
+                className={isScreen ? "w-full overflow-x-auto" : "w-full overflow-hidden"}
+                style={!isScreen ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
+              >
+                <table
+                  className={`w-full border-collapse text-center font-mono ${isScreen ? "text-xs" : "text-[7.5px]"}`}
+                  style={{ tableLayout: "fixed" }}
+                >
+                  <thead>
+                    {block.headers?.map((hRow: any[], hIdx: number) => {
+                      const cells = Array.isArray(hRow) ? hRow : [hRow];
+                      let colPointer = 0;
+                      return (
+                        <tr key={hIdx} className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                          {cells.map((rawCell: any, cIdx: number) => {
+                            while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
+                              colPointer++;
+                            }
+                            const actualCol = colPointer;
+                            const cell = normalizeMatrixCell(rawCell);
+                            colPointer += (cell.colSpan || 1);
+
+                            if (coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                              return null;
+                            }
+
+                            return (
+                              <th
+                                key={cIdx}
+                                colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                style={{ textAlign: cell.align || "center" }}
+                                className={`py-1.5 px-1 border ${
+                                  isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
+                                } break-words whitespace-normal leading-tight`}
+                              >
+                                {cell.text}
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </thead>
+                  <tbody>
+                    {(!block.rows || block.rows.length === 0) ? (
+                      <tr>
+                        <td
+                          colSpan={totalCols}
+                          className={`py-1.5 px-1 border ${
+                            isScreen ? "border-border/70 text-muted-foreground italic text-center" : "border border-black text-black italic text-center"
+                          } leading-snug`}
+                        >
+                          -
+                        </td>
+                      </tr>
+                    ) : (
+                      block.rows.map((row: any[], rIdx: number) => {
+                        const cells = Array.isArray(row) ? row : [row];
+                        let colPointer = 0;
+                        return (
+                          <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
+                            {cells.map((rawCell: any, cIdx: number) => {
+                              while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
+                                colPointer++;
+                              }
+                              const actualCol = colPointer;
+                              const cell = normalizeMatrixCell(rawCell);
+                              colPointer += (cell.colSpan || 1);
+
+                              if (coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                return null;
+                              }
+
+                              return (
+                                <td
+                                  key={cIdx}
+                                  colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                  rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                  style={{ textAlign: cell.align || "center" }}
+                                  className={`py-1.5 px-1 border ${
+                                    isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
+                                  } leading-tight break-words whitespace-normal`}
+                                >
+                                  {renderCellContent(cell.text)}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {block.footerNote && (
+                <div
+                  className={
+                    isScreen
+                      ? "p-2 text-xs italic text-center bg-muted/20 border-t border-border text-muted-foreground"
+                      : "text-[7.5px] italic text-slate-700 dark:text-slate-300 p-1 border-t border-black bg-slate-50 text-center"
+                  }
+                >
+                  {block.footerNote}
+                </div>
+              )}
+            </div>
+          );
+        }
+        if (block.type === "text_block") {
+          return (
+            <div
+              key={block.id || idx}
+              style={blockSpacingStyle}
+              className={
+                isScreen
+                  ? "p-2.5 border border-border rounded-lg text-xs bg-muted/30 text-foreground text-center font-medium"
+                  : "p-1 border border-black text-[8px] bg-slate-50 text-center font-medium"
+              }
+            >
+              {block.content}
+            </div>
+          );
+        }
+        if (block.type === "diagram_block" || block.type === "diagram") {
+          const dImg = block.imageUrl || block.image;
+          if (!dImg) return null;
+          return (
+            <div
+              key={block.id || idx}
+              style={blockSpacingStyle}
+              className={`w-full border ${
+                isScreen ? "border-border rounded-lg bg-card p-2" : "border border-black bg-white p-1.5"
+              } flex ${
+                block.alignment === "left"
+                  ? "justify-start"
+                  : block.alignment === "right"
+                  ? "justify-end"
+                  : "justify-center"
+              } items-center`}
+            >
+              <img
+                src={dImg}
+                alt={block.caption || "Calibration Diagram"}
+                style={{
+                  width: block.width ? `${block.width}px` : "240px",
+                  maxWidth: "100%",
+                  maxHeight: block.height ? `${block.height}px` : "140px",
+                  objectFit: "contain",
+                }}
+                className="block rounded"
+              />
+            </div>
+          );
+        }
+        if (block.type === "page_break") {
+          return (
+            <div
+              key={block.id || idx}
+              style={blockSpacingStyle}
+              className={`border-t border-dashed ${
+                isScreen ? "border-border my-2 pt-1 text-[10px]" : "border-slate-400 my-1 pt-0.5 text-[7px]"
+              } text-center text-muted-foreground print:break-before-page`}
+            >
+              --- PAGE BREAK ---
+            </div>
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
 }
 
 interface CertificatePreviewProps {
@@ -177,454 +1066,10 @@ export function CertificatePreview({
     (calibration as any).layout_blocks ||
     ((calibration as any).template as any)?.layout_blocks;
 
-  // ── Render Canvas Layout Blocks (Multi-Table, Split-Row, Matrix, Notes) ──
-  const renderCanvasLayoutBlocks = (blocks: any[]) => {
-    if (!blocks || blocks.length === 0) return null;
-
-    const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01, dec: number = 3): any => {
-      if (!formula) return "";
-      try {
-        let expr = formula.trim();
-        const nominal = parseFloat(String(row.nominal)) || 0;
-        const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.01;
-
-        // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
-        const isSubtraction = expr.includes("-") || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
-        const avgMatch = !isSubtraction && expr.match(/^=?AVERAGE\(([^)]+)\)/i);
-        if (avgMatch || (!isSubtraction && (expr.toLowerCase() === "avg" || expr.toLowerCase() === "average"))) {
-          let trials: number[] = [];
-          if (avgMatch) {
-            const varNames = avgMatch[1].split(",").map((s: string) => s.trim());
-            varNames.forEach((v: string) => {
-              const rawVal = row[v] ?? row[`col_${v}`] ?? row[`t${v}`];
-              if (rawVal !== undefined && String(rawVal).trim() !== "") {
-                const val = parseFloat(String(rawVal));
-                if (!isNaN(val)) trials.push(val);
-              }
-            });
-          }
-          if (trials.length === 0) {
-            const candidateKeys = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5];
-            trials = candidateKeys
-              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-              .map((v) => parseFloat(String(v)))
-              .filter((v) => !isNaN(v));
-          }
-          if (trials.length === 0) return "-";
-          const avg = trials.reduce((a, b) => a + b, 0) / trials.length;
-          return avg.toFixed(dec);
-        }
-
-        // 2. ERROR (measured - nominal or nominal - measured)
-        const isError =
-          /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr) ||
-          /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr) ||
-          (/error/i.test(expr) && !/PASS.*FAIL/i.test(expr));
-
-        if (isError) {
-          const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr);
-          let measuredVal: number | undefined = undefined;
-
-          if (row.avg !== undefined && row.avg !== "-" && String(row.avg).trim() !== "") {
-            measuredVal = parseFloat(String(row.avg));
-          } else if (row.average !== undefined && row.average !== "-" && String(row.average).trim() !== "") {
-            measuredVal = parseFloat(String(row.average));
-          } else {
-            const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
-              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-              .map((v) => parseFloat(String(v)))
-              .filter((v) => !isNaN(v));
-            if (trials.length > 0) {
-              measuredVal = trials.reduce((a, b) => a + b, 0) / trials.length;
-            } else if (row.reading !== undefined && String(row.reading).trim() !== "") {
-              measuredVal = parseFloat(String(row.reading));
-            } else if (row.ascending_reading !== undefined && String(row.ascending_reading).trim() !== "") {
-              measuredVal = parseFloat(String(row.ascending_reading));
-            } else if (row.t1 !== undefined && String(row.t1).trim() !== "") {
-              measuredVal = parseFloat(String(row.t1));
-            }
-          }
-
-          if (measuredVal === undefined || isNaN(measuredVal)) return "-";
-          const err = isInverted ? nominal - measuredVal : measuredVal - nominal;
-          return (err >= 0 ? "+" : "") + err.toFixed(dec);
-        }
-
-        // 3. STATUS / JUDGEMENT
-        if (/IF\(.*PASS.*FAIL.*\)/i.test(expr) || /PASS.*FAIL/i.test(expr)) {
-          const limitMatch = expr.match(/<=\s*([0-9.]+)/i) || expr.match(/<\s*([0-9.]+)/i);
-          const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
-
-          const hasReading =
-            row.error !== undefined ||
-            row.avg !== undefined ||
-            row.average !== undefined ||
-            (row.reading !== undefined && String(row.reading).trim() !== "") ||
-            (row.t1 !== undefined && String(row.t1).trim() !== "");
-          if (!hasReading) return "-";
-
-          let errVal: number;
-          if (row.error !== undefined && row.error !== "-") {
-            errVal = Math.abs(typeof row.error === "number" ? row.error : parseFloat(String(row.error).replace("+", "")) || 0);
-          } else {
-            const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal));
-            errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
-          }
-          return errVal <= tolLimit + 1e-9 ? "PASS" : "FAIL";
-        }
-
-        return row[expr] ?? row[formula] ?? "-";
-      } catch {
-        return "-";
-      }
-    };
-
-    const renderSingleTableGrid = (tbl: any) => {
-      const unitStr = tbl.unit || "mm";
-      const effOrientation = getEffectiveTableOrientation(tbl);
-
-      if (effOrientation === "horizontal") {
-        const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
-        const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-
-        return (
-          <div key={tbl.id} className="border border-black flex flex-col bg-white">
-            <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
-              {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
-            </div>
-            <div className="w-full">
-              <table className="w-full border-collapse text-[7.5px] text-center" style={{ tableLayout: 'fixed' }}>
-                <thead>
-                  <tr className="bg-slate-100 font-bold">
-                    <th className="py-1 px-1 text-left bg-slate-200/60 border border-black font-bold text-black" style={{ width: '18%' }}>
-                      Parameter / Sl no
-                    </th>
-                    {tbl.rows.map((r: any, rIdx: number) => (
-                      <th key={rIdx} className="py-1 px-0.5 font-bold border border-black text-black">
-                        {r.point_number ?? (rIdx + 1)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="font-mono">
-                  {displayCols.map((col: any) => (
-                    <tr key={col.id}>
-                      <td className="py-1 px-1 text-left font-bold bg-slate-50 text-[7px] leading-snug font-sans border border-black text-black">
-                        {col.label}
-                      </td>
-                      {tbl.rows.map((row: any, rIdx: number) => {
-                        const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
-                        let val: any = row[col.id];
-                        if (col.type === "nominal") {
-                          val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
-                        } else if (col.type === "text") {
-                          val = row.description || row[col.id] || "-";
-                        } else if (col.type === "formula" || col.type === "status") {
-                          val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, colDec);
-                        } else if (col.type === "reading" || col.type === "trial" || col.type === "number") {
-                          if (val !== undefined && val !== null && val !== "" && val !== "-") {
-                            const p = parseFloat(String(val));
-                            if (!isNaN(p)) {
-                              val = colDec === 0 ? String(Math.round(p)) : p.toFixed(colDec);
-                            }
-                          } else {
-                            val = "-";
-                          }
-                        } else if (val === undefined || val === null || val === "") {
-                          val = "-";
-                        }
-
-                        const isPass = val === "PASS" || val === "OK";
-                        const isFail = val === "FAIL" || val === "REJECT";
-
-                        return (
-                          <td
-                            key={rIdx}
-                            className={`py-1 px-0.5 border border-black leading-snug ${
-                              isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : "text-black"
-                            }`}
-                          >
-                            {val}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {tbl.footerNote && (
-              <div className="p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black">
-                {tbl.footerNote}
-              </div>
-            )}
-          </div>
-        );
-      }
-
-      return (
-        <div key={tbl.id} className="border border-black flex flex-col bg-white">
-          <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
-            {tbl.title} {unitStr ? `(ALL VALUES ARE IN ${unitStr})` : ""}
-          </div>
-          <div className="w-full">
-            <table className={`w-full border-collapse text-center ${tbl.columns?.length > 11 ? "text-[6.5px]" : tbl.columns?.length > 8 ? "text-[7.5px]" : "text-[8px]"}`}>
-              <thead>
-                <tr className="bg-slate-100 font-bold">
-                  {tbl.columns.map((col: any) => (
-                    <th
-                      key={col.id}
-                      style={{
-                        width:
-                          typeof col.width === "number"
-                            ? `${col.width}px`
-                            : typeof col.width === "string" && /^\d+$/.test(col.width.trim())
-                              ? `${col.width.trim()}px`
-                              : col.width,
-                      }}
-                      className="py-1 px-0.5 border border-black text-black font-bold"
-                    >
-                      {col.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="font-mono">
-                {(() => {
-                  const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
-                  return tbl.rows.map((row: any, rIdx: number) => {
-                  if (row.is_merged || row.isMerged) {
-                    return (
-                      <tr key={rIdx}>
-                        <td
-                          colSpan={tbl.columns.length}
-                          className="py-1 px-2 border border-black font-semibold text-left text-black bg-slate-50/50"
-                        >
-                          {row.statement || row.merged_text || row.description || row.required_dimension || "All the jaws are free from dent and damages"}
-                        </td>
-                      </tr>
-                    );
-                  }
-                  return (
-                    <tr key={rIdx}>
-                    {tbl.columns.map((col: any, colIdx: number) => {
-                      if (coveredCells.has(`${rIdx}_${col.id}`)) {
-                        return null;
-                      }
-                      const spanInfo = row.cellSpans?.[col.id];
-                      const span = spanInfo?.colSpan || 1;
-                      const rSpan = spanInfo?.rowSpan || 1;
-                      const isMerged = span > 1 || rSpan > 1;
-
-                      const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
-                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
-                      let val: any = row[col.id];
-                      if (isMerged) {
-                        val = (row[col.id] !== undefined && row[col.id] !== "")
-                          ? row[col.id]
-                          : (col.id === "nominal" ? row.nominal : "") ?? "";
-                        return (
-                          <td
-                            key={col.id}
-                            colSpan={span > 1 ? span : undefined}
-                            rowSpan={rSpan > 1 ? rSpan : undefined}
-                            className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center bg-slate-50/50 align-middle"
-                          >
-                            {val}
-                          </td>
-                        );
-                      }
-                      if (isPointNo) {
-                        val = row.point_number ?? row[col.id] ?? (rIdx + 1);
-                        return (
-                          <td
-                            key={col.id}
-                            colSpan={span > 1 ? span : undefined}
-                            rowSpan={rSpan > 1 ? rSpan : undefined}
-                            className="py-1 px-1 border border-black leading-snug whitespace-pre-line text-black font-semibold text-center align-middle"
-                          >
-                            {val}
-                          </td>
-                        );
-                      }
-                      if (col.type === "nominal") {
-                        val = row.nominal !== undefined ? Number(row.nominal).toFixed(colDec) : "-";
-                      } else if (col.type === "text") {
-                        val = row[col.id] || row.required_dimension || row.description || "-";
-                      } else if (col.type === "formula" || col.type === "status") {
-                        val = row[col.id] ?? evalCanvasFormula(col.formula || col.id, row, tbl.tolerance, colDec);
-                      } else if (col.type === "reading" || col.type === "trial" || col.type === "number") {
-                        if (val !== undefined && val !== null && val !== "" && val !== "-") {
-                          const p = parseFloat(String(val));
-                          if (!isNaN(p)) {
-                            val = colDec === 0 ? String(Math.round(p)) : p.toFixed(colDec);
-                          }
-                        } else {
-                          val = "-";
-                        }
-                      } else if (val === undefined || val === null || val === "") {
-                        val = "-";
-                      }
-
-                      const isPass = val === "PASS" || val === "OK";
-                      const isFail = val === "FAIL" || val === "REJECT";
-
-                      return (
-                        <td
-                          key={col.id}
-                          className={`py-1 px-1 border border-black leading-snug whitespace-pre-line ${
-                            isPass ? "text-emerald-700 font-bold" : isFail ? "text-red-600 font-bold" : "text-black"
-                          }`}
-                        >
-                          {val}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                );
-              });
-            })()}
-            </tbody>
-            </table>
-          </div>
-          {tbl.footerNote && (
-            <div className="p-1 text-[7.5px] italic text-center bg-slate-50 border-t border-black">
-              {tbl.footerNote}
-            </div>
-          )}
-        </div>
-      );
-    };
-
-    return (
-      <div className="flex flex-col">
-        {blocks.map((block: any, idx: number) => {
-          const mt = block.marginTop !== undefined ? Number(block.marginTop) : 0;
-          const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : (block.type === "page_break" ? 0 : 6);
-          const blockSpacingStyle: React.CSSProperties = {
-            marginTop: `${mt}px`,
-            marginBottom: `${mb}px`,
-          };
-          if (block.type === "table_grid") {
-            return (
-              <div key={block.id || idx} style={blockSpacingStyle}>
-                {renderSingleTableGrid(block)}
-              </div>
-            );
-          }
-          if (block.type === "split_row") {
-            return (
-              <div key={block.id || idx} style={blockSpacingStyle} className={`grid grid-cols-1 md:grid-cols-${block.children?.length || 2} gap-2 items-start`}>
-                {block.children?.map((child: any, cIdx: number) => {
-                  const isBlank = !child || child.type === "blank" || child.type === "empty" || (child.type === "text_block" && !child.content?.trim());
-                  return (
-                    <div key={child?.id || cIdx}>
-                      {child?.type === "table_grid" && renderSingleTableGrid(child)}
-                      {child?.type === "text_block" && child.content?.trim() && (
-                        <div className="p-1.5 border border-black text-[8px] bg-slate-50 text-center font-medium">
-                          {child.content}
-                        </div>
-                      )}
-                      {isBlank && <div className="w-full min-h-[20px]" />}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          }
-          if (block.type === "matrix_table") {
-            return (
-              <div key={block.id || idx} style={blockSpacingStyle} className="border border-black flex flex-col bg-white">
-                <div className="bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black">
-                  {block.title}
-                </div>
-                <table className="w-full border-collapse text-[7.5px] text-center font-mono">
-                  <thead>
-                    {block.headers?.map((hRow: any[], hIdx: number) => (
-                      <tr key={hIdx} className="bg-slate-100 font-bold">
-                        {hRow.map((cell: any, cIdx: number) => (
-                          <th
-                            key={cIdx}
-                            colSpan={cell.colSpan}
-                            rowSpan={cell.rowSpan}
-                            className="py-1 px-1 border border-black text-black font-bold"
-                          >
-                            {cell.text}
-                          </th>
-                        ))}
-                      </tr>
-                    ))}
-                  </thead>
-                  <tbody>
-                    {block.rows?.map((row: any[], rIdx: number) => (
-                      <tr key={rIdx}>
-                        {row.map((cellVal: any, cIdx: number) => (
-                          <td
-                            key={cIdx}
-                            className="py-1 px-1 border border-black leading-snug text-black"
-                          >
-                            {cellVal}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          }
-          if (block.type === "text_block") {
-            return (
-              <div key={block.id || idx} style={blockSpacingStyle} className="p-1 border border-black text-[8px] bg-slate-50 text-center font-medium">
-                {block.content}
-              </div>
-            );
-          }
-          if (block.type === "diagram_block" || block.type === "diagram") {
-            const dImg = block.imageUrl || block.image;
-            if (!dImg) return null;
-            return (
-              <div
-                key={block.id || idx}
-                style={blockSpacingStyle}
-                className={`border border-black bg-white p-1.5 flex ${
-                  block.alignment === "left"
-                    ? "justify-start"
-                    : block.alignment === "right"
-                    ? "justify-end"
-                    : "justify-center"
-                } items-center`}
-              >
-                <img
-                  src={dImg}
-                  alt={block.caption || "Calibration Diagram"}
-                  style={{
-                    width: block.width ? `${block.width}px` : "240px",
-                    maxHeight: block.height ? `${block.height}px` : "140px",
-                    objectFit: "contain",
-                  }}
-                  className="block"
-                />
-              </div>
-            );
-          }
-          if (block.type === "page_break") {
-            return (
-              <div key={block.id || idx} style={blockSpacingStyle} className="border-t border-dashed border-slate-400 my-1 pt-0.5 text-center text-[7px] text-muted-foreground print:break-before-page">
-                --- PAGE BREAK ---
-              </div>
-            );
-          }
-          return null;
-        })}
-      </div>
-    );
-  };
-
   // Helper to render Calibration Results
   const renderCalibrationResult = () => {
     if (layoutBlocks && layoutBlocks.length > 0) {
-      return renderCanvasLayoutBlocks(layoutBlocks);
+      return <CanvasBlocksRenderer blocks={layoutBlocks} />;
     }
 
     if (!points || points.length === 0) return null;
@@ -988,8 +1433,11 @@ export function CertificatePreview({
       }
 
       const certElement = certRef.current;
+      certElement.classList.add("exporting-cert-png");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
       const targetWidth = 794;
-      const targetHeight = Math.ceil(Math.max(certElement.scrollHeight, certElement.offsetHeight)) + 8;
+      const targetHeight = Math.ceil(Math.max(certElement.scrollHeight, certElement.offsetHeight)) + 4;
 
       const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
       const dataUrl = await toPng(certElement, {
@@ -1024,6 +1472,9 @@ export function CertificatePreview({
       console.error("Failed to export certificate image", err);
       toast.error("Failed to generate PNG certificate image");
     } finally {
+      if (certRef.current) {
+        certRef.current.classList.remove("exporting-cert-png");
+      }
       setDownloadingPng(false);
     }
   };
@@ -1054,8 +1505,36 @@ export function CertificatePreview({
       {/* Main Certificate Sheet */}
       <div
         ref={certRef}
-        className="bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 min-h-[1123px] overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
+        className="relative bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 min-h-[1123px] overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
       >
+        {/* CSS rules for zero scrollbars & clean export */}
+        <style>{`
+          .exporting-cert-png,
+          .exporting-cert-png * {
+            scrollbar-width: none !important;
+            -ms-overflow-style: none !important;
+          }
+          .exporting-cert-png *::-webkit-scrollbar {
+            display: none !important;
+            width: 0 !important;
+            height: 0 !important;
+          }
+          .exporting-cert-png div[class*="overflow-x-auto"],
+          .exporting-cert-png div[class*="overflow-auto"],
+          .exporting-cert-png div[class*="overflow-hidden"] {
+            overflow: visible !important;
+          }
+        `}</style>
+        {/* Dynamic Watermark for Unapproved Draft / Pending Approvals */}
+        {calibration.approval_status !== "Approved" && (
+          <div className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-20">
+            <span className="text-red-500/12 text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg border-4 border-red-500/15 py-3 px-6 rounded-xl">
+              {calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"
+                ? "REVIEWED - PENDING FINAL APPROVAL"
+                : "DRAFT - PENDING REVIEW"}
+            </span>
+          </div>
+        )}
       {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
       <div
         className="p-2.5 text-black w-full"
@@ -1361,34 +1840,34 @@ export function CertificatePreview({
           {/* Optional Diagram / Schematic Image */}
           {(() => {
             let diagramImage: string | null = null;
-            if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+            if (calibration.diagram_image && typeof calibration.diagram_image === "string" && calibration.diagram_image.trim()) {
               diagramImage = calibration.diagram_image;
-            } else if ((calibration.instrument as any)?.custom_parameters?.diagram_image !== undefined) {
-              diagramImage = (calibration.instrument as any)?.custom_parameters?.diagram_image;
-            } else if (((calibration as any).template as any)?.diagram_image) {
+            } else if ((calibration.instrument as any)?.custom_parameters?.diagram_image && typeof (calibration.instrument as any).custom_parameters.diagram_image === "string" && (calibration.instrument as any).custom_parameters.diagram_image.trim()) {
+              diagramImage = (calibration.instrument as any).custom_parameters.diagram_image;
+            } else if (((calibration as any).template as any)?.diagram_image && typeof ((calibration as any).template as any).diagram_image === "string" && ((calibration as any).template as any).diagram_image.trim()) {
               diagramImage = ((calibration as any).template as any).diagram_image;
             }
             if (!diagramImage || (typeof diagramImage === "string" && !diagramImage.trim())) return null;
 
             const diagramWidth =
               calibration.diagram_image_width ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_width ||
               ((calibration as any).template as any)?.diagram_image_width ||
-              240;
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_width ||
+              300;
             const diagramHeight =
               calibration.diagram_image_height ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_height ||
               ((calibration as any).template as any)?.diagram_image_height ||
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_height ||
               140;
             const diagramAlignment =
               calibration.diagram_image_alignment ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_alignment ||
               ((calibration as any).template as any)?.diagram_image_alignment ||
+              (calibration.instrument as any)?.custom_parameters?.diagram_image_alignment ||
               "center";
 
             return (
               <div
-                className={`border border-black bg-white p-1.5 flex ${
+                className={`w-full border border-black bg-white p-1.5 flex ${
                   diagramAlignment === "left"
                     ? "justify-start"
                     : diagramAlignment === "right"
@@ -1401,6 +1880,7 @@ export function CertificatePreview({
                   alt="Calibration Diagram"
                   style={{
                     width: `${diagramWidth}px`,
+                    maxWidth: "100%",
                     maxHeight: `${diagramHeight}px`,
                     objectFit: "contain",
                   }}
@@ -1413,7 +1893,7 @@ export function CertificatePreview({
           {/* Calibration Result */}
           {renderCalibrationResult()}
 
-          {/* Signature & Authentication Block */}
+          {/* Signature & Authentication Block (3 Columns: Calibrated By | Reviewed By | Approved By) */}
           {(() => {
             const isImgUrl = (str?: string) =>
               !!str && (str.startsWith("data:image") || str.startsWith("http") || str.startsWith("/"));
@@ -1427,16 +1907,21 @@ export function CertificatePreview({
                     isImgUrl(u.signature),
                 )?.signature;
 
-            const rawApprovedSig =
-              (calibration as any).approved_by_signature ||
-              (calibration as any).reviewed_by_signature;
+            const rawReviewedSig = (calibration as any).reviewed_by_signature;
+            const reviewedSigImg = isImgUrl(rawReviewedSig)
+              ? rawReviewedSig
+              : usersList.find(
+                  (u) =>
+                    (u.name === calibration.reviewed_by || u.id === calibration.reviewed_by) &&
+                    isImgUrl(u.signature),
+                )?.signature;
 
+            const rawApprovedSig = (calibration as any).approved_by_signature;
             const approvedSigImg = isImgUrl(rawApprovedSig)
               ? rawApprovedSig
               : usersList.find(
                   (u) =>
                     (u.name === calibration.approved_by ||
-                      u.name === calibration.reviewed_by ||
                       u.id === calibration.approved_by ||
                       u.role === "Quality Manager" ||
                       u.role === "Administrator") &&
@@ -1448,6 +1933,7 @@ export function CertificatePreview({
 
             return (
               <div className={`border border-black ${isCompact ? "p-1.5 mt-auto" : "p-2 mt-auto"} grid grid-cols-3 gap-2 items-end`}>
+                {/* Column 1: Calibrated By */}
                 <div className="text-center space-y-0.5">
                   <div
                     className="flex items-end justify-center"
@@ -1480,30 +1966,40 @@ export function CertificatePreview({
                   </div>
                 </div>
 
-                <div className="text-center flex flex-col items-center justify-center space-y-0.5">
-                  <img
-                    src="/Approved-seal1.png"
-                    alt="Approval Seal"
-                    style={{
-                      maxHeight: `${sigHeight * 1.5}px`,
-                      maxWidth: `${sigWidth * 1.2}px`,
-                    }}
-                    className="object-contain mx-auto"
-                    onError={(e) => {
-                      const target = e.currentTarget;
-                      target.style.display = "none";
-                      if (target.nextElementSibling) {
-                        (target.nextElementSibling as HTMLElement).style.display = "flex";
-                      }
-                    }}
-                  />
-                  <div className={`hidden ${isCompact ? "w-10 h-10 text-[6px]" : "w-14 h-14 text-[7px]"} rounded-full border-2 border-dashed border-sky-800 items-center justify-center font-bold text-sky-900 text-center leading-none p-1`}>
-                    CALIBRATION
-                    <br />
-                    SEAL / STAMP
+                {/* Column 2: Reviewed By */}
+                <div className="text-center space-y-0.5">
+                  <div
+                    className="flex items-end justify-center"
+                    style={{ minHeight: `${sigHeight * 1.33}px` }}
+                  >
+                    {reviewedSigImg ? (
+                      <img
+                        src={reviewedSigImg}
+                        alt="Signature"
+                        style={{
+                          maxHeight: `${sigHeight * 1.33}px`,
+                          maxWidth: `${sigWidth * 1.33}px`,
+                        }}
+                        className="object-contain mx-auto"
+                      />
+                    ) : (
+                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
+                        {calibration.reviewed_by || "Sign"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="border-t border-black pt-0.5">
+                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+                      {calibration.reviewed_by || "Reviewed By"}
+                    </p>
+                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
+                      {calibration.reviewed_by_designation ||
+                        "Calibration Reviewer"}
+                    </p>
                   </div>
                 </div>
 
+                {/* Column 3: Approved By */}
                 <div className="text-center space-y-0.5">
                   <div
                     className="flex items-end justify-center"
@@ -1521,20 +2017,17 @@ export function CertificatePreview({
                       />
                     ) : (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.approved_by ||
-                          calibration.reviewed_by ||
-                          "Sign"}
+                        {calibration.approved_by || "Sign"}
                       </span>
                     )}
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {calibration.approved_by ||
-                        calibration.reviewed_by ||
-                        "Authorized By"}
+                      {calibration.approved_by || "Approved By"}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
-                      {calibration.approved_by_designation || "Quality Manager"}
+                      {calibration.approved_by_designation ||
+                        "Quality Manager / Approver"}
                     </p>
                   </div>
                 </div>

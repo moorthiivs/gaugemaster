@@ -1,4 +1,4 @@
-import { CanvasBlock, TableGridBlock, MatrixTableBlock, TextBlock, SplitRowBlock, CanvasColumnDef, CalibrationCalculationModel } from "@/types/template";
+import { CanvasBlock, TableGridBlock, MatrixTableBlock, MatrixCell, TextBlock, SplitRowBlock, CanvasColumnDef, CalibrationCalculationModel } from "@/types/template";
 import { validateFormulaSyntax, validateFormula, evaluateCanvasRowFormulas, buildRowContext } from "./formulaEngine";
 import { translateExcelFormula, explainSemanticFormula } from "./excelFormulaTranslator";
 import { auditCalibrationTable, inferTableCalculationModel } from "./calibrationTableAuditor";
@@ -155,16 +155,30 @@ STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/IN
 
 CRITICAL EXTRACTION & FIDELITY RULES:
 0. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
-   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data OR a valid calibration template format / measurement grid skeleton.
-   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables, OR blank calibration template formats / Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data, a valid calibration template format / measurement grid skeleton, OR a metrology specification & tolerance reference table.
+   - GENUINE CALIBRATION & METROLOGY DOCUMENTS INCLUDE:
+     a) Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables.
+     b) Blank calibration template formats or Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+     c) SPECIFICATION & TOLERANCE TABLES, MAXIMUM PERMISSIBLE ERROR (MPE) TABLES, ACCURACY LIMITS, REPEATABILITY TABLES, AND CATALOGUE / STANDARD REFERENCE TABLES:
+        - Examples: Maximum Permissible Error (MPE) in Measurement tables (e.g. Mitutoyo Catalogue E2008, Starrett, Fowler, ISO/IS/DIN/JIS standards), error allowable limits, repeatability limits, new vs recalibration tolerance limits.
+        - In metrology and calibration laboratories, specification/tolerance/MPE tables are essential reference tables that define calibration acceptance limits and are frequently added to calibration certificates and templates.
+        - NEVER REJECT THESE AS INVALID! If an uploaded document or image contains a Maximum Permissible Error (MPE) table, tolerance table, error limits table, or specification reference table:
+          * Set "isValidCalibrationDocument": true!
+          * Set "detectedDocumentType": "specification_tolerance_table".
+          * Extract all columns and rows from the table verbatim into a "table_grid" block!
+          * Map the table columns accurately (e.g. Range (mm), Error Parameter / Criteria, New (mm), Recalib (mm), or whatever headers appear).
+          * Assign semantic roles (e.g. "SPECIFICATION", "TOLERANCE", "LOWER_LIMIT", "UPPER_LIMIT", "METADATA").
+          * Populate every row with the real numeric/text values from the table.
+          * Include any notes or catalogue references (e.g. "Mitutoyo Catalogue (E2008) referred") in the block title, description, or notes!
    - SPECIAL RULE FOR BLANK TEMPLATE FORMATS & SKELETONS:
      * If an uploaded sheet or image contains valid calibration column headers (such as Specification, Nominal, Readings/Trials like X-X, Y-Y, Average, Error/Deviation, Judgement) but the rows are empty or only contain pre-calibration/receipt condition headings:
      * DO NOT REJECT THIS DOCUMENT! It is a genuine calibration template format.
      * Recognize it as a valid calibration document ("isValidCalibrationDocument": true).
      * Extract all calibration columns verbatim with their semantic roles and formulas (e.g. Average formula = AVERAGE(x_top, x_bottom, y_top, y_bottom), Deviation formula = average - nominal).
      * Generate 3 to 5 realistic sample gauge calibration rows (e.g. "point_number: 1, description: Gauge Diameter Ø25.000 mm, nominal: 25.000") so the user receives a complete, functional template ready for use.
-   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, non-calibration paperwork, or files with zero calibration columns.
-   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT (has zero calibration tables/columns):
+   - INVALID DOCUMENTS INCLUDE: Only non-technical, non-metrological files with ZERO tables, ZERO tolerances, and ZERO measurement specs — such as company logos, brand watermarks, avatars, photos of people or vehicles, marketing graphics, retail receipts, or shipping invoices.
+   - Any document or image containing a tabular layout of engineering measurements, tolerances, permissible errors, or calibration specifications is a VALID document and MUST NOT be rejected!
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION OR SPECIFICATION DOCUMENT (completely unrelated file with zero tables/specs):
      * Set "isValidCalibrationDocument": false
      * Provide "validationAudit": {
          "hasCalibrationData": false,
@@ -924,27 +938,48 @@ function cleanAndParseJson(text: string): GeneratedTemplateResult {
       ? rawHeaders.map((hRow) =>
           Array.isArray(hRow)
             ? hRow.map((cell: any) =>
-                typeof cell === "string" ? { text: cell } : { text: cell?.text || String(cell || "") }
+                typeof cell === "string"
+                  ? { text: cell }
+                  : {
+                      text: cell?.text || String(cell || ""),
+                      colSpan: cell?.colSpan,
+                      rowSpan: cell?.rowSpan,
+                      align: cell?.align,
+                    }
               )
-            : [{ text: "Sl.No." }, { text: "Actual mesured" }, { text: "Error" }]
+            : [{ text: "Sl.No." }, { text: "Actual measured" }, { text: "Error" }]
         )
       : [
           [
             { text: "Sl.No." },
-            { text: "Actual mesured" },
+            { text: "Actual measured" },
             { text: "Error" },
           ],
         ];
 
     const rawRows = Array.isArray(mt.rows) ? mt.rows : [];
-    const rows: string[][] = rawRows.map((r: any) => {
+    const rows: (string | MatrixCell)[][] = rawRows.map((r: any) => {
       if (Array.isArray(r)) {
         return r.map((cell: any) =>
-          cell !== null && typeof cell === "object" ? cell.text || JSON.stringify(cell) : String(cell ?? "")
+          cell !== null && typeof cell === "object" && "text" in cell
+            ? {
+                text: cell.text || "",
+                colSpan: cell.colSpan,
+                rowSpan: cell.rowSpan,
+                align: cell.align,
+              }
+            : String(cell ?? "")
         );
       } else if (r && typeof r === "object") {
         return Object.values(r).map((cell: any) =>
-          cell !== null && typeof cell === "object" ? cell.text || JSON.stringify(cell) : String(cell ?? "")
+          cell !== null && typeof cell === "object" && "text" in cell
+            ? {
+                text: cell.text || "",
+                colSpan: cell.colSpan,
+                rowSpan: cell.rowSpan,
+                align: cell.align,
+              }
+            : String(cell ?? "")
         );
       } else {
         return [String(r ?? "")];
@@ -1191,6 +1226,7 @@ export async function generateTemplateFromImage(
 Please inspect this calibration standard / drawing / test sheet image and generate a structured Visual Canvas Template.
 NOTE: Strictly omit any tables or rows for 'Gauge Receipt Condition', 'Instrument Receipt Condition', visual dent/damage checks, 'Traceability of Masters', or 'Standard Equipments Used'. In Gaugemaster, receipt condition and master traceability are handled by default in calibration workflows and certificate headers.
 IMPORTANT: If this image is a blank or partially filled calibration template format with measurement column headers (e.g. SL.NO, SPECIFICATION, X-X, Y-Y, Average, Deviation, Judgement), DO NOT reject it! Mark isValidCalibrationDocument: true, extract all columns and formulas, and generate 3 to 5 realistic sample calibration measurement parameter rows.
+IMPORTANT: If this image is a Maximum Permissible Error (MPE) table, tolerance reference table, error limits table, repeatability table, or manufacturer catalogue specification table (such as Mitutoyo Catalogue E2008, Starrett, Fowler, etc.), DO NOT reject it! Mark isValidCalibrationDocument: true, set detectedDocumentType: "specification_tolerance_table", and extract all headers, columns, and data rows verbatim into a structured table_grid block so the user can add it directly to their calibration template.
 ${userInstructions ? `Additional User Instructions: ${userInstructions}` : ""}
 `;
 

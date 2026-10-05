@@ -32,7 +32,10 @@ import {
   FileCode,
   LayoutGrid,
   ClipboardPaste,
+  PlusCircle,
+  RefreshCw,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
@@ -54,17 +57,55 @@ import { AiConnectionBadge } from "./AiConnectionBadge";
 interface AiTemplateGeneratorModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApplyTemplate: (result: GeneratedTemplateResult) => void;
+  onApplyTemplate: (result: GeneratedTemplateResult, mode?: "append" | "replace") => void;
+  existingBlocksCount?: number;
+}
+
+function isSpecificationOrToleranceAudit(audit: DocumentValidationAudit | null | undefined): boolean {
+  if (!audit) return false;
+  const t = String(audit.detectedDocumentType || "").toLowerCase();
+  const r = String(audit.rejectionReason || "").toLowerCase();
+  const m = String(audit.metrologySummary || "").toLowerCase();
+  return (
+    t.includes("tolerance") ||
+    t.includes("specification") ||
+    t.includes("mpe") ||
+    t.includes("catalogue") ||
+    t.includes("standard") ||
+    t.includes("limit") ||
+    t.includes("repeatability") ||
+    r.includes("permissible error") ||
+    r.includes("tolerance reference") ||
+    r.includes("specification and tolerance") ||
+    r.includes("specification limits") ||
+    r.includes("allowable error") ||
+    r.includes("repeatability") ||
+    m.includes("specification limits") ||
+    m.includes("permissible error")
+  );
 }
 
 export function AiTemplateGeneratorModal({
   open,
   onOpenChange,
   onApplyTemplate,
+  existingBlocksCount = 0,
 }: AiTemplateGeneratorModalProps) {
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"pdf" | "word" | "excel" | "image">("pdf");
   const [previewMode, setPreviewMode] = useState<"sheet" | "summary">("sheet");
+  const [applyMode, setApplyMode] = useState<"append" | "replace">("append");
+
+  // Sync default applyMode based on whether existing blocks exist
+  useEffect(() => {
+    if (open) {
+      if (existingBlocksCount > 0) {
+        setApplyMode("append");
+      } else {
+        setApplyMode("replace");
+      }
+    }
+  }, [open, existingBlocksCount]);
 
   // PDF Upload State
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -341,7 +382,7 @@ export function AiTemplateGeneratorModal({
   };
 
   // Generate Template via Gemini Gateway
-  const handleGenerate = async () => {
+  const handleGenerate = async (forceExtractTable = false) => {
     if (activeTab === "pdf" && !pdfFile) {
       toast.error("Please upload a PDF calibration certificate first.");
       return;
@@ -366,18 +407,37 @@ export function AiTemplateGeneratorModal({
     setExtractedResult(null);
     setValidationError(null);
 
+    const specOverridePrompt = forceExtractTable
+      ? "CRITICAL SPECIFICATION / TOLERANCE TABLE EXTRACTION OVERRIDE: This uploaded file contains a valid metrology specification, tolerance, or Maximum Permissible Error (MPE) table (such as allowable error limits, repeatability, catalogue limits, or reference standards). You MUST mark isValidCalibrationDocument: true, extract all headers, columns, and data rows verbatim into a structured table_grid block, and preserve the table title and reference notes."
+      : "";
+
+    const combinedInstructions = [customInstructions, specOverridePrompt].filter(Boolean).join("\n");
+
     try {
       let result: GeneratedTemplateResult;
       if (activeTab === "pdf" && pdfFile) {
-        result = await generateTemplateFromPdf(pdfFile, customInstructions);
+        result = await generateTemplateFromPdf(pdfFile, combinedInstructions);
       } else if (activeTab === "word" && wordFile) {
         const content = wordSummary || `File: ${wordFile.name}`;
-        result = await generateTemplateFromWord(content, wordFile.name, customInstructions);
+        result = await generateTemplateFromWord(content, wordFile.name, combinedInstructions);
       } else if (activeTab === "image" && imageFile) {
-        result = await generateTemplateFromImage(imageFile, customInstructions);
+        result = await generateTemplateFromImage(imageFile, combinedInstructions);
       } else {
         const summaryToSend = excelSummary || `File name: ${excelFile?.name || "Uploaded workbook"}`;
-        result = await generateTemplateFromExcel(summaryToSend, customInstructions);
+        result = await generateTemplateFromExcel(summaryToSend, combinedInstructions);
+      }
+
+      const isSpecTable = isSpecificationOrToleranceAudit(result.validationAudit);
+
+      // Auto-retry once with forced extraction if rejected solely because it was classified as an MPE / tolerance table
+      if ((!result.isValidCalibrationDocument || !result.blocks || result.blocks.length === 0) && isSpecTable && !forceExtractTable) {
+        toast.info("Detected metrology specification/tolerance table. Extracting table structure...");
+        return await handleGenerate(true);
+      }
+
+      // If blocks are returned even if marked invalid, accept it as a valid specification table
+      if ((!result.isValidCalibrationDocument || result.isValidCalibrationDocument === false) && isSpecTable && Array.isArray(result.blocks) && result.blocks.length > 0) {
+        result.isValidCalibrationDocument = true;
       }
 
       // Strict Document Validity Audit Check
@@ -386,9 +446,13 @@ export function AiTemplateGeneratorModal({
           isValidCalibrationDocument: false,
           hasCalibrationData: false,
           hasMeasurementTables: false,
-          detectedDocumentType: "unrelated_document",
-          rejectionReason: "The uploaded file does not contain any calibration measurement tables, nominal test points, or tolerance specifications.",
-          metrologySummary: "Zero calibration measurement tables detected.",
+          detectedDocumentType: isSpecTable ? "specification_tolerance_table" : "unrelated_document",
+          rejectionReason: isSpecTable
+            ? "Specification or tolerance table detected. Click 'Extract As Specification Table' below to add it to your template."
+            : "The uploaded file does not contain any calibration measurement tables, nominal test points, or tolerance specifications.",
+          metrologySummary: isSpecTable
+            ? "Specification limits and tolerance reference table."
+            : "Zero calibration measurement tables detected.",
         };
         setValidationError(audit);
         toast.error(audit.rejectionReason || "Uploaded file is not a valid calibration document.");
@@ -407,9 +471,13 @@ export function AiTemplateGeneratorModal({
           isValidCalibrationDocument: false,
           hasCalibrationData: false,
           hasMeasurementTables: false,
-          detectedDocumentType: "non_calibration_document",
-          rejectionReason: "No calibration measurement tables or test parameters were found in the uploaded file.",
-          metrologySummary: "Zero calibration measurement tables extracted.",
+          detectedDocumentType: isSpecTable ? "specification_tolerance_table" : "non_calibration_document",
+          rejectionReason: isSpecTable
+            ? "Specification limits detected. Click 'Extract As Specification Table' to extract this table."
+            : "No calibration measurement tables or test parameters were found in the uploaded file.",
+          metrologySummary: isSpecTable
+            ? "Specification limits and tolerance reference table."
+            : "Zero calibration measurement tables extracted.",
         };
         setValidationError(audit);
         toast.error(audit.rejectionReason);
@@ -426,11 +494,10 @@ export function AiTemplateGeneratorModal({
     }
   };
 
-  const handleApply = () => {
+  const handleApply = (mode: "append" | "replace" = applyMode) => {
     if (!extractedResult) return;
-    onApplyTemplate(extractedResult);
+    onApplyTemplate(extractedResult, mode);
     onOpenChange(false);
-    toast.success("Applied AI generated template to Visual Canvas Designer!");
   };
 
   const handleReset = () => {
@@ -670,54 +737,132 @@ export function AiTemplateGeneratorModal({
 
         {/* Content Body */}
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
-          {validationError && (
-            <div className="p-4 rounded-xl border border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 text-rose-950 dark:text-rose-200 space-y-3 shadow-xs animate-in fade-in-50 duration-200">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0 mt-0.5">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div className="space-y-1.5 flex-1">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h4 className="text-xs font-bold uppercase tracking-wide text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
-                      Invalid Calibration Document
-                    </h4>
-                    {validationError.detectedDocumentType && (
-                      <Badge variant="outline" className="text-[10px] uppercase font-mono border-rose-300 text-rose-700 dark:text-rose-300 bg-white/80 dark:bg-rose-950/80">
-                        Detected: {validationError.detectedDocumentType.replace(/_/g, " ")}
-                      </Badge>
+          {validationError && (() => {
+            const isSpec = isSpecificationOrToleranceAudit(validationError);
+            return (
+              <div
+                className={cn(
+                  "p-4 rounded-xl border space-y-3 shadow-xs animate-in fade-in-50 duration-200",
+                  isSpec
+                    ? "border-amber-300 dark:border-amber-800/60 bg-amber-50/90 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200"
+                    : "border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 text-rose-950 dark:text-rose-200"
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-0.5",
+                      isSpec
+                        ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
+                        : "bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                    )}
+                  >
+                    {isSpec ? <Table className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                  </div>
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h4
+                        className={cn(
+                          "text-xs font-bold uppercase tracking-wide flex items-center gap-1.5",
+                          isSpec ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-400"
+                        )}
+                      >
+                        {isSpec ? "Specification / Tolerance Table Detected" : "Invalid Calibration Document"}
+                      </h4>
+                      {validationError.detectedDocumentType && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] uppercase font-mono bg-white/80 dark:bg-slate-950/80",
+                            isSpec
+                              ? "border-amber-300 text-amber-800 dark:text-amber-300"
+                              : "border-rose-300 text-rose-700 dark:text-rose-300"
+                          )}
+                        >
+                          Detected: {validationError.detectedDocumentType.replace(/_/g, " ")}
+                        </Badge>
+                      )}
+                    </div>
+                    <p
+                      className={cn(
+                        "text-xs font-medium leading-relaxed",
+                        isSpec ? "text-amber-950 dark:text-amber-100" : "text-rose-900 dark:text-rose-200"
+                      )}
+                    >
+                      {validationError.rejectionReason || "The uploaded file does not contain any calibration measurement tables, nominals, or test points."}
+                    </p>
+                    {validationError.metrologySummary && (
+                      <p
+                        className={cn(
+                          "text-[11px]",
+                          isSpec ? "text-amber-800/80 dark:text-amber-300/80" : "text-rose-800/80 dark:text-rose-300/80"
+                        )}
+                      >
+                        Metrology Audit: {validationError.metrologySummary}
+                      </p>
                     )}
                   </div>
-                  <p className="text-xs text-rose-900 dark:text-rose-200 font-medium leading-relaxed">
-                    {validationError.rejectionReason || "The uploaded file does not contain any calibration measurement tables, nominals, or test points."}
-                  </p>
-                  {validationError.metrologySummary && (
-                    <p className="text-[11px] text-rose-800/80 dark:text-rose-300/80">
-                      Metrology Audit: {validationError.metrologySummary}
-                    </p>
+                </div>
+
+                <div
+                  className={cn(
+                    "pt-2 border-t flex items-center justify-between flex-wrap gap-2 text-[11px]",
+                    isSpec ? "border-amber-200 dark:border-amber-900/50" : "border-rose-200 dark:border-rose-900/50"
                   )}
+                >
+                  <span className="text-muted-foreground">
+                    {isSpec
+                      ? "This table contains metrology tolerance & specification limits. You can extract it directly to your template."
+                      : <><strong>Expected:</strong> Calibration certificate, inspection report, or drawing with tolerance test tables.</>}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => handleGenerate(true)}
+                      disabled={isProcessing}
+                      className={cn(
+                        "h-7 text-xs font-semibold px-3 shadow-xs text-white",
+                        isSpec
+                          ? "bg-amber-600 hover:bg-amber-700"
+                          : "bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600"
+                      )}
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                          Extracting...
+                        </>
+                      ) : (
+                        <>
+                          <Table className="w-3.5 h-3.5 mr-1.5" />
+                          {isSpec ? "Extract As Specification Table" : "Extract Table Anyway"}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setValidationError(null);
+                        handleReset();
+                      }}
+                      className={cn(
+                        "h-7 text-[11px] px-2 font-medium",
+                        isSpec
+                          ? "text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                          : "text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40"
+                      )}
+                    >
+                      <RotateCcw className="w-3 h-3 inline mr-1" />
+                      Clear
+                    </Button>
+                  </div>
                 </div>
               </div>
-
-              <div className="pt-2 border-t border-rose-200 dark:border-rose-900/50 flex items-center justify-between flex-wrap gap-2 text-[11px]">
-                <span className="text-muted-foreground">
-                  <strong>Expected:</strong> Calibration certificate, inspection report, or drawing with tolerance test tables.
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setValidationError(null);
-                    handleReset();
-                  }}
-                  className="h-6 text-[11px] text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40 px-2 font-medium"
-                >
-                  <RotateCcw className="w-3 h-3 inline mr-1" />
-                  Clear & Choose Another File
-                </Button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {!extractedResult ? (
             <>
@@ -1203,10 +1348,94 @@ export function AiTemplateGeneratorModal({
               )}
             </div>
           )}
+
+          {/* Apply Destination Selector (Shown when preview is ready) */}
+          {extractedResult && (
+            <div className="p-3 rounded-xl border bg-card shadow-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-primary" />
+                  Apply Destination
+                </span>
+                {existingBlocksCount > 0 ? (
+                  <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold px-2 py-0.5">
+                    {existingBlocksCount} existing table{existingBlocksCount === 1 ? "" : "s"} on canvas
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] bg-slate-500/10 text-muted-foreground border-border px-2 py-0.5">
+                    Canvas is empty
+                  </Badge>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <label
+                  onClick={() => setApplyMode("append")}
+                  className={cn(
+                    "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
+                    applyMode === "append"
+                      ? "border-emerald-500 bg-emerald-500/10 dark:bg-emerald-950/20 shadow-xs"
+                      : "border-border hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="applyMode"
+                    value="append"
+                    checked={applyMode === "append"}
+                    onChange={() => setApplyMode("append")}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      Add to Existing Tables
+                      <Badge variant="secondary" className="text-[9px] bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 font-semibold">
+                        Keep Existing
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      {existingBlocksCount > 0
+                        ? `Keep all ${existingBlocksCount} existing table(s) intact and append ${extractedResult.blocks.length} new table(s) below.`
+                        : `Add ${extractedResult.blocks.length} new table(s) to canvas.`}
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  onClick={() => setApplyMode("replace")}
+                  className={cn(
+                    "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
+                    applyMode === "replace"
+                      ? "border-amber-500 bg-amber-500/10 dark:bg-amber-950/20 shadow-xs"
+                      : "border-border hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="applyMode"
+                    value="replace"
+                    checked={applyMode === "replace"}
+                    onChange={() => setApplyMode("replace")}
+                    className="mt-0.5 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
+                      Replace Existing Template
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Clear previous tables on the canvas and replace with this newly extracted template.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <DialogFooter className="p-3 sm:p-4 bg-muted/40 border-t flex items-center justify-between">
+        <DialogFooter className="p-3 sm:p-4 bg-muted/40 border-t flex items-center justify-between gap-2">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -1240,10 +1469,42 @@ export function AiTemplateGeneratorModal({
               )}
             </Button>
           ) : (
-            <Button size="sm" onClick={handleApply} className="gap-2 bg-primary shadow-sm font-bold">
-              <Check className="w-4 h-4" />
-              Apply to Visual Canvas Designer
-            </Button>
+            <div className="flex items-center gap-2">
+              {existingBlocksCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleApply("replace")}
+                  className="gap-1.5 text-xs border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 font-semibold"
+                  title="Replace all existing tables on canvas with generated template"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Replace Existing
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => handleApply(applyMode)}
+                className={cn(
+                  "gap-2 shadow-sm font-bold text-xs",
+                  applyMode === "append" && existingBlocksCount > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-primary text-primary-foreground"
+                )}
+              >
+                {applyMode === "append" && existingBlocksCount > 0 ? (
+                  <>
+                    <PlusCircle className="w-4 h-4" />
+                    Add Table to Existing Template (+{extractedResult.blocks.length})
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Apply to Visual Canvas Designer
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </DialogFooter>
       </DialogContent>

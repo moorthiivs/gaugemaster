@@ -21,11 +21,14 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers } from "lucide-react";
+import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers, FileText, Download, ExternalLink, FileCheck2 } from "lucide-react";
+import { getSecureFileUrl } from "@/lib/tokenStorage";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
 import { LabelPrintHistoryModal } from "@/components/LabelPrintHistoryModal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { downloadCertificate } from "@/lib/calibrationActions";
 
 import TooltipProv from "@/components/TooltipProv";
 import { Textarea } from "@/components/ui/textarea";
@@ -242,6 +245,7 @@ export default function Instruments() {
   const [newDueDate, setNewDueDate] = useState("");
   const [updatingDates, setUpdatingDates] = useState(false);
   const [certificateFile, setCertificateFile] = useState<File | null>(null);
+  const [newCertNo, setNewCertNo] = useState("");
 
 
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -268,6 +272,70 @@ export default function Instruments() {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [instrumentsToPrint, setInstrumentsToPrint] = useState<Instrument[]>([]);
   const [labelHistoryModalOpen, setLabelHistoryModalOpen] = useState(false);
+
+  // Digital Certificate Preview Modal State
+  const [certPreviewModalOpen, setCertPreviewModalOpen] = useState(false);
+  const [selectedPreviewInstrument, setSelectedPreviewInstrument] = useState<Instrument | null>(null);
+  const [selectedPreviewCalibration, setSelectedPreviewCalibration] = useState<any | null>(null);
+  const [loadingPreviewCal, setLoadingPreviewCal] = useState(false);
+  const [downloadingCert, setDownloadingCert] = useState(false);
+
+  const handleOpenCertificatePreview = async (inst: Instrument, calIdOrCertNo?: string) => {
+    setSelectedPreviewInstrument(inst);
+    setSelectedPreviewCalibration(null);
+    setLoadingPreviewCal(true);
+    setCertPreviewModalOpen(true);
+
+    try {
+      const res = await httpClient.get(`/calibrations/instrument/${inst.id}`);
+      const cals: any[] = res.data || [];
+      if (calIdOrCertNo) {
+        const found = cals.find(
+          (c) => c.id === calIdOrCertNo || c.certificate_number === calIdOrCertNo
+        );
+        setSelectedPreviewCalibration(found || cals[0] || null);
+      } else {
+        setSelectedPreviewCalibration(cals[0] || null);
+      }
+    } catch {
+      toast({
+        title: "Certificate Unavailable",
+        description: "Failed to load calibration certificate details.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingPreviewCal(false);
+    }
+  };
+
+  const handleDownloadPreviewCertificate = async (cal: any) => {
+    if (!cal?.id) return;
+    try {
+      setDownloadingCert(true);
+      const blob = await downloadCertificate(cal.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Certificate-${(cal.certificate_number || cal.id).replace(/\//g, "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast({
+        title: "Certificate Downloaded",
+        description: `Certificate ${cal.certificate_number || cal.id} downloaded successfully.`,
+        variant: "success",
+      });
+    } catch {
+      toast({
+        title: "Download Failed",
+        description: "Failed to download calibration certificate PDF.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingCert(false);
+    }
+  };
 
   const [columnConfigs, setColumnConfigs] = useState<ColumnConfig[]>(() => {
     try {
@@ -883,25 +951,24 @@ export default function Instruments() {
   const handleOpenDateModal = (inst: Instrument) => {
     setDateUpdateInstrument(inst);
     
-    let baseDate = new Date();
-    if (inst.due_date) {
-      const parsedDue = new Date(inst.due_date);
-      if (!isNaN(parsedDue.getTime())) {
-        baseDate = parsedDue;
+    let calDate = new Date();
+    if (inst.last_calibration_date) {
+      const parsedLast = new Date(inst.last_calibration_date);
+      if (!isNaN(parsedLast.getTime())) {
+        calDate = parsedLast;
       }
     }
     
-    setNewLastCalDate(format(baseDate, 'yyyy-MM-dd'));
+    const calDateStr = format(calDate, 'yyyy-MM-dd');
+    setNewLastCalDate(calDateStr);
+    setNewCertNo(inst.cert_no || "");
     setCertificateFile(null);
 
-    const freqMonths = parseFrequencyMonths(inst.frequency);
-    if (freqMonths > 0) {
-      const due = new Date(baseDate);
-      due.setMonth(due.getMonth() + freqMonths);
-      setNewDueDate(format(due, 'yyyy-MM-dd'));
-    } else {
-      setNewDueDate("");
-    }
+    const freqMonths = parseFrequencyMonths(inst.frequency) || 12;
+    const due = new Date(calDate);
+    due.setMonth(due.getMonth() + freqMonths);
+    setNewDueDate(format(due, 'yyyy-MM-dd'));
+
     setDateModalOpen(true);
   };
 
@@ -912,7 +979,8 @@ export default function Instruments() {
       await updateInstrument(dateUpdateInstrument.id, {
         last_calibration_date: new Date(newLastCalDate).toISOString(),
         due_date: new Date(newDueDate).toISOString(),
-        status: "OK"
+        status: "OK",
+        cert_no: newCertNo.trim() || undefined,
       });
 
       if (certificateFile) {
@@ -1104,69 +1172,186 @@ export default function Instruments() {
       header: "Certificate",
       cell: ({ row }) => {
         const certFile = row.original.certificate_file;
+        const certNo = row.original.cert_no;
         const instId = row.original.id;
 
         if (uploadingId === instId) {
           return (
-            <div className="flex items-center gap-2 animate-pulse">
-              <Skeleton className="h-7 w-16" />
-              <Skeleton className="h-7 w-16" />
+            <div className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 animate-pulse shadow-2xs">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
             </div>
           );
         }
-        
-        if (!certFile) {
+
+        // 1. If uploaded certificate file exists (External calibration or uploaded scan)
+        if (certFile) {
+          const fileUrl = getSecureFileUrl(certFile);
+          const fileName = certFile.split("/").pop() || "certificate.pdf";
           return (
-            <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
-              <input 
-                type="file" 
-                accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleDirectUpload(instId, e.target.files[0]);
-                  }
-                }}
-              />
-              <Button variant="outline" size="sm" className="h-7 text-xs flex gap-1">
-                <Upload className="h-3 w-3" />
-                Upload
-              </Button>
-            </div>
-          );
-        }
-        
-        const url = certFile.startsWith("http") ? certFile : `${BASE_URL}${certFile}`;
-        
-        return (
-          <div className="flex items-center gap-2">
-            <a 
-              href={url} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-primary hover:underline flex items-center gap-1 text-xs font-medium"
+            <div
+              className="inline-flex items-center rounded-lg border border-emerald-500/30 dark:border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-500/15 p-0.5 shadow-2xs group hover:bg-emerald-500/20 transition-all"
               onClick={(e) => e.stopPropagation()}
             >
-              <FileSpreadsheet className="h-3 w-3" />
-              View
-            </a>
-            <div className="relative inline-block ml-1" onClick={(e) => e.stopPropagation()}>
-              <input 
-                type="file" 
-                accept=".xlsx,.xls,.pdf"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                title="Replace Certificate"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleDirectUpload(instId, e.target.files[0]);
-                  }
-                }}
-              />
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs flex gap-1 text-muted-foreground hover:text-foreground">
-                <Upload className="h-3 w-3" />
-                Replace
-              </Button>
+              <TooltipProv
+                content={
+                  <div className="space-y-1.5 p-1 text-left max-w-[250px]">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs border-b border-border/50 pb-1 text-emerald-950 dark:text-emerald-200">
+                      <FileCheck2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Calibration Certificate</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">Certificate No</span>
+                        <span className="font-mono font-bold text-foreground break-all">{certNo || "Document Attached"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">File</span>
+                        <span className="text-muted-foreground font-mono text-[10px] truncate block">{fileName}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <span className="text-muted-foreground text-[10px] uppercase font-medium">Source</span>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300">
+                          {row.original.calibration_source || "External"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="pt-1 border-t border-border/40 text-[10px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-1">
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      <span>Click to view certificate</span>
+                    </div>
+                  </div>
+                }
+              >
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                  aria-label={`View Certificate ${certNo || ""}`}
+                >
+                  <FileCheck2 className="h-4 w-4 shrink-0" />
+                </a>
+              </TooltipProv>
+
+              <div className="h-3.5 w-px bg-emerald-500/25 dark:bg-emerald-500/35 mx-0.5 shrink-0" />
+
+              <TooltipProv content="Upload or replace certificate document">
+                <label
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-emerald-700/80 hover:text-emerald-950 hover:bg-emerald-500/25 dark:text-emerald-400 dark:hover:bg-emerald-500/30 cursor-pointer transition-colors"
+                  aria-label="Upload or replace certificate"
+                >
+                  <input 
+                    type="file" 
+                    accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleDirectUpload(instId, e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <Upload className="h-3.5 w-3.5" />
+                </label>
+              </TooltipProv>
             </div>
+          );
+        }
+
+        // 2. If in-house digital certificate number exists on instrument
+        if (certNo) {
+          return (
+            <div
+              className="inline-flex items-center rounded-lg border border-primary/30 dark:border-primary/40 bg-primary/10 dark:bg-primary/15 p-0.5 shadow-2xs group hover:bg-primary/20 transition-all"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <TooltipProv
+                content={
+                  <div className="space-y-1.5 p-1 text-left max-w-[250px]">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs border-b border-border/50 pb-1 text-primary">
+                      <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>Digital Certificate</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">Certificate No</span>
+                        <span className="font-mono font-bold text-foreground break-all">{certNo}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <span className="text-muted-foreground text-[10px] uppercase font-medium">Source</span>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border-blue-300">
+                          In-House
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="pt-1 border-t border-border/40 text-[10px] text-primary font-medium flex items-center gap-1">
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      <span>Click to preview certificate</span>
+                    </div>
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => handleOpenCertificatePreview(row.original)}
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-primary hover:bg-primary/25 transition-colors cursor-pointer"
+                  aria-label={`Preview Certificate ${certNo}`}
+                >
+                  <FileText className="h-4 w-4 shrink-0" />
+                </button>
+              </TooltipProv>
+
+              <div className="h-3.5 w-px bg-primary/25 dark:bg-primary/35 mx-0.5 shrink-0" />
+
+              <TooltipProv content="Attach signed scanned document">
+                <label
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-primary/80 hover:text-primary hover:bg-primary/25 cursor-pointer transition-colors"
+                  aria-label="Attach signed scanned document"
+                >
+                  <input 
+                    type="file" 
+                    accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleDirectUpload(instId, e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <Upload className="h-3.5 w-3.5" />
+                </label>
+              </TooltipProv>
+            </div>
+          );
+        }
+        
+        // 3. No certificate file or number: clean icon upload button with tooltip
+        return (
+          <div className="inline-flex items-center" onClick={(e) => e.stopPropagation()}>
+            <TooltipProv
+              content={
+                <div className="p-1.5 text-left max-w-[200px]">
+                  <p className="font-semibold text-xs text-foreground">Attach Certificate</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Click to upload calibration PDF or scanned report</p>
+                </div>
+              }
+            >
+              <label
+                className="h-7 w-7 rounded-lg border border-dashed border-muted-foreground/30 hover:border-emerald-500 hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center justify-center cursor-pointer transition-all shadow-2xs"
+                aria-label="Upload Certificate"
+              >
+                <input 
+                  type="file" 
+                  accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleDirectUpload(instId, e.target.files[0]);
+                    }
+                  }}
+                />
+                <Upload className="h-3.5 w-3.5" />
+              </label>
+            </TooltipProv>
           </div>
         );
       }
@@ -1949,6 +2134,8 @@ export default function Instruments() {
         setNewLastCalDate={setNewLastCalDate}
         newDueDate={newDueDate}
         setNewDueDate={setNewDueDate}
+        newCertNo={newCertNo}
+        setNewCertNo={setNewCertNo}
         certificateFile={certificateFile}
         setCertificateFile={setCertificateFile}
         updatingDates={updatingDates}
@@ -1962,6 +2149,11 @@ export default function Instruments() {
         instrument={dateUpdateInstrument}
         historyData={historyData}
         loadingHistory={loadingHistory}
+        onViewCertificate={(calId) => {
+          if (dateUpdateInstrument) {
+            handleOpenCertificatePreview(dateUpdateInstrument, calId);
+          }
+        }}
       />
 
       <InstrumentsDeleteModals
@@ -2009,6 +2201,84 @@ export default function Instruments() {
         defaultColumns={DEFAULT_INSTRUMENT_COLUMNS}
         onSave={handleSaveColumnConfigs}
       />
+
+      {/* Digital Certificate Preview Modal */}
+      <Dialog open={certPreviewModalOpen} onOpenChange={setCertPreviewModalOpen}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b bg-muted/40 shrink-0">
+            <div>
+              <DialogTitle className="text-base font-bold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                Calibration Certificate Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Certificate: <span className="font-semibold text-primary font-mono">{selectedPreviewCalibration?.certificate_number || selectedPreviewInstrument?.cert_no || "-"}</span> — {selectedPreviewInstrument?.name} ({selectedPreviewInstrument?.id_code})
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2 pr-8 shrink-0">
+              {selectedPreviewCalibration ? (
+                <Button
+                  size="sm"
+                  onClick={() => handleDownloadPreviewCertificate(selectedPreviewCalibration)}
+                  disabled={downloadingCert}
+                  className="gap-1.5 text-xs font-semibold shadow-2xs"
+                >
+                  {downloadingCert ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  Download PDF
+                </Button>
+              ) : selectedPreviewInstrument?.certificate_file ? (
+                <a
+                  href={getSecureFileUrl(selectedPreviewInstrument.certificate_file)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-md hover:bg-primary/90 shadow-2xs transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Open Document
+                </a>
+              ) : null}
+            </div>
+          </div>
+          <div className="w-full flex-1 max-h-[calc(92vh-75px)] overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950 flex justify-center">
+            {loadingPreviewCal ? (
+              <div className="flex flex-col items-center justify-center p-12 text-muted-foreground gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-xs">Loading Certificate Details...</p>
+              </div>
+            ) : selectedPreviewCalibration ? (
+              <CertificatePreview
+                calibration={selectedPreviewCalibration}
+                instrumentName={selectedPreviewInstrument?.name}
+              />
+            ) : selectedPreviewInstrument?.certificate_file ? (
+              <div className="flex flex-col items-center justify-center p-10 gap-4 text-center">
+                <FileSpreadsheet className="w-14 h-14 text-primary opacity-80" />
+                <div>
+                  <h4 className="text-base font-semibold">External Calibration Document</h4>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                    This instrument has an uploaded certificate file attached ({selectedPreviewInstrument.cert_no || "Scanned Certificate"}).
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 mt-2">
+                  <a
+                    href={getSecureFileUrl(selectedPreviewInstrument.certificate_file)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold text-white bg-primary rounded-md hover:bg-primary/90 shadow-sm gap-2"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open Certificate in New Tab
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-muted-foreground text-xs">
+                No calibration certificate details found for this instrument.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
     </>
 

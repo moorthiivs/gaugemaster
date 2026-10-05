@@ -175,7 +175,7 @@ export function TrialRunModal({
         const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
 
         tbl.rows = tbl.rows.map((r: any) => {
-          const ctx = buildRowContext(r, tbl.columns, tol, dec);
+          const ctx = buildRowContext(r, tbl.columns, tol, dec, 0, tbl.nominal);
           let readVal: number;
           if (type === "pass") {
             // Midpoint of tolerance limits guarantees PASS across symmetric, asymmetric, and negative-only tolerances
@@ -735,8 +735,10 @@ export function TrialRunModal({
                         <tbody className="divide-y divide-black">
                           {(block as MatrixTableBlock).rows.map((r, rIdx) => (
                             <tr key={rIdx} className="divide-x divide-black">
-                              {r.map((val, cIdx) => (
-                                <td key={cIdx} className="py-1 px-2 font-mono">{val}</td>
+                              {r.map((val: any, cIdx) => (
+                                <td key={cIdx} className="py-1 px-2 font-mono">
+                                  {typeof val === "object" && val !== null ? (val.text ?? "-") : String(val ?? "-")}
+                                </td>
                               ))}
                             </tr>
                           ))}

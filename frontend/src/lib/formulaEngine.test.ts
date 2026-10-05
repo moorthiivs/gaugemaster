@@ -12,6 +12,11 @@ import {
   validateFormulaSyntax,
   testEvaluateFormula,
   resolveVariableSemanticRole,
+  slugifyTableKey,
+  ensureTableKeys,
+  buildGlobalTablesContext,
+  evaluateAllCanvasBlocks,
+  resolveCrossTableReference,
 } from "./formulaEngine.js";
 
 function runTests() {
@@ -498,6 +503,333 @@ function runTests() {
   // Custom formula: 50.035 - 50 = 0.0350. With decimal_places = 4, it must be "0.0350"
   assert(resColWise.custom_diff === "0.0350", `Column-wise custom formula decimal_places: 4 produces 0.0350 (got ${resColWise.custom_diff})`);
   assert(resColWise.judgement === "PASS", `Judgement passes (got ${resColWise.judgement})`);
+
+  // --- SECTION 18: Multi-Table Global Access, Vector Mathematics & Mixed Rows ---
+  console.log("\n--- SECTION 18: Multi-Table Global Access, Vector Mathematics & Mixed Rows ---");
+
+  // 1. Slugify & Table Key Auto-Generation
+  assert(slugifyTableKey("Clock wise Direction") === "clock_wise_direction", "Slugify 'Clock wise Direction'");
+  assert(slugifyTableKey("Counter clock wise direction") === "counter_clock_wise_direction", "Slugify 'Counter clock wise direction'");
+
+  const rawBlocks = [
+    { type: "table_grid", title: "Clock wise Direction", columns: [{ id: "error", label: "Error" }], rows: [] },
+    { type: "table_grid", title: "Clock wise Direction", columns: [{ id: "error", label: "Error" }], rows: [] },
+    { type: "split_row", children: [
+      { type: "table_grid", title: "Summary", columns: [{ id: "val", label: "Value" }], rows: [] }
+    ]}
+  ];
+  ensureTableKeys(rawBlocks);
+  assert((rawBlocks[0] as any).tableKey === "clock_wise_direction", "ensureTableKeys sets tableKey for table 1");
+  assert((rawBlocks[1] as any).tableKey === "clock_wise_direction_2", "ensureTableKeys de-duplicates collision with _2");
+  assert((rawBlocks[2].children[0] as any).tableKey === "summary", "ensureTableKeys handles nested split_row table");
+
+  // 2. Multi-Table Plunger Dial Gauge Metrology Setup
+  const tableClockwise = {
+    id: "table_cw",
+    tableKey: "clockwise",
+    type: "table_grid",
+    title: "Clock wise Direction",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: [
+      { nominal: 1.0, reading: "1.002", error: "+0.002" },
+      { nominal: 2.0, reading: "2.004", error: "+0.004" },
+      { nominal: 3.0, reading: "3.006", error: "+0.006" },
+    ]
+  };
+
+  const tableCounterClockwise = {
+    id: "table_ccw",
+    tableKey: "counter_clockwise",
+    type: "table_grid",
+    title: "Counter clock wise direction",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: [
+      { nominal: 1.0, reading: "1.001", error: "+0.001" },
+      { nominal: 2.0, reading: "2.003", error: "+0.003" },
+      { nominal: 3.0, reading: "3.005", error: "+0.005" },
+    ]
+  };
+
+  const tableSummary = {
+    id: "table_sum",
+    tableKey: "summary",
+    type: "table_grid",
+    title: "Summary Parameters",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "param", label: "Parameter", type: "text" },
+      { id: "error_val", label: "Error Value", type: "reading" },
+    ],
+    rows: [
+      { param: "Sensitivity 0.01Dial", error_val: "0.002" },
+      { param: "Sensitivity 0.002Dial", error_val: "0.001" },
+      { param: "Repeatability", error_val: "0.003" },
+      {
+        param: "Total Error",
+        error_val: "-",
+        cellFormulas: {
+          error_val: "=SUM(clockwise.error, counter_clockwise.error)"
+        }
+      }
+    ]
+  };
+
+  const allBlocks = [tableClockwise, tableCounterClockwise, tableSummary];
+
+  // 3. Global Context Building & Cross-Table References
+  const globalCtx = buildGlobalTablesContext(allBlocks);
+  assert(Array.isArray(globalCtx["clockwise.error"]), "globalCtx has clockwise.error array");
+  assert(globalCtx["clockwise.error"].length === 3, "clockwise.error has 3 items");
+  assert(globalCtx["clockwise.error[0]"] === "+0.002", "clockwise.error[0] indexed reference");
+
+  // 4. Expression Evaluation: SUM(table1.error, table2.error)
+  const evalSumRes = testEvaluateFormula("SUM(clockwise.error, counter_clockwise.error)", globalCtx, 3);
+  assert(evalSumRes.success === true, "SUM cross-table success");
+  // Total = (0.002 + 0.004 + 0.006) + (0.001 + 0.003 + 0.005) = 0.012 + 0.009 = 0.021
+  assert(evalSumRes.formatted === "0.021", `SUM(clockwise.error, counter_clockwise.error) === 0.021 (got ${evalSumRes.formatted})`);
+
+  // 5. Vector Addition: SUM((clockwise.error) + (counter_clockwise.error))
+  const evalVecRes = testEvaluateFormula("SUM((clockwise.error) + (counter_clockwise.error))", globalCtx, 3);
+  assert(evalVecRes.success === true, "Vector sum cross-table success");
+  assert(evalVecRes.formatted === "0.021", `SUM((clockwise.error) + (counter_clockwise.error)) === 0.021 (got ${evalVecRes.formatted})`);
+
+  // 6. Safe Blank Propagation (Excel #VALUE! Prevention)
+  const blankCW = {
+    ...tableClockwise,
+    rows: [
+      { nominal: 1.0, reading: "", error: "-" },
+      { nominal: 2.0, reading: "", error: "-" },
+    ]
+  };
+  const blankCCW = {
+    ...tableCounterClockwise,
+    rows: [
+      { nominal: 1.0, reading: "", error: "-" },
+      { nominal: 2.0, reading: "", error: "-" },
+    ]
+  };
+  const blankGlobalCtx = buildGlobalTablesContext([blankCW, blankCCW]);
+  const blankVecRes = testEvaluateFormula("SUM((clockwise.error) + (counter_clockwise.error))", blankGlobalCtx, 3);
+  assert(blankVecRes.formatted === "-", `Blank tables vector addition safely returns '-' without #VALUE! (got ${blankVecRes.formatted})`);
+
+  // 7. evaluateAllCanvasBlocks & Mixed Rows in the same column
+  evaluateAllCanvasBlocks(allBlocks);
+  const evaluatedSummary = allBlocks[2];
+  const summaryRows: any[] = evaluatedSummary.rows;
+  assert(summaryRows[0].error_val === "0.002", "Row 1 retains manual input 0.002");
+  assert(summaryRows[1].error_val === "0.001", "Row 2 retains manual input 0.001");
+  assert(summaryRows[2].error_val === "0.003", "Row 3 retains manual input 0.003");
+  assert(summaryRows[3].error_val === "0.021", `Row 4 calculates Total Error via formula: 0.021 (got ${summaryRows[3].error_val})`);
+
+  // 8. Formula Validation of cross-table formula
+  const valRes = validateFormula("=SUM(clockwise.error, counter_clockwise.error)");
+  assert(valRes.valid === true, "validateFormula accepts cross-table SUM formula as valid");
+
+  // 9. Reactive Re-evaluation Test: Table 1 (t1) reading change updates Table 3's =avg(t1.error)
+  const t1 = {
+    id: "table_1",
+    tableKey: "t1",
+    type: "table_grid",
+    title: "Clock wise Direction",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: [
+      { nominal: 10, reading: "10.010", error: "+0.010" },
+      { nominal: 20, reading: "20.030", error: "+0.030" },
+    ]
+  };
+
+  const t3 = {
+    id: "table_3",
+    tableKey: "t3",
+    type: "table_grid",
+    title: "Evaluation Summary",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "param", label: "Parameter", type: "text" },
+      { id: "observed_error", label: "Observed Error", type: "reading" },
+    ],
+    rows: [
+      { param: "Row 1", observed_error: "0.001" },
+      { param: "Row 2", observed_error: "0.002" },
+      { param: "Row 3", observed_error: "0.003" },
+      {
+        param: "Average Error",
+        observed_error: "-",
+        cellFormulas: {
+          observed_error: "=avg(t1.error)"
+        }
+      }
+    ]
+  };
+
+  const reactiveBlocks = [t1, t3];
+  evaluateAllCanvasBlocks(reactiveBlocks);
+  const t3RowsInit: any[] = t3.rows;
+  assert(parseFloat(t3RowsInit[3].observed_error) === 0.02, `Initial =avg(t1.error) is 0.020 (got ${t3RowsInit[3].observed_error})`);
+
+  // Simulate editing Table 1's reading
+  t1.rows[1].reading = "20.050";
+  evaluateAllCanvasBlocks(reactiveBlocks);
+  const t3RowsUpdated: any[] = t3.rows;
+  assert(parseFloat(t3RowsUpdated[3].observed_error) === 0.03, `Reactive re-evaluation: Table 1 reading change updates =avg(t1.error) to 0.030 (got ${t3RowsUpdated[3].observed_error})`);
+
+  // 9b. Positional alias tests (t1, t2, t3) with vector formula =SUM((t1.error)+(t2.error))
+  const posTable1 = {
+    id: "clockwise_calibration",
+    title: "Clock wise Direction",
+    type: "table_grid",
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: [
+      { nominal: 0, reading: "0.005", error: 0.005 },
+      { nominal: 1, reading: "1.002", error: 0.002 }
+    ]
+  };
+  const posTable2 = {
+    id: "counter_clockwise_calibration",
+    title: "Counter Clockwise Direction",
+    type: "table_grid",
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: [
+      { nominal: 0, reading: "0.003", error: 0.003 },
+      { nominal: 1, reading: "1.001", error: 0.001 }
+    ]
+  };
+  const posTable3 = {
+    id: "pd_evaluation_summary",
+    title: "Evaluation Summary",
+    type: "table_grid",
+    columns: [
+      { id: "parameter", label: "Parameter", type: "text" },
+      { id: "observed_error", label: "Observed Error", type: "reading" }
+    ],
+    rows: [
+      {
+        parameter: "Total Error",
+        observed_error: "-",
+        cellFormulas: {
+          observed_error: "=SUM((t1.error)+(t2.error))"
+        }
+      }
+    ]
+  };
+
+  const posBlocks = [posTable1, posTable2, posTable3];
+  evaluateAllCanvasBlocks(posBlocks, { forceFull: true });
+  assert(parseFloat(posTable3.rows[0].observed_error) === 0.011, `Positional alias vector =SUM((t1.error)+(t2.error)) evaluates correctly to 0.011 (got ${posTable3.rows[0].observed_error})`);
+
+  // Now change reading in Table 2 (Counter Clockwise Direction) and re-evaluate
+  posTable2.rows[0].reading = "0.010";
+  posTable2.rows[0].error = 0.010;
+  evaluateAllCanvasBlocks(posBlocks, { forceFull: true });
+  assert(parseFloat(posTable3.rows[0].observed_error) === 0.018, `Updating Table 2 reading immediately recalculates =SUM((t1.error)+(t2.error)) to 0.018 (got ${posTable3.rows[0].observed_error})`);
+
+  // 10. Performance & Keystroke Latency Benchmark
+  console.log("\n--- SECTION 19: Performance & Keystroke Latency Benchmark ---");
+  const benchT1 = {
+    id: "table_1",
+    tableKey: "t1",
+    type: "table_grid",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: Array.from({ length: 15 }, (_, i) => ({
+      nominal: (i + 1) * 10,
+      reading: ((i + 1) * 10.005).toFixed(3),
+      error: "+0.005"
+    }))
+  };
+
+  const benchT2 = {
+    id: "table_2",
+    tableKey: "t2",
+    type: "table_grid",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "nominal", label: "Nominal", type: "nominal" },
+      { id: "reading", label: "Reading", type: "reading" },
+      { id: "error", label: "Error", type: "formula", formula: "reading - nominal" }
+    ],
+    rows: Array.from({ length: 15 }, (_, i) => ({
+      nominal: (i + 1) * 10,
+      reading: ((i + 1) * 10.002).toFixed(3),
+      error: "+0.002"
+    }))
+  };
+
+  const benchT3 = {
+    id: "table_3",
+    tableKey: "t3",
+    type: "table_grid",
+    tolerance: 0.02,
+    decimal_places: 3,
+    columns: [
+      { id: "param", label: "Parameter", type: "text" },
+      { id: "observed_error", label: "Observed Error", type: "reading" },
+    ],
+    rows: [
+      ...Array.from({ length: 14 }, (_, i) => ({
+        param: `Point ${i + 1}`,
+        observed_error: "0.001"
+      })),
+      {
+        param: "Average Error",
+        observed_error: "-",
+        cellFormulas: {
+          observed_error: "=avg(t1.error)"
+        }
+      }
+    ]
+  };
+
+  const benchBlocks = [benchT1, benchT2, benchT3];
+  evaluateAllCanvasBlocks(benchBlocks, { forceFull: true });
+
+  // Simulate 100 consecutive keystrokes in Table 1, Row 0
+  const startPerf = performance.now();
+  for (let k = 0; k < 100; k++) {
+    benchT1.rows[0].reading = (10 + (k * 0.001)).toFixed(3);
+    evaluateAllCanvasBlocks(benchBlocks, { changedBlockIndex: 0, changedRowIndex: 0 });
+  }
+  const endPerf = performance.now();
+  const totalMs = endPerf - startPerf;
+  const avgMsPerKey = totalMs / 100;
+
+  console.log(`[PERF] 100 keystrokes executed in ${totalMs.toFixed(2)}ms (Avg ${avgMsPerKey.toFixed(3)}ms per keypress)`);
+  assert(avgMsPerKey < 10.0, `Average keystroke re-evaluation time (${avgMsPerKey.toFixed(3)}ms) is well under 10ms (Budget: 16.6ms for 60fps)`);
+  assert(parseFloat(benchT3.rows[14].observed_error) > 0, `Table 3 avg(t1.error) reactive calculation is valid: ${benchT3.rows[14].observed_error}`);
 
   console.log(`\n=== FINAL FORMULA ENGINE TEST RESULT: ${passed} PASSED, ${failed} FAILED ===`);
   if (failed > 0) process.exit(1);

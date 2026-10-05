@@ -100,16 +100,60 @@ export class CalibrationController {
     });
   }
 
+  @Post(':id/review')
+  @RequirePermission('calibration_approvals', 'edit')
+  async review(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      reviewerId?: string;
+      reviewerName?: string;
+      reviewerDesignation?: string;
+      signature?: string;
+      remarks?: string;
+    },
+    @Req() req: any,
+  ) {
+    const reviewerId = body.reviewerId || req?.user?.userId || req?.user?.id;
+    const reviewerName = body.reviewerName || req?.user?.name || 'Reviewer';
+    const reviewerDesignation = body.reviewerDesignation || 'Calibration Reviewer';
+
+    return this.calibrationService.review(
+      id,
+      { id: reviewerId, name: reviewerName, designation: reviewerDesignation },
+      body.signature,
+      body.remarks,
+    );
+  }
+
   @Post(':id/approve')
   @RequirePermission('calibration_approvals', 'edit')
   async approve(
     @Param('id') id: string,
-    @Body() body: { reviewerId: string; reviewerName: string; reviewerDesignation?: string; signature?: string },
+    @Body()
+    body: {
+      approverId?: string;
+      reviewerId?: string;
+      approverName?: string;
+      reviewerName?: string;
+      approverDesignation?: string;
+      reviewerDesignation?: string;
+      signature?: string;
+      remarks?: string;
+      approverRemarks?: string;
+    },
+    @Req() req: any,
   ) {
+    const approverId = body.approverId || body.reviewerId || req?.user?.userId || req?.user?.id;
+    const approverName = body.approverName || body.reviewerName || req?.user?.name || 'Approver';
+    const approverDesignation = body.approverDesignation || body.reviewerDesignation || 'Quality Manager / Approver';
+    const remarks = body.approverRemarks || body.remarks;
+
     return this.calibrationService.approve(
       id,
-      { id: body.reviewerId, name: body.reviewerName, designation: body.reviewerDesignation },
+      { id: approverId, name: approverName, designation: approverDesignation },
       body.signature,
+      remarks,
     );
   }
 
@@ -117,11 +161,22 @@ export class CalibrationController {
   @RequirePermission('calibration_approvals', 'edit')
   async reject(
     @Param('id') id: string,
-    @Body() body: { reviewerId: string; reviewerName: string; rejectionReason: string },
+    @Body()
+    body: {
+      reviewerId?: string;
+      userId?: string;
+      reviewerName?: string;
+      userName?: string;
+      rejectionReason: string;
+    },
+    @Req() req: any,
   ) {
+    const userId = body.reviewerId || body.userId || req?.user?.userId || req?.user?.id;
+    const userName = body.reviewerName || body.userName || req?.user?.name || 'Reviewer / Approver';
+
     return this.calibrationService.reject(
       id,
-      { id: body.reviewerId, name: body.reviewerName },
+      { id: userId, name: userName },
       body.rejectionReason,
     );
   }

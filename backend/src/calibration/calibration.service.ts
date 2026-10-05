@@ -596,13 +596,21 @@ export class CalibrationService {
             updatedCp.receipt_condition = dto.receipt_condition;
           }
 
-          await this.instrumentsService.update(dto.instrument_id, {
-            last_calibration_date: savedCalibration.calibration_date as any,
-            due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
-            status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
-            calibration_source: 'In-House',
-            custom_parameters: updatedCp,
-          } as any);
+          if (approval_status === 'Approved') {
+            await this.instrumentsService.update(dto.instrument_id, {
+              last_calibration_date: savedCalibration.calibration_date as any,
+              due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
+              status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+              calibration_source: 'In-House',
+              cert_no: savedCalibration.certificate_number,
+              custom_parameters: updatedCp,
+            } as any);
+          } else {
+            // Calibration pending approval: save custom parameters template only, do not prematurely advance schedule or log history
+            await this.instrumentsService.update(dto.instrument_id, {
+              custom_parameters: updatedCp,
+            } as any);
+          }
         } catch (err) {
           console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
         }
@@ -612,22 +620,60 @@ export class CalibrationService {
     });
   }
 
-  async approve(
+  async review(
     id: string,
     reviewer: { id: string; name: string; designation?: string },
     signature?: string,
+    remarks?: string,
+  ): Promise<Calibration> {
+    const calibration = await this.findOne(id);
+    if (!calibration) throw new NotFoundException('Calibration record not found');
+
+    const oldStatus = calibration.approval_status;
+    calibration.approval_status = 'Reviewed';
+    calibration.reviewed_by = reviewer.name;
+    calibration.reviewed_by_id = reviewer.id;
+    calibration.reviewed_by_designation = reviewer.designation || 'Calibration Reviewer';
+    if (signature) {
+      calibration.reviewed_by_signature = signature;
+    }
+    calibration.reviewed_at = new Date();
+    calibration.reviewer_remarks = remarks || undefined;
+
+    const saved = await this.calibrationRepository.save(calibration);
+
+    // Record audit log entry
+    const auditLog = this.auditLogRepository.create({
+      calibration_id: saved.id,
+      edited_by_id: reviewer.id,
+      edited_by_name: reviewer.name,
+      changes_summary: [{ field: 'approval_status', oldValue: oldStatus, newValue: 'Reviewed' }],
+      remarks: remarks ? `Calibration Reviewed & Recommended: ${remarks}` : 'Calibration Record Reviewed and Recommended for Approval',
+    });
+    await this.auditLogRepository.save(auditLog);
+
+    return saved;
+  }
+
+  async approve(
+    id: string,
+    approver: { id: string; name: string; designation?: string },
+    signature?: string,
+    remarks?: string,
   ): Promise<Calibration> {
     const calibration = await this.findOne(id);
     if (!calibration) throw new NotFoundException('Calibration record not found');
 
     const oldStatus = calibration.approval_status;
     calibration.approval_status = 'Approved';
-    calibration.approved_by = reviewer.name;
-    calibration.approved_by_designation = reviewer.designation || 'Quality Manager';
+    calibration.approved_by = approver.name;
+    calibration.approved_by_id = approver.id;
+    calibration.approved_by_designation = approver.designation || 'Quality Manager / Approver';
     if (signature) {
       calibration.approved_by_signature = signature;
     }
     calibration.approved_at = new Date();
+    calibration.approver_remarks = remarks || undefined;
     calibration.certificate_generated = true;
 
     const saved = await this.calibrationRepository.save(calibration);
@@ -650,6 +696,8 @@ export class CalibrationService {
           due_date: finalDueDate as any,
           status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
           calibration_source: 'In-House',
+          cert_no: saved.certificate_number,
+          certificate_file: saved.certificate_file || undefined,
         } as any);
       } catch (err) {
         console.warn(`Failed to update instrument ${calibration.instrument_id} on approval`, err);
@@ -659,10 +707,10 @@ export class CalibrationService {
     // Record audit log entry
     const auditLog = this.auditLogRepository.create({
       calibration_id: saved.id,
-      edited_by_id: reviewer.id,
-      edited_by_name: reviewer.name,
+      edited_by_id: approver.id,
+      edited_by_name: approver.name,
       changes_summary: [{ field: 'approval_status', oldValue: oldStatus, newValue: 'Approved' }],
-      remarks: 'Calibration Record Approved by Reviewer',
+      remarks: remarks ? `Calibration Final Approved: ${remarks}` : 'Calibration Record Final Approved by Approver',
     });
     await this.auditLogRepository.save(auditLog);
 
@@ -770,8 +818,14 @@ export class CalibrationService {
       qb.andWhere('(cal.certificate_generated = false OR cal.certificate_generated IS NULL)');
     }
     if (approvalStatus) {
-      if (approvalStatus === 'Pending Approval') {
-        qb.andWhere("(cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Approval')");
+      if (approvalStatus === 'Pending Review') {
+        qb.andWhere("(cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Review')");
+      } else if (approvalStatus === 'Reviewed') {
+        qb.andWhere("(cal.approval_status = 'Reviewed' OR cal.approval_status = 'Pending Approval')");
+      } else if (approvalStatus === 'Pending Approval') {
+        qb.andWhere(
+          "(cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Approval' OR cal.approval_status = 'Pending Review' OR cal.approval_status = 'Reviewed')",
+        );
       } else {
         qb.andWhere('cal.approval_status = :approvalStatus', { approvalStatus });
       }
@@ -839,6 +893,7 @@ export class CalibrationService {
     try {
       await this.instrumentsService.update(calibration.instrument_id, {
         certificate_file: filePath,
+        cert_no: calibration.certificate_number,
       } as any);
     } catch (err) {
       console.warn(`Failed to update instrument certificate`, err);
@@ -1081,13 +1136,19 @@ export class CalibrationService {
           updatedCp.receipt_condition = dto.receipt_condition;
         }
 
-        await this.instrumentsService.update(saved.instrument_id, {
-          last_calibration_date: saved.calibration_date as any,
-          due_date: saved.next_calibration_date as any,
-          status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
-          calibration_source: 'In-House',
-          custom_parameters: updatedCp,
-        } as any);
+        if (saved.approval_status === 'Approved') {
+          await this.instrumentsService.update(saved.instrument_id, {
+            last_calibration_date: saved.calibration_date as any,
+            due_date: saved.next_calibration_date as any,
+            status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
+            calibration_source: 'In-House',
+            custom_parameters: updatedCp,
+          } as any);
+        } else {
+          await this.instrumentsService.update(saved.instrument_id, {
+            custom_parameters: updatedCp,
+          } as any);
+        }
       } catch (err) {
         console.warn(`Failed to update instrument ${saved.instrument_id} on calibration update`, err);
       }

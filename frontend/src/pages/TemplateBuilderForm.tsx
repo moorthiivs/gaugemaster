@@ -64,6 +64,7 @@ import {
   MoreVertical,
   Bot,
   BookOpen,
+  ArrowLeftRight,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -116,6 +117,7 @@ import { validateTemplatePreSave } from "@/lib/templatePreSaveValidator";
 import { PreSaveAuditModal } from "@/components/calibration/template-management/PreSaveAuditModal";
 import { AddColumnModal } from "@/components/calibration/template-management/AddColumnModal";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ensureTableKeys, evaluateAllCanvasBlocks } from "@/lib/formulaEngine";
 
 export default function TemplateBuilderForm() {
   useSEO({
@@ -192,7 +194,7 @@ export default function TemplateBuilderForm() {
   const canvasActionsRef = useRef<CanvasEditorActions | null>(null);
 
   // Dedicated Full-Height Copilot State matching reference smple.png
-  const [showAssistant, setShowAssistant] = useState(true);
+  const [showAssistant, setShowAssistant] = useState(false);
   const [isAssistantDocked, setIsAssistantDocked] = useState(true);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
@@ -900,41 +902,78 @@ export default function TemplateBuilderForm() {
     markDirty();
   };
 
-  const handleApplyAiGenerated = (result: GeneratedTemplateResult) => {
+  const handleApplyAiGenerated = (
+    result: GeneratedTemplateResult,
+    mode: "append" | "replace" = "append",
+  ) => {
+    const hasExisting = layoutBlocks && layoutBlocks.length > 0;
+    const isAppend = mode === "append" && hasExisting;
+
     if (
       result.name &&
       (!templateId || name === "New Template" || !name.trim())
     ) {
       setName(result.name);
     }
-    if (result.description) {
+    if (result.description && (!description || !isAppend)) {
       setDescription(result.description);
     }
-    if (result.instrumentType) {
+    if (result.instrumentType && (!instrumentType || !isAppend)) {
       setInstrumentType(result.instrumentType);
     }
-    if (result.defaultTolerance !== undefined) {
+    if (
+      result.defaultTolerance !== undefined &&
+      (!isAppend || defaultTolerance === undefined)
+    ) {
       setDefaultTolerance(result.defaultTolerance);
     }
-    if (result.defaultUnit) {
+    if (result.defaultUnit && (!isAppend || !defaultUnit)) {
       setDefaultUnit(result.defaultUnit);
     }
-    if (result.decimalPlaces !== undefined) {
+    if (
+      result.decimalPlaces !== undefined &&
+      (!isAppend || decimalPlaces === undefined)
+    ) {
       setDecimalPlaces(result.decimalPlaces);
     }
-    if (result.acceptanceCriteria) {
+    if (result.acceptanceCriteria && (!isAppend || !enableAcceptance)) {
       setEnableAcceptance(result.acceptanceCriteria.enabled);
       setAcceptanceType(result.acceptanceCriteria.type);
       setAcceptanceValue(result.acceptanceCriteria.value);
     }
+
     if (result.blocks && result.blocks.length > 0) {
-      setLayoutBlocks(result.blocks);
-      setSelectedBlockId(result.blocks[0]?.id || null);
+      if (isAppend) {
+        const uniqueNewBlocks = result.blocks.map((b, idx) => {
+          const newId = `${b.type || "block"}_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+          if (b.type === "split_row" && Array.isArray((b as any).children)) {
+            return {
+              ...b,
+              id: newId,
+              children: (b as any).children.map((c: any, cIdx: number) => ({
+                ...c,
+                id: `${c.type || "tbl"}_${Date.now()}_${idx}_${cIdx}_${Math.random().toString(36).substring(2, 6)}`,
+              })),
+            };
+          }
+          return { ...b, id: newId };
+        });
+        const combined = ensureTableKeys([...layoutBlocks, ...uniqueNewBlocks]);
+        const evaluated = evaluateAllCanvasBlocks(combined, { forceFull: true });
+        setLayoutBlocks(evaluated);
+        setSelectedBlockId(uniqueNewBlocks[0]?.id || null);
+        toast.success(
+          `Added ${result.blocks.length} block(s) without removing existing tables! Total: ${combined.length} blocks.`,
+        );
+      } else {
+        setLayoutBlocks(result.blocks);
+        setSelectedBlockId(result.blocks[0]?.id || null);
+        toast.success(
+          `Loaded "${result.name}" with ${result.blocks.length} blocks!`,
+        );
+      }
     }
     markDirty();
-    toast.success(
-      `Loaded "${result.name}" with ${result.blocks.length} blocks!`,
-    );
   };
 
   // Global window paste listener when not typing in text fields
@@ -3126,6 +3165,154 @@ export default function TemplateBuilderForm() {
                         )}
                       </Card>
 
+                      {/* Horizontal Layout Column Dimensions Card */}
+                      {activeTableBlock.orientation === "horizontal" && (
+                        <Card className="border border-indigo-200 dark:border-indigo-900 shadow-xs bg-indigo-50/20 dark:bg-indigo-950/10">
+                          <CardHeader className="py-2.5 px-4 border-b border-indigo-100 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/30">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <ArrowLeftRight className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                                <CardTitle className="text-xs font-bold text-foreground">
+                                  Horizontal Layout Column Dimensions
+                                </CardTitle>
+                              </div>
+                              <Badge variant="outline" className="text-xxs font-mono border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300">
+                                Transposed Table Mode
+                              </Badge>
+                            </div>
+                            <CardDescription className="text-tiny text-muted-foreground mt-0.5">
+                              In horizontal view, parameters are rendered as rows and calibration test points form the columns. Adjust the widths below or drag column borders directly on the canvas.
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="p-4 space-y-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* Parameter Column Width (Column 0) */}
+                              <div className="p-3 rounded-lg bg-card border space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs font-semibold text-foreground">
+                                    Parameter Label Column Width
+                                  </Label>
+                                  <span className="font-mono text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                    {typeof activeTableBlock.firstColWidth === "number"
+                                      ? activeTableBlock.firstColWidth
+                                      : parseInt(String(activeTableBlock.firstColWidth || activeTableBlock.parameterWidth || 160)) || 160}px
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="range"
+                                    min={70}
+                                    max={350}
+                                    step={5}
+                                    value={
+                                      typeof activeTableBlock.firstColWidth === "number"
+                                        ? activeTableBlock.firstColWidth
+                                        : parseInt(String(activeTableBlock.firstColWidth || activeTableBlock.parameterWidth || 160)) || 160
+                                    }
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      const updatedCols = (activeTableBlock.columns || []).map((c: any, i: number) =>
+                                        i === 0 ? { ...c, width: `${val}px` } : c,
+                                      );
+                                      updateActiveTableBlock({
+                                        firstColWidth: val,
+                                        parameterWidth: val,
+                                        ...(updatedCols.length > 0 ? { columns: updatedCols } : {}),
+                                      });
+                                    }}
+                                    className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                                  <span className="text-xxs text-muted-foreground">Presets:</span>
+                                  {[120, 140, 160, 180, 220].map((w) => (
+                                    <button
+                                      key={w}
+                                      type="button"
+                                      onClick={() => {
+                                        const updatedCols = (activeTableBlock.columns || []).map((c: any, i: number) =>
+                                          i === 0 ? { ...c, width: `${w}px` } : c,
+                                        );
+                                        updateActiveTableBlock({
+                                          firstColWidth: w,
+                                          parameterWidth: w,
+                                          ...(updatedCols.length > 0 ? { columns: updatedCols } : {}),
+                                        });
+                                      }}
+                                      className={`px-2 py-0.5 rounded text-xxs font-mono transition-colors border ${
+                                        parseInt(String(activeTableBlock.firstColWidth || activeTableBlock.parameterWidth || 160)) === w
+                                          ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs font-bold"
+                                          : "bg-background text-muted-foreground hover:text-foreground border-border"
+                                      }`}
+                                    >
+                                      {w}px
+                                    </button>
+                                  ))}
+                                </div>
+                                <p className="text-[11px] text-muted-foreground pt-1 leading-tight">
+                                  Recommended: <strong className="text-foreground font-semibold">150px - 170px</strong> for long parameter titles (e.g., &ldquo;DRO / Height Master Reading&rdquo;) to remain cleanly on a single line.
+                                </p>
+                              </div>
+
+                              {/* Test Point Column Width (Points 1..N) */}
+                              <div className="p-3 rounded-lg bg-card border space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-xs font-semibold text-foreground">
+                                    Point Data Columns Width
+                                  </Label>
+                                  <span className="font-mono text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                    {typeof activeTableBlock.dataColWidth === "number"
+                                      ? activeTableBlock.dataColWidth
+                                      : parseInt(String(activeTableBlock.dataColWidth || 65)) || 65}px
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <input
+                                    type="range"
+                                    min={40}
+                                    max={220}
+                                    step={5}
+                                    value={
+                                      typeof activeTableBlock.dataColWidth === "number"
+                                        ? activeTableBlock.dataColWidth
+                                        : parseInt(String(activeTableBlock.dataColWidth || 65)) || 65
+                                    }
+                                    onChange={(e) => {
+                                      const val = parseInt(e.target.value);
+                                      updateActiveTableBlock({
+                                        dataColWidth: val,
+                                      });
+                                    }}
+                                    className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                                  />
+                                </div>
+                                <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                                  <span className="text-xxs text-muted-foreground">Presets:</span>
+                                  {[50, 65, 80, 100, 130].map((w) => (
+                                    <button
+                                      key={w}
+                                      type="button"
+                                      onClick={() =>
+                                        updateActiveTableBlock({
+                                          dataColWidth: w,
+                                        })
+                                      }
+                                      className={`px-2 py-0.5 rounded text-xxs font-mono transition-colors border ${
+                                        parseInt(String(activeTableBlock.dataColWidth || 65)) === w
+                                          ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                                          : "bg-background text-muted-foreground hover:text-foreground border-border"
+                                      }`}
+                                    >
+                                      {w}px
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+
                       {/* Columns Architecture & Properties Card */}
                       <Card className="border shadow-xs bg-card">
                         <CardHeader className="py-3 px-4 border-b bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 space-y-0">
@@ -5043,7 +5230,7 @@ export default function TemplateBuilderForm() {
                 is_canvas_template: true,
                 layout_blocks: layoutBlocks,
                 calibration_points: points,
-                custom_columns: customColumns,
+                custom_columns: customColumns as any,
                 standard_columns_config: standardColumnConfigs,
                 column_order: columnOrder,
                 hidden_columns: hiddenColumns,
@@ -5105,6 +5292,7 @@ export default function TemplateBuilderForm() {
         open={showAiModal}
         onOpenChange={setShowAiModal}
         onApplyTemplate={handleApplyAiGenerated}
+        existingBlocksCount={layoutBlocks.length}
       />
 
       {/* Trial Run Modal */}

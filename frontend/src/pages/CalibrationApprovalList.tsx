@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
-import { CertificatePreview, formatUncertainty } from "@/components/calibration/CertificatePreview";
+import { CertificatePreview, CanvasBlocksRenderer, formatUncertainty } from "@/components/calibration/CertificatePreview";
 import { useNavigate } from "react-router-dom";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
@@ -47,8 +47,15 @@ export default function CalibrationApprovalList() {
   const [calibrations, setCalibrations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const roleName = getRoleName(user?.role || (user as any)?.userRole).toLowerCase();
+  const isAdmin = roleName.includes("admin") || !!user?.isSuperAdmin;
+  const isApprover = roleName.includes("approv") || roleName.includes("quality") || roleName.includes("manager") || isAdmin;
+  const isReviewer = roleName.includes("review") || isAdmin;
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilterTab, setStatusFilterTab] = useState("Pending Approval");
+  const [statusFilterTab, setStatusFilterTab] = useState(
+    isApprover && !roleName.includes("review") ? "Reviewed" : "Pending Review"
+  );
   const [reviewTab, setReviewTab] = useState("readings");
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -58,13 +65,26 @@ export default function CalibrationApprovalList() {
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
+  const [reviewRecommendationDialogOpen, setReviewRecommendationDialogOpen] = useState(false);
 
-  // Review form states
+  // Review & Approval form states
   const [rejectionReason, setRejectionReason] = useState("");
+  const [reviewerRemarks, setReviewerRemarks] = useState("");
+  const [approverRemarks, setApproverRemarks] = useState("");
   const [reviewerName, setReviewerName] = useState(user?.name || "");
-  const [reviewerDesignation, setReviewerDesignation] = useState("Quality Manager");
+  const [reviewerDesignation, setReviewerDesignation] = useState("Calibration Reviewer");
   const [reviewerSignature, setReviewerSignature] = useState(user?.name || "");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (selectedRecord?.id && !selectedRecord.layout_blocks && selectedRecord.is_canvas_template) {
+      httpClient.get(`/calibrations/${selectedRecord.id}`).then((res) => {
+        if (res.data) {
+          setSelectedRecord((prev: any) => ({ ...prev, ...res.data }));
+        }
+      }).catch(() => {});
+    }
+  }, [selectedRecord?.id]);
 
   const fetchCalibrations = async () => {
     setLoading(true);
@@ -105,8 +125,10 @@ export default function CalibrationApprovalList() {
   const filteredCalibrations = calibrations.filter((cal) => {
     const status = cal.approval_status || "Calibration Completed";
     let matchesTab = true;
-    if (statusFilterTab === "Pending Approval") {
-      matchesTab = status === "Calibration Completed" || status === "Pending Approval";
+    if (statusFilterTab === "Pending Review") {
+      matchesTab = status === "Calibration Completed" || status === "Pending Review";
+    } else if (statusFilterTab === "Reviewed") {
+      matchesTab = status === "Reviewed" || status === "Pending Approval";
     } else if (statusFilterTab === "Approved") {
       matchesTab = status === "Approved";
     } else if (statusFilterTab === "Rejected") {
@@ -117,6 +139,7 @@ export default function CalibrationApprovalList() {
     const instCode = cal.instrument?.id_code?.toLowerCase() || "";
     const certNo = cal.certificate_number?.toLowerCase() || "";
     const engName = cal.calibrated_by?.toLowerCase() || "";
+    const revName = cal.reviewed_by?.toLowerCase() || "";
     const q = searchQuery.toLowerCase();
 
     const matchesSearch =
@@ -124,42 +147,87 @@ export default function CalibrationApprovalList() {
       instName.includes(q) ||
       instCode.includes(q) ||
       certNo.includes(q) ||
-      engName.includes(q);
+      engName.includes(q) ||
+      revName.includes(q);
 
     return matchesTab && matchesSearch;
   });
 
-  // Approval counts
-  const pendingCount = calibrations.filter(
+  // Workflow Stage counts
+  const pendingReviewCount = calibrations.filter(
     (c) =>
       (c.approval_status || "Calibration Completed") === "Calibration Completed" ||
+      c.approval_status === "Pending Review"
+  ).length;
+
+  const reviewedCount = calibrations.filter(
+    (c) =>
+      c.approval_status === "Reviewed" ||
       c.approval_status === "Pending Approval"
   ).length;
 
   const approvedCount = calibrations.filter((c) => c.approval_status === "Approved").length;
   const rejectedCount = calibrations.filter((c) => c.approval_status === "Rejected").length;
 
-  // Handle Approve Submission
+  // Handle Review & Recommend Submission (Stage 1)
+  const handleConfirmReview = async () => {
+    if (!selectedRecord) return;
+    setSubmitting(true);
+    try {
+      await httpClient.post(`/calibrations/${selectedRecord.id}/review`, {
+        reviewerId: user?.id,
+        reviewerName: user?.name || reviewerName || "Reviewer",
+        reviewerDesignation: getRoleName(user?.role) || reviewerDesignation || "Calibration Reviewer",
+        signature: (user as any)?.signature || reviewerSignature || user?.name || "Calibration Reviewer",
+        remarks: reviewerRemarks.trim() || undefined,
+      });
+
+      toast({
+        title: "Calibration Reviewed & Recommended",
+        description: `Calibration ${selectedRecord.certificate_number} has been reviewed and forwarded for Final Approval.`,
+        variant: "success",
+      });
+
+      setReviewRecommendationDialogOpen(false);
+      setReviewDialogOpen(false);
+      setSelectedRecord(null);
+      setReviewerRemarks("");
+      fetchCalibrations();
+    } catch (err: any) {
+      console.error("Failed to review calibration:", err);
+      toast({
+        title: "Review Action Failed",
+        description: err.response?.data?.message || "Could not complete review.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Handle Final Approve Submission (Stage 2)
   const handleConfirmApprove = async () => {
     if (!selectedRecord) return;
     setSubmitting(true);
     try {
       await httpClient.post(`/calibrations/${selectedRecord.id}/approve`, {
-        reviewerId: user?.id,
-        reviewerName: user?.name || reviewerName || "Quality Manager",
-        reviewerDesignation: getRoleName(user?.role) || reviewerDesignation || "Quality Manager",
-        signature: (user as any)?.signature || reviewerSignature || user?.name || "Quality Manager",
+        approverId: user?.id,
+        approverName: user?.name || "Quality Manager",
+        approverDesignation: getRoleName(user?.role) || "Quality Manager / Approver",
+        signature: (user as any)?.signature || user?.name || "Quality Manager",
+        approverRemarks: approverRemarks.trim() || undefined,
       });
 
       toast({
         title: "Calibration Approved",
-        description: `Certificate ${selectedRecord.certificate_number} has been approved and released.`,
+        description: `Certificate ${selectedRecord.certificate_number} has been final approved and released.`,
         variant: "success",
       });
 
       setApproveDialogOpen(false);
       setReviewDialogOpen(false);
       setSelectedRecord(null);
+      setApproverRemarks("");
       fetchCalibrations();
     } catch (err: any) {
       console.error("Failed to approve calibration:", err);
@@ -189,7 +257,7 @@ export default function CalibrationApprovalList() {
     try {
       await httpClient.post(`/calibrations/${selectedRecord.id}/reject`, {
         reviewerId: user?.id,
-        reviewerName: user?.name || "Quality Manager",
+        reviewerName: user?.name || "Reviewer / Approver",
         rejectionReason: rejectionReason.trim(),
       });
 
@@ -224,6 +292,14 @@ export default function CalibrationApprovalList() {
         </Badge>
       );
     }
+    if (status === "Reviewed" || status === "Pending Approval") {
+      return (
+        <Badge className="bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/30 gap-1.5 font-medium">
+          <UserCheck className="w-3.5 h-3.5 text-blue-600" />
+          <span>Reviewed (Pending Approver)</span>
+        </Badge>
+      );
+    }
     if (status === "Rejected") {
       return (
         <Badge variant="destructive" className="gap-1.5 font-medium">
@@ -235,7 +311,7 @@ export default function CalibrationApprovalList() {
     return (
       <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 gap-1.5 font-medium">
         <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-        <span>Pending Approval</span>
+        <span>Pending Review</span>
       </Badge>
     );
   };
@@ -289,23 +365,38 @@ export default function CalibrationApprovalList() {
         cell: ({ row }) => (
           <div>
             <div className="font-medium text-foreground">{row.original.calibrated_by || "Calibration Engineer"}</div>
-            <div className="text-[10px] text-muted-foreground">Engineer</div>
+            <div className="text-[10px] text-muted-foreground">
+              {row.original.calibration_date
+                ? new Date(row.original.calibration_date).toLocaleDateString("en-IN", {
+                    day: "2-digit",
+                    month: "short",
+                    year: "numeric",
+                  })
+                : "Engineer"}
+            </div>
           </div>
         ),
       },
       {
-        accessorKey: "calibration_date",
-        header: "Cal. Date",
+        accessorKey: "reviewed_by",
+        header: "Reviewed By",
         cell: ({ row }) => (
-          <span className="text-muted-foreground tabular-nums font-medium">
-            {row.original.calibration_date
-              ? new Date(row.original.calibration_date).toLocaleDateString("en-IN", {
+          <div>
+            <div className="font-medium text-foreground">
+              {row.original.reviewed_by || (
+                <span className="text-muted-foreground/60 italic text-xs">Pending Review</span>
+              )}
+            </div>
+            {row.original.reviewed_at && (
+              <div className="text-[10px] text-muted-foreground tabular-nums">
+                {new Date(row.original.reviewed_at).toLocaleDateString("en-IN", {
                   day: "2-digit",
                   month: "short",
                   year: "numeric",
-                })
-              : "-"}
-          </span>
+                })}
+              </div>
+            )}
+          </div>
         ),
       },
       {
@@ -335,6 +426,28 @@ export default function CalibrationApprovalList() {
         meta: { align: "right" },
         cell: ({ row }) => {
           const cal = row.original;
+          const status = cal.approval_status || "Calibration Completed";
+          const isPendingReview = status === "Calibration Completed" || status === "Pending Review";
+          const isReviewedStatus = status === "Reviewed" || status === "Pending Approval";
+          const isApprovedStatus = status === "Approved";
+
+          let buttonLabel = "View";
+          let isHighlighted = false;
+
+          if (isPendingReview) {
+            buttonLabel = isReviewer ? "Review" : "View";
+            isHighlighted = isReviewer;
+          } else if (isReviewedStatus) {
+            buttonLabel = isApprover ? "Inspect & Approve" : "View";
+            isHighlighted = isApprover;
+          } else if (isApprovedStatus) {
+            buttonLabel = "View Cert";
+            isHighlighted = false;
+          } else {
+            buttonLabel = "View";
+            isHighlighted = false;
+          }
+
           return (
             <div className="flex items-center justify-end gap-2">
               {canAccess("calibrations", "edit") && (
@@ -349,23 +462,29 @@ export default function CalibrationApprovalList() {
                 </Button>
               )}
               <Button
-                variant="outline"
+                variant={isHighlighted ? "default" : "outline"}
                 size="sm"
-                className="h-8 text-xs gap-1.5"
+                className={`h-8 text-xs gap-1.5 ${
+                  isHighlighted && isReviewedStatus
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                    : isHighlighted && isPendingReview
+                    ? "bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                    : ""
+                }`}
                 onClick={() => {
                   setSelectedRecord(cal);
                   setReviewDialogOpen(true);
                 }}
               >
                 <Eye className="w-3.5 h-3.5" />
-                <span>Review</span>
+                <span>{buttonLabel}</span>
               </Button>
             </div>
           );
         },
       },
     ],
-    [canAccess, navigate]
+    [canAccess, navigate, isReviewer, isApprover]
   );
 
   return (
@@ -389,7 +508,7 @@ export default function CalibrationApprovalList() {
       />
 
       {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="rounded-xl border border-border bg-card shadow-2xs">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
@@ -400,8 +519,23 @@ export default function CalibrationApprovalList() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{pendingCount}</div>
-            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Awaiting Manager / Reviewer action</p>
+            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{pendingReviewCount}</div>
+            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Awaiting Reviewer action</p>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-xl border border-border bg-card shadow-2xs">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+              <span>Reviewed (Awaiting Final)</span>
+              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
+                <UserCheck className="w-4 h-4" />
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{reviewedCount}</div>
+            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Recommended for Approver sign-off</p>
           </CardContent>
         </Card>
 
@@ -439,12 +573,20 @@ export default function CalibrationApprovalList() {
       {/* Tabs & Search Toolbar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-xl border">
         <Tabs value={statusFilterTab} onValueChange={setStatusFilterTab} className="w-full sm:w-auto">
-          <TabsList className="grid grid-cols-4 h-9">
-            <TabsTrigger value="Pending Approval" className="text-xs gap-1.5">
-              <span>Pending</span>
-              {pendingCount > 0 && (
+          <TabsList className="grid grid-cols-5 h-9">
+            <TabsTrigger value="Pending Review" className="text-xs gap-1.5">
+              <span>Pending Review</span>
+              {pendingReviewCount > 0 && (
                 <span className="bg-amber-500/20 text-amber-700 dark:text-amber-300 px-1.5 py-0.2 rounded-full text-[10px] font-bold">
-                  {pendingCount}
+                  {pendingReviewCount}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="Reviewed" className="text-xs gap-1.5">
+              <span>Reviewed</span>
+              {reviewedCount > 0 && (
+                <span className="bg-blue-500/20 text-blue-700 dark:text-blue-300 px-1.5 py-0.2 rounded-full text-[10px] font-bold">
+                  {reviewedCount}
                 </span>
               )}
             </TabsTrigger>
@@ -488,8 +630,14 @@ export default function CalibrationApprovalList() {
         hideColumnToggle={false}
         emptyTitle="No Calibration Records Found"
         emptyDescription={
-          statusFilterTab === "Pending Approval"
-            ? "All completed calibrations have been reviewed and processed."
+          statusFilterTab === "Pending Review"
+            ? "All calibration submissions have been reviewed."
+            : statusFilterTab === "Reviewed"
+            ? "No reviewed calibrations awaiting final approver sign-off."
+            : statusFilterTab === "Approved"
+            ? "No approved calibrations found."
+            : statusFilterTab === "Rejected"
+            ? "No rejected records found."
             : "No matching records found for your filter."
         }
         emptyIcon={FileCheck}
@@ -518,8 +666,70 @@ export default function CalibrationApprovalList() {
               <div className="bg-destructive/15 border border-destructive/30 text-destructive p-3 rounded-lg flex items-start gap-2.5 text-xs">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-semibold">Rejection Comment from Reviewer ({selectedRecord.rejected_by}):</div>
+                  <div className="font-semibold">Rejection Comment from Reviewer / Approver ({selectedRecord.rejected_by || "Reviewer"}):</div>
                   <div className="mt-0.5">{selectedRecord.rejection_reason}</div>
+                </div>
+              </div>
+            )}
+
+            {/* Reviewer Sign-off Banner if reviewed */}
+            {selectedRecord.reviewed_by && (
+              <div className="bg-blue-500/10 border border-blue-500/20 text-blue-900 dark:text-blue-300 p-3 rounded-lg flex items-start gap-2.5 text-xs">
+                <UserCheck className="w-4 h-4 shrink-0 text-blue-600 mt-0.5" />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">
+                      Reviewed & Recommended by: {selectedRecord.reviewed_by}
+                      {selectedRecord.reviewed_by_designation ? ` (${selectedRecord.reviewed_by_designation})` : " (Reviewer)"}
+                    </span>
+                    {selectedRecord.reviewed_at && (
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        {new Date(selectedRecord.reviewed_at).toLocaleDateString("en-IN", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  {selectedRecord.reviewer_remarks && (
+                    <div className="mt-1 text-muted-foreground italic">
+                      "{selectedRecord.reviewer_remarks}"
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Approver Sign-off Banner if approved */}
+            {selectedRecord.approval_status === "Approved" && selectedRecord.approved_by && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-900 dark:text-emerald-300 p-3 rounded-lg flex items-start gap-2.5 text-xs">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">
+                      Approved & Released by: {selectedRecord.approved_by}
+                      {selectedRecord.approved_by_designation ? ` (${selectedRecord.approved_by_designation})` : " (Approver)"}
+                    </span>
+                    {selectedRecord.approved_at && (
+                      <span className="text-[11px] text-muted-foreground font-mono">
+                        {new Date(selectedRecord.approved_at).toLocaleDateString("en-IN", {
+                          day: "2-digit",
+                          month: "short",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    )}
+                  </div>
+                  {selectedRecord.approver_remarks && (
+                    <div className="mt-1 text-muted-foreground italic">
+                      "{selectedRecord.approver_remarks}"
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -539,6 +749,11 @@ export default function CalibrationApprovalList() {
               {/* Readings & Specs Tab */}
               <TabsContent value="readings" className="flex-1 overflow-y-auto max-h-[68vh] space-y-4 pr-1 scrollbar-thin">
                 {(() => {
+                  const layoutBlocks =
+                    (selectedRecord as any).layout_blocks ||
+                    ((selectedRecord as any).template as any)?.layout_blocks;
+                  const hasLayoutBlocks = Array.isArray(layoutBlocks) && layoutBlocks.length > 0;
+
                   const points = selectedRecord.calibration_points || [];
                   const unit = points[0]?.unit || "mm";
 
@@ -741,6 +956,9 @@ export default function CalibrationApprovalList() {
 
                       {/* Optional Diagram / Schematic Image */}
                       {(() => {
+                        const hasDiagramInBlocks = hasLayoutBlocks && layoutBlocks.some((b: any) => b.type === "diagram_block" || b.type === "diagram");
+                        if (hasDiagramInBlocks) return null;
+
                         const diagramImg =
                           selectedRecord.diagram_image ||
                           ((selectedRecord as any).template as any)?.diagram_image;
@@ -787,55 +1005,89 @@ export default function CalibrationApprovalList() {
                         );
                       })()}
 
-                      {/* Test Points Table */}
-                      <div className="border rounded-lg overflow-hidden">
-                        <div className="bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground border-b flex justify-between items-center">
-                          <span>Calibration Test Points ({points.length} points)</span>
-                          <Badge variant="outline" className={selectedRecord.verdict === "PASS" ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-bold" : "bg-red-500/10 text-red-700 border-red-500/30 font-bold"}>
-                            Verdict: {selectedRecord.verdict || "PASS"}
-                          </Badge>
+                      {/* Calibration Readings / Test Points */}
+                      {hasLayoutBlocks ? (
+                        <div className="border rounded-lg overflow-hidden bg-card">
+                          <div className="bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground border-b flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <FileText className="w-3.5 h-3.5 text-primary" />
+                              <span>Calibration Measurement Data &amp; Specifications</span>
+                              <Badge variant="secondary" className="text-[10px]">
+                                Canvas Template
+                              </Badge>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className={
+                                selectedRecord.verdict === "PASS"
+                                  ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-bold"
+                                  : "bg-red-500/10 text-red-700 border-red-500/30 font-bold"
+                              }
+                            >
+                              Verdict: {selectedRecord.verdict || "PASS"}
+                            </Badge>
+                          </div>
+                          <div className="p-3 bg-card overflow-x-auto space-y-3">
+                            <CanvasBlocksRenderer blocks={layoutBlocks} isScreen={true} />
+                          </div>
                         </div>
-                        <table className="w-full text-xs text-left">
-                          <thead className="bg-muted/30 text-muted-foreground text-[10px] uppercase border-b">
-                            <tr>
-                              <th className="px-3 py-2 w-12">Point</th>
-                              {activeColumns.map((colKey: string) => (
-                                <th key={colKey} className="px-3 py-2">{getColumnTitle(colKey)}</th>
-                              ))}
-                              {showStatusColumn && <th className="px-3 py-2">Status</th>}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y font-mono">
-                            {points.map((pt: any, idx: number) => {
-                              const ptStatus = pt.status || "PASS";
-                              return (
-                                <tr key={idx} className="hover:bg-muted/20">
-                                  <td className="px-3 py-2 font-semibold text-foreground">{pt.point_number || idx + 1}</td>
-                                  {activeColumns.map((colKey: string) => (
-                                    <td key={colKey} className={`px-3 py-2 ${colKey === "description" ? "font-sans font-medium" : ""}`}>
-                                      {getCellValue(pt, colKey)}
-                                    </td>
-                                  ))}
-                                  {showStatusColumn && (
-                                    <td className="px-3 py-2 font-sans">
-                                      <Badge
-                                        variant="outline"
-                                        className={
-                                          ptStatus === "PASS"
-                                            ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 text-[10px]"
-                                            : "bg-red-500/10 text-red-700 border-red-500/30 text-[10px]"
-                                        }
-                                      >
-                                        {ptStatus}
-                                      </Badge>
-                                    </td>
-                                  )}
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                      ) : (
+                        <div className="border rounded-lg overflow-hidden">
+                          <div className="bg-muted/60 px-3 py-2 text-xs font-semibold text-foreground border-b flex justify-between items-center">
+                            <span>Calibration Test Points ({points.length} points)</span>
+                            <Badge
+                              variant="outline"
+                              className={
+                                selectedRecord.verdict === "PASS"
+                                  ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 font-bold"
+                                  : "bg-red-500/10 text-red-700 border-red-500/30 font-bold"
+                              }
+                            >
+                              Verdict: {selectedRecord.verdict || "PASS"}
+                            </Badge>
+                          </div>
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-muted/30 text-muted-foreground text-[10px] uppercase border-b">
+                              <tr>
+                                <th className="px-3 py-2 w-12">Point</th>
+                                {activeColumns.map((colKey: string) => (
+                                  <th key={colKey} className="px-3 py-2">{getColumnTitle(colKey)}</th>
+                                ))}
+                                {showStatusColumn && <th className="px-3 py-2">Status</th>}
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y font-mono">
+                              {points.map((pt: any, idx: number) => {
+                                const ptStatus = pt.status || "PASS";
+                                return (
+                                  <tr key={idx} className="hover:bg-muted/20">
+                                    <td className="px-3 py-2 font-semibold text-foreground">{pt.point_number || idx + 1}</td>
+                                    {activeColumns.map((colKey: string) => (
+                                      <td key={colKey} className={`px-3 py-2 ${colKey === "description" ? "font-sans font-medium" : ""}`}>
+                                        {getCellValue(pt, colKey)}
+                                      </td>
+                                    ))}
+                                    {showStatusColumn && (
+                                      <td className="px-3 py-2 font-sans">
+                                        <Badge
+                                          variant="outline"
+                                          className={
+                                            ptStatus === "PASS"
+                                              ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 text-[10px]"
+                                              : "bg-red-500/10 text-red-700 border-red-500/30 text-[10px]"
+                                          }
+                                        >
+                                          {ptStatus}
+                                        </Badge>
+                                      </td>
+                                    )}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   );
                 })()}
@@ -850,13 +1102,17 @@ export default function CalibrationApprovalList() {
               </TabsContent>
             </Tabs>
 
-            {/* Manager Review Action Footer */}
-            <DialogFooter className="border-t pt-3 flex items-center justify-between">
-              <div className="text-xs text-muted-foreground">
-                Reviewer: <span className="font-semibold text-foreground">{user?.name}</span> ({getRoleName(user?.role) || "Quality Manager"})
+            {/* Calibration Review & Approval Action Footer */}
+            <DialogFooter className="border-t pt-3 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="text-xs text-muted-foreground flex items-center gap-2">
+                <span>Current User:</span>
+                <span className="font-semibold text-foreground">{user?.name}</span>
+                <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                  {getRoleName(user?.role) || "User"}
+                </Badge>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-end gap-2 flex-wrap">
                 {canAccess("calibrations", "edit") && (
                   <Button
                     variant="outline"
@@ -869,30 +1125,89 @@ export default function CalibrationApprovalList() {
                   </Button>
                 )}
                 <Button variant="outline" size="sm" onClick={() => setReviewDialogOpen(false)}>
-                  Cancel
+                  Close
                 </Button>
 
-                {selectedRecord.approval_status !== "Approved" && canAccess("calibration_approvals", "edit") && (
-                  <>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setRejectDialogOpen(true)}
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Reject & Return</span>
-                    </Button>
+                {/* Stage 1: Pending Review */}
+                {((selectedRecord.approval_status || "Calibration Completed") === "Calibration Completed" ||
+                  selectedRecord.approval_status === "Pending Review") &&
+                  canAccess("calibration_approvals", "edit") && (
+                    <>
+                      {isReviewer ? (
+                        <>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => setRejectDialogOpen(true)}
+                          >
+                            <X className="w-4 h-4" />
+                            <span>Reject & Return</span>
+                          </Button>
 
-                    <Button
-                      size="sm"
-                      className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                      onClick={() => setApproveDialogOpen(true)}
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Approve Certificate</span>
-                    </Button>
-                  </>
+                          <Button
+                            size="sm"
+                            className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold"
+                            onClick={() => {
+                              setReviewerRemarks("");
+                              setReviewRecommendationDialogOpen(true);
+                            }}
+                          >
+                            <UserCheck className="w-4 h-4" />
+                            <span>Review & Recommend</span>
+                          </Button>
+                        </>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs py-1.5 px-3 text-muted-foreground">
+                          Awaiting Calibration Reviewer
+                        </Badge>
+                      )}
+                    </>
+                  )}
+
+                {/* Stage 2: Reviewed (Awaiting Final Approver Sign-off) */}
+                {(selectedRecord.approval_status === "Reviewed" ||
+                  selectedRecord.approval_status === "Pending Approval") &&
+                  canAccess("calibration_approvals", "edit") && (
+                    <>
+                      {isApprover ? (
+                        <>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => setRejectDialogOpen(true)}
+                          >
+                            <X className="w-4 h-4" />
+                            <span>Reject & Return</span>
+                          </Button>
+
+                          <Button
+                            size="sm"
+                            className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                            onClick={() => {
+                              setApproverRemarks("");
+                              setApproveDialogOpen(true);
+                            }}
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Final Approve & Release</span>
+                          </Button>
+                        </>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs py-1.5 px-3 text-muted-foreground">
+                          Reviewed - Awaiting Final Approver
+                        </Badge>
+                      )}
+                    </>
+                  )}
+
+                {/* Stage 3: Approved */}
+                {selectedRecord.approval_status === "Approved" && (
+                  <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 gap-1.5 py-1.5 px-3">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Certificate Released</span>
+                  </Badge>
                 )}
               </div>
             </DialogFooter>
@@ -900,16 +1215,89 @@ export default function CalibrationApprovalList() {
         </Dialog>
       )}
 
-      {/* Approve Confirmation Modal */}
+      {/* Review Recommendation Confirmation Modal (Stage 1) */}
+      <Dialog open={reviewRecommendationDialogOpen} onOpenChange={setReviewRecommendationDialogOpen}>
+        <DialogContent className="max-w-md space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-600">
+              <UserCheck className="w-5 h-5" />
+              <span>Complete Review & Recommend</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Confirm that you have verified the measurement readings, formula calculations, master standard traceability, and uncertainty budgets for certificate{" "}
+              <span className="font-bold text-foreground">{selectedRecord?.certificate_number}</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3.5 space-y-2.5 text-xs">
+            <div className="flex justify-between items-center pb-2 border-b border-blue-500/20">
+              <span className="text-muted-foreground font-medium">Instrument:</span>
+              <span className="font-semibold text-foreground">
+                {selectedRecord?.instrument?.name || "Instrument"}
+              </span>
+            </div>
+            <div className="flex justify-between items-center pb-2 border-b border-blue-500/20">
+              <span className="text-muted-foreground font-medium">Calibrated By:</span>
+              <span className="font-semibold text-foreground">
+                {selectedRecord?.calibrated_by || "Calibration Engineer"}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground font-medium">Reviewer:</span>
+              <span className="font-semibold text-blue-700 dark:text-blue-400">
+                {user?.name || "Calibration Reviewer"} ({getRoleName(user?.role) || "Reviewer"})
+              </span>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="font-semibold text-xs text-foreground block">
+              Reviewer Remarks / Verification Notes (Optional)
+            </label>
+            <Textarea
+              placeholder="e.g. Verified test points, environmental parameters, and master gauge calibration validity. Recommended for final approval."
+              value={reviewerRemarks}
+              onChange={(e) => setReviewerRemarks(e.target.value)}
+              className="h-24 text-xs"
+            />
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setReviewRecommendationDialogOpen(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmReview}
+              disabled={submitting}
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 font-semibold"
+            >
+              {submitting ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <UserCheck className="w-4 h-4" />
+              )}
+              <span>Complete Review & Forward</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Final Approve Confirmation Modal (Stage 2) */}
       <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>
         <DialogContent className="max-w-md space-y-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-emerald-600">
               <CheckCircle2 className="w-5 h-5" />
-              <span>Confirm Calibration Approval</span>
+              <span>Confirm Final Approval & Release</span>
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Are you sure you want to approve and release calibration certificate <span className="font-bold text-foreground">{selectedRecord?.certificate_number}</span>?
+              Are you sure you want to approve and release calibration certificate <span className="font-bold text-foreground">{selectedRecord?.certificate_number}</span>? This will officially issue the certificate.
             </DialogDescription>
           </DialogHeader>
 
@@ -923,6 +1311,17 @@ export default function CalibrationApprovalList() {
                   ` (${selectedRecord?.instrument?.id_code || selectedRecord?.instrument_id_code})`}
               </span>
             </div>
+
+            {/* Reviewed By Info */}
+            {selectedRecord?.reviewed_by && (
+              <div className="flex justify-between items-center pb-2 border-b border-emerald-500/20">
+                <span className="text-muted-foreground font-medium">Reviewed By:</span>
+                <span className="font-semibold text-blue-700 dark:text-blue-400 text-xs">
+                  {selectedRecord.reviewed_by}
+                  {selectedRecord.reviewed_by_designation ? ` (${selectedRecord.reviewed_by_designation})` : ""}
+                </span>
+              </div>
+            )}
 
             {/* Verdict Status Pass / Fail */}
             <div className="flex justify-between items-center pb-2 border-b border-emerald-500/20">
@@ -938,22 +1337,25 @@ export default function CalibrationApprovalList() {
               </Badge>
             </div>
 
-            {/* Certificate Preview Action */}
-            <div className="flex justify-between items-center pt-0.5">
-              <span className="text-muted-foreground font-medium">Certificate Document:</span>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs gap-1.5 border-primary/40 hover:bg-primary/10 text-primary font-semibold"
-                onClick={() => {
-                  setApproveDialogOpen(false);
-                  setReviewTab("certificate");
-                }}
-              >
-                <Eye className="w-3.5 h-3.5" />
-                <span>Certificate Preview</span>
-              </Button>
+            {/* Approver identity */}
+            <div className="flex justify-between items-center">
+              <span className="text-muted-foreground font-medium">Approver:</span>
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400 text-xs">
+                {user?.name || "Quality Manager"} ({getRoleName(user?.role) || "Approver"})
+              </span>
             </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="font-semibold text-xs text-foreground block">
+              Approver Remarks / Authorization Note (Optional)
+            </label>
+            <Textarea
+              placeholder="e.g. Certificate verified and authorized for release to customer / shop floor."
+              value={approverRemarks}
+              onChange={(e) => setApproverRemarks(e.target.value)}
+              className="h-20 text-xs"
+            />
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
@@ -966,7 +1368,7 @@ export default function CalibrationApprovalList() {
               ) : (
                 <Check className="w-4 h-4" />
               )}
-              <span>Yes, Approve Certificate</span>
+              <span>Final Approve & Release</span>
             </Button>
           </DialogFooter>
         </DialogContent>

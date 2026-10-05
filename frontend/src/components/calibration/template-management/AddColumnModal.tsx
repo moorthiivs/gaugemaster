@@ -159,11 +159,13 @@ export function AddColumnModal({
   const [columnName, setColumnName] = useState("");
   const [columnKey, setColumnKey] = useState("");
   const [columnType, setColumnType] = useState<CanvasColumnDef["type"]>("reading");
+  const [judgementMode, setJudgementMode] = useState<"formula" | "manual">("formula");
   const [isTypeManual, setIsTypeManual] = useState(false);
   const [columnDecimals, setColumnDecimals] = useState<string>("inherit");
   const [columnFormula, setColumnFormula] = useState("");
   const [columnAlign, setColumnAlign] = useState<"left" | "center" | "right">("right");
   const [columnWidth, setColumnWidth] = useState<number>(120);
+  const [columnGroupName, setColumnGroupName] = useState<string>("");
 
   const formulaInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -176,17 +178,31 @@ export function AddColumnModal({
     return COLUMN_TYPES.find((c) => c.value === columnType) || COLUMN_TYPES[0];
   }, [columnType]);
 
+  // Existing header groups in this table
+  const existingGroups = useMemo(() => {
+    if (!targetTable?.columns) return [];
+    const groups = new Set<string>();
+    targetTable.columns.forEach((c) => {
+      if (c.groupName?.trim()) {
+        groups.add(c.groupName.trim());
+      }
+    });
+    return Array.from(groups);
+  }, [targetTable]);
+
   // Reset form when modal opens
   useEffect(() => {
     if (open) {
       setColumnName("");
       setColumnKey("");
       setColumnType("reading");
+      setJudgementMode("formula");
       setIsTypeManual(false);
       setColumnDecimals("inherit");
       setColumnFormula("");
       setColumnAlign("right");
       setColumnWidth(120);
+      setColumnGroupName("");
     }
   }, [open]);
 
@@ -212,7 +228,15 @@ export function AddColumnModal({
         setColumnType("status");
         setColumnAlign("center");
         setColumnWidth(120);
-        if (!columnFormula) {
+        if (
+          lower.includes("manual") ||
+          lower.includes("visual") ||
+          lower.includes("wear") ||
+          lower.includes("ring") ||
+          lower.includes("check")
+        ) {
+          setJudgementMode("manual");
+        } else if (!columnFormula) {
           setColumnFormula("IF(ABS(error) <= tolerance, 'PASS', 'FAIL')");
         }
       } else if (
@@ -349,10 +373,10 @@ export function AddColumnModal({
 
   // Live test evaluation
   const liveTestResult = useMemo(() => {
-    if (columnType !== "formula" && columnType !== "status") return null;
+    if (columnType !== "formula" && (columnType !== "status" || judgementMode === "manual")) return null;
     if (!columnFormula.trim()) return null;
     return testEvaluateFormula(columnFormula.trim(), sampleContext);
-  }, [columnType, columnFormula, sampleContext]);
+  }, [columnType, judgementMode, columnFormula, sampleContext]);
 
   // Submit Handler
   const handleSaveColumn = () => {
@@ -381,8 +405,10 @@ export function AddColumnModal({
       return;
     }
 
+    const isManualJudgement = columnType === "status" && judgementMode === "manual";
+
     // Check formula requirement
-    if ((columnType === "formula" || columnType === "status") && !columnFormula.trim()) {
+    if (!isManualJudgement && (columnType === "formula" || columnType === "status") && !columnFormula.trim()) {
       toast.error("Please enter a formula expression for this column");
       return;
     }
@@ -395,15 +421,19 @@ export function AddColumnModal({
       key: trimmedKey,
       label: trimmedName,
       type: columnType,
+      role: columnType === "status" ? "JUDGEMENT" : undefined,
+      isManualJudgement: isManualJudgement,
+      judgementMode: columnType === "status" ? judgementMode : undefined,
       formula:
-        columnType === "formula" || columnType === "status"
+        !isManualJudgement && (columnType === "formula" || columnType === "status")
           ? columnFormula.trim()
           : undefined,
       decimal_places: dedicatedDec,
       decimalPrecision: dedicatedDec,
       align: columnAlign,
       width: columnWidth,
-      editable: columnType !== "formula" && columnType !== "status",
+      groupName: columnGroupName.trim() || undefined,
+      editable: isManualJudgement || (columnType !== "formula" && columnType !== "status"),
     };
 
     onAddColumn(targetTable.id, newCol);
@@ -594,30 +624,89 @@ export function AddColumnModal({
           {/* Section 3: Formula Input Section (Visible when Column Type is Formula or Judgement) */}
           {(columnType === "formula" || columnType === "status") && (
             <div className="space-y-3 p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
-              <div className="h-6 flex items-center justify-between">
-                <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  <Calculator className="w-4 h-4 text-primary" />
-                  <span>Formula Expression <span className="text-destructive">*</span></span>
-                </Label>
-                <Badge
-                  variant="outline"
-                  className="text-xs font-mono border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                >
-                  {columnType === "status" ? "Pass/Fail Verdict" : "Math Expression"}
-                </Badge>
-              </div>
+              {columnType === "status" && (
+                <div className="space-y-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold text-foreground">
+                      Judgement Evaluation Mode:
+                    </Label>
+                    <Badge variant="outline" className="text-[10px] uppercase font-bold text-slate-500">
+                      {judgementMode === "manual" ? "Visual / Functional Check" : "Calculated Tolerance"}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJudgementMode("formula");
+                        if (!columnFormula.trim()) {
+                          setColumnFormula("IF(ABS(error) <= tolerance, 'PASS', 'FAIL')");
+                        }
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-lg border transition-all text-center ${
+                        judgementMode === "formula"
+                          ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                          : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Formula (Auto PASS / FAIL)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJudgementMode("manual");
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-lg border transition-all text-center ${
+                        judgementMode === "manual"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Manual Check (OK / NOT OK)
+                    </button>
+                  </div>
+                </div>
+              )}
 
-              <Textarea
-                ref={formulaInputRef}
-                value={columnFormula}
-                onChange={(e) => setColumnFormula(e.target.value)}
-                placeholder={
-                  columnType === "status"
-                    ? "e.g. IF(ABS(error) <= tolerance, 'PASS', 'FAIL')"
-                    : "e.g. reading - nominal"
-                }
-                className="font-mono text-sm h-20 resize-none border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
-              />
+              {columnType === "status" && judgementMode === "manual" ? (
+                <div className="space-y-2 py-1 text-xs">
+                  <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 space-y-1.5">
+                    <div className="font-semibold flex items-center gap-1.5 text-xs">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Manual Visual & Functional Inspection Mode Active</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
+                      Perfect for <strong>Thread Plug Gauges</strong>, <strong>Thread Rings</strong>, and limit gauges (e.g. checked by GO/NOGO wear check rings).
+                      The technician can directly type or 1-click toggle <strong>OK</strong> / <strong>NOT OK</strong> during calibration without requiring numeric readings or tolerance calculation formulas.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="h-6 flex items-center justify-between">
+                    <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                      <Calculator className="w-4 h-4 text-primary" />
+                      <span>Formula Expression <span className="text-destructive">*</span></span>
+                    </Label>
+                    <Badge
+                      variant="outline"
+                      className="text-xs font-mono border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    >
+                      {columnType === "status" ? "Pass/Fail Verdict" : "Math Expression"}
+                    </Badge>
+                  </div>
+
+                  <Textarea
+                    ref={formulaInputRef}
+                    value={columnFormula}
+                    onChange={(e) => setColumnFormula(e.target.value)}
+                    placeholder={
+                      columnType === "status"
+                        ? "e.g. IF(ABS(error) <= tolerance, 'PASS', 'FAIL')"
+                        : "e.g. reading - nominal"
+                    }
+                    className="font-mono text-sm h-20 resize-none border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
+                  />
 
               {/* Variable Tokens */}
               <div className="space-y-1.5">
@@ -750,6 +839,8 @@ export function AddColumnModal({
                   )}
                 </div>
               )}
+                </>
+              )}
             </div>
           )}
 
@@ -868,6 +959,50 @@ export function AddColumnModal({
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Section 5: Header Grouping / Super-Header (Optional) */}
+          <div className="space-y-2 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <Columns className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>Header Group / Super-Header</span>
+                <span className="text-xs font-normal text-muted-foreground">(Optional)</span>
+              </Label>
+              {columnGroupName && (
+                <button
+                  type="button"
+                  onClick={() => setColumnGroupName("")}
+                  className="text-xs text-rose-500 hover:text-rose-600 font-medium cursor-pointer"
+                >
+                  Clear Group
+                </button>
+              )}
+            </div>
+            <Input
+              value={columnGroupName}
+              onChange={(e) => setColumnGroupName(e.target.value)}
+              placeholder="e.g. OBSERVATIONS, TOLERANCE (leave blank for single header)"
+              className="h-9 text-sm border-slate-300 dark:border-slate-600 bg-background"
+            />
+            {existingGroups.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[11px] text-muted-foreground font-medium">Existing groups in table:</span>
+                {existingGroups.map((grp) => (
+                  <Badge
+                    key={grp}
+                    variant={columnGroupName === grp ? "default" : "outline"}
+                    className="text-[11px] cursor-pointer hover:bg-primary/20 transition-colors"
+                    onClick={() => setColumnGroupName(grp)}
+                  >
+                    {grp}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            <span className="text-xs text-muted-foreground block">
+              Merges this column under a shared super-header across 2, 3, or more adjacent columns.
+            </span>
           </div>
         </div>
 

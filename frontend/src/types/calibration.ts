@@ -99,6 +99,16 @@ export interface CalibrationRecord {
   approved_by_designation?: string;
   approved_by_signature?: string;
 
+  // Approval Workflow
+  approval_status?: string;
+  reviewed_at?: string;
+  reviewer_remarks?: string;
+  approved_at?: string;
+  approver_remarks?: string;
+  rejected_by?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+
   // Certificate & ULR
   certificate_number: string;
   ulr_number?: string;

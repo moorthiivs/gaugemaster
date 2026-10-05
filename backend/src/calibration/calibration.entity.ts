@@ -179,10 +179,25 @@ export class Calibration {
 
   // ── Approval Workflow ────────────────────────────────────────
   @Column({ default: 'Calibration Completed' })
-  approval_status: string; // 'Calibration Completed' | 'Approved' | 'Rejected'
+  approval_status: string; // 'Pending Review' | 'Calibration Completed' | 'Reviewed' | 'Pending Approval' | 'Approved' | 'Rejected'
+
+  @Column({ type: 'timestamp', nullable: true })
+  reviewed_at?: Date;
+
+  @Column({ nullable: true })
+  reviewed_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  reviewer_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   approved_at?: Date;
+
+  @Column({ nullable: true })
+  approved_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  approver_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   rejected_at?: Date;
