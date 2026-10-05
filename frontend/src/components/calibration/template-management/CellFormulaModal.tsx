@@ -28,6 +28,7 @@ import {
   buildGlobalTablesContext,
   slugifyTableKey,
   validateFormula,
+  getExcelColumnLetter,
 } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
@@ -132,6 +133,52 @@ export function CellFormulaModal({
     return { targetTable: tbl, targetRow: row, allTables: tables };
   }, [blocks, blockIndex, childIndex, rowIndex]);
 
+  // Resolve active cell Excel coordinate
+  const activeColIndex = useMemo(() => {
+    if (!targetTable || !targetTable.columns) return -1;
+    return targetTable.columns.findIndex((c) => c && c.id === colId);
+  }, [targetTable, colId]);
+
+  const activeColLetter = activeColIndex >= 0 ? getExcelColumnLetter(activeColIndex) : "";
+  const activeCellCoord = activeColLetter ? `${activeColLetter}${rowIndex + 1}` : "";
+
+  // Sibling cell coordinates for current row
+  const rowCellCoordinates = useMemo(() => {
+    if (!targetTable || !targetTable.columns) return [];
+    return targetTable.columns.map((c, cIdx) => {
+      const letter = getExcelColumnLetter(cIdx);
+      const coord = `${letter}${rowIndex + 1}`;
+      return {
+        letter,
+        coord,
+        colId: c.id,
+        label: c.label || c.id,
+        isCurrent: c.id === colId,
+      };
+    });
+  }, [targetTable, rowIndex, colId]);
+
+  // Column ranges for numeric / trial / reading / error columns
+  const columnRanges = useMemo(() => {
+    if (!targetTable || !targetTable.columns || !targetTable.rows) return [];
+    const numRows = targetTable.rows.length;
+    if (numRows === 0) return [];
+    return targetTable.columns
+      .filter((c) => c && c.id !== "point_number" && c.id !== "sl_no")
+      .map((c) => {
+        const cIdx = targetTable.columns.findIndex((col) => col.id === c.id);
+        const letter = getExcelColumnLetter(cIdx);
+        return {
+          label: c.label || c.id,
+          colId: c.id,
+          letter,
+          range: `${letter}1:${letter}${numRows}`,
+          sum: `SUM(${letter}1:${letter}${numRows})`,
+          avg: `AVERAGE(${letter}1:${letter}${numRows})`,
+        };
+      });
+  }, [targetTable]);
+
   // Live evaluation test
   const testResult = useMemo(() => {
     const trimmed = formula.trim();
@@ -146,7 +193,16 @@ export function CellFormulaModal({
     try {
       const dec = targetTable.decimal_places ?? decimalPlaces ?? 3;
       const tol = typeof targetTable.tolerance === "number" ? targetTable.tolerance : 0.02;
-      const ctx = buildRowContext(targetRow, targetTable.columns, tol, dec, 0, targetTable.nominal);
+      const ctx = buildRowContext(
+        targetRow,
+        targetTable.columns,
+        tol,
+        dec,
+        0,
+        targetTable.nominal,
+        rowIndex,
+        targetTable.rows
+      );
       const globalContext = buildGlobalTablesContext(blocks);
       Object.assign(ctx.valuesMap, globalContext);
       Object.assign(ctx.rawValuesMap, globalContext);
@@ -164,7 +220,7 @@ export function CellFormulaModal({
     } catch (err: any) {
       return { success: false, message: err.message || "Invalid formula expression" };
     }
-  }, [formula, targetTable, targetRow, blocks, decimalPlaces]);
+  }, [formula, targetTable, targetRow, blocks, decimalPlaces, rowIndex]);
 
   const handleInsertToken = (token: string) => {
     setFormula((prev) => {
@@ -177,11 +233,17 @@ export function CellFormulaModal({
   const handleApply = () => {
     const trimmed = formula.trim();
     if (trimmed) {
-      const valid = validateFormula(trimmed);
+      const valid = validateFormula(trimmed, {
+        availableColumns: targetTable?.columns,
+        isJudgement: isJudgementCol,
+        targetColumnId: colId,
+      });
       const errorMsg = valid.errors?.join("; ") || "";
       if (!valid.isValid && !errorMsg.includes("not found")) {
-        toast.error(`Invalid formula syntax: ${errorMsg}`);
-        return;
+        if (!testResult || !testResult.success) {
+          toast.error(`Invalid formula syntax: ${errorMsg}`);
+          return;
+        }
       }
       onApplyFormula(blockIndex, childIndex, rowIndex, colId, trimmed);
       toast.success(`Formula applied to Row ${rowIndex + 1} (${colLabel})`);
@@ -198,9 +260,47 @@ export function CellFormulaModal({
     onOpenChange(false);
   };
 
+  const isJudgementCol =
+    colId === "status" ||
+    colId === "judgement" ||
+    /judg|verdict|status|decision/i.test(colId) ||
+    /judg|verdict|status|decision/i.test(colLabel);
+
+  const rowTolerance = targetRow?.tolerance ?? targetTable?.tolerance ?? 0.003;
+  const rowTolStr = typeof rowTolerance === "number" ? rowTolerance.toString() : "0.003";
+
   // Quick Preset Formulas
   const presets = useMemo(() => {
     const list: Array<{ label: string; formula: string; description: string }> = [];
+
+    if (isJudgementCol) {
+      list.push({
+        label: `Max Limit: reading <= ${rowTolStr}`,
+        formula: `=IF(reading <= ${rowTolStr}, "PASS", "FAIL")`,
+        description: `Judgement passes if reading is <= ${rowTolStr}, else fails`,
+      });
+      list.push({
+        label: `Average <= ${rowTolStr}`,
+        formula: `=IF(average <= ${rowTolStr}, "PASS", "FAIL")`,
+        description: `Judgement passes if computed average is <= ${rowTolStr}, else fails`,
+      });
+      list.push({
+        label: `ABS(deviation) <= tolerance`,
+        formula: `=IF(ABS(deviation) <= tolerance, "PASS", "FAIL")`,
+        description: `Pass if deviation is within tolerance limits`,
+      });
+      list.push({
+        label: `Bilateral Limits (lower_limit <= reading <= upper_limit)`,
+        formula: `=IF(AND(reading >= lower_limit, reading <= upper_limit), "PASS", "FAIL")`,
+        description: `Pass if reading is within upper and lower tolerance limits`,
+      });
+      list.push({
+        label: `ABS(error) <= tolerance`,
+        formula: `=IF(ABS(error) <= tolerance, "PASS", "FAIL")`,
+        description: `Pass if absolute measurement error is within tolerance`,
+      });
+    }
+
     const otherTables = allTables.filter((t) => !t.isCurrent);
 
     if (otherTables.length >= 2) {
@@ -235,14 +335,21 @@ export function CellFormulaModal({
       });
     }
 
-    list.push({
-      label: "Reading - Nominal (Local Error)",
-      formula: "=reading - nominal",
-      description: "Standard calibration deviation for this row",
-    });
+    if (!isJudgementCol) {
+      list.push({
+        label: "Reading - Nominal (Local Error)",
+        formula: "=reading - nominal",
+        description: "Standard calibration deviation for this row",
+      });
+      list.push({
+        label: "Average of Trials",
+        formula: "=AVERAGE(trials)",
+        description: "Mean value of all trial readings in this row",
+      });
+    }
 
     return list;
-  }, [allTables]);
+  }, [allTables, isJudgementCol, rowTolStr]);
 
   const currentTableKey =
     targetTable?.tableKey || slugifyTableKey(targetTable?.title || "table");
@@ -262,9 +369,23 @@ export function CellFormulaModal({
                   <Badge variant="outline" className="font-mono text-xs text-purple-600 bg-purple-50 border-purple-200">
                     {colLabel}
                   </Badge>
+                  {activeCellCoord && (
+                    <Badge className="font-mono text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-2xs">
+                      Cell {activeCellCoord}
+                    </Badge>
+                  )}
                 </DialogTitle>
-                <DialogDescription className="text-xs text-muted-foreground pt-0.5">
-                  Table: <code className="font-mono font-bold text-foreground">#{currentTableKey}</code> • Row {rowIndex + 1}
+                <DialogDescription className="text-xs text-muted-foreground pt-0.5 flex items-center gap-1.5 flex-wrap">
+                  <span>Table:</span>
+                  <code className="font-mono font-bold text-foreground">#{currentTableKey}</code>
+                  <span>•</span>
+                  <span>Row {rowIndex + 1}</span>
+                  {activeCellCoord && (
+                    <>
+                      <span>•</span>
+                      <span>Excel Cell: <strong className="font-mono text-purple-700 dark:text-purple-300 font-bold">{activeCellCoord}</strong></span>
+                    </>
+                  )}
                 </DialogDescription>
               </div>
             </div>
@@ -275,9 +396,26 @@ export function CellFormulaModal({
           {/* Metrology use-case banner */}
           <div className="bg-purple-50/60 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
             <p className="text-purple-950 dark:text-purple-200 leading-relaxed font-medium">
-              💡 <strong>Flexible Calculation & Manual Input:</strong> Assigning a formula here makes this specific row computed. Other rows in the same column without a formula will remain editable for manual input. You can reference error or reading columns from other tables using dot notation (e.g. <code className="font-mono bg-purple-100 dark:bg-purple-900 px-1 py-0.5 rounded text-purple-900 dark:text-purple-200">{`clockwise.error`}</code>).
+              💡 <strong>Flexible Calculation & Manual Input:</strong> Assigning a formula makes this specific row computed. Other rows without a formula remain manual. You can use standard variable names (e.g. <code className="font-mono bg-purple-100 dark:bg-purple-900 px-1 py-0.5 rounded text-purple-900 dark:text-purple-200">reading - nominal</code>) or <strong>Excel coordinates</strong> like <code className="font-mono bg-purple-100 dark:bg-purple-900 px-1 py-0.5 rounded text-purple-900 dark:text-purple-200">B{rowIndex + 1} - A{rowIndex + 1}</code>, cross-table <code className="font-mono bg-purple-100 dark:bg-purple-900 px-1 py-0.5 rounded text-purple-900 dark:text-purple-200">{`t1!C${rowIndex + 1}`}</code>, or ranges <code className="font-mono bg-purple-100 dark:bg-purple-900 px-1 py-0.5 rounded text-purple-900 dark:text-purple-200">{`SUM(C1:C${targetTable?.rows?.length || 5})`}</code>.
             </p>
           </div>
+
+          {/* Judgement Formula Guide Notice */}
+          {isJudgementCol && (
+            <div className="bg-emerald-50/70 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-lg p-2.5 flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+              <div className="text-emerald-900 dark:text-emerald-200 leading-relaxed">
+                <strong>Judgement Formula Guide:</strong> To automatically evaluate PASS / FAIL based on a limit (e.g. max 0.003), use:
+                <code className="block mt-1 font-mono text-xs bg-emerald-100 dark:bg-emerald-900/60 p-1 rounded text-emerald-950 dark:text-emerald-100 font-bold">
+                  =IF(reading &lt;= {rowTolStr}, &quot;PASS&quot;, &quot;FAIL&quot;)
+                </code>
+                or for tolerance compliance:
+                <code className="block mt-1 font-mono text-xs bg-emerald-100 dark:bg-emerald-900/60 p-1 rounded text-emerald-950 dark:text-emerald-100 font-bold">
+                  =IF(ABS(deviation) &lt;= tolerance, &quot;PASS&quot;, &quot;FAIL&quot;)
+                </code>
+              </div>
+            </div>
+          )}
 
           {/* Preset Formulas */}
           {presets.length > 0 && (
@@ -305,6 +443,123 @@ export function CellFormulaModal({
             </div>
           )}
 
+          {/* Excel Cell Coordinates (Click to Insert) */}
+          {rowCellCoordinates.length > 0 && (
+            <div className="space-y-1.5 p-2.5 rounded-lg border border-purple-200 dark:border-purple-900/50 bg-purple-50/40 dark:bg-purple-950/20">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-bold flex items-center gap-1.5 text-purple-900 dark:text-purple-200">
+                  <TableIcon className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Excel Cell Coordinates (Row {rowIndex + 1})</span>
+                </Label>
+                <span className="text-[10px] text-muted-foreground font-mono">Click to insert</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {rowCellCoordinates.map((cell) => (
+                  <button
+                    key={cell.coord}
+                    type="button"
+                    onClick={() => handleInsertToken(cell.coord)}
+                    className={`font-mono text-xs px-2 py-0.5 rounded font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                      cell.isCurrent
+                        ? "bg-purple-600 text-white shadow-xs ring-1 ring-purple-400"
+                        : "bg-white dark:bg-slate-900 hover:bg-purple-100 hover:text-purple-800 text-purple-900 dark:text-purple-200 border border-purple-300 dark:border-purple-800 shadow-2xs"
+                    }`}
+                    title={`Insert cell coordinate ${cell.coord} (${cell.label})${cell.isCurrent ? " - Active Cell" : ""}`}
+                  >
+                    <span>{cell.coord}</span>
+                    <span className="text-[10px] font-normal opacity-75 font-sans truncate max-w-[80px]">({cell.label})</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Column Range & Aggregation Presets */}
+              {columnRanges.length > 0 && (
+                <div className="pt-2 border-t border-purple-200/60 dark:border-purple-800/40 flex flex-wrap gap-1 items-center">
+                  <span className="text-[10px] font-semibold text-muted-foreground mr-1">Ranges:</span>
+                  {columnRanges.slice(0, 4).map((col) => (
+                    <React.Fragment key={col.colId}>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertToken(col.sum)}
+                        className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 hover:bg-purple-100 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800 transition-colors cursor-pointer"
+                        title={`Sum range ${col.range} (${col.label})`}
+                      >
+                        {col.sum}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertToken(col.avg)}
+                        className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 hover:bg-purple-100 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-800 transition-colors cursor-pointer"
+                        title={`Average range ${col.range} (${col.label})`}
+                      >
+                        {col.avg}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Row Metrology Variables helper */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+              <Hash className="w-3.5 h-3.5 text-purple-500" />
+              <span>Row Variables (Click to Insert)</span>
+            </Label>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { token: "reading", label: "reading (measured/merged)" },
+                { token: "actual", label: "actual" },
+                { token: "average", label: "average" },
+                { token: "deviation", label: "deviation" },
+                { token: "tolerance", label: "tolerance" },
+                { token: "lower_limit", label: "lower_limit" },
+                { token: "upper_limit", label: "upper_limit" },
+                { token: "nominal", label: "nominal" },
+                { token: "error", label: "error" },
+              ].map((v) => (
+                <button
+                  key={v.token}
+                  type="button"
+                  onClick={() => handleInsertToken(v.token)}
+                  className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-purple-50 hover:bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:hover:bg-purple-900 dark:text-purple-300 border border-purple-200 dark:border-purple-800 transition-colors cursor-pointer"
+                  title={`Insert ${v.token}`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Functions & Logic helper */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
+              <Calculator className="w-3.5 h-3.5 text-blue-500" />
+              <span>Logic Functions (Click to Insert)</span>
+            </Label>
+            <div className="flex flex-wrap gap-1">
+              {[
+                { token: `IF(reading <= ${rowTolStr}, "PASS", "FAIL")`, label: `IF(<= ${rowTolStr})` },
+                { token: 'IF(ABS(deviation) <= tolerance, "PASS", "FAIL")', label: 'IF(ABS(dev) <= tol)' },
+                { token: 'AND(reading >= lower_limit, reading <= upper_limit)', label: 'AND(limits)' },
+                { token: 'ABS(deviation)', label: 'ABS()' },
+                { token: 'AVERAGE(trials)', label: 'AVERAGE()' },
+                { token: 'ROUND(reading, 3)', label: 'ROUND()' },
+              ].map((fn, fIdx) => (
+                <button
+                  key={fIdx}
+                  type="button"
+                  onClick={() => handleInsertToken(fn.token)}
+                  className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:hover:bg-blue-900 dark:text-blue-300 border border-blue-200 dark:border-blue-800 transition-colors cursor-pointer"
+                  title={`Insert ${fn.token}`}
+                >
+                  {fn.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Cross-Table References helper */}
           <div className="space-y-2">
             <Label className="text-xs font-semibold flex items-center gap-1.5 text-muted-foreground">
@@ -328,18 +583,31 @@ export function CellFormulaModal({
                     </Badge>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {tbl.columns.map((col) => {
-                      const token = tbl.isCurrent ? col.id : `${tbl.key}.${col.id}`;
+                    {tbl.columns.map((col, cIdx) => {
+                      const colToken = tbl.isCurrent ? col.id : `${tbl.key}.${col.id}`;
+                      const colLetter = getExcelColumnLetter(cIdx);
+                      const coordToken = tbl.isCurrent ? `${colLetter}${rowIndex + 1}` : `${tbl.key}!${colLetter}${rowIndex + 1}`;
                       return (
-                        <button
-                          key={col.id}
-                          type="button"
-                          onClick={() => handleInsertToken(token)}
-                          className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-muted hover:bg-purple-100 hover:text-purple-800 dark:hover:bg-purple-900/40 dark:hover:text-purple-300 border transition-colors cursor-pointer"
-                          title={`Insert ${token}`}
-                        >
-                          {token}
-                        </button>
+                        <div key={col.id} className="inline-flex items-center rounded overflow-hidden border border-border text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => handleInsertToken(colToken)}
+                            className="font-mono px-1.5 py-0.5 bg-muted hover:bg-purple-100 hover:text-purple-800 dark:hover:bg-purple-900/40 dark:hover:text-purple-300 transition-colors cursor-pointer"
+                            title={`Insert variable ${colToken}`}
+                          >
+                            {colToken}
+                          </button>
+                          {!tbl.isCurrent && (
+                            <button
+                              type="button"
+                              onClick={() => handleInsertToken(coordToken)}
+                              className="font-mono text-[10px] px-1 py-0.5 bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 hover:bg-purple-200 dark:hover:bg-purple-900 border-l border-border transition-colors cursor-pointer font-bold"
+                              title={`Insert exact cell coordinate ${coordToken}`}
+                            >
+                              {colLetter}{rowIndex + 1}
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>

@@ -15,6 +15,8 @@ export interface StructuredSpecification {
   unit: string;
   decimalPrecision: number;
   isValid: boolean;
+  isMaxLimit?: boolean;
+  isMinLimit?: boolean;
 }
 
 /**

@@ -1989,7 +1989,7 @@ function _handleDeterministicLocalAssistantInternal(
     q.includes("virtual reading")
   ) {
     const numMatch = userQuery.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/);
-    const nominalVal = activeTable.rows[0]?.nominal ?? 50.0;
+    const nominalVal = Number(activeTable.rows[0]?.nominal ?? 50.0);
     const readingVal = numMatch ? parseFloat(numMatch[0]) : nominalVal;
 
     const sampleRow = {
@@ -2066,8 +2066,8 @@ function _handleDeterministicLocalAssistantInternal(
     const judgementCol = activeTable.columns.find(
       (c) => c.role === "JUDGEMENT" || c.semanticRole === "JUDGEMENT" || c.type === "status"
     );
-    const nominal = activeTable.rows[0]?.nominal ?? 35.035;
-    const tol = activeTable.tolerance ?? 0.01;
+    const nominal = Number(activeTable.rows[0]?.nominal ?? 35.035);
+    const tol = Number(activeTable.tolerance ?? 0.01);
     const formula = judgementCol?.formula || `IF(AND(actual >= lower_limit, actual <= upper_limit), "PASS", "FAIL")`;
 
     const readingVarName = formula.includes("actual_dimension")

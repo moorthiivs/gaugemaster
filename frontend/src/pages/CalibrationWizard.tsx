@@ -319,6 +319,8 @@ export default function CalibrationWizard() {
 
       const specText = s.specification || s.required_dimension || s.description || existingRow.specification || existingRow.required_dimension || existingRow.description || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+      const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit || existingRow?.isMaxLimit);
+      const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit || existingRow?.isMinLimit);
 
       const mergedRow: any = {
         ...existingRow,
@@ -328,14 +330,20 @@ export default function CalibrationWizard() {
         required_dimension: specText,
         description: specText,
         specification: specText,
-        nominal: (s.nominal !== undefined && s.nominal !== 0 && s.nominal !== "0" && s.nominal !== "")
-          ? s.nominal
-          : (existingRow.nominal !== undefined ? existingRow.nominal : (parsed?.isValid ? parsed.nominal : 0)),
+        nominal: isMaxLimit
+          ? 0
+          : ((s.nominal !== undefined && s.nominal !== 0 && s.nominal !== "0" && s.nominal !== "")
+            ? s.nominal
+            : (existingRow.nominal !== undefined ? existingRow.nominal : (parsed?.isValid ? parsed.nominal : 0))),
         lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : (existingRow.lower_tolerance ?? parsed?.lowerTolerance),
         upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : (existingRow.upper_tolerance ?? parsed?.upperTolerance),
         lower_limit: s.lower_limit !== undefined ? s.lower_limit : (existingRow.lower_limit ?? parsed?.lowerLimit),
         upper_limit: s.upper_limit !== undefined ? s.upper_limit : (existingRow.upper_limit ?? parsed?.upperLimit),
-        tolerance: s.tolerance !== undefined ? s.tolerance : (existingRow.tolerance ?? tol),
+        tolerance: isMaxLimit && parsed?.upperTolerance !== undefined
+          ? parsed.upperTolerance
+          : (s.tolerance !== undefined ? s.tolerance : (existingRow.tolerance ?? tol)),
+        isMaxLimit,
+        isMinLimit,
         unit: s.unit || existingRow.unit || tableUnit || defaultUnit,
         actual: (s.actual !== undefined && s.actual !== "") ? s.actual : (existingRow.actual ?? ""),
         // INVARIANT: Template formulas always take precedence over instrument custom parameter specs!
@@ -366,12 +374,14 @@ export default function CalibrationWizard() {
         });
       }
 
-            return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec, tableNominal);
+      return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec, tableNominal);
     };
 
-        const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
+    const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
       const specText = s.specification || s.required_dimension || s.description || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+      const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit);
+      const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit);
       const rowObj: any = {
         ...s,
         point_number: s.point_number || idx + 1,
@@ -379,16 +389,18 @@ export default function CalibrationWizard() {
         description: specText,
         specification: specText,
         cellSpans: s.cellSpans,
-        nominal: s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0),
+        nominal: isMaxLimit ? 0 : (s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0)),
         lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
         upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
         lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
         upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
-        tolerance: s.tolerance !== undefined ? s.tolerance : tol,
+        tolerance: isMaxLimit && parsed?.upperTolerance !== undefined ? parsed.upperTolerance : (s.tolerance !== undefined ? s.tolerance : tol),
+        isMaxLimit,
+        isMinLimit,
         unit: s.unit || tableUnit || defaultUnit,
         actual: s.actual ?? "",
       };
-            return evaluateCanvasRowFormulas(rowObj, columns, tol, dec, tableNominal);
+      return evaluateCanvasRowFormulas(rowObj, columns, tol, dec, tableNominal);
     };
 
     if (validTables.length === 1) {
@@ -2964,7 +2976,9 @@ export default function CalibrationWizard() {
       tol,
       dec,
       targetTbl.nominal,
-      globalContext
+      globalContext,
+      targetTbl.rows,
+      rowIndex
     );
     evaluatedRow[colId] = val;
     if (colId === "error") {

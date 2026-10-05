@@ -380,8 +380,8 @@ export default function TemplateBuilderForm() {
 
   const updateActiveTableBlock = (updates: Partial<TableGridBlock>) => {
     if (!activeTableBlock) return;
-    setLayoutBlocks((prev) =>
-      prev.map((b) => {
+    setLayoutBlocks((prev) => {
+      const updated = prev.map((b) => {
         if (b.id === activeTableBlock.id && b.type === "table_grid") {
           return { ...b, ...updates } as CanvasBlock;
         }
@@ -396,8 +396,17 @@ export default function TemplateBuilderForm() {
           } as CanvasBlock;
         }
         return b;
-      }),
-    );
+      });
+      if (
+        updates.tolerance !== undefined ||
+        updates.decimal_places !== undefined ||
+        updates.nominal !== undefined ||
+        updates.columns !== undefined
+      ) {
+        return evaluateAllCanvasBlocks(updated, { forceFull: true });
+      }
+      return updated;
+    });
     markDirty();
   };
 

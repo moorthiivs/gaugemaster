@@ -49,6 +49,89 @@ export function getExcelColumnLetter(index: number): string {
   return letter;
 }
 
+/**
+ * Converts Excel Column Letter(s) to 0-indexed column position:
+ * A -> 0, B -> 1, Z -> 25, AA -> 26, AB -> 27
+ */
+export function getExcelColumnIndex(letter: string): number {
+  if (!letter || typeof letter !== "string") return -1;
+  const clean = letter.toUpperCase().trim();
+  if (!/^[A-Z]+$/.test(clean)) return -1;
+  let index = 0;
+  for (let i = 0; i < clean.length; i++) {
+    index = index * 26 + (clean.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+export interface ParsedCellCoordinate {
+  tableKey?: string;
+  colLetter: string;
+  colIdx: number;
+  rowNum: number;
+  rowIdx: number;
+  raw: string;
+}
+
+/**
+ * Parses an Excel cell coordinate reference:
+ * "A1", "B2", "t1!A1", "t1.A1", "[Table 1]!B3", "[t1].[A1]"
+ */
+export function parseCellCoordinate(coord: string): ParsedCellCoordinate | null {
+  if (!coord || typeof coord !== "string") return null;
+  const trimmed = coord.trim();
+  const match = trimmed.match(/^(?:\[?([^\]\.!]+)\]?[!\.])?([A-Za-z]+)([1-9][0-9]*)$/);
+  if (!match) return null;
+
+  const rawTableKey = match[1]?.trim();
+  const colLetter = match[2].toUpperCase();
+  const colIdx = getExcelColumnIndex(colLetter);
+  const rowNum = parseInt(match[3], 10);
+  const rowIdx = rowNum - 1;
+
+  if (colIdx < 0 || rowIdx < 0) return null;
+
+  return {
+    tableKey: rawTableKey,
+    colLetter,
+    colIdx,
+    rowNum,
+    rowIdx,
+    raw: trimmed,
+  };
+}
+
+/**
+ * Expands an Excel coordinate range into an array of individual coordinate strings:
+ * "A1:A4" -> ["A1", "A2", "A3", "A4"]
+ * "A1:B2" -> ["A1", "B1", "A2", "B2"]
+ * "t1!A1:A3" -> ["t1!A1", "t1!A2", "t1!A3"]
+ */
+export function expandCellRange(rangeStr: string): string[] {
+  if (!rangeStr || typeof rangeStr !== "string") return [];
+  const parts = rangeStr.split(":").map((s) => s.trim());
+  if (parts.length !== 2) return [];
+
+  const startCoord = parseCellCoordinate(parts[0]);
+  const endCoord = parseCellCoordinate(parts[1]);
+  if (!startCoord || !endCoord) return [];
+
+  const minCol = Math.min(startCoord.colIdx, endCoord.colIdx);
+  const maxCol = Math.max(startCoord.colIdx, endCoord.colIdx);
+  const minRow = Math.min(startCoord.rowNum, endCoord.rowNum);
+  const maxRow = Math.max(startCoord.rowNum, endCoord.rowNum);
+  const tablePrefix = startCoord.tableKey ? `${startCoord.tableKey}!` : "";
+
+  const coords: string[] = [];
+  for (let r = minRow; r <= maxRow; r++) {
+    for (let c = minCol; c <= maxCol; c++) {
+      const colLetter = getExcelColumnLetter(c);
+      coords.push(`${tablePrefix}${colLetter}${r}`);
+    }
+  }
+  return coords;
+}
+
 export function extractBounds(val: any): { min: number; max: number; nom: number } {
   if (typeof val === "number") return { min: val, max: val, nom: val };
   if (!val) return { min: 0, max: 0, nom: 0 };
@@ -275,7 +358,7 @@ export function resolveVariableSemanticRole(
     }
   }
 
-  // 4. Excel column reference (A..Z, AA..ZZ)
+  // 4. Excel column reference (A..Z, AA..ZZ) or cell coordinate (A1..ZZ999, t1!A1, t1.A1)
   if (/^[A-Za-z]{1,2}$/.test(clean)) {
     return {
       canonicalName: clean.toUpperCase(),
@@ -285,8 +368,18 @@ export function resolveVariableSemanticRole(
     };
   }
 
-  // 5. Cross-table reference (e.g. clockwise.error, table_1.reading, or table.col[0])
-  if (clean.includes(".")) {
+  const cellCoord = parseCellCoordinate(clean);
+  if (cellCoord) {
+    return {
+      canonicalName: clean.toUpperCase(),
+      role: "COLUMN",
+      label: `Cell ${cellCoord.raw.toUpperCase()}`,
+      defaultTestValue: 35.022,
+    };
+  }
+
+  // 5. Cross-table reference (e.g. clockwise.error, table_1.reading, t1!A1, or table.col[0])
+  if (clean.includes(".") || clean.includes("!")) {
     return {
       canonicalName: clean,
       role: "COLUMN",
@@ -321,6 +414,15 @@ export function isStandardMetrologyVariable(
   }
   if (/^[A-Za-z]{1,2}$/.test(clean)) return true;
 
+  // Excel coordinate check (e.g. A1, B2, C10, t1!A1, table1!B2, t1.A1)
+  if (parseCellCoordinate(clean)) return true;
+  if (clean.includes("!")) {
+    const parts = clean.split("!");
+    const colPart = parts[parts.length - 1].trim();
+    if (parseCellCoordinate(colPart) || isStandardMetrologyVariable(colPart, availableColumns)) return true;
+    return true;
+  }
+
   if (Array.isArray(availableColumns)) {
     const matched = availableColumns.some((c) => {
       if (typeof c === "string") return c.toLowerCase() === lower;
@@ -334,6 +436,7 @@ export function isStandardMetrologyVariable(
     const parts = clean.split(".");
     const colPart = parts[parts.length - 1].replace(/\[\d+\]$/, "").toLowerCase();
     if (STANDARD_METROLOGY_VARIABLES[colPart]) return true;
+    if (parseCellCoordinate(colPart)) return true;
     if (Array.isArray(availableColumns)) {
       return availableColumns.some((c) => {
         const id = (typeof c === "string" ? c : c?.id || "").toLowerCase();
@@ -367,10 +470,28 @@ interface Token {
 /**
  * Tokenizes a formula string into a structured stream of tokens.
  */
-function tokenizeFormula(formulaStr: string): { tokens: Token[]; error?: string } {
+export function tokenizeFormula(formulaStr: string): { tokens: Token[]; error?: string } {
   let clean = formulaStr.trim();
   if (clean.startsWith("=")) clean = clean.substring(1).trim();
   if (!clean) return { tokens: [{ type: "EOF", value: null }] };
+
+  // Expand cross-table coordinate ranges (e.g. SUM(t1!A1:A5) or SUM(t1!A1:t1!A5))
+  clean = clean.replace(
+    /(?<![a-zA-Z0-9_])([a-zA-Z0-9_]+)[!\.]\s*([A-Za-z]+[1-9][0-9]*)\s*:\s*(?:[a-zA-Z0-9_]+[!\.]\s*)?([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, tbl, start, end) => {
+      const expanded = expandCellRange(`${tbl}!${start}:${tbl}!${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
+
+  // Expand local table coordinate ranges (e.g. SUM(A1:A5), AVERAGE(B1:B3))
+  clean = clean.replace(
+    /(?<![!.\w])([A-Za-z]+[1-9][0-9]*)\s*:\s*([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, start, end) => {
+      const expanded = expandCellRange(`${start}:${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
 
   const tokens: Token[] = [];
   let pos = 0;
@@ -493,6 +614,11 @@ function tokenizeFormula(formulaStr: string): { tokens: Token[]; error?: string 
       pos++;
       continue;
     }
+    if (ch === ":") {
+      tokens.push({ type: "OPERATOR", value: ":" });
+      pos++;
+      continue;
+    }
 
     // Multi-char operators
     const twoChars = clean.substring(pos, pos + 2);
@@ -526,19 +652,19 @@ function tokenizeFormula(formulaStr: string): { tokens: Token[]; error?: string 
       continue;
     }
 
-    // Identifier or keyword (supports dot-qualified references e.g. clockwise.error, table_1.reading)
+    // Identifier or keyword (supports dot-qualified references e.g. clockwise.error, table_1.reading, and exclamation references e.g. t1!A1)
     if (/[a-zA-Z_]/.test(ch)) {
       let ident = "";
       while (
         pos < len &&
         (/[a-zA-Z0-9_]/.test(clean[pos]) ||
-          (clean[pos] === "." && pos + 1 < len && /[a-zA-Z0-9_]/.test(clean[pos + 1])))
+          ((clean[pos] === "." || clean[pos] === "!") && pos + 1 < len && /[a-zA-Z0-9_]/.test(clean[pos + 1])))
       ) {
         ident += clean[pos++];
       }
 
       // Check if followed by index bracket: e.g. clockwise.error[0]
-      if (pos < len && clean[pos] === "[" && ident.includes(".")) {
+      if (pos < len && clean[pos] === "[" && (ident.includes(".") || ident.includes("!"))) {
         pos++;
         let idxStr = "";
         while (pos < len && clean[pos] !== "]") {
@@ -848,7 +974,7 @@ function flattenNumericArgs(args: any[]): number[] {
  * "clockwise.error", "[Clock wise Direction].[Error]", "clockwise.error[0]"
  */
 export function resolveCrossTableReference(ref: string, context: Record<string, any>): any {
-  if (!ref || !ref.includes(".")) return undefined;
+  if (!ref || (!ref.includes(".") && !ref.includes("!"))) return undefined;
 
   // Direct key check in context
   if (ref in context) return context[ref];
@@ -857,8 +983,8 @@ export function resolveCrossTableReference(ref: string, context: Record<string, 
   if (refLower in context) return context[refLower];
   if (context[refLower] !== undefined) return context[refLower];
 
-  // Match: "[Table Name].[Col Name]" or "table.col" or "table.col[0]" or "[Table].[Col][0]"
-  const match = ref.match(/^\[?([^\]\.\[]+)\]?\.\[?([^\]\.\[]+)\]?(?:\[(\d+)\])?$/);
+  // Match: "[Table Name].[Col Name]" or "table.col" or "table!A1" or "[Table].[Col][0]"
+  const match = ref.match(/^\[?([^\]\.!\[]+)\]?[!\.]\[?([^\]\.!\[]+)\]?(?:\[(\d+)\])?$/);
   if (!match) return undefined;
 
   const rawTable = match[1].trim();
@@ -903,6 +1029,19 @@ export function resolveCrossTableReference(ref: string, context: Record<string, 
 
   // If foundTable is a TableGridBlock (has columns and rows)
   if (Array.isArray(foundTable.columns) && Array.isArray(foundTable.rows)) {
+    // Check if rawCol is an exact Excel coordinate (e.g. "A1", "B2", "C3")
+    const cellCoord = parseCellCoordinate(rawCol);
+    if (cellCoord && cellCoord.colIdx >= 0 && cellCoord.rowIdx >= 0) {
+      if (cellCoord.colIdx < foundTable.columns.length && cellCoord.rowIdx < foundTable.rows.length) {
+        const targetCol = foundTable.columns[cellCoord.colIdx];
+        const targetRow = foundTable.rows[cellCoord.rowIdx];
+        if (targetCol && targetRow) {
+          const val = targetRow[targetCol.id];
+          return isBlankValue(val) ? null : val;
+        }
+      }
+    }
+
     const colLower = rawCol.toLowerCase();
     const colNorm = colLower.replace(/[^a-z0-9]/g, "");
     const targetCol = foundTable.columns.find((c: any) => {
@@ -983,9 +1122,9 @@ export function evaluateAST(
     const matchKey = Object.keys(context).find((k) => k.trim().toLowerCase() === clean);
     if (matchKey !== undefined) return context[matchKey];
 
-    // Check dot-notation cross-table reference
-    // e.g. "clockwise.error", "[Clock wise Direction].[Error]", "clockwise.error[0]"
-    if (name.includes(".")) {
+    // Check dot-notation or exclamation cross-table reference
+    // e.g. "clockwise.error", "t1!A1", "t1.A1", "[Clock wise Direction].[Error]", "clockwise.error[0]"
+    if (name.includes(".") || name.includes("!")) {
       const dotRes = resolveCrossTableReference(name, context);
       if (dotRes !== undefined) return dotRes;
     }
@@ -1314,7 +1453,7 @@ export function validateFormula(
   } else if (typeof calculationModelOrOptions === "object" && calculationModelOrOptions !== null) {
     options = { ...options, ...calculationModelOrOptions };
   }
-  const clean = formulaStr ? formulaStr.trim() : "";
+  let clean = formulaStr ? formulaStr.trim() : "";
   if (!clean) {
     return {
       valid: true,
@@ -1335,6 +1474,22 @@ export function validateFormula(
       unsupportedFunctions: [],
     };
   }
+
+  // Expand coordinate ranges if present before AST check (e.g. SUM(A1:A5), AVERAGE(B1:B3), SUM(t1!A1:A3))
+  clean = clean.replace(
+    /(?<![a-zA-Z0-9_])([a-zA-Z0-9_]+)[!\.]\s*([A-Za-z]+[1-9][0-9]*)\s*:\s*(?:[a-zA-Z0-9_]+[!\.]\s*)?([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, tbl, start, end) => {
+      const expanded = expandCellRange(`${tbl}!${start}:${tbl}!${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
+  clean = clean.replace(
+    /(?<![!.\w])([A-Za-z]+[1-9][0-9]*)\s*:\s*([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, start, end) => {
+      const expanded = expandCellRange(`${start}:${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
 
   // Detect any unsupported function names in formula
   const funcMatches = (clean.match(/([A-Za-z_][A-Za-z0-9_.]*)\s*\(/g) || []).map((f) =>
@@ -1418,13 +1573,14 @@ export function validateFormula(
   // Populate default test values for any missing dependencies
   for (const dep of dependencies) {
     if (testContext[dep] === undefined) {
-      if (dep.includes(".")) {
-        const testArr = [0.005, 0.008];
-        testContext[dep] = testArr;
-        testContext[dep.toLowerCase()] = testArr;
-        testContext[dep.toUpperCase()] = testArr;
+      if (dep.includes(".") || dep.includes("!")) {
+        const isSingleCell = parseCellCoordinate(dep);
+        const testVal = isSingleCell ? 35.022 : [0.005, 0.008];
+        testContext[dep] = testVal;
+        testContext[dep.toLowerCase()] = testVal;
+        testContext[dep.toUpperCase()] = testVal;
         const cleanRef = dep.replace(/[\[\]]/g, "");
-        testContext[cleanRef] = testArr;
+        testContext[cleanRef] = testVal;
       } else {
         const info = resolveVariableSemanticRole(dep, options.availableColumns);
         testContext[dep] = info.defaultTestValue;
@@ -2078,6 +2234,25 @@ export interface RowEvaluationContext {
   rawValuesMap: Record<string, any>;
   trialValues: number[];
   trialColumns: string[];
+  isMaxLimit?: boolean;
+  isMinLimit?: boolean;
+}
+
+/**
+ * Robustly parses tolerance values from numeric, string, or prefix formats (e.g. 0.02, "±0.3", "+0.05", "-0.01").
+ */
+export function parseToleranceValue(val: any): number | undefined {
+  if (val === undefined || val === null || isBlankValue(val)) return undefined;
+  if (typeof val === "number") return isNaN(val) ? undefined : Math.abs(val);
+  const str = String(val).trim().replace(/^[±+-]/, "").trim();
+  if (!str) return undefined;
+  const match = str.match(/^\d+(?:\.\d+)?/);
+  if (match) {
+    const p = parseFloat(match[0]);
+    return isNaN(p) ? undefined : p;
+  }
+  const direct = parseFloat(str);
+  return isNaN(direct) ? undefined : Math.abs(direct);
 }
 
 /**
@@ -2090,7 +2265,9 @@ export function buildRowContext(
   tableTol: number = 0.02,
   tableDec: number = 3,
   acceptanceCriteriaValue: number = 0,
-  tableNominal?: number | string
+  tableNominal?: number | string,
+  rowIndex: number = 0,
+  allRows?: any[]
 ): RowEvaluationContext {
   const dec = tableDec;
 
@@ -2167,48 +2344,81 @@ export function buildRowContext(
         ? parseNominalValue(row.table_nominal ?? row.tableNominal)
         : undefined;
 
+  let parsedSpecResult: ReturnType<typeof parseSpecification> | null = null;
   if (specText) {
     const parsed = parseSpecification(specText, row.unit || "mm", tableTol, dec);
     if (parsed.isValid) {
-      if (!hasDedicatedNomCol || isNaN(nom) || nom === 0) {
+      parsedSpecResult = parsed;
+      if (!hasDedicatedNomCol || isNaN(nom) || nom === 0 || parsed.isMaxLimit || parsed.isMinLimit) {
         nom = parsed.nominal;
       }
-      if (lowerTol === undefined || !columns.some((c) => c && c.type === "tolerance")) {
+      if (lowerTol === undefined || !columns.some((c) => c && c.type === "tolerance") || parsed.isMaxLimit || parsed.isMinLimit) {
         lowerTol = parsed.lowerTolerance;
       }
-      if (upperTol === undefined || !columns.some((c) => c && c.type === "tolerance")) {
+      if (upperTol === undefined || !columns.some((c) => c && c.type === "tolerance") || parsed.isMaxLimit || parsed.isMinLimit) {
         upperTol = parsed.upperTolerance;
       }
     }
   }
 
-  // Fallback to table-level nominal when row has no dedicated nominal or is undefined/0
-  if ((!hasDedicatedNomCol || isNaN(nom) || nom === 0) && parsedTableNom !== undefined && !isNaN(parsedTableNom)) {
+  const isMaxLimit = Boolean(parsedSpecResult?.isMaxLimit || row.isMaxLimit);
+  const isMinLimit = Boolean(parsedSpecResult?.isMinLimit || row.isMinLimit);
+
+  // Fallback to table-level nominal when row has no dedicated nominal or is undefined/0 (never for Max/Min limit specifications)
+  if (!isMaxLimit && !isMinLimit && (!hasDedicatedNomCol || isNaN(nom) || nom === 0) && parsedTableNom !== undefined && !isNaN(parsedTableNom)) {
     nom = parsedTableNom;
   }
 
   if (isNaN(nom)) nom = 0;
 
-  if (lowerTol === undefined && !isNaN(existingLowerLimit)) {
+  const tolCol = columns.find(
+    (c) =>
+      c &&
+      !isPointNoCol(c) &&
+      (c.type === "tolerance" ||
+        c.role === "TOLERANCE" ||
+        /^(tolerance|tol|tolarance)$/i.test(c.id || "") ||
+        /tolerance|tolarance/i.test(c.label || ""))
+  );
+
+  const rowColTol = tolCol ? parseToleranceValue(row[tolCol.id]) : undefined;
+  if (rowColTol !== undefined) {
+    lowerTol = -rowColTol;
+    upperTol = rowColTol;
+  }
+
+  if (lowerTol === undefined && !isNaN(existingLowerLimit) && !isMaxLimit && !isMinLimit) {
     lowerTol = existingLowerLimit - nom;
   }
-  if (upperTol === undefined && !isNaN(existingUpperLimit)) {
+  if (upperTol === undefined && !isNaN(existingUpperLimit) && !isMaxLimit && !isMinLimit) {
     upperTol = existingUpperLimit - nom;
   }
 
   if (lowerTol === undefined) {
     const tolVal =
-      typeof row.tolerance === "number"
-        ? row.tolerance
-        : parseFloat(String(row.tolerance ?? tableTol)) || tableTol;
+      rowColTol !== undefined
+        ? rowColTol
+        : typeof row.tolerance === "number"
+          ? row.tolerance
+          : (parseToleranceValue(row.tolerance) ?? (parseFloat(String(row.tolerance ?? tableTol)) || tableTol));
     lowerTol = -tolVal;
     upperTol = tolVal;
   }
   if (upperTol === undefined) upperTol = -lowerTol;
 
-  const lowerLimit = !isNaN(existingLowerLimit) ? existingLowerLimit : (nom + lowerTol);
-  const upperLimit = !isNaN(existingUpperLimit) ? existingUpperLimit : (nom + upperTol);
-  const tolerance = typeof row.tolerance === "number" ? row.tolerance : tableTol;
+  const lowerLimit = isMaxLimit
+    ? (parsedSpecResult?.lowerLimit ?? 0)
+    : (!isNaN(existingLowerLimit) ? existingLowerLimit : (nom + lowerTol));
+  const upperLimit = isMaxLimit
+    ? (parsedSpecResult?.upperLimit ?? upperTol)
+    : (!isNaN(existingUpperLimit) ? existingUpperLimit : (nom + upperTol));
+  const tolerance = isMaxLimit
+    ? (parsedSpecResult?.upperTolerance ?? upperTol)
+    : (rowColTol !== undefined
+        ? rowColTol
+        : typeof row.tolerance === "number"
+          ? row.tolerance
+          : (parseToleranceValue(row.tolerance) ?? tableTol));
 
   // 2. Identify all trial values
   const trialValues: number[] = [];
@@ -2284,8 +2494,34 @@ export function buildRowContext(
     (c) => c && (c.type === "trial" || /^t\d+$/i.test(c.id) || /^actual_\d+$/i.test(c.id) || /^reading_\d+$/i.test(c.id))
   );
 
+  // Dedicated single reading column check (e.g. "observed_value", "reading", "actual")
+  const explicitReadingCols = columns.filter(
+    (c) =>
+      c &&
+      !isPointNoCol(c) &&
+      c.type !== "nominal" &&
+      c.role !== "NOMINAL" &&
+      c.role !== "SPECIFICATION" &&
+      (c.type === "reading" ||
+        c.role === "READING" ||
+        c.id === "reading" ||
+        c.id === "observed_value" ||
+        c.id === "observed" ||
+        c.id === "observation" ||
+        c.id === "actual" ||
+        c.id === "actual_dimension")
+  );
+
   if (hasTrialCols && trialValues.length > 0) {
     actualVal = trialValues.reduce((a, b) => a + b, 0) / trialValues.length;
+  } else if (explicitReadingCols.length === 1 && !hasTrialCols) {
+    const rCol = explicitReadingCols[0];
+    const rVal = row[rCol.id] !== undefined ? row[rCol.id] : row[rCol.id.toLowerCase()];
+    if (!isBlankValue(rVal)) {
+      const parsed = parseFloat(String(rVal));
+      if (!isNaN(parsed)) actualVal = parsed;
+      rawReading = rVal;
+    }
   } else if (!isBlankValue(row.actual_dimension) && (!hasTrialCols || columns.some(c => c.id === "actual_dimension"))) {
     rawReading = row.actual_dimension;
   } else if (!isBlankValue(row.actual) && (!hasTrialCols || columns.some(c => c.id === "actual"))) {
@@ -2302,7 +2538,7 @@ export function buildRowContext(
     actualVal = trialValues.reduce((a, b) => a + b, 0) / trialValues.length;
   }
 
-  if (rawReading !== undefined) {
+  if (rawReading !== undefined && actualVal === undefined) {
     const parsed = parseFloat(String(rawReading));
     if (!isNaN(parsed)) actualVal = parsed;
   }
@@ -2341,6 +2577,8 @@ export function buildRowContext(
     tolerance: tolerance,
     tol: tolerance,
     Tolerance: tolerance,
+    tolarance: tolerance,
+    Tolarance: tolerance,
     actual: hasReading ? actualVal : "",
     Actual: hasReading ? actualVal : "",
     actual_dimension: hasReading ? actualVal : "",
@@ -2416,8 +2654,14 @@ export function buildRowContext(
   columns.forEach((col, idx) => {
     if (!col || !col.id) return;
     const rawVal = row[col.id];
+    const isTolCol =
+      col.type === "tolerance" ||
+      col.role === "TOLERANCE" ||
+      /^(tolerance|tol|tolarance)$/i.test(col.id || "") ||
+      /tolerance|tolarance/i.test(col.label || "");
+    const parsedTol = isTolCol ? parseToleranceValue(rawVal) : undefined;
     const isNum = !isBlankValue(rawVal) && !isNaN(Number(rawVal));
-    const val = isNum ? parseFloat(String(rawVal)) : (rawVal ?? "");
+    const val = parsedTol !== undefined ? parsedTol : (isNum ? parseFloat(String(rawVal)) : (rawVal ?? ""));
 
     valuesMap[col.id] = val;
     rawValuesMap[col.id] = rawVal;
@@ -2442,6 +2686,70 @@ export function buildRowContext(
     }
   });
 
+  if (explicitReadingCols.length === 1) {
+    const rCol = explicitReadingCols[0];
+    valuesMap[rCol.id] = hasReading ? actualVal : "";
+    rawValuesMap[rCol.id] = hasReading ? (rawReading ?? actualVal) : "";
+    valuesMap[rCol.id.toLowerCase()] = hasReading ? actualVal : "";
+    valuesMap[rCol.id.toUpperCase()] = hasReading ? actualVal : "";
+    valuesMap.reading = hasReading ? actualVal : "";
+    valuesMap.Reading = hasReading ? actualVal : "";
+  }
+
+  // Register Excel cell coordinates (e.g. A1, A2, B1, B2)
+  if (Array.isArray(allRows) && allRows.length > 0) {
+    allRows.forEach((r, rIdx) => {
+      if (!r || r.is_merged || r.isMerged) return;
+      columns.forEach((col, cIdx) => {
+        if (!col || !col.id) return;
+        const colLetter = getExcelColumnLetter(cIdx);
+        if (!colLetter) return;
+        const coordUpper = `${colLetter}${rIdx + 1}`;
+        const coordLower = `${colLetter.toLowerCase()}${rIdx + 1}`;
+
+        // Invariant: Do not overwrite if an existing column has this exact ID (e.g. trial column 't1' or 'header1')
+        const isExistingColId = columns.some(
+          (c) => c && c.id && c.id.toLowerCase() === coordLower
+        );
+        if (isExistingColId) return;
+
+        // If this is the current row, use row's up-to-date value, else use r's value
+        const targetRow = rIdx === rowIndex ? row : r;
+        const rawVal = targetRow[col.id];
+        const isNum = !isBlankValue(rawVal) && !isNaN(Number(rawVal));
+        const val = isNum ? parseFloat(String(rawVal)) : (rawVal ?? "");
+
+        valuesMap[coordUpper] = val;
+        valuesMap[coordLower] = val;
+        rawValuesMap[coordUpper] = rawVal;
+        rawValuesMap[coordLower] = rawVal;
+      });
+    });
+  } else {
+    // Single detached row context: register coordinates for current row
+    columns.forEach((col, cIdx) => {
+      if (!col || !col.id) return;
+      const colLetter = getExcelColumnLetter(cIdx);
+      if (!colLetter) return;
+      const coordUpper = `${colLetter}${rowIndex + 1}`;
+      const coordLower = `${colLetter.toLowerCase()}${rowIndex + 1}`;
+
+      const isExistingColId = columns.some(
+        (c) => c && c.id && c.id.toLowerCase() === coordLower
+      );
+      if (isExistingColId) return;
+
+      const rawVal = row[col.id];
+      const isNum = !isBlankValue(rawVal) && !isNaN(Number(rawVal));
+      const val = isNum ? parseFloat(String(rawVal)) : (rawVal ?? "");
+
+      valuesMap[coordUpper] = val;
+      valuesMap[coordLower] = val;
+      rawValuesMap[coordUpper] = rawVal;
+      rawValuesMap[coordLower] = rawVal;
+    });
+  }
+
   return {
     nom,
     lowerTol,
@@ -2455,6 +2763,8 @@ export function buildRowContext(
     rawValuesMap,
     trialValues,
     trialColumns,
+    isMaxLimit,
+    isMinLimit,
   };
 }
 
@@ -2611,7 +2921,25 @@ export function evaluateFormulaExpression(
   let expr = formula.trim();
   if (expr.startsWith("=")) expr = expr.substring(1).trim();
 
-  // 0. Try direct semantic AST evaluation with row context (best performance & accuracy)
+  // 0a. Expand cross-table coordinate ranges (e.g. SUM(t1!A1:A5) or SUM(t1!A1:t1!A5))
+  expr = expr.replace(
+    /(?<![a-zA-Z0-9_])([a-zA-Z0-9_]+)[!\.]\s*([A-Za-z]+[1-9][0-9]*)\s*:\s*(?:[a-zA-Z0-9_]+[!\.]\s*)?([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, tbl, start, end) => {
+      const expanded = expandCellRange(`${tbl}!${start}:${tbl}!${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
+
+  // 0b. Expand local table coordinate ranges (e.g. SUM(A1:A5))
+  expr = expr.replace(
+    /(?<![!.\w])([A-Za-z]+[1-9][0-9]*)\s*:\s*([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g,
+    (_, start, end) => {
+      const expanded = expandCellRange(`${start}:${end}`);
+      return expanded.length > 0 ? expanded.join(", ") : _;
+    }
+  );
+
+  // 0c. Try direct semantic AST evaluation with row context (best performance & accuracy)
   const directAstRes = testEvaluateFormula(expr, ctx.valuesMap, decimalPlaces);
   if (directAstRes.success && directAstRes.result !== undefined && directAstRes.error === undefined) {
     return {
@@ -2663,11 +2991,25 @@ export function evaluateFormulaExpression(
     if (/^\d+$/.test(key)) {
       const digitArgRegex = new RegExp(`(?<=[(, ])\\b${key}\\b(?=[), ])`, "g");
       expr = expr.replace(digitArgRegex, replaceVal);
+    } else if (key.includes("!") || key.includes(".")) {
+      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const regex = new RegExp(`(?<![a-zA-Z0-9_])${escaped}(?![a-zA-Z0-9_])`, "gi");
+      expr = expr.replace(regex, replaceVal);
     } else {
       const regex = new RegExp(`\\b${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi");
       expr = expr.replace(regex, replaceVal);
     }
   }
+
+  // Preprocess any remaining cross-table coordinates (e.g. t1!A1)
+  expr = expr.replace(/(?<![a-zA-Z0-9_])([a-zA-Z0-9_]+)!\s*([A-Za-z]+[1-9][0-9]*)(?![a-zA-Z0-9_])/g, (match) => {
+    const crossVal = resolveCrossTableReference(match, ctx.valuesMap);
+    if (crossVal !== undefined) {
+      if (isBlankValue(crossVal)) return '""';
+      return typeof crossVal === "string" && isNaN(Number(crossVal)) ? JSON.stringify(crossVal) : String(crossVal);
+    }
+    return match;
+  });
 
   // 4. Try safe micro-evaluator first (zero eval, pure arithmetic & logic)
   const safeRes = safeEvaluateExpression(expr, ctx.valuesMap);
@@ -2832,8 +3174,9 @@ export function buildGlobalTablesContext(blocks: any[]): GlobalTablesContext {
     }
     const keysToRegister = Array.from(new Set(baseKeys.filter(Boolean)));
 
-    columns.forEach((col) => {
+    columns.forEach((col, cIdx) => {
       const colId = col.id;
+      const colLetter = getExcelColumnLetter(cIdx);
       const colLabel = col.label || col.name || colId;
       const colValues = rows
         .filter((r) => !r.is_merged && !r.isMerged)
@@ -2846,6 +3189,10 @@ export function buildGlobalTablesContext(blocks: any[]): GlobalTablesContext {
       tableDataMap[colId.toLowerCase()] = colValues;
       tableDataMap[colLabel] = colValues;
       tableDataMap[colLabel.toLowerCase()] = colValues;
+      if (colLetter) {
+        tableDataMap[colLetter] = colValues;
+        tableDataMap[colLetter.toLowerCase()] = colValues;
+      }
 
       keysToRegister.forEach((tK) => {
         globalContext[`${tK}.${colId}`] = colValues;
@@ -2854,7 +3201,33 @@ export function buildGlobalTablesContext(blocks: any[]): GlobalTablesContext {
         globalContext[`${tK}.${colLabel.toLowerCase()}`] = colValues;
         globalContext[`[${tK}].[${colId}]`] = colValues;
         globalContext[`[${tK}].[${colLabel}]`] = colValues;
+        if (colLetter) {
+          globalContext[`${tK}.${colLetter}`] = colValues;
+          globalContext[`${tK}.${colLetter.toLowerCase()}`] = colValues;
+          globalContext[`${tK}!${colLetter}`] = colValues;
+          globalContext[`${tK}!${colLetter.toLowerCase()}`] = colValues;
+        }
       });
+
+      // Register individual cell coordinates (e.g. t1!A1, t1.A1, t1!B2)
+      if (colLetter) {
+        rows.forEach((r, rIdx) => {
+          if (!r || r.is_merged || r.isMerged) return;
+          const rawVal = r[colId];
+          const val = isBlankValue(rawVal) ? null : rawVal;
+          const coordUpper = `${colLetter}${rIdx + 1}`;
+          const coordLower = `${colLetter.toLowerCase()}${rIdx + 1}`;
+
+          keysToRegister.forEach((tK) => {
+            globalContext[`${tK}!${coordUpper}`] = val;
+            globalContext[`${tK}!${coordLower}`] = val;
+            globalContext[`${tK}.${coordUpper}`] = val;
+            globalContext[`${tK}.${coordLower}`] = val;
+            globalContext[`[${tK}]![${coordUpper}]`] = val;
+            globalContext[`[${tK}].[${coordUpper}]`] = val;
+          });
+        });
+      }
     });
 
     // Semantic column aliases (error, deviation, actual, reading)
@@ -2917,6 +3290,29 @@ export function buildGlobalTablesContext(blocks: any[]): GlobalTablesContext {
     get(target, prop, receiver) {
       if (typeof prop === "string") {
         if (prop in target) return (target as any)[prop];
+        // Match coordinate reference like "t1!A1", "t1.A1", "[Table 1]!B3"
+        const coordMatch = prop.match(/^\[?([^\]\.!\[]+)\]?[!\.]\[?([A-Za-z]+)([1-9][0-9]*)\]?$/);
+        if (coordMatch) {
+          const tKey = coordMatch[1].trim();
+          const cLetter = coordMatch[2].toUpperCase();
+          const rNum = parseInt(coordMatch[3], 10);
+          const cIdx = getExcelColumnIndex(cLetter);
+          const rIdx = rNum - 1;
+          const tbl = (target as any)[tKey] || (target as any)[tKey.toLowerCase()];
+          if (tbl) {
+            if (Array.isArray(tbl.rows) && Array.isArray(tbl.columns)) {
+              if (cIdx >= 0 && cIdx < tbl.columns.length && rIdx >= 0 && rIdx < tbl.rows.length) {
+                const colDef = tbl.columns[cIdx];
+                return tbl.rows[rIdx]?.[colDef?.id];
+              }
+            } else if (typeof tbl === "object" && tbl !== null) {
+              const colArr = tbl[cLetter] || tbl[cLetter.toLowerCase()];
+              if (Array.isArray(colArr) && rIdx >= 0 && rIdx < colArr.length) {
+                return colArr[rIdx];
+              }
+            }
+          }
+        }
         // Match indexed reference like "clockwise.error[0]" or "t1.reading[1]"
         const idxMatch = prop.match(/^(.+)\[(\d+)\]$/);
         if (idxMatch) {
@@ -2960,7 +3356,9 @@ export function evaluateCanvasRowFormulas(
   tableTol: number = 0.02,
   tableDec: number = 3,
   tableNominal?: number | string,
-  globalTablesContext?: GlobalTablesContext
+  globalTablesContext?: GlobalTablesContext,
+  allRows?: any[],
+  rowIndex?: number
 ): any {
   if (!row) return row;
   if (row.is_merged || row.isMerged) return row;
@@ -2971,18 +3369,19 @@ export function evaluateCanvasRowFormulas(
   syncTrialAliases(newRow, columns);
 
   // 2. Build initial row context
-  let ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal);
+  let ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal, rowIndex ?? 0, allRows);
   if (globalTablesContext) {
     Object.setPrototypeOf(ctx.valuesMap, globalTablesContext);
     Object.setPrototypeOf(ctx.rawValuesMap, globalTablesContext);
   }
 
-  newRow.nominal =
-    (typeof row.nominal === "string" && isNaN(Number(row.nominal)) && row.nominal.trim() !== "") ||
-    (typeof row.nominal === "string" && (row.nominal.endsWith(".") || row.nominal === "-" || row.nominal.includes(".")))
+  newRow.nominal = ctx.isMaxLimit
+    ? 0
+    : (typeof row.nominal === "string" && isNaN(Number(row.nominal)) && row.nominal.trim() !== "") ||
+      (typeof row.nominal === "string" && (row.nominal.endsWith(".") || row.nominal === "-" || row.nominal.includes(".")))
       ? row.nominal
       : ctx.nom;
-  newRow.nom = ctx.nom;
+  newRow.nom = ctx.isMaxLimit ? 0 : ctx.nom;
   if (row.nominal_value !== undefined && newRow.nominal_value === undefined) {
     newRow.nominal_value = row.nominal_value;
   }
@@ -2990,12 +3389,15 @@ export function evaluateCanvasRowFormulas(
   newRow.upperTolerance = ctx.upperTol;
   newRow.lower_tolerance = ctx.lowerTol;
   newRow.upper_tolerance = ctx.upperTol;
+  newRow.tolerance = ctx.tolerance;
   newRow.lowerLimit = ctx.lowerLimit;
   newRow.upperLimit = ctx.upperLimit;
   newRow.lower_limit = ctx.lowerLimit;
   newRow.upper_limit = ctx.upperLimit;
   newRow.min_limit = ctx.lowerLimit;
   newRow.max_limit = ctx.upperLimit;
+  if (ctx.isMaxLimit) newRow.isMaxLimit = true;
+  if (ctx.isMinLimit) newRow.isMinLimit = true;
 
   const hasMultiTrials = columns.some(
     (c) => c && (c.type === "trial" || /^actual_\d+$/i.test(c.id) || /^t\d+$/i.test(c.id))
@@ -3011,13 +3413,13 @@ export function evaluateCanvasRowFormulas(
 
   // 5. Evaluate columns in dependency order
   for (const col of calcCols) {
-    ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal);
+    ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal, rowIndex ?? 0, allRows);
     if (globalTablesContext) {
       Object.setPrototypeOf(ctx.valuesMap, globalTablesContext);
       Object.setPrototypeOf(ctx.rawValuesMap, globalTablesContext);
     }
 
-    const formula = (col.formula || "").trim();
+    const formula = (col.formula || col.customFormula || "").trim();
     const colId = col.id;
     const colLabel = (col.label || "").toLowerCase();
     const colRole = col.role;
@@ -3073,8 +3475,7 @@ export function evaluateCanvasRowFormulas(
 
     const isManualJudgement =
       Boolean(col.isManualJudgement) ||
-      (col as any).judgementMode === "manual" ||
-      (isStatus && !formula);
+      (col as any).judgementMode === "manual";
 
     if (isManualJudgement) {
       const currentVal = newRow[colId] ?? newRow.status ?? newRow.judgement;
@@ -3288,7 +3689,7 @@ export function evaluateCanvasRowFormulas(
   // 6. Evaluate row-specific cell formulas (cellFormulas: { [colId]: formulaString })
   // Supports mixed columns where some rows are manual inputs and other rows have formulas.
   if (newRow.cellFormulas && typeof newRow.cellFormulas === "object") {
-    ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal);
+    ctx = buildRowContext(newRow, columns, tableTol, dec, 0, tableNominal, rowIndex ?? 0, allRows);
     if (globalTablesContext) {
       Object.setPrototypeOf(ctx.valuesMap, globalTablesContext);
       Object.setPrototypeOf(ctx.rawValuesMap, globalTablesContext);
@@ -3328,9 +3729,18 @@ export function evaluateCanvasRowFormulas(
         } else if (colId === "avg" || colId === "average") {
           newRow.avg = evalRes.formatted;
           newRow.average = evalRes.formatted;
-        } else if (colId === "status" || colId === "judgement") {
+        }
+        if (
+          colId === "status" ||
+          colId === "judgement" ||
+          colId === "judgment" ||
+          colDef?.type === "status" ||
+          colDef?.role === "JUDGEMENT" ||
+          /judge|status/i.test(colDef?.label || colId)
+        ) {
           newRow.status = evalRes.formatted;
           newRow.judgement = evalRes.formatted;
+          newRow[colId] = evalRes.formatted;
         }
       }
     }
@@ -3467,7 +3877,7 @@ export function evaluateAllCanvasBlocks(
             }
           }
         }
-        return evaluateCanvasRowFormulas(row, table.columns, tol, dec, nom, globalContext);
+        return evaluateCanvasRowFormulas(row, table.columns, tol, dec, nom, globalContext, table.rows, rIdx);
       });
     };
 

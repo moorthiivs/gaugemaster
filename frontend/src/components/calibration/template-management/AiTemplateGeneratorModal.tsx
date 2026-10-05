@@ -436,7 +436,7 @@ export function AiTemplateGeneratorModal({
       }
 
       // If blocks are returned even if marked invalid, accept it as a valid specification table
-      if ((!result.isValidCalibrationDocument || result.isValidCalibrationDocument === false) && isSpecTable && Array.isArray(result.blocks) && result.blocks.length > 0) {
+      if (!result.isValidCalibrationDocument && isSpecTable && Array.isArray(result.blocks) && result.blocks.length > 0) {
         result.isValidCalibrationDocument = true;
       }
 
@@ -1443,7 +1443,7 @@ export function AiTemplateGeneratorModal({
           {!extractedResult ? (
             <Button
               size="sm"
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               disabled={
                 isProcessing ||
                 (activeTab === "pdf"
