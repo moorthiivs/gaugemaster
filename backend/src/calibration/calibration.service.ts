@@ -677,6 +677,15 @@ export class CalibrationService {
         }
       }
 
+      // Auto-purge any unfinished drafts for this instrument upon successful calibration creation
+      if (dto.instrument_id) {
+        try {
+          await this.deleteDraftsByInstrument(userId, dto.instrument_id);
+        } catch (err) {
+          console.warn(`Failed to clean up draft for instrument ${dto.instrument_id}`, err);
+        }
+      }
+
       return savedCalibration;
     });
   }
@@ -1125,11 +1134,77 @@ export class CalibrationService {
     });
   }
 
+  async getDraftByInstrument(userId: string, instrumentId: string): Promise<CalibrationDraft | null> {
+    if (!instrumentId) return null;
+    const userIds = await this.getCompanyUserIds(userId);
+    const targetUserIds = userIds.length > 0 ? userIds : [userId];
+
+    const drafts = await this.draftRepository.find({
+      where: { user_id: In(targetUserIds) },
+      order: { updated_at: 'DESC' },
+    });
+
+    return drafts.find((d) => {
+      let p = d.data;
+      if (typeof p === 'string') {
+        try {
+          p = JSON.parse(p);
+        } catch {}
+      }
+      const draftInstId = p?.selectedInstrument?.id;
+      const draftInstCode = p?.selectedInstrument?.id_code;
+      return (
+        draftInstId === instrumentId ||
+        draftInstCode === instrumentId ||
+        (draftInstId && String(draftInstId).toLowerCase() === String(instrumentId).toLowerCase()) ||
+        (draftInstCode && String(draftInstCode).toLowerCase() === String(instrumentId).toLowerCase())
+      );
+    }) || null;
+  }
+
+  async deleteDraftsByInstrument(userId: string, instrumentId: string): Promise<void> {
+    if (!instrumentId) return;
+    const userIds = await this.getCompanyUserIds(userId);
+    const targetUserIds = userIds.length > 0 ? userIds : [userId];
+
+    const drafts = await this.draftRepository.find({
+      where: { user_id: In(targetUserIds) },
+    });
+
+    const matchingDrafts = drafts.filter((d) => {
+      let p = d.data;
+      if (typeof p === 'string') {
+        try {
+          p = JSON.parse(p);
+        } catch {}
+      }
+      const draftInstId = p?.selectedInstrument?.id;
+      const draftInstCode = p?.selectedInstrument?.id_code;
+      return (
+        draftInstId === instrumentId ||
+        draftInstCode === instrumentId ||
+        (draftInstId && String(draftInstId).toLowerCase() === String(instrumentId).toLowerCase()) ||
+        (draftInstCode && String(draftInstCode).toLowerCase() === String(instrumentId).toLowerCase())
+      );
+    });
+
+    if (matchingDrafts.length > 0) {
+      await this.draftRepository.delete(matchingDrafts.map((d) => d.id));
+    }
+  }
+
   async saveDraft(userId: string, data: any, draftId?: string): Promise<CalibrationDraft> {
     let draft: CalibrationDraft | null = null;
-    
+
     if (draftId) {
       draft = await this.draftRepository.findOne({ where: { id: draftId } });
+    }
+
+    const instrumentId = data?.selectedInstrument?.id || data?.selectedInstrument?.id_code;
+
+    // Deduplicate: if no draftId provided or not found, check if an unfinished draft already exists for this instrument
+    if (!draft && instrumentId) {
+      draft = await this.getDraftByInstrument(userId, instrumentId);
     }
 
     if (!draft) {
@@ -1141,7 +1216,42 @@ export class CalibrationService {
       draft.data = data;
     }
 
-    return this.draftRepository.save(draft);
+    const saved = await this.draftRepository.save(draft);
+
+    // Clean up any other duplicate drafts for the same instrument to keep database pristine
+    if (instrumentId) {
+      try {
+        const userIds = await this.getCompanyUserIds(userId);
+        const targetUserIds = userIds.length > 0 ? userIds : [userId];
+        const allDrafts = await this.draftRepository.find({
+          where: { user_id: In(targetUserIds) },
+        });
+        const olderDupes = allDrafts.filter((d) => {
+          if (d.id === saved.id) return false;
+          let p = d.data;
+          if (typeof p === 'string') {
+            try {
+              p = JSON.parse(p);
+            } catch {}
+          }
+          const draftInstId = p?.selectedInstrument?.id;
+          const draftInstCode = p?.selectedInstrument?.id_code;
+          return (
+            draftInstId === instrumentId ||
+            draftInstCode === instrumentId ||
+            (draftInstId && String(draftInstId).toLowerCase() === String(instrumentId).toLowerCase()) ||
+            (draftInstCode && String(draftInstCode).toLowerCase() === String(instrumentId).toLowerCase())
+          );
+        });
+        if (olderDupes.length > 0) {
+          await this.draftRepository.delete(olderDupes.map((d) => d.id));
+        }
+      } catch (err) {
+        // Non-blocking cleanup
+      }
+    }
+
+    return saved;
   }
 
   async deleteDraft(id: string): Promise<void> {

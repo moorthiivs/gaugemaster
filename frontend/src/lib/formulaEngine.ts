@@ -2463,11 +2463,29 @@ export function buildRowContext(
  * Resolves dependency chains: e.g. trials -> average -> deviation -> judgement.
  */
 export function getTopologicallySortedColumns(columns: any[]): any[] {
+  const hasReadingsOrTrials = columns.some(
+    (c) => c && (c.type === "reading" || c.type === "trial" || c.role === "READING")
+  );
+
   const calcCols = columns.filter((col) => {
     if (!col) return false;
     const formula = (col.formula || "").trim();
     const colId = (col.id || "").toLowerCase();
     const colLabel = (col.label || "").toLowerCase();
+    const colRole = col.role;
+    const colType = col.type;
+
+    // Static tolerance limits, acceptance criteria specifications, and metadata columns without formulas are NOT calculated columns
+    const isExplicitNonCalc =
+      !formula &&
+      (colRole === "TOLERANCE" ||
+        colRole === "SPECIFICATION" ||
+        colRole === "METADATA" ||
+        colType === "tolerance" ||
+        colType === "text" ||
+        (!hasReadingsOrTrials && (colId === "error" || colLabel.includes("error"))));
+    if (isExplicitNonCalc) return false;
+
     return (
       col.type === "formula" ||
       col.role === "CALCULATED" ||
@@ -3016,7 +3034,21 @@ export function evaluateCanvasRowFormulas(
       /^=?AVERAGE\s*\(/i.test(formula) ||
       /\b(actual_1\s*\+\s*actual_2|t1\s*\+\s*t2|reading_1\s*\+\s*reading_2)/i.test(formula);
 
+    const hasReadingsOrTrials = columns.some(
+      (c) => c && (c.type === "reading" || c.type === "trial" || c.role === "READING")
+    );
+
+    const isNonCalcErrorCol =
+      !formula &&
+      (colRole === "TOLERANCE" ||
+        colRole === "SPECIFICATION" ||
+        colRole === "METADATA" ||
+        colType === "tolerance" ||
+        colType === "text" ||
+        !hasReadingsOrTrials);
+
     const isError =
+      !isNonCalcErrorCol &&
       (colId === "error" ||
         colId === "deviation" ||
         colLabel === "error" ||
@@ -3129,7 +3161,11 @@ export function evaluateCanvasRowFormulas(
       }
       if (isError && (colId === "deviation" || colId === "error" || colLabel.includes("deviation") || colLabel.includes("error"))) {
         newRow.deviation = "-";
-        newRow.error = undefined;
+        if (colId !== "error") {
+          newRow.error = undefined;
+        } else {
+          newRow.error = "-";
+        }
       }
       if (isStatus && (colRole === "JUDGEMENT" || colType === "status" || colId === "status" || colId === "judgement" || colLabel.includes("judge"))) {
         newRow.status = "-";
@@ -3213,7 +3249,11 @@ export function evaluateCanvasRowFormulas(
         } else {
           newRow[colId] = "-";
           newRow.deviation = "-";
-          newRow.error = undefined;
+          if (colId !== "error") {
+            newRow.error = undefined;
+          } else {
+            newRow.error = "-";
+          }
         }
       } else if (isStatus) {
         const reading =
@@ -3233,6 +3273,13 @@ export function evaluateCanvasRowFormulas(
           newRow[colId] = "-";
           newRow.status = "-";
           newRow.judgement = "-";
+        }
+      } else if (!isError && !isAvg && !isStatus) {
+        if (row[colId] !== undefined) {
+          newRow[colId] = row[colId];
+          if (colId === "error") {
+            newRow.error = row[colId];
+          }
         }
       }
     }

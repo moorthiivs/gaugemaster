@@ -49,6 +49,18 @@ export class CalibrationController {
   }
 
   // ── Drafts ──
+  @Get('drafts/instrument/:instrumentId')
+  async getDraftByInstrument(@Req() req: any, @Param('instrumentId') instrumentId: string) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+    return this.calibrationService.getDraftByInstrument(userId, instrumentId);
+  }
+
+  @Delete('drafts/instrument/:instrumentId')
+  async deleteDraftsByInstrument(@Req() req: any, @Param('instrumentId') instrumentId: string) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+    return this.calibrationService.deleteDraftsByInstrument(userId, instrumentId);
+  }
+
   @Get('drafts/:userId')
   async getAllDrafts(@Param('userId') userId: string) {
     return this.calibrationService.getAllDrafts(userId);

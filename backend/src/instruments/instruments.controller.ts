@@ -99,6 +99,15 @@ export class InstrumentsController {
         return this.instrumentsService.getHistory(id);
     }
 
+    @Delete(':id/history/:historyId')
+    @RequirePermission('instruments', 'delete')
+    async deleteHistory(
+        @Param('id') id: string,
+        @Param('historyId') historyId: string,
+    ) {
+        return this.instrumentsService.deleteHistoryRecord(id, historyId);
+    }
+
     @Get(':id')
     @RequirePermission('instruments', 'view')
     async findOne(@Param('id') id: string) {

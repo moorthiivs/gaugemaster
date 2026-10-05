@@ -64,6 +64,7 @@ export interface CalibrationRecord {
 
   // Data
   is_canvas_template?: boolean;
+  is_template_preview?: boolean;
   layout_blocks?: CanvasBlock[] | Record<string, unknown>[];
   calibration_points: CalibrationPoint[];
   custom_columns?: Record<string, unknown>[];

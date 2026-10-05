@@ -766,6 +766,7 @@ export function TrialRunModal({
                   calibration={mockCalibrationRecord}
                   instrumentName={templateName}
                   showDownloadPng={true}
+                  isTemplatePreview={true}
                 />
               </div>
             </div>

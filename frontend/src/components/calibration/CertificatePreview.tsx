@@ -882,6 +882,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
               <img
                 src={dImg}
                 alt={block.caption || "Calibration Diagram"}
+                crossOrigin="anonymous"
                 style={{
                   width: block.width ? `${block.width}px` : "240px",
                   maxWidth: "100%",
@@ -889,6 +890,11 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                   objectFit: "contain",
                 }}
                 className="block rounded"
+                onError={(e) => {
+                  const imgEl = e.currentTarget as HTMLImageElement;
+                  imgEl.style.display = "none";
+                  imgEl.setAttribute("data-img-error", "true");
+                }}
               />
             </div>
           );
@@ -916,6 +922,7 @@ interface CertificatePreviewProps {
   calibration: Partial<CalibrationRecord>;
   instrumentName?: string;
   showDownloadPng?: boolean;
+  isTemplatePreview?: boolean;
 }
 
 /**
@@ -926,12 +933,21 @@ export function CertificatePreview({
   calibration,
   instrumentName,
   showDownloadPng = true,
+  isTemplatePreview = false,
 }: CertificatePreviewProps) {
   const { user } = useAuth();
   const [certConfig, setCertConfig] = useState<any>(null);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [downloadingPng, setDownloadingPng] = useState(false);
+  const [logoError, setLogoError] = useState(false);
   const certRef = useRef<HTMLDivElement>(null);
+
+  const isPreviewMode =
+    Boolean(isTemplatePreview) ||
+    Boolean((calibration as any)?.is_template_preview) ||
+    Boolean((calibration as any)?.is_preview) ||
+    calibration.certificate_number === "PREVIEW-DEMO-001" ||
+    (typeof calibration.certificate_number === "string" && calibration.certificate_number.startsWith("PREVIEW-"));
 
   useEffect(() => {
     const fetchSignatories = async () => {
@@ -978,6 +994,16 @@ export function CertificatePreview({
     } catch {
       return "-";
     }
+  };
+
+  const getCompanyLogoUrl = (path?: string) => {
+    if (!path) return "";
+    if (path.startsWith("data:") || path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:")) {
+      return path;
+    }
+    const baseUrl = (import.meta.env.VITE_API_BASE_URL || API_URL || "").replace(/\/api\/?$/, "");
+    const cleanPath = path.startsWith("/") ? path : `/${path}`;
+    return `${baseUrl}${cleanPath}`;
   };
 
   const points = calibration.calibration_points || [];
@@ -1071,6 +1097,10 @@ export function CertificatePreview({
     "Website: www.gaugemaster.com | Email: info@gaugemaster.com | Phone: +91 98222 23948";
 
   const companyLogoPath = certConfig?.companyLogoPath || "";
+
+  useEffect(() => {
+    setLogoError(false);
+  }, [companyLogoPath]);
   const headerDisplayMode = certConfig?.headerDisplayMode || "name";
   const headerBgColor = certConfig?.headerBgColor || "#54c6f3";
 
@@ -1475,7 +1505,22 @@ export function CertificatePreview({
           overflow: "visible",
         },
         backgroundColor: "#ffffff",
-        cacheBust: true,
+        cacheBust: false,
+        imagePlaceholder: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        filter: (domNode) => {
+          if (domNode instanceof HTMLImageElement) {
+            // Exclude broken, errored, hidden, or unrendered images from being cloned
+            if (
+              domNode.style.display === "none" ||
+              domNode.getAttribute("data-img-error") === "true" ||
+              (domNode.complete && domNode.naturalWidth === 0) ||
+              !domNode.getAttribute("src")
+            ) {
+              return false;
+            }
+          }
+          return true;
+        },
       });
 
       saveAs(dataUrl, `Certificate-${certNum}.png`);
@@ -1537,11 +1582,13 @@ export function CertificatePreview({
             overflow: visible !important;
           }
         `}</style>
-        {/* Dynamic Watermark for Unapproved Draft / Pending Approvals */}
+        {/* Dynamic Watermark for Unapproved Draft / Pending Approvals / Template Preview */}
         {calibration.approval_status !== "Approved" && (
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-20">
             <span className="text-red-500/12 text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg border-4 border-red-500/15 py-3 px-6 rounded-xl">
-              {calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"
+              {isPreviewMode
+                ? "TEMPLATE PREVIEW"
+                : calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"
                 ? "REVIEWED - PENDING FINAL APPROVAL"
                 : "DRAFT - PENDING REVIEW"}
             </span>
@@ -1554,21 +1601,26 @@ export function CertificatePreview({
       >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 max-w-[200px]">
-            {companyLogoPath &&
+            {companyLogoPath && !logoError &&
               (headerDisplayMode === "logo" ||
                 headerDisplayMode === "both") && (
                 <img
-                  src={`${(import.meta.env.VITE_API_BASE_URL || API_URL || "").replace(/\/api\/?$/, "")}${companyLogoPath}`}
+                  src={getCompanyLogoUrl(companyLogoPath)}
                   alt="Logo"
+                  crossOrigin="anonymous"
                   className="max-h-12 w-auto object-contain"
                   onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = "none";
+                    const imgEl = e.currentTarget as HTMLImageElement;
+                    imgEl.style.display = "none";
+                    imgEl.setAttribute("data-img-error", "true");
+                    setLogoError(true);
                   }}
                 />
               )}
             {(headerDisplayMode === "name" ||
               headerDisplayMode === "both" ||
-              !companyLogoPath) && (
+              !companyLogoPath ||
+              logoError) && (
               <div>
                 <h1 className="text-xs font-extrabold text-black uppercase leading-tight">
                   {headerCompanyName}
@@ -1890,6 +1942,7 @@ export function CertificatePreview({
                 <img
                   src={diagramImage}
                   alt="Calibration Diagram"
+                  crossOrigin="anonymous"
                   style={{
                     width: `${diagramWidth}px`,
                     maxWidth: "100%",
@@ -1897,6 +1950,11 @@ export function CertificatePreview({
                     objectFit: "contain",
                   }}
                   className="block"
+                  onError={(e) => {
+                    const imgEl = e.currentTarget as HTMLImageElement;
+                    imgEl.style.display = "none";
+                    imgEl.setAttribute("data-img-error", "true");
+                  }}
                 />
               </div>
             );
@@ -1911,12 +1969,14 @@ export function CertificatePreview({
               !!str && (str.startsWith("data:image") || str.startsWith("http") || str.startsWith("/"));
 
             const isApproved =
+              !isPreviewMode &&
               (calibration.approval_status === "Approved" ||
                 (calibration as any).approval_status === "APPROVED" ||
                 Boolean((calibration as any).approved_at)) &&
               Boolean(calibration.approved_by && calibration.approved_by.trim() !== "" && calibration.approved_by !== "Pending Approval");
 
             const isReviewed =
+              !isPreviewMode &&
               Boolean(calibration.reviewed_by && calibration.reviewed_by.trim() !== "" && calibration.reviewed_by !== "Pending Review") &&
               (calibration.approval_status === "Reviewed" ||
                 calibration.approval_status === "Approved" ||
@@ -1924,8 +1984,10 @@ export function CertificatePreview({
                 Boolean((calibration as any).reviewed_at) ||
                 Boolean((calibration as any).reviewed_by_signature));
 
-            const rawCalibratedSig = (calibration as any).calibrated_by_signature;
-            const calibratedSigImg = isImgUrl(rawCalibratedSig)
+            const rawCalibratedSig = !isPreviewMode ? (calibration as any).calibrated_by_signature : null;
+            const calibratedSigImg = isPreviewMode
+              ? null
+              : isImgUrl(rawCalibratedSig)
               ? rawCalibratedSig
               : ((user?.name === calibration.calibrated_by || user?.id === calibration.calibrated_by) && isImgUrl((user as any)?.signature))
               ? (user as any).signature
@@ -1935,7 +1997,7 @@ export function CertificatePreview({
                     isImgUrl(u.signature),
                 )?.signature || null;
 
-            const rawReviewedSig = (calibration as any).reviewed_by_signature;
+            const rawReviewedSig = isReviewed ? (calibration as any).reviewed_by_signature : null;
             const reviewedSigImg = isReviewed
               ? (isImgUrl(rawReviewedSig)
                   ? rawReviewedSig
@@ -1976,7 +2038,7 @@ export function CertificatePreview({
                     className="flex items-end justify-center"
                     style={{ minHeight: `${sigHeight * 1.33}px` }}
                   >
-                    {calibratedSigImg ? (
+                    {!isPreviewMode && calibratedSigImg ? (
                       <img
                         src={calibratedSigImg}
                         alt="Signature"
@@ -1986,8 +2048,13 @@ export function CertificatePreview({
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
+                        onError={(e) => {
+                          const imgEl = e.currentTarget as HTMLImageElement;
+                          imgEl.style.display = "none";
+                          imgEl.setAttribute("data-img-error", "true");
+                        }}
                       />
-                    ) : calibration.calibrated_by ? (
+                    ) : !isPreviewMode && calibration.calibrated_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
                         {calibration.calibrated_by}
                       </span>
@@ -1995,7 +2062,7 @@ export function CertificatePreview({
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {calibration.calibrated_by || "Calibrated By"}
+                      {isPreviewMode ? "Calibrated By" : (calibration.calibrated_by || "Calibrated By")}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.calibrated_by_designation ||
@@ -2010,7 +2077,7 @@ export function CertificatePreview({
                     className="flex items-end justify-center"
                     style={{ minHeight: `${sigHeight * 1.33}px` }}
                   >
-                    {isReviewed && reviewedSigImg ? (
+                    {!isPreviewMode && isReviewed && reviewedSigImg ? (
                       <img
                         src={reviewedSigImg}
                         alt="Signature"
@@ -2020,8 +2087,13 @@ export function CertificatePreview({
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
+                        onError={(e) => {
+                          const imgEl = e.currentTarget as HTMLImageElement;
+                          imgEl.style.display = "none";
+                          imgEl.setAttribute("data-img-error", "true");
+                        }}
                       />
-                    ) : isReviewed && calibration.reviewed_by ? (
+                    ) : !isPreviewMode && isReviewed && calibration.reviewed_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
                         {calibration.reviewed_by}
                       </span>
@@ -2029,11 +2101,11 @@ export function CertificatePreview({
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {isReviewed ? (calibration.reviewed_by || "Reviewed By") : "Reviewed By"}
+                      {isPreviewMode ? "Reviewed By" : (isReviewed ? (calibration.reviewed_by || "Reviewed By") : "Reviewed By")}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.reviewed_by_designation ||
-                        "Calibration Reviewer"}
+                        "Quality Head"}
                     </p>
                   </div>
                 </div>
@@ -2044,7 +2116,7 @@ export function CertificatePreview({
                     className="flex items-end justify-center"
                     style={{ minHeight: `${sigHeight * 1.33}px` }}
                   >
-                    {isApproved && approvedSigImg ? (
+                    {!isPreviewMode && isApproved && approvedSigImg ? (
                       <img
                         src={approvedSigImg}
                         alt="Signature"
@@ -2054,8 +2126,13 @@ export function CertificatePreview({
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
+                        onError={(e) => {
+                          const imgEl = e.currentTarget as HTMLImageElement;
+                          imgEl.style.display = "none";
+                          imgEl.setAttribute("data-img-error", "true");
+                        }}
                       />
-                    ) : isApproved && calibration.approved_by ? (
+                    ) : !isPreviewMode && isApproved && calibration.approved_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
                         {calibration.approved_by}
                       </span>
@@ -2063,11 +2140,11 @@ export function CertificatePreview({
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {isApproved ? (calibration.approved_by || "Approved By") : "Approved By"}
+                      {isPreviewMode ? "Approved By" : (isApproved ? (calibration.approved_by || "Approved By") : "Approved By")}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.approved_by_designation ||
-                        "Quality Manager / Approver"}
+                        "Technical Director"}
                     </p>
                   </div>
                 </div>

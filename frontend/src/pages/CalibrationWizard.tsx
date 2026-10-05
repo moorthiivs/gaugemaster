@@ -17,8 +17,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
-import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getCalibration, updateCalibration } from "@/lib/calibrationActions";
+import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getDraftByInstrument, deleteDraftsByInstrument, getCalibration, updateCalibration } from "@/lib/calibrationActions";
 import { getTemplates, getTemplate } from "@/lib/templateActions";
+import { UnfinishedDraftModal } from "@/components/calibration/UnfinishedDraftModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
@@ -237,6 +238,10 @@ export default function CalibrationWizard() {
 
       // Sync row-level cellFormulas and formula_observed_error
       if (Array.isArray(calTbl.rows) && Array.isArray(tplTbl.rows)) {
+        const isCriteriaOrAcceptance =
+          /acceptance|criteria|permissible/i.test(calTbl.title || "") ||
+          /acceptance|criteria|permissible/i.test(tplTbl.title || "");
+
         calTbl.rows.forEach((cRow: any, rIdx: number) => {
           const tRow =
             tplTbl.rows.find(
@@ -244,6 +249,7 @@ export default function CalibrationWizard() {
                 r &&
                 cRow &&
                 ((r.parameter && cRow.parameter && r.parameter === cRow.parameter) ||
+                  (r.actual_measured && cRow.actual_measured && r.actual_measured === cRow.actual_measured) ||
                   (r.required_dimension && cRow.required_dimension && r.required_dimension === cRow.required_dimension))
             ) || tplTbl.rows[rIdx];
 
@@ -257,6 +263,28 @@ export default function CalibrationWizard() {
               cRow.formula_observed_error = tRow.formula_observed_error;
             } else {
               delete cRow.formula_observed_error;
+            }
+
+            // Restore template-authored criteria/tolerance values if missing, wiped, or 0 in calibration/draft row
+            if (Array.isArray(tplTbl.columns)) {
+              tplTbl.columns.forEach((tCol: any) => {
+                if (tCol && tCol.id && tRow[tCol.id] !== undefined && tRow[tCol.id] !== null && tRow[tCol.id] !== "") {
+                  const currVal = cRow[tCol.id];
+                  const isMissingOrWiped =
+                    currVal === undefined ||
+                    currVal === null ||
+                    currVal === "" ||
+                    currVal === "-" ||
+                    (currVal === 0 && typeof tRow[tCol.id] === "string") ||
+                    (isCriteriaOrAcceptance && (currVal === 0 || currVal === "0"));
+                  if (isMissingOrWiped) {
+                    cRow[tCol.id] = tRow[tCol.id];
+                    if (tCol.id === "error") {
+                      cRow.error = tRow[tCol.id];
+                    }
+                  }
+                }
+              });
             }
           }
         });
@@ -275,7 +303,15 @@ export default function CalibrationWizard() {
     defaultUnit: string = "mm"
   ) => {
     if (!tables || tables.length === 0 || !specs || specs.length === 0) return;
-    const validTables = tables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
+    const validTables = tables.filter((b: any) => {
+      const title = (b.title || "").toLowerCase();
+      return (
+        !title.includes("receipt condition") &&
+        !title.includes("acceptance") &&
+        !title.includes("criteria") &&
+        !title.includes("permissible")
+      );
+    });
     if (validTables.length === 0) return;
 
         const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
@@ -2141,7 +2177,7 @@ export default function CalibrationWizard() {
 
   // Auto-save Draft
   useEffect(() => {
-    if (isInitializing || !user || savedCalibrationId) return;
+    if (isInitializing || !user || savedCalibrationId || editIdParam || !selectedInstrument) return;
     const timeout = setTimeout(() => {
       const draftData = {
         step,
@@ -2207,117 +2243,124 @@ export default function CalibrationWizard() {
     reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
   ]);
 
+  // Reusable Draft Restoration Helper
+  const restoreDraftData = async (draft: any) => {
+    if (!draft || !draft.data) return;
+    let d = draft.data;
+    if (typeof d === "string") {
+      try {
+        d = JSON.parse(d);
+      } catch (e) {
+        console.error("Failed to parse draft", e);
+      }
+    }
+    draftIdRef.current = draft.id;
+    setActiveDraftId(draft.id);
+    setStep(d.step || 0);
+    setSelectedInstrument(d.selectedInstrument || null);
+    setSelectedType(d.selectedType || null);
+    setReferenceStandards(
+      d.referenceStandards || [{ name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }]
+    );
+    setEnvTemp(d.envTemp || "");
+    setEnvHumidity(d.envHumidity || "");
+    setEnvSoakingTime(d.envSoakingTime || "");
+    setEnvSoakingStartTime(d.envSoakingStartTime || "");
+    setEnvSoakingEndTime(d.envSoakingEndTime || "");
+    setDocNo(d.docNo || "");
+    const draftProcNo = d.procedureNo || d.procedureReference || "";
+    setProcedureNo(draftProcNo);
+    setProcedureReference(draftProcNo);
+    if (d.procedureName) setProcedureName(d.procedureName);
+    if (d.procedureDate) setProcedureDate(d.procedureDate);
+    if (d.procedureRev) setProcedureRev(d.procedureRev);
+    if (d.receiptCondition) setReceiptCondition(d.receiptCondition);
+    if (d.customReceiptCondition) setCustomReceiptCondition(d.customReceiptCondition);
+    setCalPoints(d.calPoints || []);
+    if (d.wizardDiagramImage !== undefined) setWizardDiagramImage(d.wizardDiagramImage);
+    if (d.wizardDiagramWidth) setWizardDiagramWidth(d.wizardDiagramWidth);
+    if (d.wizardDiagramHeight) setWizardDiagramHeight(d.wizardDiagramHeight);
+    if (d.wizardDiagramAlignment) setWizardDiagramAlignment(d.wizardDiagramAlignment);
+    if (d.wizardIsCanvas !== undefined) setWizardIsCanvas(d.wizardIsCanvas);
+    if (d.wizardLayoutBlocks) {
+      let draftTpl = availableTemplates?.find((t) => t.id === d.selectedTemplateId);
+      if (!draftTpl && d.selectedTemplateId) {
+        try {
+          draftTpl = await getTemplate(d.selectedTemplateId);
+        } catch (e) {}
+      }
+      if (draftTpl && draftTpl.layout_blocks) {
+        syncFormulasFromTemplate(d.wizardLayoutBlocks, draftTpl.layout_blocks);
+      }
+      const blocksWithKeys = ensureTableKeys(d.wizardLayoutBlocks);
+      setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
+    }
+    if (d.selectedTemplateId) setSelectedTemplateId(d.selectedTemplateId);
+    setWizardCustomColumns(d.wizardCustomColumns || []);
+    setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
+    setWizardColumnOrder(d.wizardColumnOrder || []);
+    setWizardHiddenColumns(d.wizardHiddenColumns || []);
+    setWizardDecimalPlaces(d.wizardDecimalPlaces ?? 4);
+    setWizardAcceptanceCriteria(d.wizardAcceptanceCriteria || {});
+    setCalUnit(d.calUnit || "");
+    setCalTolerance(d.calTolerance || 0);
+    setUncertainty(d.uncertainty || "");
+    setVerdict(d.verdict || "PASS");
+    setIsVerdictManuallyOverridden(Boolean(d.isVerdictManuallyOverridden));
+    setRemarks(d.remarks || "");
+    setCalibratedBy(d.calibratedBy || "");
+    setCalibratedByDesignation(d.calibratedByDesignation || "");
+    setReviewedBy(d.reviewedBy || "");
+    setReviewedByDesignation(d.reviewedByDesignation || "");
+    setApprovedBy(d.approvedBy || "");
+    setApprovedByDesignation(d.approvedByDesignation || "");
+    setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
+    setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
+    setNextCalDate(d.nextCalDate || "");
+  };
+
   // Load specific draft on mount
   useEffect(() => {
     if (!user) return;
     if (draftIdParam) {
-      getDraft(draftIdParam).then(async (draft) => {
-        if (draft && draft.data) {
-          let d = draft.data;
-          if (typeof d === "string") {
-            try { d = JSON.parse(d); } catch (e) { console.error("Failed to parse draft", e); }
+      getDraft(draftIdParam)
+        .then(async (draft) => {
+          if (draft) {
+            await restoreDraftData(draft);
           }
-          setStep(d.step || 0);
-          setSelectedInstrument(d.selectedInstrument || null);
-          setSelectedType(d.selectedType || null);
-          setReferenceStandards(d.referenceStandards || [{ name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }]);
-          setEnvTemp(d.envTemp || "");
-          setEnvHumidity(d.envHumidity || "");
-          setEnvSoakingTime(d.envSoakingTime || "");
-          setEnvSoakingStartTime(d.envSoakingStartTime || "");
-          setEnvSoakingEndTime(d.envSoakingEndTime || "");
-          setDocNo(d.docNo || "");
-          const draftProcNo = d.procedureNo || d.procedureReference || "";
-          setProcedureNo(draftProcNo);
-          setProcedureReference(draftProcNo);
-          if (d.procedureName) setProcedureName(d.procedureName);
-          if (d.procedureDate) setProcedureDate(d.procedureDate);
-          if (d.procedureRev) setProcedureRev(d.procedureRev);
-          if (d.receiptCondition) setReceiptCondition(d.receiptCondition);
-          if (d.customReceiptCondition) setCustomReceiptCondition(d.customReceiptCondition);
-          setCalPoints(d.calPoints || []);
-          if (d.wizardDiagramImage !== undefined) setWizardDiagramImage(d.wizardDiagramImage);
-          if (d.wizardDiagramWidth) setWizardDiagramWidth(d.wizardDiagramWidth);
-          if (d.wizardDiagramHeight) setWizardDiagramHeight(d.wizardDiagramHeight);
-          if (d.wizardDiagramAlignment) setWizardDiagramAlignment(d.wizardDiagramAlignment);
-          if (d.wizardIsCanvas !== undefined) setWizardIsCanvas(d.wizardIsCanvas);
-          if (d.wizardLayoutBlocks) {
-            let draftTpl = availableTemplates?.find((t) => t.id === d.selectedTemplateId);
-            if (!draftTpl && d.selectedTemplateId) {
-              try {
-                draftTpl = await getTemplate(d.selectedTemplateId);
-              } catch (e) {}
-            }
-            if (draftTpl && draftTpl.layout_blocks) {
-              syncFormulasFromTemplate(d.wizardLayoutBlocks, draftTpl.layout_blocks);
-            }
-            const blocksWithKeys = ensureTableKeys(d.wizardLayoutBlocks);
-            setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
-          }
-          if (d.selectedTemplateId) setSelectedTemplateId(d.selectedTemplateId);
-          setWizardCustomColumns(d.wizardCustomColumns || []);
-          setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
-          setWizardColumnOrder(d.wizardColumnOrder || []);
-          setWizardHiddenColumns(d.wizardHiddenColumns || []);
-          setWizardDecimalPlaces(d.wizardDecimalPlaces ?? 4);
-          setWizardAcceptanceCriteria(d.wizardAcceptanceCriteria || {});
-          setCalUnit(d.calUnit || "");
-          setCalTolerance(d.calTolerance || 0);
-          setUncertainty(d.uncertainty || "");
-                    setVerdict(d.verdict || "PASS");
-          setIsVerdictManuallyOverridden(Boolean(d.isVerdictManuallyOverridden));
-          setRemarks(d.remarks || "");
-          setCalibratedBy(d.calibratedBy || "");
-          setCalibratedByDesignation(d.calibratedByDesignation || "");
-          setReviewedBy(d.reviewedBy || "");
-          setReviewedByDesignation(d.reviewedByDesignation || "");
-          setApprovedBy(d.approvedBy || "");
-          setApprovedByDesignation(d.approvedByDesignation || "");
-          setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
-          setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
-          setNextCalDate(d.nextCalDate || "");
-        }
-        setIsInitializing(false);
-      }).catch(() => setIsInitializing(false));
+          setIsInitializing(false);
+        })
+        .catch(() => setIsInitializing(false));
     } else {
       setIsInitializing(false);
     }
   }, [user, draftIdParam]);
 
-  // Load instrument if coming from instruments page
+  // Load instrument if coming from instruments page with query param
   useEffect(() => {
-    if (instrumentId) {
-      getInstrument(instrumentId).then((inst) => {
-        setSelectedInstrument(inst);
-        applyInstrumentCustomParameters(inst);
-        if (inst.due_date) {
-          const prevDueDate = toLocalYyyyMmDd(inst.due_date);
-          if (prevDueDate) {
-            setCalDate(prevDueDate);
-            setCertIssueDate(prevDueDate);
+    if (instrumentId && !draftIdParam) {
+      getInstrument(instrumentId)
+        .then(async (inst) => {
+          // Check if an unfinished draft exists for this instrument
+          try {
+            const draft = await getDraftByInstrument(inst.id);
+            if (draft && draft.id) {
+              setDetectedDraft(draft);
+              setPendingInstrumentForDraft(inst);
+              setUnfinishedDraftModalOpen(true);
+              return;
+            }
+          } catch (e) {
+            console.warn("Could not check draft for instrument", e);
           }
-        }
-        // Try to auto-detect type from item_type
-        const typeMatch = CALIBRATION_TYPES.find(
-          (t) => inst.item_type?.toLowerCase().includes(t.type) || inst.name?.toLowerCase().includes(t.type)
-        );
-        if (typeMatch) {
-          setSelectedType(typeMatch);
-          setCalUnit(typeMatch.defaultUnit);
-        }
-        
-        // Auto-fill from latest calibration
-        httpClient.get(`/calibrations/latest/${instrumentId}`).then((res) => {
-          if (res.data) {
-            applyPreviousCalibrationData(res.data, typeMatch);
-            toast.success("Auto-filled data from previous calibration");
-          }
-        }).catch(() => {});
-      }).catch(() => {
-        toast.error("Failed to load instrument");
-      });
+
+          proceedWithInstrumentSelect(inst);
+        })
+        .catch(() => {
+          toast.error("Failed to load instrument");
+        });
     }
-  }, [instrumentId]);
+  }, [instrumentId, draftIdParam]);
 
   // Fetch Master Standards for Step 2
   useEffect(() => {
@@ -2348,6 +2391,12 @@ export default function CalibrationWizard() {
 
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery, user]);
+
+  // Unfinished Draft Found Modal State
+  const [unfinishedDraftModalOpen, setUnfinishedDraftModalOpen] = useState(false);
+  const [detectedDraft, setDetectedDraft] = useState<any | null>(null);
+  const [pendingInstrumentForDraft, setPendingInstrumentForDraft] = useState<Instrument | null>(null);
+  const [isDraftActionLoading, setIsDraftActionLoading] = useState(false);
 
   // Recently Calibrated Alert modal state
   const [recentCalModalOpen, setRecentCalModalOpen] = useState(false);
@@ -2381,7 +2430,22 @@ export default function CalibrationWizard() {
     }).catch(() => {});
   };
 
-  const handleInstrumentSelect = (inst: Instrument) => {
+  const handleInstrumentSelect = async (inst: Instrument) => {
+    // Check if an unfinished draft exists for this instrument
+    if (!draftIdParam) {
+      try {
+        const draft = await getDraftByInstrument(inst.id);
+        if (draft && draft.id) {
+          setDetectedDraft(draft);
+          setPendingInstrumentForDraft(inst);
+          setUnfinishedDraftModalOpen(true);
+          return;
+        }
+      } catch (e) {
+        console.warn("Could not check draft for instrument", e);
+      }
+    }
+
     if (inst.last_calibration_date) {
       const lastCal = new Date(inst.last_calibration_date);
       const now = new Date();
@@ -2394,6 +2458,67 @@ export default function CalibrationWizard() {
       }
     }
     proceedWithInstrumentSelect(inst);
+  };
+
+  const handleResumeUnfinishedDraft = async () => {
+    if (!detectedDraft) return;
+    setIsDraftActionLoading(true);
+    try {
+      await restoreDraftData(detectedDraft);
+      setUnfinishedDraftModalOpen(false);
+      setPendingInstrumentForDraft(null);
+      toast.info("Resumed unfinished draft calibration session");
+    } catch (err) {
+      console.error("Failed to resume draft", err);
+      toast.error("Failed to resume draft session");
+    } finally {
+      setIsDraftActionLoading(false);
+    }
+  };
+
+  const handleStartScratchFromDraft = async () => {
+    if (!detectedDraft) return;
+    setIsDraftActionLoading(true);
+    try {
+      await deleteDraft(detectedDraft.id).catch(console.error);
+      const targetInst = pendingInstrumentForDraft;
+      if (targetInst?.id) {
+        await deleteDraftsByInstrument(targetInst.id).catch(console.error);
+      }
+      draftIdRef.current = null;
+      setActiveDraftId(null);
+      setDetectedDraft(null);
+      setUnfinishedDraftModalOpen(false);
+      setPendingInstrumentForDraft(null);
+
+      if (targetInst) {
+        if (targetInst.last_calibration_date) {
+          const lastCal = new Date(targetInst.last_calibration_date);
+          const now = new Date();
+          const diffDays = Math.abs((now.getTime() - lastCal.getTime()) / (1000 * 3600 * 24));
+          if (diffDays <= 10) {
+            setRecentCalDetails({ lastCalDate: targetInst.last_calibration_date, dueDate: targetInst.due_date });
+            setPendingSelectedInstrument(targetInst);
+            setRecentCalModalOpen(true);
+            toast.success("Previous draft removed. Starting fresh calibration.");
+            return;
+          }
+        }
+        proceedWithInstrumentSelect(targetInst);
+        toast.success("Previous draft removed. Starting fresh calibration.");
+      }
+    } catch (err) {
+      console.error("Failed to discard draft", err);
+      toast.error("Failed to discard draft");
+    } finally {
+      setIsDraftActionLoading(false);
+    }
+  };
+
+  const handleCancelDraftModal = () => {
+    setUnfinishedDraftModalOpen(false);
+    setDetectedDraft(null);
+    setPendingInstrumentForDraft(null);
   };
 
   // Auto-determine verdict from points or canvas blocks with full telemetry
@@ -2626,6 +2751,9 @@ export default function CalibrationWizard() {
           setActiveDraftId(null);
           draftIdRef.current = null;
         }
+        if (selectedInstrument?.id) {
+          await deleteDraftsByInstrument(selectedInstrument.id).catch(console.error);
+        }
 
         toast.success("Calibration saved successfully!");
       }
@@ -2794,6 +2922,9 @@ export default function CalibrationWizard() {
       globalContext
     );
     evaluatedRow[colId] = val;
+    if (colId === "error") {
+      evaluatedRow.error = val;
+    }
     if (/judg|status|verdict/i.test(colId)) {
       evaluatedRow.status = val;
       evaluatedRow.judgement = val;
@@ -3235,6 +3366,18 @@ export default function CalibrationWizard() {
                           /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
 
                       if (isEditable) {
+                        const isAcceptanceTable = Boolean(tbl?.title && /acceptance|criteria|permissible/i.test(tbl.title));
+                        const cellVal =
+                          row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                            ? row[col.id]
+                            : (col.id === "error" && row.error !== undefined && row.error !== null && row.error !== ""
+                              ? row.error
+                              : (col.type === "nominal" || col.id === "nominal"
+                                ? (row.nominal ?? row.nom ?? "")
+                                : (col.type === "tolerance" || col.id === "tolerance"
+                                  ? (row.tolerance ?? "")
+                                  : "")));
+
                         return (
                           <td
                             key={rIdx}
@@ -3244,18 +3387,25 @@ export default function CalibrationWizard() {
                             <Input
                               type="text"
                               inputMode={
-                                col.type === "text" || /spec|dimension|desc|remark/i.test(col.id || col.label || "")
+                                col.type === "text" ||
+                                col.role === "TOLERANCE" ||
+                                col.type === "tolerance" ||
+                                isAcceptanceTable ||
+                                /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
                                   ? undefined
                                   : "decimal"
                               }
-                              value={row[col.id] ?? (col.type === "nominal" || col.id === "nominal" ? (row.nominal ?? row.nom ?? "") : (col.type === "tolerance" || col.id === "tolerance" ? (row.tolerance ?? "") : ""))}
+                              value={cellVal}
                               onChange={(e) => {
                                 const v = e.target.value;
                                 const isTextAllowed =
                                   col.type === "text" ||
-                                  /spec|dimension|desc|remark|comment|feature|note/i.test(col.id) ||
-                                  /spec|dimension|desc|remark|comment|feature|note/i.test(col.label || "");
-                                if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                  col.role === "TOLERANCE" ||
+                                  col.type === "tolerance" ||
+                                  isAcceptanceTable ||
+                                  /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
+                                  /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
+                                if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v) || /^[<>=≤≥±~]/.test(v)) {
                                   handleWizardCanvasCellChange(
                                     bIdx,
                                     isSplit,
@@ -3268,7 +3418,16 @@ export default function CalibrationWizard() {
                               }}
                               onBlur={(e) => {
                                 const raw = e.target.value.trim();
-                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                if (
+                                  raw === "" ||
+                                  raw === "-" ||
+                                  raw === "+" ||
+                                  raw === "." ||
+                                  /^[<>=≤≥±~]/.test(raw) ||
+                                  isAcceptanceTable
+                                ) {
+                                  return;
+                                }
                                 const parsed = parseFloat(raw);
                                 if (!isNaN(parsed)) {
                                   const formatted = raw.startsWith("+")
@@ -3839,23 +3998,42 @@ export default function CalibrationWizard() {
                         /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
 
                     if (isEditable) {
+                      const isAcceptanceTable = Boolean(tbl?.title && /acceptance|criteria|permissible/i.test(tbl.title));
+                      const cellVal =
+                        row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                          ? row[col.id]
+                          : (col.id === "error" && row.error !== undefined && row.error !== null && row.error !== ""
+                            ? row.error
+                            : (col.type === "nominal" || col.id === "nominal"
+                              ? (row.nominal ?? row.nom ?? "")
+                              : (col.type === "tolerance" || col.id === "tolerance"
+                                ? (row.tolerance ?? "")
+                                : "")));
+
                       return (
                         <td key={col.id} className="p-0.5">
                           <Input
                             type="text"
                             inputMode={
-                              col.type === "text" || /spec|dimension|desc|remark/i.test(col.id || col.label || "")
+                              col.type === "text" ||
+                              col.role === "TOLERANCE" ||
+                              col.type === "tolerance" ||
+                              isAcceptanceTable ||
+                              /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
                                 ? undefined
                                 : "decimal"
                             }
-                            value={row[col.id] ?? (col.type === "nominal" || col.id === "nominal" ? (row.nominal ?? row.nom ?? "") : (col.type === "tolerance" || col.id === "tolerance" ? (row.tolerance ?? "") : ""))}
+                            value={cellVal}
                             onChange={(e) => {
                               const v = e.target.value;
                               const isTextAllowed =
                                 col.type === "text" ||
-                                /spec|dimension|desc|remark|comment|feature|note/i.test(col.id) ||
-                                /spec|dimension|desc|remark|comment|feature|note/i.test(col.label || "");
-                              if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                col.role === "TOLERANCE" ||
+                                col.type === "tolerance" ||
+                                isAcceptanceTable ||
+                                /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
+                                /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
+                              if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v) || /^[<>=≤≥±~]/.test(v)) {
                                 handleWizardCanvasCellChange(
                                   bIdx,
                                   isSplit,
@@ -3868,7 +4046,16 @@ export default function CalibrationWizard() {
                             }}
                             onBlur={(e) => {
                               const raw = e.target.value.trim();
-                              if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                              if (
+                                raw === "" ||
+                                raw === "-" ||
+                                raw === "+" ||
+                                raw === "." ||
+                                /^[<>=≤≥±~]/.test(raw) ||
+                                isAcceptanceTable
+                              ) {
+                                return;
+                              }
                               const parsed = parseFloat(raw);
                               if (!isNaN(parsed)) {
                                 const formatted = raw.startsWith("+")
@@ -5965,6 +6152,19 @@ export default function CalibrationWizard() {
           </Button>
         )}
       </div>
+
+      {/* ═══ Unfinished Draft Found Modal ═══ */}
+      <UnfinishedDraftModal
+        open={unfinishedDraftModalOpen}
+        onOpenChange={setUnfinishedDraftModalOpen}
+        draft={detectedDraft}
+        instrumentName={pendingInstrumentForDraft?.name || detectedDraft?.data?.selectedInstrument?.name}
+        instrumentCode={pendingInstrumentForDraft?.id_code || detectedDraft?.data?.selectedInstrument?.id_code}
+        onResume={handleResumeUnfinishedDraft}
+        onStartScratch={handleStartScratchFromDraft}
+        onCancel={handleCancelDraftModal}
+        isLoading={isDraftActionLoading}
+      />
 
       {/* ═══ Recently Calibrated Warning Alert Modal ═══ */}
       <Dialog open={recentCalModalOpen} onOpenChange={setRecentCalModalOpen}>

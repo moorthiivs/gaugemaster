@@ -104,6 +104,12 @@ export async function getDraft(id: string) {
   return res.data;
 }
 
+/** Get draft by instrument ID */
+export async function getDraftByInstrument(instrumentId: string) {
+  const res = await httpClient.get(`/calibrations/drafts/instrument/${instrumentId}`);
+  return res.data;
+}
+
 /** Save draft */
 export async function saveDraft(userId: string, data: any, draftId?: string) {
   const res = await httpClient.post(`/calibrations/draft`, { userId, data, draftId });
@@ -113,6 +119,12 @@ export async function saveDraft(userId: string, data: any, draftId?: string) {
 /** Delete draft */
 export async function deleteDraft(id: string) {
   const res = await httpClient.delete(`/calibrations/draft/${id}`);
+  return res.data;
+}
+
+/** Delete drafts for a specific instrument */
+export async function deleteDraftsByInstrument(instrumentId: string) {
+  const res = await httpClient.delete(`/calibrations/drafts/instrument/${instrumentId}`);
   return res.data;
 }
 

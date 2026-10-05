@@ -2154,6 +2154,20 @@ export default function Instruments() {
             handleOpenCertificatePreview(dateUpdateInstrument, calId);
           }
         }}
+        onHistoryDeleted={(deletedId, updatedInstrument) => {
+          setHistoryData((prev) => prev.filter((h) => h.id !== deletedId));
+          if (updatedInstrument) {
+            setDateUpdateInstrument((prev) => (prev ? { ...prev, ...updatedInstrument } : null));
+            setData((prev) => ({
+              ...prev,
+              items: prev.items.map((item) => (item.id === updatedInstrument.id ? { ...item, ...updatedInstrument } : item)),
+            }));
+            setAllData((prev) =>
+              prev.map((item) => (item.id === updatedInstrument.id ? { ...item, ...updatedInstrument } : item))
+            );
+          }
+          fetchData();
+        }}
       />
 
       <InstrumentsDeleteModals

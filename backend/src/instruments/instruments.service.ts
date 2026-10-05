@@ -3,6 +3,7 @@ import {
     ConflictException,
     InternalServerErrorException,
     NotFoundException,
+    BadRequestException,
 } from '@nestjs/common';
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
@@ -779,6 +780,134 @@ export class InstrumentsService {
             console.warn('Failed to enrich calibration history:', err);
             return uniqueHistories;
         }
+    }
+
+    /**
+     * Deletes a calibration history record and recalculates the instrument's
+     * active calibration dates, due date, status, certificate, and source.
+     */
+    async deleteHistoryRecord(instrumentId: string, historyId: string) {
+        if (!historyId) {
+            throw new BadRequestException('History ID is required');
+        }
+
+        const historyEntry = await this.calibrationHistoryRepository.findOne({
+            where: { id: historyId },
+            relations: ['instrument'],
+        });
+
+        if (!historyEntry) {
+            throw new NotFoundException(`Calibration history record with ID ${historyId} not found`);
+        }
+
+        const targetInstrumentId = instrumentId || historyEntry.instrument?.id;
+        if (instrumentId && historyEntry.instrument && historyEntry.instrument.id !== instrumentId) {
+            throw new BadRequestException('History record does not belong to the specified instrument');
+        }
+
+        const deletedCalDate = historyEntry.last_calibration_date;
+
+        // If duplicate history entries exist for the exact same calibration date on this instrument, clean them up
+        if (targetInstrumentId && deletedCalDate) {
+            const sameDateHistories = await this.calibrationHistoryRepository.find({
+                where: {
+                    instrument: { id: targetInstrumentId },
+                    last_calibration_date: deletedCalDate,
+                },
+            });
+            for (const item of sameDateHistories) {
+                if (item.id !== historyEntry.id) {
+                    await this.calibrationHistoryRepository.remove(item).catch(() => {});
+                }
+            }
+        }
+
+        // If this history entry corresponds to an in-house digital calibration, clean up the digital record too
+        if (targetInstrumentId && deletedCalDate) {
+            try {
+                const calDateStr = new Date(deletedCalDate).toISOString().slice(0, 10);
+                const matchingCals = await this.instrumentRepository.query(
+                    `SELECT id FROM calibrations 
+                     WHERE instrument_id = $1 
+                     AND DATE(calibration_date) = $2`,
+                    [targetInstrumentId, calDateStr]
+                );
+                if (matchingCals && matchingCals.length > 0) {
+                    for (const mc of matchingCals) {
+                        await this.instrumentRepository.query(
+                            `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
+                            [mc.id]
+                        ).catch(() => {});
+                        await this.instrumentRepository.query(
+                            `DELETE FROM calibrations WHERE id = $1`,
+                            [mc.id]
+                        ).catch(() => {});
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to clean up matching in-house calibration record:', err);
+            }
+        }
+
+        // Remove the target history entry
+        await this.calibrationHistoryRepository.remove(historyEntry);
+
+        // Synchronize and roll back the instrument to the previous cycle
+        let updatedInstrument: Instrument | null = null;
+        if (targetInstrumentId) {
+            const instrument = await this.instrumentRepository.findOne({ where: { id: targetInstrumentId } });
+            if (instrument) {
+                const remainingHistories = await this.calibrationHistoryRepository.find({
+                    where: { instrument: { id: targetInstrumentId } },
+                    order: { last_calibration_date: 'DESC', created_at: 'DESC' },
+                });
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                if (remainingHistories.length > 0) {
+                    const latestHistory = remainingHistories[0];
+                    const newDueDate = latestHistory.due_date;
+                    const isOverdue = newDueDate ? new Date(newDueDate) <= today : false;
+
+                    instrument.last_calibration_date = latestHistory.last_calibration_date;
+                    instrument.due_date = latestHistory.due_date;
+                    instrument.certificate_file = latestHistory.certificate_file;
+                    instrument.calibration_source = latestHistory.calibration_source || 'External';
+                    instrument.status = isOverdue ? 'Overdue' : 'OK';
+                    updatedInstrument = await this.instrumentRepository.save(instrument);
+                } else {
+                    // No remaining histories: roll back using frequency or reset
+                    if (deletedCalDate) {
+                        const months = this.parseFrequencyMonths(instrument.frequency);
+                        const prevCalDate = new Date(deletedCalDate);
+                        prevCalDate.setMonth(prevCalDate.getMonth() - months);
+
+                        const prevDueDate = new Date(deletedCalDate);
+                        const isOverdue = prevDueDate <= today;
+
+                        instrument.last_calibration_date = prevCalDate;
+                        instrument.due_date = prevDueDate;
+                        instrument.certificate_file = null as any;
+                        instrument.calibration_source = 'In-House';
+                        instrument.status = isOverdue ? 'Overdue' : 'OK';
+                        updatedInstrument = await this.instrumentRepository.save(instrument);
+                    } else {
+                        instrument.last_calibration_date = null as any;
+                        instrument.due_date = null as any;
+                        instrument.certificate_file = null as any;
+                        updatedInstrument = await this.instrumentRepository.save(instrument);
+                    }
+                }
+            }
+        }
+
+        return {
+            success: true,
+            message: 'Calibration history record deleted successfully',
+            deletedId: historyId,
+            instrument: updatedInstrument,
+        };
     }
 
     /**

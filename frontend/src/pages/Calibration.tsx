@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
-import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
+import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
 import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
@@ -160,9 +160,34 @@ export default function Calibration() {
   }, [filteredOverdueInstruments, page, pageSize]);
 
   const filteredDrafts = useMemo(() => {
-    if (!searchQuery.trim()) return drafts;
+    // Deduplicate drafts by instrument ID (prioritizing the most recently updated draft)
+    const seenInstruments = new Set<string>();
+    const deduplicatedDrafts: typeof drafts = [];
+
+    const sortedDrafts = [...drafts].sort((a, b) => {
+      const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+      const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+      return timeB - timeA;
+    });
+
+    for (const draft of sortedDrafts) {
+      let parsedData = draft.data;
+      if (typeof parsedData === "string") {
+        try {
+          parsedData = JSON.parse(parsedData);
+        } catch (e) {}
+      }
+      const instId = parsedData?.selectedInstrument?.id || parsedData?.selectedInstrument?.id_code;
+      if (instId) {
+        if (seenInstruments.has(instId)) continue;
+        seenInstruments.add(instId);
+      }
+      deduplicatedDrafts.push(draft);
+    }
+
+    if (!searchQuery.trim()) return deduplicatedDrafts;
     const q = searchQuery.trim().toLowerCase();
-    return drafts.filter((draft) => {
+    return deduplicatedDrafts.filter((draft) => {
       let parsedData = draft.data;
       if (typeof parsedData === "string") {
         try { parsedData = JSON.parse(parsedData); } catch (e) {}
@@ -377,10 +402,29 @@ export default function Calibration() {
     }
   };
 
-  const handleDeleteDraft = async (id: string) => {
+  const handleDeleteDraft = async (id: string, instrumentId?: string) => {
     try {
       await deleteDraft(id);
-      setDrafts((prev) => prev.filter((d) => d.id !== id));
+      if (instrumentId) {
+        await deleteDraftsByInstrument(instrumentId).catch(console.error);
+      }
+      setDrafts((prev) =>
+        prev.filter((d) => {
+          if (d.id === id) return false;
+          if (instrumentId) {
+            let p = d.data;
+            if (typeof p === "string") {
+              try {
+                p = JSON.parse(p);
+              } catch {}
+            }
+            if (p?.selectedInstrument?.id === instrumentId || p?.selectedInstrument?.id_code === instrumentId) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
       toast.success("Draft deleted");
     } catch {
       toast.error("Failed to delete draft");
@@ -1313,7 +1357,7 @@ export default function Calibration() {
                                     variant="ghost" 
                                     size="icon"
                                     className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                    onClick={() => handleDeleteDraft(draft.id)}
+                                    onClick={() => handleDeleteDraft(draft.id, inst?.id || inst?.id_code)}
                                   >
                                     <Trash2 className="w-4 h-4" />
                                   </Button>

@@ -5170,6 +5170,7 @@ export default function TemplateBuilderForm() {
 
           <div className="flex-1 overflow-y-auto py-3 px-1 flex justify-center bg-slate-100 dark:bg-slate-900/60 rounded-lg">
             <CertificatePreview
+              isTemplatePreview={true}
               calibration={{
                 certificate_number: "PREVIEW-DEMO-001",
                 ulr_number: "ULR-DEMO-2026-0001",
@@ -5247,7 +5248,7 @@ export default function TemplateBuilderForm() {
                 uncertainty: "± 0.0015 mm",
                 verdict: "PASS",
                 remarks: remarks || "Standard calibration per ISO/IEC 17025",
-                calibrated_by: user?.name || "Calibrator",
+                calibrated_by: "Calibrator",
                 calibrated_by_designation: "Calibration Engineer",
                 reviewed_by: "Quality Manager",
                 reviewed_by_designation: "Quality Head",
