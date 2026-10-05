@@ -2717,7 +2717,18 @@ export default function CalibrationWizard() {
       ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
     };
 
-    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02;
+    const isTolCol =
+      colId === "tolerance" ||
+      colId === "tol" ||
+      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && (c.type === "tolerance" || /tolerance|tol/i.test(c.label || c.id || ""))));
+
+    if (isTolCol) {
+      const parsedTol = val !== "" && !isNaN(Number(val)) ? parseFloat(String(val)) : val;
+      row.tolerance = parsedTol;
+      row.tol = parsedTol;
+    }
+
+    const tol = typeof row.tolerance === "number" ? row.tolerance : (parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02);
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
     // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
@@ -3203,19 +3214,25 @@ export default function CalibrationWizard() {
                           </td>
                         );
                       }
-                      // Editable cell: reading, trial, number, measurement, or non-formula row in a formula column
+                      // Editable cell: reading, trial, tolerance, nominal, number, measurement, or non-formula row in a formula column
                       const isEditable =
-                        col.type === "trial" ||
-                        col.type === "reading" ||
-                        col.type === "number" ||
-                        col.type === "formula" ||
-                        col.role === "READING" ||
-                        col.dataType === "MEASUREMENT" ||
-                        (col.role as string) === "MEASUREMENT" ||
-                        col.semanticRole === "READING" ||
-                        col.semanticRole === "TRIAL" ||
-                        /actual|reading|trial|observed|error|val/i.test(col.id) ||
-                        /actual|reading|trial|observed|error/i.test(col.label || "");
+                        !col.readOnly &&
+                        (col.editable === true ||
+                          col.type === "trial" ||
+                          col.type === "reading" ||
+                          col.type === "tolerance" ||
+                          col.type === "nominal" ||
+                          col.type === "number" ||
+                          col.type === "formula" ||
+                          col.role === "READING" ||
+                          col.role === "TOLERANCE" ||
+                          col.role === "NOMINAL" ||
+                          col.dataType === "MEASUREMENT" ||
+                          (col.role as string) === "MEASUREMENT" ||
+                          col.semanticRole === "READING" ||
+                          col.semanticRole === "TRIAL" ||
+                          /actual|reading|trial|observed|error|val|tol|tolerance|nom|dimension/i.test(col.id) ||
+                          /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
 
                       if (isEditable) {
                         return (
@@ -3231,7 +3248,7 @@ export default function CalibrationWizard() {
                                   ? undefined
                                   : "decimal"
                               }
-                              value={row[col.id] ?? ""}
+                              value={row[col.id] ?? (col.type === "nominal" || col.id === "nominal" ? (row.nominal ?? row.nom ?? "") : (col.type === "tolerance" || col.id === "tolerance" ? (row.tolerance ?? "") : ""))}
                               onChange={(e) => {
                                 const v = e.target.value;
                                 const isTextAllowed =
@@ -3254,12 +3271,14 @@ export default function CalibrationWizard() {
                                 if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
                                 const parsed = parseFloat(raw);
                                 if (!isNaN(parsed)) {
-                                  const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                  const formatted = raw.startsWith("+")
+                                    ? "+" + (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec))
+                                    : (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec));
                                   handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
                                 }
                               }}
                               className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1 w-full min-w-[48px]"
-                              placeholder={colDec === 0 ? "0" : (0).toFixed(colDec)}
+                              placeholder={col.type === "tolerance" || /tol/i.test(col.id) ? "±0.00" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
                             />
                           </td>
                         );
@@ -3667,7 +3686,7 @@ export default function CalibrationWizard() {
                       );
                     }
                     const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
-                    if (col.type === "nominal" || col.type === "number") {
+                    if ((col.type === "nominal" || col.type === "number") && col.readOnly) {
                       const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                         ? row[col.id]
                         : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
@@ -3702,6 +3721,20 @@ export default function CalibrationWizard() {
                               rows={String(row[col.id] || row.required_dimension || "").includes("\n") ? 2 : 1}
                               className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/50 hover:bg-background focus:bg-background transition-colors text-left w-full"
                               placeholder="e.g. 55.10-0.025"
+                            />
+                          </td>
+                        );
+                      }
+                      if (col.editable || !col.readOnly) {
+                        return (
+                          <td key={col.id} className="p-0.5 min-w-[100px]">
+                            <Input
+                              type="text"
+                              value={row[col.id] ?? row.description ?? ""}
+                              onChange={(e) => {
+                                handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, e.target.value);
+                              }}
+                              className="h-6 text-[11px] font-mono py-0 px-1.5 w-full"
                             />
                           </td>
                         );
@@ -3785,19 +3818,25 @@ export default function CalibrationWizard() {
                       );
                     }
 
-                    // Editable cell: reading, trial, number, measurement, or non-formula row in a formula column
+                    // Editable cell: reading, trial, tolerance, nominal, number, measurement, or non-formula row in a formula column
                     const isEditable =
-                      col.type === "trial" ||
-                      col.type === "reading" ||
-                      col.type === "number" ||
-                      col.type === "formula" ||
-                      col.role === "READING" ||
-                      col.dataType === "MEASUREMENT" ||
-                      (col.role as string) === "MEASUREMENT" ||
-                      col.semanticRole === "READING" ||
-                      col.semanticRole === "TRIAL" ||
-                      /actual|reading|trial|observed|error|val/i.test(col.id) ||
-                      /actual|reading|trial|observed|error/i.test(col.label || "");
+                      !col.readOnly &&
+                      (col.editable === true ||
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.type === "tolerance" ||
+                        col.type === "nominal" ||
+                        col.type === "number" ||
+                        col.type === "formula" ||
+                        col.role === "READING" ||
+                        col.role === "TOLERANCE" ||
+                        col.role === "NOMINAL" ||
+                        col.dataType === "MEASUREMENT" ||
+                        (col.role as string) === "MEASUREMENT" ||
+                        col.semanticRole === "READING" ||
+                        col.semanticRole === "TRIAL" ||
+                        /actual|reading|trial|observed|error|val|tol|tolerance|nom|dimension/i.test(col.id) ||
+                        /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
 
                     if (isEditable) {
                       return (
@@ -3809,7 +3848,7 @@ export default function CalibrationWizard() {
                                 ? undefined
                                 : "decimal"
                             }
-                            value={row[col.id] ?? ""}
+                            value={row[col.id] ?? (col.type === "nominal" || col.id === "nominal" ? (row.nominal ?? row.nom ?? "") : (col.type === "tolerance" || col.id === "tolerance" ? (row.tolerance ?? "") : ""))}
                             onChange={(e) => {
                               const v = e.target.value;
                               const isTextAllowed =
@@ -3832,12 +3871,14 @@ export default function CalibrationWizard() {
                               if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
                               const parsed = parseFloat(raw);
                               if (!isNaN(parsed)) {
-                                const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                const formatted = raw.startsWith("+")
+                                  ? "+" + (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec))
+                                  : (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec));
                                 handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
                               }
                             }}
                             className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
-                            placeholder={colDec === 0 ? "0" : (0).toFixed(colDec)}
+                            placeholder={col.type === "tolerance" || /tol/i.test(col.id) ? "±0.00" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
                           />
                         </td>
                       );
