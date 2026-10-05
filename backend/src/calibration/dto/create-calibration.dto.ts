@@ -223,6 +223,10 @@ export class CreateCalibrationDto {
   @IsString()
   rejection_reason?: string;
 
+  @IsOptional()
+  @IsString()
+  recalibration_of_id?: string;
+
   // Signatories
   @IsOptional()
   @IsString()

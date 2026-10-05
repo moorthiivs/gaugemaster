@@ -38,6 +38,7 @@ import {
   Check,
   X,
   Edit,
+  RotateCcw,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
@@ -450,6 +451,17 @@ export default function CalibrationApprovalList() {
 
           return (
             <div className="flex items-center justify-end gap-2">
+              {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
+                <Button
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                  onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                  title="Recalibrate this rejected instrument"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Recalibrate</span>
+                </Button>
+              )}
               {canAccess("calibrations", "edit") && (
                 <Button
                   variant="outline"
@@ -1208,6 +1220,29 @@ export default function CalibrationApprovalList() {
                     <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                     <span>Certificate Released</span>
                   </Badge>
+                )}
+
+                {/* Stage: Rejected / Rework */}
+                {selectedRecord.approval_status === "Rejected" && (
+                  <div className="flex items-center gap-2">
+                    <Badge variant="destructive" className="gap-1.5 py-1.5 px-3">
+                      <X className="w-4 h-4" />
+                      <span>Returned for Rework</span>
+                    </Badge>
+                    {canAccess("calibrations", "create") && (
+                      <Button
+                        size="sm"
+                        className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                        onClick={() => {
+                          setReviewDialogOpen(false);
+                          navigate(`/calibration/new?recalibrateId=${selectedRecord.id}`);
+                        }}
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        <span>Recalibrate Instrument</span>
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
             </DialogFooter>

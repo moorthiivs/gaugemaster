@@ -208,6 +208,9 @@ export class Calibration {
   @Column({ type: 'text', nullable: true })
   rejection_reason?: string;
 
+  @Column({ nullable: true })
+  recalibration_of_id?: string;
+
   // ── Signatories ──────────────────────────────────────────────
   @Column({ nullable: true })
   calibrated_by: string;

@@ -219,7 +219,59 @@ export function parseSpecification(
     }
   }
 
-  // 5. PATTERN E: Plain numeric dimension without tolerance operator: e.g. "35.035", "Shaft 35.035"
+  // 6. PATTERN G: Maximum limit specification: e.g. "0.003Max", "0.003 Max", "Max 0.003", "<=0.003", "Symmetry 0.003Max"
+  const maxRegex = /^(?:(.+?)\s+)?(?:(?:max\.?|maximum|<=?)\s*([ØRSR\s]*-?\d+(?:\.\d+)?)|(?:[ØRSR\s]*)(-?\d+(?:\.\d+)?)\s*(?:max\.?|maximum))$/i;
+  const maxMatch = normalized.match(maxRegex);
+  if (maxMatch) {
+    const desc = maxMatch[1]?.trim();
+    const valStr = maxMatch[2] || maxMatch[3];
+    const val = parseFloat(valStr);
+    const dec = Math.max(getDecimalCount(valStr), defaultDecimalPlaces);
+
+    if (!isNaN(val)) {
+      return {
+        specificationText: rawText,
+        description: desc || undefined,
+        nominal: 0,
+        lowerTolerance: 0,
+        upperTolerance: val,
+        lowerLimit: 0,
+        upperLimit: val,
+        unit: defaultUnit,
+        decimalPrecision: dec,
+        isValid: true,
+        isMaxLimit: true,
+      };
+    }
+  }
+
+  // 7. PATTERN H: Minimum limit specification: e.g. "0.003Min", "0.003 Min", "Min 0.003", ">=0.003"
+  const minRegex = /^(?:(.+?)\s+)?(?:(?:min\.?|minimum|>=?)\s*([ØRSR\s]*-?\d+(?:\.\d+)?)|(?:[ØRSR\s]*)(-?\d+(?:\.\d+)?)\s*(?:min\.?|minimum))$/i;
+  const minMatch = normalized.match(minRegex);
+  if (minMatch) {
+    const desc = minMatch[1]?.trim();
+    const valStr = minMatch[2] || minMatch[3];
+    const val = parseFloat(valStr);
+    const dec = Math.max(getDecimalCount(valStr), defaultDecimalPlaces);
+
+    if (!isNaN(val)) {
+      return {
+        specificationText: rawText,
+        description: desc || undefined,
+        nominal: val,
+        lowerTolerance: 0,
+        upperTolerance: 999999,
+        lowerLimit: val,
+        upperLimit: 999999,
+        unit: defaultUnit,
+        decimalPrecision: dec,
+        isValid: true,
+        isMinLimit: true,
+      };
+    }
+  }
+
+  // 8. PATTERN E: Plain numeric dimension without tolerance operator: e.g. "35.035", "Shaft 35.035"
   const plainRegex = /^(?:(.+?)\s+)?(?:[ØRSR\s]*)(-?\d+(?:\.\d+)?)$/i;
   const plainMatch = normalized.match(plainRegex);
   if (plainMatch) {

@@ -235,7 +235,12 @@ export function AppHeader() {
   const activeJobsRef = useRef<string[]>([]);
 
   const toggleTheme = () => {
-    const newScheme = themeSettings.colorScheme === "dark" ? "light" : "dark";
+    const isCurrentDark =
+      themeSettings.colorScheme === "dark" ||
+      (themeSettings.colorScheme === "auto" &&
+        typeof window !== "undefined" &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const newScheme = isCurrentDark ? "light" : "dark";
     saveTheme({
       ...themeSettings,
       colorScheme: newScheme,

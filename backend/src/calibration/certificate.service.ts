@@ -16,6 +16,10 @@ import {
 } from './utils/png-encoder.util';
 import { getCoveredCells } from './utils/table-span.util';
 import { getPdfFonts } from '../lib/pdf-fonts';
+import {
+  applyVerticalAlignmentToTable,
+  walkAndAlignPdfTables,
+} from './utils/pdf-table-align.util';
 
 const fonts = getPdfFonts();
 
@@ -1461,7 +1465,7 @@ export class CertificateService {
             ]);
           }
 
-          return {
+          const hTableElement = {
             unbreakable: true,
             table: {
               dontBreakRows: true,
@@ -1486,6 +1490,7 @@ export class CertificateService {
               tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : tableGap,
             ],
           };
+          return applyVerticalAlignmentToTable(hTableElement, bodyWidth, effectiveHContentFontSize);
         }
 
         const numCols = tbl.columns?.length || 1;
@@ -1756,7 +1761,7 @@ export class CertificateService {
           ]);
         }
 
-        return {
+        const vTableElement = {
           unbreakable: (tbl.rows || []).length <= 15,
           table: {
             dontBreakRows: true,
@@ -1781,6 +1786,7 @@ export class CertificateService {
             tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : tableGap,
           ],
         };
+        return applyVerticalAlignmentToTable(vTableElement, bodyWidth, effectiveContentFontSize);
       };
 
       blocks.forEach((block: any) => {
@@ -2057,7 +2063,7 @@ export class CertificateService {
             matrixBody.push(emptyFallbackRow);
           }
 
-          resultElements.push({
+          const matrixTableElement = {
             unbreakable: true,
             table: {
               dontBreakRows: true,
@@ -2081,7 +2087,8 @@ export class CertificateService {
               0,
               block.marginBottom !== undefined ? Number(block.marginBottom) : mb,
             ],
-          });
+          };
+          resultElements.push(applyVerticalAlignmentToTable(matrixTableElement, matrixBodyWidth, contentFontSize));
         } else if (block.type === 'text_block') {
           resultElements.push({
             unbreakable: true,
@@ -3442,6 +3449,10 @@ export class CertificateService {
         font: 'Roboto',
       },
     };
+
+    // Vertically center all table cells across the certificate where row heights vary
+    const printableBodyWidth = (useLandscape ? 841.89 : 595.28) - 36;
+    walkAndAlignPdfTables(docDefinition.content, printableBodyWidth, contentFontSize);
 
     let pdfDoc: any;
     try {

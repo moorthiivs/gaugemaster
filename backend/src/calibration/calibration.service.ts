@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In, DataSource } from 'typeorm';
 import { Calibration } from './calibration.entity';
@@ -16,6 +16,8 @@ import { User } from 'src/users/user.entity';
 
 @Injectable()
 export class CalibrationService {
+  private readonly logger = new Logger(CalibrationService.name);
+
   constructor(
     @InjectRepository(Calibration)
     private readonly calibrationRepository: Repository<Calibration>,
@@ -677,6 +679,33 @@ export class CalibrationService {
         }
       }
 
+      // If this calibration is a recalibration/rework of a rejected record, record audit log on the original
+      if (dto.recalibration_of_id) {
+        try {
+          const rejectedOrig = await manager.findOne(Calibration, {
+            where: { id: dto.recalibration_of_id },
+          });
+          if (rejectedOrig) {
+            const reauditLog = manager.create(CalibrationAuditLog, {
+              calibration_id: rejectedOrig.id,
+              edited_by_id: userId,
+              edited_by_name: savedCalibration.calibrated_by || 'Calibration Engineer',
+              changes_summary: [
+                {
+                  field: 'recalibration',
+                  oldValue: 'Rejected',
+                  newValue: `Recalibrated as Cert: ${savedCalibration.certificate_number} (ID: ${savedCalibration.id})`,
+                },
+              ],
+              remarks: `Recalibration / Rework completed under Certificate ${savedCalibration.certificate_number}`,
+            });
+            await manager.save(CalibrationAuditLog, reauditLog);
+          }
+        } catch (err) {
+          console.warn(`Failed to link recalibration audit log on original ${dto.recalibration_of_id}`, err);
+        }
+      }
+
       // Auto-purge any unfinished drafts for this instrument upon successful calibration creation
       if (dto.instrument_id) {
         try {
@@ -829,6 +858,45 @@ export class CalibrationService {
     calibration.certificate_generated = false;
 
     const saved = await this.calibrationRepository.save(calibration);
+
+    // Rollback or update instrument status upon rejection:
+    if (saved.instrument_id) {
+      try {
+        const inst = await this.instrumentsService.findOne(saved.instrument_id);
+        if (inst) {
+          const otherCals = await this.calibrationRepository.find({
+            where: { instrument_id: saved.instrument_id },
+            order: { calibration_date: 'DESC' },
+          });
+          const approvedCals = otherCals.filter(
+            (c) => c.id !== saved.id && c.approval_status === 'Approved',
+          );
+
+          if (approvedCals.length > 0) {
+            const latestApproved = approvedCals[0];
+            const now = new Date();
+            const dueDate = latestApproved.next_calibration_date
+              ? new Date(latestApproved.next_calibration_date)
+              : null;
+            const isOverdue = dueDate ? dueDate < now : false;
+
+            await this.instrumentsService.update(inst.id, {
+              last_calibration_date: latestApproved.calibration_date as any,
+              due_date: latestApproved.next_calibration_date as any,
+              status: latestApproved.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
+              cert_no: latestApproved.certificate_number || undefined,
+            } as any);
+          } else {
+            // No previous approved calibration - mark instrument as REJECTED so it cannot be used
+            await this.instrumentsService.update(inst.id, {
+              status: 'REJECTED',
+            } as any);
+          }
+        }
+      } catch (err: any) {
+        this.logger.error(`Failed to update instrument status on rejection: ${err?.message || err}`);
+      }
+    }
 
     // Record audit log entry
     const auditLog = this.auditLogRepository.create({

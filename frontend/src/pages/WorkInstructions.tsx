@@ -40,6 +40,8 @@ import {
   History,
   FileText,
   Image as ImageIcon,
+  FileSpreadsheet,
+  Download,
   Upload,
   Clock,
   User,
@@ -67,6 +69,7 @@ import { DocumentViewerModal } from "@/components/documentation/DocumentViewerMo
 import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
 import { InstrumentSearchSelector } from "@/components/documentation/InstrumentSearchSelector";
 import { Instrument } from "@/types/instrument";
+import { isExcelFile, downloadFileFromUrl } from "@/lib/tokenStorage";
 
 export default function WorkInstructions() {
   useSEO({
@@ -332,6 +335,11 @@ export default function WorkInstructions() {
       toast.error("No document uploaded for this instruction");
       return;
     }
+    const isExcel = isExcelFile(item.file_path, item.document_name, item.file_type);
+    if (isExcel) {
+      downloadFileFromUrl(item.file_path, item.document_name);
+      toast.success(`Downloading ${item.document_name || "instruction.xlsx"} to view in Excel`);
+    }
     setViewerDoc({
       isOpen: true,
       title: item.title,
@@ -447,13 +455,17 @@ export default function WorkInstructions() {
         header: () => <span className="font-semibold">Document</span>,
         cell: ({ row }) => {
           const inst = row.original;
+          const isExcel = isExcelFile(inst.file_path, inst.document_name, inst.file_type);
           const isPdf =
-            inst.file_type?.toLowerCase().includes("pdf") ||
-            inst.document_name?.toLowerCase().endsWith(".pdf");
+            !isExcel &&
+            (inst.file_type?.toLowerCase().includes("pdf") ||
+              inst.document_name?.toLowerCase().endsWith(".pdf"));
 
           return inst.document_name ? (
             <div className="flex items-center gap-2">
-              {isPdf ? (
+              {isExcel ? (
+                <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : isPdf ? (
                 <FileText className="h-4 w-4 text-red-500 shrink-0" />
               ) : (
                 <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
@@ -461,6 +473,11 @@ export default function WorkInstructions() {
               <span className="text-xs font-medium truncate max-w-[180px]" title={inst.document_name}>
                 {inst.document_name}
               </span>
+              {isExcel && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-mono">
+                  EXCEL
+                </Badge>
+              )}
             </div>
           ) : (
             <span className="text-xs text-muted-foreground italic">No document</span>
@@ -503,18 +520,23 @@ export default function WorkInstructions() {
         header: () => <div className="text-right font-semibold pr-4">Action</div>,
         cell: ({ row }) => {
           const inst = row.original;
+          const isExcel = isExcelFile(inst.file_path, inst.document_name, inst.file_type);
           return (
             <div className="flex items-center justify-end gap-1">
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
+                className={`h-8 px-2.5 text-xs gap-1 ${
+                  isExcel
+                    ? "text-emerald-600 hover:text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                    : "hover:text-primary hover:border-primary/50"
+                }`}
                 onClick={() => handleView(inst)}
                 disabled={!inst.file_path}
-                title="View Document"
+                title={isExcel ? "Download Excel to view in local system" : "View Document inside application"}
               >
-                <Eye className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">View</span>
+                {isExcel ? <Download className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{isExcel ? "Download" : "View"}</span>
               </Button>
               {canAccess("work_instructions", "edit") && (
                 <Button
@@ -843,14 +865,14 @@ export default function WorkInstructions() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">
-                Upload Document (PDF or Image)
+                Upload Document (PDF, Image, or Excel)
               </Label>
               <div className="border-2 border-dashed rounded-lg p-4 text-center hover:bg-muted/40 transition-colors">
                 <input
                   type="file"
                   id="wi-file-upload"
                   className="hidden"
-                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       setCreateFile(e.target.files[0]);
@@ -872,10 +894,10 @@ export default function WorkInstructions() {
                   ) : (
                     <>
                       <span className="text-xs font-medium text-foreground">
-                        Click to select or drop instruction PDF / image
+                        Click to select or drop instruction PDF, image, or Excel spreadsheet
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        Supported: PDF, PNG, JPG, WebP, SVG (Max 25MB)
+                        Supported: PDF, PNG, JPG, WebP, SVG, XLSX, XLS, CSV (Max 25MB)
                       </span>
                     </>
                   )}
@@ -1012,14 +1034,14 @@ export default function WorkInstructions() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">
-                Upload New Document Revision (Optional)
+                Upload New Document Revision (Optional - PDF, Image, or Excel)
               </Label>
               <div className="border border-dashed rounded-lg p-3 text-center hover:bg-muted/40 transition-colors">
                 <input
                   type="file"
                   id="edit-wi-file-upload"
                   className="hidden"
-                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       setEditFile(e.target.files[0]);
@@ -1032,7 +1054,7 @@ export default function WorkInstructions() {
                     <span className="text-xs font-semibold text-primary">{editFile.name} (Will increment to v{(editingItem?.version || 1) + 1})</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement
+                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement (PDF, Image, or Excel)
                     </span>
                   )}
                 </label>

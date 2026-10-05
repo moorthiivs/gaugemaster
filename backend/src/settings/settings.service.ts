@@ -48,11 +48,22 @@ export class SettingsService {
           };
         }
 
-        const updatePayload = {
+        const updatePayload: any = {
           ...createSettingDto,
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
           ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
         };
+
+        if (createSettingDto.themeSettings && (existing.themeSettings as any)?.userThemes) {
+          updatePayload.themeSettings = {
+            ...createSettingDto.themeSettings,
+            userThemes: {
+              ...((existing.themeSettings as any).userThemes || {}),
+              ...((createSettingDto.themeSettings as any).userThemes || {}),
+              ...(userId ? { [userId]: createSettingDto.themeSettings } : {}),
+            },
+          };
+        }
 
         await this.settingsRepository.update(existing.id, updatePayload);
         const updated = await this.settingsRepository.findOne({ where: { id: existing.id } });
@@ -97,6 +108,98 @@ export class SettingsService {
   async findOneByUserId(userId: string) {
     const setting = await this.settingsRepository.findOne({ where: { userId } });
     return this.sanitizeSetting(setting);
+  }
+
+  async getThemeSettings(userId?: string, companyId?: string) {
+    const defaultTheme = {
+      colorScheme: 'dark',
+      fontSize: 'medium',
+      compactMode: false,
+      animations: true,
+      highContrast: false,
+      reducedMotion: false,
+      fontFamily: 'Geist',
+      baseColor: 'mist',
+      themeColor: 'mist',
+    };
+
+    let setting: Setting | null = null;
+    if (companyId) {
+      setting = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    if (!setting && userId) {
+      setting = await this.settingsRepository.findOne({ where: { userId } });
+    }
+
+    if (!setting || !setting.themeSettings) {
+      return defaultTheme;
+    }
+
+    const companyTheme = { ...setting.themeSettings };
+    const userThemes = (companyTheme as any).userThemes || {};
+    const userSpecific = userId ? userThemes[userId] : null;
+
+    delete (companyTheme as any).userThemes;
+
+    return {
+      ...defaultTheme,
+      ...companyTheme,
+      ...(userSpecific || {}),
+    };
+  }
+
+  async saveThemeSettings(userId?: string, companyId?: string, themeSettings?: any, jwtUser?: any) {
+    if (!companyId && !userId) return null;
+    if (!themeSettings) return null;
+
+    let existing: Setting | null = null;
+    if (companyId) {
+      existing = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    if (!existing && userId) {
+      existing = await this.settingsRepository.findOne({ where: { userId } });
+    }
+
+    const isAdmin =
+      jwtUser?.isSuperAdmin ||
+      (jwtUser?.role && typeof jwtUser.role === 'object' && jwtUser.role.name?.toLowerCase().includes('admin')) ||
+      (typeof jwtUser?.userRole === 'string' && jwtUser.userRole.toLowerCase().includes('admin'));
+
+    if (!existing) {
+      const newSetting = this.settingsRepository.create({
+        companyId: companyId || userId,
+        userId: userId || companyId,
+        themeSettings: {
+          ...themeSettings,
+          userThemes: userId ? { [userId]: themeSettings } : {},
+        },
+      });
+      const saved = await this.settingsRepository.save(newSetting);
+      const res = { ...saved.themeSettings };
+      delete (res as any).userThemes;
+      return res;
+    }
+
+    const currentThemeSettings = existing.themeSettings || ({} as any);
+    const userThemes = { ...((currentThemeSettings as any).userThemes || {}) };
+
+    if (userId) {
+      userThemes[userId] = themeSettings;
+    }
+
+    const updatedThemeSettings = {
+      ...currentThemeSettings,
+      ...(isAdmin ? themeSettings : {}),
+      userThemes,
+    };
+
+    await this.settingsRepository.update(existing.id, {
+      themeSettings: updatedThemeSettings,
+    });
+
+    const res = { ...updatedThemeSettings };
+    delete (res as any).userThemes;
+    return res;
   }
 
   /**

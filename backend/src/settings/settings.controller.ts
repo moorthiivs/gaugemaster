@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
@@ -37,6 +37,61 @@ export class SettingsController {
   @RequirePermission('settings', 'edit')
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
     return this.settingsService.create(createSettingDto);
+  }
+
+  @Get('theme')
+  getTheme(
+    @Query('userId') queryUserId: string,
+    @Query('companyId') queryCompanyId: string,
+    @Headers('authorization') authHeader: string,
+    @Req() req: any,
+  ) {
+    let tokenUserId: string | undefined;
+    let tokenCompanyId: string | undefined;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        tokenUserId = payload.sub;
+        tokenCompanyId = payload.companyId;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    const userId = queryUserId || req.user?.userId || req.user?.id || tokenUserId;
+    const companyId = queryCompanyId || req.user?.companyId || tokenCompanyId;
+
+    return this.settingsService.getThemeSettings(userId, companyId);
+  }
+
+  @Post('theme')
+  saveTheme(
+    @Body() body: any,
+    @Headers('authorization') authHeader: string,
+    @Req() req: any,
+  ) {
+    let tokenUserId: string | undefined;
+    let tokenCompanyId: string | undefined;
+    let tokenPayload: any = null;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+        tokenUserId = tokenPayload.sub;
+        tokenCompanyId = tokenPayload.companyId;
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    const userId = body.userId || req.user?.userId || req.user?.id || tokenUserId;
+    const companyId = body.companyId || req.user?.companyId || tokenCompanyId;
+    const themeSettings = body.themeSettings || body;
+
+    return this.settingsService.saveThemeSettings(userId, companyId, themeSettings, req.user || tokenPayload);
   }
 
   @Get(':userId/:companyId')

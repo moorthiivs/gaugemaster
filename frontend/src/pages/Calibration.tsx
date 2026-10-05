@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
@@ -36,6 +36,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 const quickLinkIconMap: Record<string, React.ElementType> = {
   Gauge,
@@ -536,14 +541,62 @@ export default function Calibration() {
             );
           }
           if (status === "Rejected") {
+            const cal = row.original;
             return (
-              <Badge
-                variant="outline"
-                className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/40 dark:text-rose-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
-              >
-                <XCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
-                Rejected
-              </Badge>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 cursor-pointer focus:outline-hidden group"
+                    title="Click to view rejection details & rework notes"
+                  >
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 group-hover:bg-rose-200/90 group-hover:border-rose-400 dark:bg-rose-950/40 dark:text-rose-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5 shadow-2xs transition-colors"
+                    >
+                      <XCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                      Rejected
+                    </Badge>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-80 p-3.5 space-y-2.5 text-xs shadow-xl border-rose-200 dark:border-rose-900/60 z-50">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                      <XCircle className="w-4 h-4 text-rose-600" /> Calibration Rejected
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                      Rework Required
+                    </Badge>
+                  </div>
+                  {cal.rejected_by && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Rejected by: <strong className="text-foreground">{cal.rejected_by}</strong>
+                      {cal.rejected_at && (
+                        <span> on {format(new Date(cal.rejected_at), "dd-MMM-yyyy 'at' hh:mm a")}</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="bg-rose-50/70 dark:bg-rose-950/40 p-2.5 rounded-lg border border-rose-200/80 text-slate-800 dark:text-slate-200 space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-rose-600" />
+                      Reason / Corrective Action:
+                    </div>
+                    <div className="whitespace-pre-wrap text-xs leading-relaxed font-medium">
+                      {cal.rejection_reason || "No explicit reason was recorded by the reviewer."}
+                    </div>
+                  </div>
+                  {canAccess("calibrations", "create") && (
+                    <Button
+                      size="sm"
+                      onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                      className="w-full text-xs h-7.5 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs mt-1"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Recalibrate Now
+                    </Button>
+                  )}
+                </PopoverContent>
+              </Popover>
             );
           }
           if (status === "Pending Approval") {
@@ -585,6 +638,19 @@ export default function Calibration() {
           const cal = row.original;
           return (
             <div className="flex items-center justify-end gap-1.5">
+              {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                  className="gap-1 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                  title="Recalibrate this rejected instrument"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Recalibrate
+                </Button>
+              )}
+
               <Button
                 variant="outline"
                 size="sm"
@@ -620,6 +686,15 @@ export default function Calibration() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
+                  {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700 font-semibold focus:text-amber-800 focus:bg-amber-50"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                      Recalibrate Record
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     onClick={() => handleOpenCertPreview(cal)}
                     className="gap-2 cursor-pointer text-primary"

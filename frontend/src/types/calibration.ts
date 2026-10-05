@@ -109,6 +109,7 @@ export interface CalibrationRecord {
   rejected_by?: string;
   rejected_at?: string;
   rejection_reason?: string;
+  recalibration_of_id?: string;
 
   // Certificate & ULR
   certificate_number: string;

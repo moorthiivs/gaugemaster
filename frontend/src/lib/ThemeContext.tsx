@@ -620,9 +620,10 @@ export const getContrastColor = (hex: string): string => {
   return brightness > 155 ? "240 5.9% 10%" : "0 0% 98%";
 };
 
-export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
-  const { user } = useAuth();
-  const [themeSettings, setThemeSettings] = useState<ThemeSettingsType>({
+export const THEME_STORAGE_KEY = "gaugemaster_theme_settings";
+
+export const getInitialThemeSettings = (): ThemeSettingsType => {
+  const baseDefaults: ThemeSettingsType = {
     colorScheme: "dark",
     fontSize: "medium",
     compactMode: false,
@@ -634,49 +635,122 @@ export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
     themeColor: "mist",
     lightTheme: defaultLightTheme,
     darkTheme: defaultDarkTheme,
-  });
+  };
 
-  // Load from DB
+  if (typeof window === "undefined") {
+    return baseDefaults;
+  }
+
+  try {
+    const raw = localStorage.getItem(THEME_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...baseDefaults,
+        ...parsed,
+        lightTheme: { ...defaultLightTheme, ...(parsed.lightTheme || {}) },
+        darkTheme: { ...defaultDarkTheme, ...(parsed.darkTheme || {}) },
+      };
+    }
+  } catch (e) {
+    console.warn("Failed to load theme from localStorage", e);
+  }
+
+  try {
+    const storedTheme = localStorage.getItem("theme");
+    if (storedTheme === "light" || storedTheme === "dark" || storedTheme === "auto") {
+      return {
+        ...baseDefaults,
+        colorScheme: storedTheme as any,
+      };
+    }
+  } catch {}
+
+  return baseDefaults;
+};
+
+export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+  const { user } = useAuth();
+  const [themeSettings, setThemeSettings] = useState<ThemeSettingsType>(getInitialThemeSettings);
+
+  // Sync with OS color scheme when in 'auto' mode
+  useEffect(() => {
+    if (themeSettings.colorScheme !== "auto" || typeof window === "undefined") return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      const isDark = e.matches;
+      const root = document.documentElement;
+      root.setAttribute("data-theme", isDark ? "dark" : "light");
+      root.classList.toggle("dark", isDark);
+    };
+
+    mediaQuery.addEventListener("change", handler);
+    return () => mediaQuery.removeEventListener("change", handler);
+  }, [themeSettings.colorScheme]);
+
+  // Load from DB when user logs in or switches
   useEffect(() => {
     const fetchSettings = async () => {
       if (!user?.id || !user?.companyId) return;
       try {
-        const res = await httpClient.get(`/settings/${user.id}/${user.companyId}`);
-        if (res.data?.themeSettings) {
-          const loaded = res.data.themeSettings;
+        const res = await httpClient.get("/settings/theme", {
+          params: { userId: user.id, companyId: user.companyId },
+        });
+        if (res.data) {
+          const loaded = res.data.themeSettings || res.data;
           // Default to Geist if unset or previously on old Plus Jakarta Sans default
           const activeFont = (!loaded.fontFamily || loaded.fontFamily === "Plus Jakarta Sans")
             ? "Geist"
             : loaded.fontFamily;
 
-          setThemeSettings((prev) => ({
-            ...prev,
-            ...loaded,
-            fontFamily: activeFont,
-            baseColor: loaded.baseColor || prev.baseColor || "mist",
-            themeColor: loaded.themeColor || prev.themeColor || "mist",
-            lightTheme: { ...defaultLightTheme, ...(loaded.lightTheme || {}) },
-            darkTheme: { ...defaultDarkTheme, ...(loaded.darkTheme || {}) },
-          }));
+          setThemeSettings((prev) => {
+            const merged: ThemeSettingsType = {
+              ...prev,
+              ...loaded,
+              fontFamily: activeFont,
+              baseColor: loaded.baseColor || prev.baseColor || "mist",
+              themeColor: loaded.themeColor || prev.themeColor || "mist",
+              lightTheme: { ...defaultLightTheme, ...(loaded.lightTheme || {}) },
+              darkTheme: { ...defaultDarkTheme, ...(loaded.darkTheme || {}) },
+            };
+            try {
+              localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(merged));
+              localStorage.setItem("theme", merged.colorScheme);
+            } catch {}
+            return merged;
+          });
         }
       } catch (err) {
-        console.error("Failed to fetch theme settings", err);
+        console.warn("Could not fetch remote theme settings, using local preference", err);
       }
     };
     fetchSettings();
   }, [user?.id, user?.companyId]);
 
   const saveTheme = async (settings: ThemeSettingsType) => {
-    if (!user?.id || !user?.companyId) return;
+    // 1. Immediately apply to React state
+    setThemeSettings(settings);
+
+    // 2. Persist locally to localStorage immediately
     try {
-      await httpClient.post("/settings", {
-        userId: user.id,
-        companyId: user.companyId,
-        themeSettings: settings,
-      });
-      setThemeSettings(settings);
-    } catch (err) {
-      console.error("Failed to save theme settings", err);
+      localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(settings));
+      localStorage.setItem("theme", settings.colorScheme);
+    } catch (e) {
+      console.warn("Failed to save theme to localStorage", e);
+    }
+
+    // 3. Persist to backend without blocking UI or failing if non-admin
+    if (user?.id && user?.companyId) {
+      try {
+        await httpClient.post("/settings/theme", {
+          userId: user.id,
+          companyId: user.companyId,
+          themeSettings: settings,
+        });
+      } catch (err) {
+        console.warn("Failed to sync theme settings to backend", err);
+      }
     }
   };
 

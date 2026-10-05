@@ -1021,18 +1021,27 @@ export default function CalibrationWizard() {
     fetchSystemUsers();
   }, [user]);
 
-  // Draft & Edit state params
+  // Draft, Edit & Recalibrate state params
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get("draftId");
   const editIdParam = searchParams.get("editId");
+  const recalibrateIdParam = searchParams.get("recalibrateId") || searchParams.get("recalibration_of_id");
   const typeParam = searchParams.get("type");
+
+  const [rejectionNotice, setRejectionNotice] = useState<{
+    rejectedBy?: string;
+    rejectedAt?: string;
+    reason?: string;
+    certificateNumber?: string;
+    originalCalDate?: string;
+  } | null>(null);
 
   // Sync certIssueDate to calDate by default (for new calibrations)
   useEffect(() => {
-    if (calDate && !editIdParam && !draftIdParam) {
+    if (calDate && !editIdParam && !recalibrateIdParam && !draftIdParam) {
       setCertIssueDate(calDate);
     }
-  }, [calDate, editIdParam, draftIdParam]);
+  }, [calDate, editIdParam, recalibrateIdParam, draftIdParam]);
 
   // Auto-calculate Next Calibration Due Date based on Instrument Frequency
   useEffect(() => {
@@ -1058,7 +1067,7 @@ export default function CalibrationWizard() {
   const draftIdRef = useRef<string | null>(draftIdParam || null);
   const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
   const [isInitializing, setIsInitializing] = useState(true);
-  const [editLoading, setEditLoading] = useState(!!editIdParam);
+  const [editLoading, setEditLoading] = useState(!!editIdParam || !!recalibrateIdParam);
 
   const { canAccess } = usePermissions();
 
@@ -1105,7 +1114,7 @@ export default function CalibrationWizard() {
 
   // Pre-select calibration type if type URL parameter is present
   useEffect(() => {
-    if (typeParam && !editIdParam && !draftIdParam) {
+    if (typeParam && !editIdParam && !recalibrateIdParam && !draftIdParam) {
       const match = CALIBRATION_TYPES.find(
         (t) =>
           t.type.toLowerCase() === typeParam.toLowerCase() ||
@@ -1118,7 +1127,7 @@ export default function CalibrationWizard() {
         }
       }
     }
-  }, [typeParam, editIdParam, draftIdParam]);
+  }, [typeParam, editIdParam, recalibrateIdParam, draftIdParam]);
 
   // Fetch templates for selected Calibration Type (with fallback to all company templates)
   useEffect(() => {
@@ -1904,15 +1913,29 @@ export default function CalibrationWizard() {
     }
   }, [availableTemplates, selectedInstrument, selectedTemplateId, isEditMode, draftIdParam]);
 
-  // Load existing calibration if in Edit mode
+  // Load existing calibration if in Edit or Recalibration mode
   useEffect(() => {
-    if (!user || !editIdParam) return;
-    setIsEditMode(true);
+    const targetCalId = editIdParam || recalibrateIdParam;
+    if (!user || !targetCalId) return;
+
+    const isRecalibration = !!recalibrateIdParam && !editIdParam;
+    setIsEditMode(!isRecalibration);
     setEditLoading(true);
 
-    getCalibration(editIdParam)
+    getCalibration(targetCalId)
       .then(async (cal) => {
-        setSavedCalibrationId(cal.id);
+        if (!isRecalibration) {
+          setSavedCalibrationId(cal.id);
+        } else {
+          setSavedCalibrationId(null);
+          setRejectionNotice({
+            rejectedBy: cal.rejected_by || (cal as any).rejected_by_user?.name || "Reviewer / Approver",
+            rejectedAt: cal.rejected_at || cal.updated_at || "",
+            reason: cal.rejection_reason || (cal as any).approver_remarks || (cal as any).reviewer_remarks || "Calibration was rejected during review/approval.",
+            certificateNumber: cal.certificate_number || "",
+            originalCalDate: cal.calibration_date ? toLocalYyyyMmDd(cal.calibration_date) : "",
+          });
+        }
         setSelectedInstrument(cal.instrument);
         const typeMatch =
           CALIBRATION_TYPES.find((t) => t.type === cal.calibration_type) ||
@@ -2130,7 +2153,7 @@ export default function CalibrationWizard() {
         const calAlign = (cal as any).diagram_image_alignment || targetTpl?.diagram_image_alignment || "center";
         setWizardDiagramAlignment(calAlign as "center" | "left" | "right");
 
-                setUncertainty(cal.uncertainty || "");
+        setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
         setIsVerdictManuallyOverridden(false);
         if (cal.remarks) setRemarks(cal.remarks);
@@ -2143,41 +2166,62 @@ export default function CalibrationWizard() {
         setApprovedBy(cal.approved_by || "");
         setApprovedByDesignation(cal.approved_by_designation || "");
         setApprovedBySignature((cal as any).approved_by_signature || "");
-        setCalDate(
-          toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date())
-        );
-        setCertIssueDate(
-          toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
-            toLocalYyyyMmDd(cal.calibration_date) ||
-            toLocalYyyyMmDd(new Date())
-        );
-        setNextCalDate(
-          toLocalYyyyMmDd(cal.next_calibration_date)
-        );
-        setNextCertNumber(cal.certificate_number || "");
-        if (cal.ulr_number) {
-          setUlrEnabled(true);
-          setNextUlrNumber(cal.ulr_number);
-        } else if ((cal as any).ulr_enabled) {
-          setUlrEnabled(true);
+        
+        if (!isRecalibration) {
+          setCalDate(
+            toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date())
+          );
+          setCertIssueDate(
+            toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
+              toLocalYyyyMmDd(cal.calibration_date) ||
+              toLocalYyyyMmDd(new Date())
+          );
+          setNextCalDate(
+            toLocalYyyyMmDd(cal.next_calibration_date)
+          );
+          setNextCertNumber(cal.certificate_number || "");
+          if (cal.ulr_number) {
+            setUlrEnabled(true);
+            setNextUlrNumber(cal.ulr_number);
+          } else if ((cal as any).ulr_enabled) {
+            setUlrEnabled(true);
+          }
+        } else {
+          const todayStr = toLocalYyyyMmDd(new Date());
+          setCalDate(todayStr);
+          setCertIssueDate(todayStr);
+          if (cal.instrument?.frequency) {
+            setNextCalDate(computeNextDueDate(todayStr, cal.instrument.frequency));
+          } else {
+            setNextCalDate("");
+          }
+          setNextCertNumber("—");
+          if (cal.ulr_number || (cal as any).ulr_enabled) {
+            setUlrEnabled(true);
+            setNextUlrNumber("—");
+          }
         }
 
         // Reopen workflow starting from Step 2 (Calibration Entry)
         setStep(2);
-        toast.info(`Editing calibration ${cal.certificate_number}`);
+        if (isRecalibration) {
+          toast.info(`Starting re-calibration for rejected certificate ${cal.certificate_number}`);
+        } else {
+          toast.info(`Editing calibration ${cal.certificate_number}`);
+        }
       })
       .catch((err) => {
-        toast.error("Failed to load calibration for editing");
+        toast.error(isRecalibration ? "Failed to load rejected calibration" : "Failed to load calibration for editing");
       })
       .finally(() => {
         setIsInitializing(false);
         setEditLoading(false);
       });
-  }, [user, editIdParam]);
+  }, [user, editIdParam, recalibrateIdParam]);
 
   // Auto-save Draft
   useEffect(() => {
-    if (isInitializing || !user || savedCalibrationId || editIdParam || !selectedInstrument) return;
+    if (isInitializing || !user || savedCalibrationId || editIdParam || recalibrateIdParam || !selectedInstrument) return;
     const timeout = setTimeout(() => {
       const draftData = {
         step,
@@ -2726,6 +2770,7 @@ export default function CalibrationWizard() {
         approved_by_signature: approvedBySignature,
         ulr_enabled: ulrEnabled,
         next_calibration_date: nextCalDate || undefined,
+        recalibration_of_id: recalibrateIdParam || undefined,
         companyId: user?.companyId,
         created_by: user?.id,
       };
@@ -3281,23 +3326,54 @@ export default function CalibrationWizard() {
                           </td>
                         );
                       }
-                      const cellRaw = row[col.id] ?? row.status ?? "-";
-                      const cellStr = String(cellRaw).trim().toUpperCase();
+                      const isToleranceCol =
+                        col.type === "tolerance" ||
+                        col.role === "TOLERANCE" ||
+                        col.semanticRole === "TOLERANCE" ||
+                        /^(?:tolerance|tol)$/i.test(col.id || "") ||
+                        /^(?:tolerance|tol)$/i.test(col.label || "");
+
+                      const isNominalCol =
+                        col.type === "nominal" ||
+                        col.role === "NOMINAL" ||
+                        col.semanticRole === "NOMINAL" ||
+                        /^(?:nominal|nom)$/i.test(col.id || "");
+
+                      const isReadingCol =
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.role === "READING" ||
+                        col.semanticRole === "READING" ||
+                        col.semanticRole === "TRIAL" ||
+                        /^(?:reading|trial|observed|actual)(?:_\d+|\d+)?$/i.test(col.id || "");
+
                       const isJudgementCol =
-                        col.type === "status" ||
-                        col.role === "JUDGEMENT" ||
-                        /judg|verdict|status/i.test(col.label || col.id) ||
-                        cellStr === "PASS" ||
-                        cellStr === "FAIL" ||
-                        cellStr === "OK" ||
-                        cellStr === "REJECT";
+                        !isToleranceCol &&
+                        !isNominalCol &&
+                        !isReadingCol &&
+                        col.type !== "text" &&
+                        col.type !== "nominal" &&
+                        (col.type === "status" ||
+                          col.type === "judgement" ||
+                          col.role === "JUDGEMENT" ||
+                          col.semanticRole === "JUDGEMENT" ||
+                          Boolean(col.isPassFail) ||
+                          /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || "") ||
+                          (typeof col.label === "string" &&
+                            /judg|verdict/i.test(col.label) &&
+                            !/tol|reading|trial|nominal|dimension/i.test(col.label)));
+
+                      const cellRaw = isJudgementCol
+                        ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
+                        : (row[col.id] ?? "-");
+                      const cellStr = String(cellRaw).trim().toUpperCase();
 
                       if (isJudgementCol) {
                         const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
                         const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
 
                         if (isManualJudge) {
-                          const currentVal = row[col.id] || row.status || row.judgement || "OK";
+                          const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
                           return (
                             <td
                               key={rIdx}
@@ -3349,6 +3425,7 @@ export default function CalibrationWizard() {
                       const isEditable =
                         !col.readOnly &&
                         (col.editable === true ||
+                          isToleranceCol ||
                           col.type === "trial" ||
                           col.type === "reading" ||
                           col.type === "tolerance" ||
@@ -3374,7 +3451,7 @@ export default function CalibrationWizard() {
                               ? row.error
                               : (col.type === "nominal" || col.id === "nominal"
                                 ? (row.nominal ?? row.nom ?? "")
-                                : (col.type === "tolerance" || col.id === "tolerance"
+                                : (isToleranceCol || col.type === "tolerance" || col.id === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "")
                                   ? (row.tolerance ?? "")
                                   : "")));
 
@@ -3390,6 +3467,7 @@ export default function CalibrationWizard() {
                                 col.type === "text" ||
                                 col.role === "TOLERANCE" ||
                                 col.type === "tolerance" ||
+                                isToleranceCol ||
                                 isAcceptanceTable ||
                                 /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
                                   ? undefined
@@ -3402,6 +3480,7 @@ export default function CalibrationWizard() {
                                   col.type === "text" ||
                                   col.role === "TOLERANCE" ||
                                   col.type === "tolerance" ||
+                                  isToleranceCol ||
                                   isAcceptanceTable ||
                                   /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
                                   /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
@@ -3437,7 +3516,7 @@ export default function CalibrationWizard() {
                                 }
                               }}
                               className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1 w-full min-w-[48px]"
-                              placeholder={col.type === "tolerance" || /tol/i.test(col.id) ? "±0.00" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
+                              placeholder={isToleranceCol || col.type === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "") ? "±Tol" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
                             />
                           </td>
                         );
@@ -3921,23 +4000,54 @@ export default function CalibrationWizard() {
                       );
                     }
 
-                    const cellRaw = row[col.id] ?? row.status ?? "-";
-                    const cellStr = String(cellRaw).trim().toUpperCase();
+                    const isToleranceCol =
+                      col.type === "tolerance" ||
+                      col.role === "TOLERANCE" ||
+                      col.semanticRole === "TOLERANCE" ||
+                      /^(?:tolerance|tol)$/i.test(col.id || "") ||
+                      /^(?:tolerance|tol)$/i.test(col.label || "");
+
+                    const isNominalCol =
+                      col.type === "nominal" ||
+                      col.role === "NOMINAL" ||
+                      col.semanticRole === "NOMINAL" ||
+                      /^(?:nominal|nom)$/i.test(col.id || "");
+
+                    const isReadingCol =
+                      col.type === "trial" ||
+                      col.type === "reading" ||
+                      col.role === "READING" ||
+                      col.semanticRole === "READING" ||
+                      col.semanticRole === "TRIAL" ||
+                      /^(?:reading|trial|observed|actual)(?:_\d+|\d+)?$/i.test(col.id || "");
+
                     const isJudgementCol =
-                      col.type === "status" ||
-                      col.role === "JUDGEMENT" ||
-                      /judg|verdict|status/i.test(col.label || col.id) ||
-                      cellStr === "PASS" ||
-                      cellStr === "FAIL" ||
-                      cellStr === "OK" ||
-                      cellStr === "REJECT";
+                      !isToleranceCol &&
+                      !isNominalCol &&
+                      !isReadingCol &&
+                      col.type !== "text" &&
+                      col.type !== "nominal" &&
+                      (col.type === "status" ||
+                        col.type === "judgement" ||
+                        col.role === "JUDGEMENT" ||
+                        col.semanticRole === "JUDGEMENT" ||
+                        Boolean(col.isPassFail) ||
+                        /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || "") ||
+                        (typeof col.label === "string" &&
+                          /judg|verdict/i.test(col.label) &&
+                          !/tol|reading|trial|nominal|dimension/i.test(col.label)));
+
+                    const cellRaw = isJudgementCol
+                      ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
+                      : (row[col.id] ?? "-");
+                    const cellStr = String(cellRaw).trim().toUpperCase();
 
                     if (isJudgementCol) {
                       const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
                       const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
 
                       if (isManualJudge) {
-                        const currentVal = row[col.id] || row.status || row.judgement || "OK";
+                        const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
                         return (
                           <td key={col.id} className="py-0.5 px-1 text-center min-w-[100px]">
                             <JudgementCellControl
@@ -3981,6 +4091,7 @@ export default function CalibrationWizard() {
                     const isEditable =
                       !col.readOnly &&
                       (col.editable === true ||
+                        isToleranceCol ||
                         col.type === "trial" ||
                         col.type === "reading" ||
                         col.type === "tolerance" ||
@@ -4006,7 +4117,7 @@ export default function CalibrationWizard() {
                             ? row.error
                             : (col.type === "nominal" || col.id === "nominal"
                               ? (row.nominal ?? row.nom ?? "")
-                              : (col.type === "tolerance" || col.id === "tolerance"
+                              : (isToleranceCol || col.type === "tolerance" || col.id === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "")
                                 ? (row.tolerance ?? "")
                                 : "")));
 
@@ -4018,6 +4129,7 @@ export default function CalibrationWizard() {
                               col.type === "text" ||
                               col.role === "TOLERANCE" ||
                               col.type === "tolerance" ||
+                              isToleranceCol ||
                               isAcceptanceTable ||
                               /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
                                 ? undefined
@@ -4030,6 +4142,7 @@ export default function CalibrationWizard() {
                                 col.type === "text" ||
                                 col.role === "TOLERANCE" ||
                                 col.type === "tolerance" ||
+                                isToleranceCol ||
                                 isAcceptanceTable ||
                                 /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
                                 /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
@@ -4065,7 +4178,7 @@ export default function CalibrationWizard() {
                               }
                             }}
                             className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
-                            placeholder={col.type === "tolerance" || /tol/i.test(col.id) ? "±0.00" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
+                            placeholder={isToleranceCol || col.type === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "") ? "±Tol" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
                           />
                         </td>
                       );
@@ -4243,10 +4356,64 @@ export default function CalibrationWizard() {
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <div>
-          <h1 className="text-xl font-bold">New Calibration</h1>
-          <p className="text-sm text-muted-foreground">Complete the calibration process step by step</p>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-bold">
+              {rejectionNotice ? "Re-Calibration" : isEditMode ? "Edit Calibration" : "New Calibration"}
+            </h1>
+            {rejectionNotice && (
+              <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-700 font-bold uppercase tracking-wider text-[10px] px-2 py-0.5">
+                Rework Mode
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {rejectionNotice
+              ? `Re-calibrating instrument following rejection of certificate ${rejectionNotice.certificateNumber}`
+              : isEditMode
+              ? "Update calibration data and regenerate certificate"
+              : "Complete the calibration process step by step"}
+          </p>
         </div>
       </div>
+
+      {/* TypeUI Rejection Notice Alert Banner */}
+      {rejectionNotice && (
+        <div className="rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50/95 dark:bg-rose-950/30 p-4 sm:p-5 shadow-sm space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-900/60 border border-rose-300 dark:border-rose-700 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-rose-950 dark:text-rose-200">
+                    Re-Calibration Required: Previous Calibration Was Rejected
+                  </h3>
+                  <Badge variant="outline" className="text-[11px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/50 dark:text-rose-300">
+                    Rejected Cert: {rejectionNotice.certificateNumber}
+                  </Badge>
+                </div>
+                <p className="text-xs text-rose-800/80 dark:text-rose-300/80 mt-1">
+                  Rejected by <strong className="font-semibold text-rose-900 dark:text-rose-100">{rejectionNotice.rejectedBy}</strong>
+                  {rejectionNotice.rejectedAt && ` on ${formatDisplayDate(rejectionNotice.rejectedAt, "dd-MMM-yyyy 'at' hh:mm a")}`}.
+                  Previous specifications, masters, and values have been pre-filled. Review the reviewer reason below, correct failing readings or parameters, and click Finish to submit for re-approval.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Rejection Reason Box */}
+          <div className="rounded-xl bg-white/95 dark:bg-slate-900/95 border border-rose-200 dark:border-rose-800/80 p-3.5 shadow-2xs">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400 flex items-center gap-1.5 mb-1">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Rejection Reason / Corrective Action Required:
+            </div>
+            <p className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+              {rejectionNotice.reason || "No explicit reason was recorded by the reviewer."}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Progress Steps */}
       <div className="w-full bg-card/80 backdrop-blur-md border border-border/80 p-2 rounded-2xl shadow-xs">

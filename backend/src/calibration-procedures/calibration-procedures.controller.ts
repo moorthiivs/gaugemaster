@@ -32,12 +32,12 @@ if (!fs.existsSync(uploadDirectory)) {
 
 const fileFilter = (req: any, file: any, cb: any) => {
   if (
-    file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|svg\+xml|pdf)$/) ||
-    file.originalname.match(/\.(jpg|jpeg|png|gif|webp|svg|pdf)$/i)
+    file.mimetype.match(/\/(jpg|jpeg|png|gif|webp|svg\+xml|pdf|csv|vnd\.ms-excel|vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet|x-excel|excel)$/i) ||
+    file.originalname.match(/\.(jpg|jpeg|png|gif|webp|svg|pdf|xlsx|xls|csv)$/i)
   ) {
     cb(null, true);
   } else {
-    cb(new BadRequestException('Only PDF and image files (PNG, JPG, SVG, WebP) are allowed'), false);
+    cb(new BadRequestException('Only PDF, Image, and Excel (XLSX, XLS, CSV) files are allowed'), false);
   }
 };
 
