@@ -535,11 +535,72 @@ export class CalibrationService {
     }
 
     return await this.dataSource.transaction(async (manager) => {
+      // Auto-resolve signatures if missing or not data:image
+      let resolvedCalibratedSig = dto.calibrated_by_signature;
+      if (
+        (!resolvedCalibratedSig || !resolvedCalibratedSig.startsWith('data:image')) &&
+        (dto.calibrated_by || dto.created_by)
+      ) {
+        try {
+          const u = await this.userRepository.findOne({
+            where: [
+              ...(dto.calibrated_by ? [{ name: dto.calibrated_by }, { id: dto.calibrated_by }] : []),
+              ...(dto.created_by ? [{ id: dto.created_by }] : []),
+            ],
+          });
+          if (u?.signature && u.signature.startsWith('data:image')) {
+            resolvedCalibratedSig = u.signature;
+          }
+        } catch (e) {}
+      }
+
+      let resolvedReviewedSig = dto.reviewed_by_signature;
+      if (
+        (!resolvedReviewedSig || !resolvedReviewedSig.startsWith('data:image')) &&
+        (dto.reviewed_by || (dto as any).reviewed_by_id)
+      ) {
+        try {
+          const u = await this.userRepository.findOne({
+            where: [
+              ...((dto as any).reviewed_by_id ? [{ id: (dto as any).reviewed_by_id }] : []),
+              ...(dto.reviewed_by ? [{ name: dto.reviewed_by }] : []),
+            ],
+          });
+          if (u?.signature && u.signature.startsWith('data:image')) {
+            resolvedReviewedSig = u.signature;
+          }
+        } catch (e) {}
+      }
+
+      let resolvedApprovedSig = approval_status === 'Approved' ? dto.approved_by_signature : null;
+      if (
+        approval_status === 'Approved' &&
+        (!resolvedApprovedSig || !resolvedApprovedSig.startsWith('data:image')) &&
+        (dto.approved_by || (dto as any).approved_by_id)
+      ) {
+        try {
+          const u = await this.userRepository.findOne({
+            where: [
+              ...((dto as any).approved_by_id ? [{ id: (dto as any).approved_by_id }] : []),
+              ...(dto.approved_by ? [{ name: dto.approved_by }] : []),
+            ],
+          });
+          if (u?.signature && u.signature.startsWith('data:image')) {
+            resolvedApprovedSig = u.signature;
+          }
+        } catch (e) {}
+      }
+
       const calibration = manager.create(Calibration, {
         ...dto,
         certificate_number,
         ulr_number,
         approval_status,
+        calibrated_by_signature: resolvedCalibratedSig || dto.calibrated_by_signature,
+        reviewed_by_signature: resolvedReviewedSig || dto.reviewed_by_signature,
+        approved_by: approval_status === 'Approved' ? dto.approved_by : undefined,
+        approved_by_designation: approval_status === 'Approved' ? dto.approved_by_designation : undefined,
+        approved_by_signature: approval_status === 'Approved' ? (resolvedApprovedSig || dto.approved_by_signature) : undefined,
         certificate_generated: approval_status === 'Approved',
         calibration_date: new Date(dto.calibration_date),
         certificate_issue_date: dto.certificate_issue_date
@@ -633,9 +694,22 @@ export class CalibrationService {
     calibration.approval_status = 'Reviewed';
     calibration.reviewed_by = reviewer.name;
     calibration.reviewed_by_id = reviewer.id;
-    calibration.reviewed_by_designation = reviewer.designation || 'Calibration Reviewer';
-    if (signature) {
-      calibration.reviewed_by_signature = signature;
+    let finalSignature = signature;
+    if ((!finalSignature || !finalSignature.startsWith('data:image')) && (reviewer.id || reviewer.name)) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(reviewer.id ? [{ id: reviewer.id }] : []),
+            ...(reviewer.name ? [{ name: reviewer.name }] : []),
+          ],
+        });
+        if (u?.signature && u.signature.startsWith('data:image')) {
+          finalSignature = u.signature;
+        }
+      } catch (e) {}
+    }
+    if (finalSignature) {
+      calibration.reviewed_by_signature = finalSignature;
     }
     calibration.reviewed_at = new Date();
     calibration.reviewer_remarks = remarks || undefined;
@@ -668,9 +742,22 @@ export class CalibrationService {
     calibration.approval_status = 'Approved';
     calibration.approved_by = approver.name;
     calibration.approved_by_id = approver.id;
-    calibration.approved_by_designation = approver.designation || 'Quality Manager / Approver';
-    if (signature) {
-      calibration.approved_by_signature = signature;
+    let finalSignature = signature;
+    if ((!finalSignature || !finalSignature.startsWith('data:image')) && (approver.id || approver.name)) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(approver.id ? [{ id: approver.id }] : []),
+            ...(approver.name ? [{ name: approver.name }] : []),
+          ],
+        });
+        if (u?.signature && u.signature.startsWith('data:image')) {
+          finalSignature = u.signature;
+        }
+      } catch (e) {}
+    }
+    if (finalSignature) {
+      calibration.approved_by_signature = finalSignature;
     }
     calibration.approved_at = new Date();
     calibration.approver_remarks = remarks || undefined;
@@ -849,6 +936,10 @@ export class CalibrationService {
 
     const [data, total] = await qb.getManyAndCount();
 
+    for (const item of data) {
+      await this.enrichSignatures(item);
+    }
+
     return {
       data,
       total,
@@ -856,6 +947,90 @@ export class CalibrationService {
       pageSize,
       totalPages: Math.ceil(total / pageSize),
     };
+  }
+
+  async enrichSignatures(calibration: Calibration): Promise<Calibration> {
+    if (!calibration) return calibration;
+
+    // 1. Calibrated By Signature
+    if (
+      (!calibration.calibrated_by_signature || !calibration.calibrated_by_signature.startsWith('data:image')) &&
+      (calibration.calibrated_by || (calibration.created_by as any)?.id)
+    ) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(calibration.calibrated_by ? [{ name: calibration.calibrated_by }, { id: calibration.calibrated_by }] : []),
+            ...((calibration.created_by as any)?.id ? [{ id: (calibration.created_by as any).id }] : []),
+          ],
+        });
+        if (u?.signature && u.signature.startsWith('data:image')) {
+          calibration.calibrated_by_signature = u.signature;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Reviewed By Signature
+    if (
+      (!calibration.reviewed_by_signature || !calibration.reviewed_by_signature.startsWith('data:image')) &&
+      (calibration.reviewed_by || calibration.reviewed_by_id)
+    ) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(calibration.reviewed_by_id ? [{ id: calibration.reviewed_by_id }] : []),
+            ...(calibration.reviewed_by ? [{ name: calibration.reviewed_by }] : []),
+          ],
+        });
+        if (u?.signature && u.signature.startsWith('data:image')) {
+          calibration.reviewed_by_signature = u.signature;
+        }
+      } catch (e) {}
+    }
+
+    // 3. Approved By Signature
+    const isApproved =
+      calibration.approval_status === 'Approved' ||
+      Boolean((calibration as any).approved_at);
+    if (
+      isApproved &&
+      (!calibration.approved_by_signature || !calibration.approved_by_signature.startsWith('data:image')) &&
+      (calibration.approved_by || calibration.approved_by_id)
+    ) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(calibration.approved_by_id ? [{ id: calibration.approved_by_id }] : []),
+            ...(calibration.approved_by ? [{ name: calibration.approved_by }] : []),
+          ],
+        });
+        if (u?.signature && u.signature.startsWith('data:image')) {
+          calibration.approved_by_signature = u.signature;
+        }
+      } catch (e) {}
+    }
+
+    return calibration;
+  }
+
+  async getSignatories(companyId?: string) {
+    const where: any = {};
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    const users = await this.userRepository.find({
+      where,
+      relations: ['role'],
+      select: ['id', 'name', 'designation', 'signature', 'roleId', 'companyId'],
+    });
+
+    return users.map((u) => ({
+      id: u.id,
+      name: u.name,
+      designation: u.designation || u.role?.name || 'Signatory',
+      role: u.role?.name || 'User',
+      signature: u.signature || null,
+    }));
   }
 
   async findOne(id: string): Promise<Calibration> {
@@ -866,22 +1041,27 @@ export class CalibrationService {
     if (!calibration) {
       throw new NotFoundException(`Calibration with ID ${id} not found`);
     }
-    return calibration;
+    return await this.enrichSignatures(calibration);
   }
 
   async getLatestByInstrument(instrumentId: string): Promise<Calibration | null> {
-    return this.calibrationRepository.findOne({
+    const cal = await this.calibrationRepository.findOne({
       where: { instrument_id: instrumentId },
       order: { created_at: 'DESC', calibration_date: 'DESC' },
     });
+    return cal ? await this.enrichSignatures(cal) : null;
   }
 
   async findByInstrument(instrumentId: string) {
-    return this.calibrationRepository.find({
+    const cals = await this.calibrationRepository.find({
       where: { instrument_id: instrumentId },
       order: { created_at: 'DESC', calibration_date: 'DESC' },
       relations: ['instrument'],
     });
+    for (const cal of cals) {
+      await this.enrichSignatures(cal);
+    }
+    return cals;
   }
 
   async markCertificateGenerated(id: string, filePath: string) {
@@ -1074,7 +1254,10 @@ export class CalibrationService {
     if (dto.reviewed_by !== undefined) existing.reviewed_by = dto.reviewed_by;
     if (dto.reviewed_by_designation !== undefined) existing.reviewed_by_designation = dto.reviewed_by_designation;
     if (dto.approved_by !== undefined) existing.approved_by = dto.approved_by;
-    if (dto.approved_by_designation !== undefined) existing.approved_by_designation = dto.approved_by_designation;
+    if (dto.calibrated_by_signature !== undefined) existing.calibrated_by_signature = dto.calibrated_by_signature;
+    if (dto.reviewed_by_signature !== undefined) existing.reviewed_by_signature = dto.reviewed_by_signature;
+    if (dto.approved_by_signature !== undefined) existing.approved_by_signature = dto.approved_by_signature;
+    await this.enrichSignatures(existing);
     if (dto.next_calibration_date !== undefined) {
       existing.next_calibration_date = dto.next_calibration_date
         ? new Date(dto.next_calibration_date)

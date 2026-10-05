@@ -934,14 +934,26 @@ export function CertificatePreview({
   const certRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (user?.companyId) {
-      httpClient
-        .get(`/users?companyId=${user.companyId}`)
-        .then((res) => {
-          if (Array.isArray(res.data)) setUsersList(res.data);
-        })
-        .catch(() => {});
-    }
+    const fetchSignatories = async () => {
+      try {
+        const res = await httpClient.get(`/calibrations/signatories${user?.companyId ? `?companyId=${user.companyId}` : ""}`);
+        if (Array.isArray(res.data) && res.data.length > 0) {
+          setUsersList(res.data);
+          return;
+        }
+      } catch {}
+
+      if (user?.companyId) {
+        httpClient
+          .get(`/users?companyId=${user.companyId}`)
+          .then((res) => {
+            if (Array.isArray(res.data)) setUsersList(res.data);
+          })
+          .catch(() => {});
+      }
+    };
+
+    fetchSignatories();
   }, [user?.companyId]);
 
   useEffect(() => {
@@ -1898,35 +1910,60 @@ export function CertificatePreview({
             const isImgUrl = (str?: string) =>
               !!str && (str.startsWith("data:image") || str.startsWith("http") || str.startsWith("/"));
 
+            const isApproved =
+              (calibration.approval_status === "Approved" ||
+                (calibration as any).approval_status === "APPROVED" ||
+                Boolean((calibration as any).approved_at)) &&
+              Boolean(calibration.approved_by && calibration.approved_by.trim() !== "" && calibration.approved_by !== "Pending Approval");
+
+            const isReviewed =
+              Boolean(calibration.reviewed_by && calibration.reviewed_by.trim() !== "" && calibration.reviewed_by !== "Pending Review") &&
+              (calibration.approval_status === "Reviewed" ||
+                calibration.approval_status === "Approved" ||
+                (calibration as any).approval_status === "APPROVED" ||
+                Boolean((calibration as any).reviewed_at) ||
+                Boolean((calibration as any).reviewed_by_signature));
+
             const rawCalibratedSig = (calibration as any).calibrated_by_signature;
             const calibratedSigImg = isImgUrl(rawCalibratedSig)
               ? rawCalibratedSig
+              : ((user?.name === calibration.calibrated_by || user?.id === calibration.calibrated_by) && isImgUrl((user as any)?.signature))
+              ? (user as any).signature
               : usersList.find(
                   (u) =>
                     (u.name === calibration.calibrated_by || u.id === calibration.calibrated_by) &&
                     isImgUrl(u.signature),
-                )?.signature;
+                )?.signature || null;
 
             const rawReviewedSig = (calibration as any).reviewed_by_signature;
-            const reviewedSigImg = isImgUrl(rawReviewedSig)
-              ? rawReviewedSig
-              : usersList.find(
-                  (u) =>
-                    (u.name === calibration.reviewed_by || u.id === calibration.reviewed_by) &&
-                    isImgUrl(u.signature),
-                )?.signature;
+            const reviewedSigImg = isReviewed
+              ? (isImgUrl(rawReviewedSig)
+                  ? rawReviewedSig
+                  : ((user?.name === calibration.reviewed_by || user?.id === (calibration as any).reviewed_by_id) && isImgUrl((user as any)?.signature))
+                  ? (user as any).signature
+                  : usersList.find(
+                      (u) =>
+                        (u.name === calibration.reviewed_by ||
+                          u.id === calibration.reviewed_by ||
+                          u.id === (calibration as any).reviewed_by_id) &&
+                        isImgUrl(u.signature),
+                    )?.signature || null)
+              : null;
 
-            const rawApprovedSig = (calibration as any).approved_by_signature;
-            const approvedSigImg = isImgUrl(rawApprovedSig)
-              ? rawApprovedSig
-              : usersList.find(
-                  (u) =>
-                    (u.name === calibration.approved_by ||
-                      u.id === calibration.approved_by ||
-                      u.role === "Quality Manager" ||
-                      u.role === "Administrator") &&
-                    isImgUrl(u.signature),
-                )?.signature;
+            const rawApprovedSig = isApproved ? (calibration as any).approved_by_signature : null;
+            const approvedSigImg = isApproved
+              ? (isImgUrl(rawApprovedSig)
+                  ? rawApprovedSig
+                  : ((user?.name === calibration.approved_by || user?.id === (calibration as any).approved_by_id) && isImgUrl((user as any)?.signature))
+                  ? (user as any).signature
+                  : usersList.find(
+                      (u) =>
+                        (u.name === calibration.approved_by ||
+                          u.id === calibration.approved_by ||
+                          u.id === (calibration as any).approved_by_id) &&
+                        isImgUrl(u.signature),
+                    )?.signature || null)
+              : null;
 
             const sigWidth = Number(certConfig?.signatureImageWidth) || 75;
             const sigHeight = Number(certConfig?.signatureImageHeight) || 28;
@@ -1943,17 +1980,18 @@ export function CertificatePreview({
                       <img
                         src={calibratedSigImg}
                         alt="Signature"
+                        crossOrigin="anonymous"
                         style={{
                           maxHeight: `${sigHeight * 1.33}px`,
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
                       />
-                    ) : (
+                    ) : calibration.calibrated_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.calibrated_by || "Sign"}
+                        {calibration.calibrated_by}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
@@ -1972,25 +2010,26 @@ export function CertificatePreview({
                     className="flex items-end justify-center"
                     style={{ minHeight: `${sigHeight * 1.33}px` }}
                   >
-                    {reviewedSigImg ? (
+                    {isReviewed && reviewedSigImg ? (
                       <img
                         src={reviewedSigImg}
                         alt="Signature"
+                        crossOrigin="anonymous"
                         style={{
                           maxHeight: `${sigHeight * 1.33}px`,
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
                       />
-                    ) : (
+                    ) : isReviewed && calibration.reviewed_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.reviewed_by || "Sign"}
+                        {calibration.reviewed_by}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {calibration.reviewed_by || "Reviewed By"}
+                      {isReviewed ? (calibration.reviewed_by || "Reviewed By") : "Reviewed By"}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.reviewed_by_designation ||
@@ -2005,25 +2044,26 @@ export function CertificatePreview({
                     className="flex items-end justify-center"
                     style={{ minHeight: `${sigHeight * 1.33}px` }}
                   >
-                    {approvedSigImg ? (
+                    {isApproved && approvedSigImg ? (
                       <img
                         src={approvedSigImg}
                         alt="Signature"
+                        crossOrigin="anonymous"
                         style={{
                           maxHeight: `${sigHeight * 1.33}px`,
                           maxWidth: `${sigWidth * 1.33}px`,
                         }}
                         className="object-contain mx-auto"
                       />
-                    ) : (
+                    ) : isApproved && calibration.approved_by ? (
                       <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.approved_by || "Sign"}
+                        {calibration.approved_by}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <div className="border-t border-black pt-0.5">
                     <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {calibration.approved_by || "Approved By"}
+                      {isApproved ? (calibration.approved_by || "Approved By") : "Approved By"}
                     </p>
                     <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
                       {calibration.approved_by_designation ||

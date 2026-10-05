@@ -963,16 +963,22 @@ export default function CalibrationWizard() {
   useEffect(() => {
     const fetchSystemUsers = async () => {
       try {
-        const res = await httpClient.get(`/users?companyId=${user?.companyId || ""}`);
-        const list = Array.isArray(res.data) ? res.data : [];
+        const res = await httpClient.get(`/calibrations/signatories${user?.companyId ? `?companyId=${user.companyId}` : ""}`);
+        let list = Array.isArray(res.data) ? res.data : [];
+        if (list.length === 0 && user?.companyId) {
+          try {
+            const uRes = await httpClient.get(`/users?companyId=${user.companyId}`);
+            if (Array.isArray(uRes.data)) list = uRes.data;
+          } catch {}
+        }
         if (user?.name && !list.some((u: any) => u.name === user.name || u.id === user.id)) {
-          list.unshift({ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name });
+          list.unshift({ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || "" });
         }
         setSystemUsers(list);
       } catch (err) {
         console.error("Failed to load users for signatories", err);
         if (user?.name) {
-          setSystemUsers([{ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name }]);
+          setSystemUsers([{ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || "" }]);
         }
       }
     };
@@ -1046,17 +1052,17 @@ export default function CalibrationWizard() {
   // Auto-resolve signatures from systemUsers if missing
   useEffect(() => {
     if (systemUsers.length > 0) {
-      if (calibratedBy && !calibratedBySignature) {
+      if (calibratedBy && (!calibratedBySignature || !calibratedBySignature.startsWith("data:image"))) {
         const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
-        if (u?.signature) setCalibratedBySignature(u.signature);
+        if (u?.signature && u.signature.startsWith("data:image")) setCalibratedBySignature(u.signature);
       }
-      if (reviewedBy && !reviewedBySignature) {
+      if (reviewedBy && (!reviewedBySignature || !reviewedBySignature.startsWith("data:image"))) {
         const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
-        if (u?.signature) setReviewedBySignature(u.signature);
+        if (u?.signature && u.signature.startsWith("data:image")) setReviewedBySignature(u.signature);
       }
-      if (approvedBy && !approvedBySignature) {
+      if (approvedBy && (!approvedBySignature || !approvedBySignature.startsWith("data:image"))) {
         const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
-        if (u?.signature) setApprovedBySignature(u.signature);
+        if (u?.signature && u.signature.startsWith("data:image")) setApprovedBySignature(u.signature);
       }
     }
   }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
@@ -5859,6 +5865,7 @@ export default function CalibrationWizard() {
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
                       approved_by_signature: approvedBySignature,
+                      approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
                       custom_columns: wizardCustomColumns as any,
@@ -6102,6 +6109,7 @@ export default function CalibrationWizard() {
                 approved_by: approvedBy,
                 approved_by_designation: approvedByDesignation,
                 approved_by_signature: approvedBySignature,
+                approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
                 column_order: wizardColumnOrder,
                 hidden_columns: wizardHiddenColumns,
                 custom_columns: wizardCustomColumns as any,

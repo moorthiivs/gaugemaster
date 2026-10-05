@@ -168,6 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           companyId: effectiveCompanyId,
           isSuperAdmin: authUser.isSuperAdmin || false,
           companyAccess: authUser.companyAccess || null,
+          signature: authUser.signature || undefined,
         };
         setUser(userObj);
         setIsNewCustomer(!authUser.onboarded);
@@ -330,6 +331,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           companyId: u.companyId !== undefined ? u.companyId : (prev?.companyId || ""),
           isSuperAdmin: u.isSuperAdmin !== undefined ? u.isSuperAdmin : prev?.isSuperAdmin,
           companyAccess: u.companyAccess !== undefined ? u.companyAccess : prev?.companyAccess,
+          signature: u.signature !== undefined ? u.signature : prev?.signature,
         }));
       }
     };
@@ -426,6 +428,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,
+            signature: authUser.signature || undefined,
           };
 
           await signIn(userObj, accessToken, refreshToken);
@@ -457,6 +460,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,
+            signature: authUser.signature || undefined,
           };
 
           await signIn(userObj, accessToken, refreshToken);

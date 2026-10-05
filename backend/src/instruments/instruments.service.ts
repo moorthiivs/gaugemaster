@@ -207,15 +207,24 @@ export class InstrumentsService {
             }
         }
 
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+        const now = new Date();
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        const todayEndLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 23, 59, 59, 999));
+        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+        const todayEnd = new Date(todayEndLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+
         if (status && status !== 'All') {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
-                baseWhere.due_date = LessThan(new Date());
+                baseWhere.due_date = LessThan(todayStart);
             } else if (normalizedStatus === 'duesoon') {
-                const now = new Date();
-                const dueSoonEnd = new Date(now);
-                dueSoonEnd.setDate(now.getDate() + 30);
-                baseWhere.due_date = Between(now, dueSoonEnd);
+                const dueSoonEnd = new Date(todayEnd);
+                dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
+                baseWhere.due_date = Between(todayStart, dueSoonEnd);
+            } else if (normalizedStatus === 'duetoday' || normalizedStatus === 'today') {
+                baseWhere.due_date = Between(todayStart, todayEnd);
             } else {
                 baseWhere.status = ILike(status);
             }
@@ -986,8 +995,11 @@ export class InstrumentsService {
         try {
             logger.log('🕒 Running auto-overdue status update job...');
 
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Normalize to start of day
+            const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+            const now = new Date();
+            const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+            const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+            const today = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
 
             const overdueInstruments = await this.instrumentRepository.find({
                 where: {

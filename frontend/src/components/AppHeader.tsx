@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck, Zap, ChevronDown, Layers, FileCheck2, Gauge, ChevronRight, X, Building2 } from "lucide-react";
+import { Bell, LogOut, Moon, Search, Settings, Sun, User, User as UserIcon, Loader2, CheckCircle2, XCircle, DownloadCloudIcon, AlertCircle, FileSpreadsheet, Mail, AlertTriangle, Trash2, LayoutDashboard, Wrench, PlusCircle, BarChart3, CalendarDays, UserCheck, Zap, ChevronDown, Layers, FileCheck2, Gauge, ChevronRight, X, Building2, Bot } from "lucide-react";
 import { useNavigate, NavLink } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -867,6 +867,21 @@ export function AppHeader() {
                   </DropdownMenuItem>
                 </>
               )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="cursor-pointer"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("copilot:open"));
+                }}
+              >
+                <Bot className="mr-2 h-4 w-4 text-primary" />
+                <div className="flex items-center justify-between w-full">
+                  <span>Metrology Copilot</span>
+                  <Badge variant="secondary" className="text-[9px] font-mono px-1.5 py-0 h-4 bg-primary/10 text-primary border-primary/20">
+                    AI
+                  </Badge>
+                </div>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={async () => {
                 await signOut();

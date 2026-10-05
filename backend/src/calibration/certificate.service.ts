@@ -80,12 +80,18 @@ export class CertificateService {
       } catch (e) {}
     }
 
-    let approvedSig = calibration.approved_by_signature;
-    const approvedName = calibration.approved_by;
-    if ((!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {
+    const isApproved =
+      calibration.approval_status === 'Approved' ||
+      Boolean((calibration as any).approved_at);
+    let approvedSig = isApproved ? calibration.approved_by_signature : null;
+    const approvedName = isApproved ? calibration.approved_by : null;
+    if (isApproved && (!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {
       try {
         const u = await this.userRepository.findOne({
-          where: { name: approvedName },
+          where: [
+            ...(calibration.approved_by_id ? [{ id: calibration.approved_by_id }] : []),
+            ...(approvedName ? [{ name: approvedName }] : []),
+          ],
         });
         if (u && u.signature && u.signature.startsWith('data:image')) {
           approvedSig = u.signature;
@@ -2526,8 +2532,9 @@ export class CertificateService {
                         },
                     {
                       text:
-                        calibration.approved_by ||
-                        'Approved By',
+                        isApproved
+                          ? (calibration.approved_by || 'Approved By')
+                          : 'Approved By',
                       alignment: 'center',
                       bold: true,
                       fontSize: signatureFontSize,

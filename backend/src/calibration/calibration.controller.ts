@@ -35,6 +35,14 @@ export class CalibrationController {
     return this.calibrationService.create(dto);
   }
 
+  @Get('signatories')
+  @RequirePermission('calibrations', 'view')
+  async getSignatories(@Req() req: any, @Query('companyId') queryCompanyId?: string) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (queryCompanyId || req?.user?.companyId) : req?.user?.companyId;
+    return this.calibrationService.getSignatories(effectiveCompanyId);
+  }
+
   @Get('latest/:instrumentId')
   async getLatest(@Param('instrumentId') instrumentId: string) {
     return this.calibrationService.getLatestByInstrument(instrumentId);

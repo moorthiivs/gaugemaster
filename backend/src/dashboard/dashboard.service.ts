@@ -82,6 +82,13 @@ export class DashboardService {
             endRange = new Date(Date.UTC(startYear, startMonth + 1, 0, 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
         }
 
+        // Today's local date boundaries taking into account timezone offset
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        const todayEndLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 23, 59, 59, 999));
+        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+        const todayEnd = new Date(todayEndLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+
         // Helper to construct where filter with optional item_status, calibration status, and reference standard
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
             ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
@@ -132,13 +139,13 @@ export class DashboardService {
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL THEN 1 ELSE 0 END)`, 'workingTotal')
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceTotal')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :now THEN 1 ELSE 0 END)`, 'overdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :now AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :now AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart THEN 1 ELSE 0 END)`, 'overdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :now AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon');
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon');
 
         if (targetCompanyId) {
             kpiQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
@@ -146,9 +153,9 @@ export class DashboardService {
             kpiQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
         }
 
-        const dueSoonEnd = new Date(now);
-        dueSoonEnd.setDate(now.getDate() + 30);
-        kpiQuery.setParameter('now', now);
+        const dueSoonEnd = new Date(todayEnd);
+        dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
+        kpiQuery.setParameter('todayStart', todayStart);
         kpiQuery.setParameter('dueSoonEnd', dueSoonEnd);
 
         if (itemStatus && itemStatus !== 'All') {
@@ -205,12 +212,6 @@ export class DashboardService {
         const dueThisMonth = pendingCount + calibratedCount;
 
         // Today's due and completed counts
-        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
-        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
-        const todayEndLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 23, 59, 59, 999));
-        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-        const todayEnd = new Date(todayEndLocal.getTime() - tzOffsetMinutes * 60 * 1000);
-
         const dueTodayCount = await this.instrumentRepository.count({
             where: getBaseWhere({
                 due_date: Between(todayStart, todayEnd),
@@ -728,6 +729,10 @@ export class DashboardService {
             endRange = new Date(Date.UTC(startYear, startMonth + 1, 0, 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
         }
 
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
             ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
             ...(itemStatus ? { item_status: itemStatus } : {}),
@@ -759,7 +764,7 @@ export class DashboardService {
         if (listType === 'overdue') {
             return this.instrumentRepository.find({
                 where: getBaseWhere({
-                    due_date: LessThan(now),
+                    due_date: LessThan(todayStart),
                 }),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,

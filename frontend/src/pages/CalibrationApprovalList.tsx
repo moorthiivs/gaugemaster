@@ -178,7 +178,7 @@ export default function CalibrationApprovalList() {
         reviewerId: user?.id,
         reviewerName: user?.name || reviewerName || "Reviewer",
         reviewerDesignation: getRoleName(user?.role) || reviewerDesignation || "Calibration Reviewer",
-        signature: (user as any)?.signature || reviewerSignature || user?.name || "Calibration Reviewer",
+        signature: (user as any)?.signature || reviewerSignature || undefined,
         remarks: reviewerRemarks.trim() || undefined,
       });
 
@@ -214,7 +214,7 @@ export default function CalibrationApprovalList() {
         approverId: user?.id,
         approverName: user?.name || "Quality Manager",
         approverDesignation: getRoleName(user?.role) || "Quality Manager / Approver",
-        signature: (user as any)?.signature || user?.name || "Quality Manager",
+        signature: (user as any)?.signature || undefined,
         approverRemarks: approverRemarks.trim() || undefined,
       });
 
