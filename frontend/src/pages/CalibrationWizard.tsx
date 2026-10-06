@@ -207,7 +207,11 @@ export default function CalibrationWizard() {
   };
 
   // Helper: synchronize template column formulas and row cellFormulas into existing calibration blocks
-  const syncFormulasFromTemplate = (calibrationBlocks: any[], templateBlocks: any[]): any[] => {
+  const syncFormulasFromTemplate = (
+    calibrationBlocks: any[],
+    templateBlocks: any[],
+    options?: { preserveExistingFormulas?: boolean }
+  ): any[] => {
     if (!Array.isArray(calibrationBlocks) || !Array.isArray(templateBlocks)) return calibrationBlocks;
 
     const calTables = getAllCanvasTables(calibrationBlocks);
@@ -229,7 +233,11 @@ export default function CalibrationWizard() {
         calTbl.columns.forEach((cCol: any) => {
           const tCol = tplTbl.columns.find((t: any) => t && t.id === cCol.id);
           if (tCol) {
-            if (tCol.formula !== undefined) cCol.formula = tCol.formula;
+            if (options?.preserveExistingFormulas && cCol.formula) {
+              // Preserve existing calibration formula
+            } else if (tCol.formula !== undefined) {
+              cCol.formula = tCol.formula;
+            }
             if (tCol.dependsOn !== undefined) cCol.dependsOn = tCol.dependsOn;
             if (tCol.formulaType !== undefined) cCol.formulaType = tCol.formulaType;
           }
@@ -254,14 +262,19 @@ export default function CalibrationWizard() {
             ) || tplTbl.rows[rIdx];
 
           if (tRow) {
-            if (tRow.cellFormulas && typeof tRow.cellFormulas === "object" && Object.keys(tRow.cellFormulas).length > 0) {
+            if (options?.preserveExistingFormulas && cRow.cellFormulas && Object.keys(cRow.cellFormulas).length > 0) {
+              // Preserve existing row cellFormulas
+            } else if (tRow.cellFormulas && typeof tRow.cellFormulas === "object" && Object.keys(tRow.cellFormulas).length > 0) {
               cRow.cellFormulas = { ...tRow.cellFormulas };
-            } else {
+            } else if (!options?.preserveExistingFormulas) {
               delete cRow.cellFormulas;
             }
-            if (tRow.formula_observed_error) {
+
+            if (options?.preserveExistingFormulas && cRow.formula_observed_error) {
+              // Preserve existing formula_observed_error
+            } else if (tRow.formula_observed_error) {
               cRow.formula_observed_error = tRow.formula_observed_error;
-            } else {
+            } else if (!options?.preserveExistingFormulas) {
               delete cRow.formula_observed_error;
             }
 
@@ -317,7 +330,10 @@ export default function CalibrationWizard() {
         const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
       if (!s) return evaluateCanvasRowFormulas(existingRow, columns, tol, dec, tableNominal);
 
-      const specText = s.specification || s.required_dimension || s.description || existingRow.specification || existingRow.required_dimension || existingRow.description || "";
+      const finalDesc = s.description ?? existingRow.description ?? "";
+      const finalReqDim = s.required_dimension ?? existingRow.required_dimension ?? s.specification ?? existingRow.specification ?? "";
+      const finalSpec = s.specification ?? existingRow.specification ?? s.required_dimension ?? existingRow.required_dimension ?? "";
+      const specText = finalReqDim || finalSpec || finalDesc || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
       const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit || existingRow?.isMaxLimit);
       const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit || existingRow?.isMinLimit);
@@ -327,9 +343,9 @@ export default function CalibrationWizard() {
         ...s,
         cellSpans: existingRow.cellSpans || s.cellSpans,
         point_number: existingRow.point_number ?? s.point_number,
-        required_dimension: specText,
-        description: specText,
-        specification: specText,
+        required_dimension: finalReqDim || specText,
+        description: finalDesc,
+        specification: finalSpec || specText,
         nominal: isMaxLimit
           ? 0
           : ((s.nominal !== undefined && s.nominal !== 0 && s.nominal !== "0" && s.nominal !== "")
@@ -378,16 +394,19 @@ export default function CalibrationWizard() {
     };
 
     const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
-      const specText = s.specification || s.required_dimension || s.description || "";
+      const finalDesc = s.description || s.parameter_name || "";
+      const finalReqDim = s.required_dimension || s.specification || "";
+      const finalSpec = s.specification || s.required_dimension || "";
+      const specText = finalReqDim || finalSpec || finalDesc || "";
       const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
       const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit);
       const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit);
       const rowObj: any = {
         ...s,
         point_number: s.point_number || idx + 1,
-        required_dimension: specText,
-        description: specText,
-        specification: specText,
+        required_dimension: finalReqDim,
+        description: finalDesc,
+        specification: finalSpec,
         cellSpans: s.cellSpans,
         nominal: isMaxLimit ? 0 : (s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0)),
         lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
@@ -785,9 +804,9 @@ export default function CalibrationWizard() {
                 table_id: tbl.id || `table_${tblIdx}`,
                 table_title: tbl.title || "",
                 point_number: r.point_number ?? (gaugeSpecs.length + 1),
-                required_dimension: r.required_dimension || r.specification || r.description || "",
-                description: r.description || r.specification || r.required_dimension || "",
-                specification: r.specification || r.required_dimension || r.description || "",
+                required_dimension: r.required_dimension || r.specification || "",
+                description: r.description || "",
+                specification: r.specification || r.required_dimension || "",
                 cellSpans: r.cellSpans,
                 nominal: r.nominal,
                 tolerance: r.tolerance ?? tbl.tolerance,
@@ -1154,7 +1173,7 @@ export default function CalibrationWizard() {
         }
         setAvailableTemplates(finalTpls || []);
 
-        if (selectedTemplateId && selectedTemplateId !== "none" && finalTpls && finalTpls.length > 0) {
+        if (!isEditMode && !editIdParam && selectedTemplateId && selectedTemplateId !== "none" && finalTpls && finalTpls.length > 0) {
           const activeTpl = finalTpls.find((t) => t.id === selectedTemplateId);
           if (activeTpl?.layout_blocks) {
             setWizardLayoutBlocks((prev) => {
@@ -2144,8 +2163,13 @@ export default function CalibrationWizard() {
               }
               return b;
             });
-          if (targetTpl && targetTpl.layout_blocks && targetTpl.layout_blocks.length > 0) {
-            syncFormulasFromTemplate(sanitizedBlocks, targetTpl.layout_blocks);
+          const isApprovedOrCompleted =
+            cal.approval_status === "Approved" ||
+            cal.certificate_generated ||
+            (cal as any).status === "completed";
+
+          if (!isApprovedOrCompleted && targetTpl && targetTpl.layout_blocks && targetTpl.layout_blocks.length > 0) {
+            syncFormulasFromTemplate(sanitizedBlocks, targetTpl.layout_blocks, { preserveExistingFormulas: true });
           }
           const blocksWithKeys = ensureTableKeys(sanitizedBlocks);
           setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
@@ -2167,7 +2191,11 @@ export default function CalibrationWizard() {
 
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
-        setIsVerdictManuallyOverridden(false);
+        const loadedOverridden = Boolean(
+          (cal as any).is_verdict_manually_overridden ??
+          (cal as any).standard_columns_config?.is_verdict_manually_overridden
+        );
+        setIsVerdictManuallyOverridden(loadedOverridden);
         if (cal.remarks) setRemarks(cal.remarks);
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
@@ -2755,7 +2783,11 @@ export default function CalibrationWizard() {
         layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
         calibration_points: calPoints,
         custom_columns: wizardCustomColumns,
-        standard_columns_config: wizardStandardColumnConfigs,
+        standard_columns_config: {
+          ...(wizardStandardColumnConfigs || {}),
+          is_verdict_manually_overridden: isVerdictManuallyOverridden,
+        },
+        is_verdict_manually_overridden: isVerdictManuallyOverridden,
         column_order: wizardColumnOrder,
         hidden_columns: wizardHiddenColumns,
         template_id: selectedTemplateId && selectedTemplateId !== "none" ? selectedTemplateId : undefined,
@@ -3330,13 +3362,17 @@ export default function CalibrationWizard() {
                         );
                       }
                       if (col.type === "text") {
+                        const cellVal =
+                          col.id === "description"
+                            ? (row.description ?? row[col.id] ?? "")
+                            : (row[col.id] ?? (col.id === "required_dimension" ? row.required_dimension : "") ?? "");
                         return (
                           <td
                             key={rIdx}
                             style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
                             className="py-0.5 px-1 font-medium text-[11px]"
                           >
-                            {row.description || row[col.id] || "-"}
+                            {cellVal || "-"}
                           </td>
                         );
                       }
@@ -3954,12 +3990,17 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (col.type === "text") {
-                      const isSpecCol = col.id === "required_dimension" || col.id === "description" || col.id === "specification" || col.id === "spec" || /spec|dimension/i.test(col.label || "");
+                      const isDescCol = col.id === "description";
+                      const isReqDimCol = col.id === "required_dimension" || /dimension/i.test(col.label || "");
+                      const isSpecCol = isReqDimCol || isDescCol || col.id === "specification" || col.id === "spec" || /spec/i.test(col.label || "");
                       if (isSpecCol) {
+                        const cellVal = isDescCol
+                          ? (row[col.id] ?? row.description ?? "")
+                          : (row[col.id] ?? row.required_dimension ?? row.specification ?? "");
                         return (
                           <td key={col.id} className="p-0.5 min-w-[130px]">
                             <Textarea
-                              value={row[col.id] || row.required_dimension || row.description || ""}
+                              value={cellVal}
                               onChange={(e) => {
                                 handleWizardCanvasCellChange(
                                   bIdx,
@@ -3970,9 +4011,9 @@ export default function CalibrationWizard() {
                                   e.target.value
                                 );
                               }}
-                              rows={String(row[col.id] || row.required_dimension || "").includes("\n") ? 2 : 1}
+                              rows={String(cellVal).includes("\n") ? 2 : 1}
                               className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/50 hover:bg-background focus:bg-background transition-colors text-left w-full"
-                              placeholder="e.g. 55.10-0.025"
+                              placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 55.10-0.025"}
                             />
                           </td>
                         );
@@ -3982,7 +4023,7 @@ export default function CalibrationWizard() {
                           <td key={col.id} className="p-0.5 min-w-[100px]">
                             <Input
                               type="text"
-                              value={row[col.id] ?? row.description ?? ""}
+                              value={row[col.id] ?? ""}
                               onChange={(e) => {
                                 handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, e.target.value);
                               }}
@@ -3991,9 +4032,12 @@ export default function CalibrationWizard() {
                           </td>
                         );
                       }
+                      const readOnlyVal = col.id === "description"
+                        ? (row.description || row[col.id])
+                        : (row[col.id] || (col.id === "required_dimension" ? row.required_dimension : undefined));
                       return (
                         <td key={col.id} className="py-0.5 px-1.5 font-medium text-left pl-2 text-[11px]">
-                          {row.description || row[col.id] || (row.point_number ?? (rIdx + 1))}
+                          {readOnlyVal || "-"}
                         </td>
                       );
                     }

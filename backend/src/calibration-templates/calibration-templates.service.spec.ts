@@ -24,4 +24,37 @@ describe('CalibrationTemplatesService', () => {
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
+
+  it('should reject template with invalid formula syntax', async () => {
+    const invalidDto: any = {
+      name: 'Test Template Broken Formula',
+      layout_blocks: [
+        {
+          type: 'table_grid',
+          title: 'Dimensions',
+          columns: [{ id: 'error', label: 'Error', formula: 'reading + * 5' }],
+        },
+      ],
+    };
+
+    await expect(service.create(invalidDto)).rejects.toThrow(
+      'Template contains invalid formula(s)',
+    );
+  });
+
+  it('should accept template with valid formulas', async () => {
+    const validDto: any = {
+      name: 'Test Template Valid Formula',
+      layout_blocks: [
+        {
+          type: 'table_grid',
+          title: 'Dimensions',
+          columns: [{ id: 'error', label: 'Error', formula: 'reading - nominal' }],
+        },
+      ],
+    };
+
+    const result = await service.create(validDto);
+    expect(result).toBeDefined();
+  });
 });

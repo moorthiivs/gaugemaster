@@ -89,13 +89,20 @@ export function resolveCertificateCellValue(
       return String(fallbackStatus).trim();
     }
     // 2c. If explicit formula exists, evaluate it
+    const effectiveStatusFormula =
+      (row._cellFormulas && row._cellFormulas[col.id]) ||
+      (row.cellFormulas && row.cellFormulas[col.id]) ||
+      (typeof rawCell === "string" && rawCell.trim().startsWith("=") ? rawCell : undefined) ||
+      col.customFormula ||
+      col.formula;
+
     if (
-      col.formula &&
-      typeof col.formula === "string" &&
-      col.formula.trim().length > 0 &&
+      effectiveStatusFormula &&
+      typeof effectiveStatusFormula === "string" &&
+      effectiveStatusFormula.trim().length > 0 &&
       options?.evalFormula
     ) {
-      const formulaRes = options.evalFormula(col.formula, row, tolerance, colDec);
+      const formulaRes = options.evalFormula(effectiveStatusFormula, row, tolerance, colDec);
       if (formulaRes !== undefined && formulaRes !== null && String(formulaRes).trim() !== "") {
         return String(formulaRes).trim();
       }
@@ -136,31 +143,54 @@ export function resolveCertificateCellValue(
   }
 
   // 4. Specification / Required Dimension / Description Text
+  const isDescCol = colIdLower === "description";
+  const isReqDimCol = colIdLower === "required_dimension" || /dimension/i.test(colLabelLower);
   const isSpecCol =
     colType === "text" ||
-    colIdLower === "required_dimension" ||
+    isReqDimCol ||
+    isDescCol ||
     colIdLower === "specification" ||
-    colIdLower === "description" ||
-    /spec|dimension/i.test(colLabelLower);
+    /spec/i.test(colLabelLower);
 
   if (isSpecCol) {
+    let fallbackText: any = undefined;
+    if (isDescCol) {
+      fallbackText = row.description;
+    } else if (isReqDimCol) {
+      fallbackText = row.required_dimension || row.specification;
+    } else if (colIdLower === "specification" || /spec/i.test(colLabelLower)) {
+      fallbackText = row.specification || row.required_dimension;
+    }
+
     const textVal =
       rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== ""
         ? rawCell
-        : row.required_dimension || row.specification || row.description;
+        : fallbackText;
     if (textVal !== undefined && textVal !== null && String(textVal).trim() !== "") {
       return String(textVal);
     }
     if (colType === "text") return "-";
   }
 
-  // 5. Formula Column (only if explicit formula is provided or type === 'formula')
+  // 5. Formula Column (explicit formula, customFormula, cellFormulas, or =prefix)
+  const effectiveFormula =
+    (row._cellFormulas && row._cellFormulas[col.id]) ||
+    (row.cellFormulas && row.cellFormulas[col.id]) ||
+    (typeof rawCell === "string" && rawCell.trim().startsWith("=") ? rawCell : undefined) ||
+    col.customFormula ||
+    col.formula;
+
   const hasFormula =
     colType === "formula" ||
-    (typeof col.formula === "string" && col.formula.trim().length > 0);
+    (typeof effectiveFormula === "string" && effectiveFormula.trim().length > 0);
 
   if (hasFormula) {
-    if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== "") {
+    if (
+      rawCell !== undefined &&
+      rawCell !== null &&
+      String(rawCell).trim() !== "" &&
+      !(typeof rawCell === "string" && rawCell.trim().startsWith("="))
+    ) {
       const strCell = String(rawCell).trim();
       const p = parseFloat(strCell);
       if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(strCell)) {
@@ -168,8 +198,8 @@ export function resolveCertificateCellValue(
       }
       return strCell;
     }
-    if (col.formula && typeof col.formula === "string" && col.formula.trim().length > 0 && options?.evalFormula) {
-      const formulaRes = options.evalFormula(col.formula, row, tolerance, colDec);
+    if (effectiveFormula && typeof effectiveFormula === "string" && effectiveFormula.trim().length > 0 && options?.evalFormula) {
+      const formulaRes = options.evalFormula(effectiveFormula, row, tolerance, colDec);
       if (formulaRes !== undefined && formulaRes !== null && String(formulaRes).trim() !== "") {
         return String(formulaRes).trim();
       }

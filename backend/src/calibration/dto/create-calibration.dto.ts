@@ -140,6 +140,22 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calculated_verdict?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_verdict_overridden?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verdict_override_reason?: string;
+
+  @IsOptional()
+  @IsString()
+  template_version_id?: string;
+
+  @IsOptional()
+  @IsString()
   remarks?: string;
 
   @IsOptional()

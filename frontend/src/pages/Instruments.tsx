@@ -1125,7 +1125,12 @@ export default function Instruments() {
     status: {
       accessorKey: "status",
       header: "Status",
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      cell: ({ row }) => (
+        <StatusBadge
+          status={row.original.status}
+          subStatus={row.original.custom_parameters?.calibration_sub_status}
+        />
+      ),
     },
     item_status: {
       accessorKey: "item_status",

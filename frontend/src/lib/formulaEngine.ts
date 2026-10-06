@@ -2276,9 +2276,9 @@ export function buildRowContext(
     row.specificationText ||
     row.specification ||
     row.specification_text ||
+    row.required_dimension ||
     row.description ||
     row.gauge_receipt_condition ||
-    row.required_dimension ||
     "";
   const isPointNoCol = (c: any) =>
     c && (c.id === "point_number" || c.id === "sl_no" || c.id === "slno" || c.id === "sr_no" || c.id === "item_no" || /^(sl|sr|item)[\._\s]*no/i.test(c.label || ""));

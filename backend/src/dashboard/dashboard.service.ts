@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Instrument } from 'src/instruments/instrument.entity';
 import { CalibrationHistory } from 'src/instruments/calibration-history.entity';
 import { User } from 'src/users/user.entity';
-import { Between, LessThan, MoreThan, Repository, ILike, In } from 'typeorm';
+import { Between, LessThan, MoreThan, Repository, ILike, In, Not } from 'typeorm';
 
 @Injectable()
 export class DashboardService {
@@ -139,9 +139,9 @@ export class DashboardService {
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL THEN 1 ELSE 0 END)`, 'workingTotal')
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceTotal')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart THEN 1 ELSE 0 END)`, 'overdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) THEN 1 ELSE 0 END)`, 'overdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
+            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
 
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
@@ -765,6 +765,7 @@ export class DashboardService {
             return this.instrumentRepository.find({
                 where: getBaseWhere({
                     due_date: LessThan(todayStart),
+                    status: Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED'])),
                 }),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Injectable, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In, DataSource } from 'typeorm';
 import { Calibration } from './calibration.entity';
@@ -13,10 +13,98 @@ import { InstrumentsService } from '../instruments/instruments.service';
  * based on the company's certificate configuration in Settings.
  */
 import { User } from 'src/users/user.entity';
+import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
+import { recalculateCalibrationLayoutBlocks } from './utils/formula-engine.util';
 
 @Injectable()
-export class CalibrationService {
+export class CalibrationService implements OnModuleInit {
   private readonly logger = new Logger(CalibrationService.name);
+
+  async onModuleInit() {
+    await this.syncInFlightCalibrationInstruments();
+  }
+
+  /**
+   * One-time / startup synchronization for any in-flight calibrations
+   * (e.g. 'Calibration Completed', 'Pending Review', 'Reviewed', 'Pending Approval').
+   * Ensures the instrument status is 'Under Calibration', dates are updated if newer,
+   * and the hover sub-status is set to 'Review Pending' or 'Approve Pending'.
+   */
+  async syncInFlightCalibrationInstruments() {
+    try {
+      this.logger.log('🔄 Checking and syncing in-flight calibration instruments...');
+      const inFlightCals = await this.calibrationRepository.find({
+        where: [
+          { approval_status: 'Calibration Completed' },
+          { approval_status: 'Pending Review' },
+          { approval_status: 'Reviewed' },
+          { approval_status: 'Pending Approval' },
+        ],
+        order: { created_at: 'DESC' },
+        relations: ['instrument'],
+      });
+
+      const processedInstrumentIds = new Set<string>();
+
+      for (const cal of inFlightCals) {
+        if (!cal.instrument_id || processedInstrumentIds.has(cal.instrument_id)) continue;
+        processedInstrumentIds.add(cal.instrument_id);
+
+        const inst = cal.instrument || (await this.instrumentsService.findOne(cal.instrument_id));
+        if (!inst) continue;
+
+        const isReviewed = cal.approval_status === 'Reviewed' || cal.approval_status === 'Pending Approval';
+        const subStatus = isReviewed ? 'Approve Pending' : 'Review Pending';
+        const existingCp = (inst as any)?.custom_parameters || {};
+
+        const existingLastCal = inst.last_calibration_date ? new Date(inst.last_calibration_date) : null;
+        const newCalDate = cal.calibration_date ? new Date(cal.calibration_date) : null;
+
+        const isSameCalendarDay = (d1: Date | null, d2: Date | null) => {
+          if (!d1 || !d2) return false;
+          return (
+            d1.getUTCFullYear() === d2.getUTCFullYear() &&
+            d1.getUTCMonth() === d2.getUTCMonth() &&
+            d1.getUTCDate() === d2.getUTCDate()
+          );
+        };
+
+        let shouldUpdateDates = true;
+        if (existingLastCal && newCalDate) {
+          if (isSameCalendarDay(existingLastCal, newCalDate) || newCalDate < existingLastCal) {
+            shouldUpdateDates = false;
+          }
+        }
+
+        const updatePayload: Record<string, any> = {
+          status: 'Under Calibration',
+          custom_parameters: {
+            ...existingCp,
+            calibration_sub_status: subStatus,
+          },
+        };
+
+        if (shouldUpdateDates && newCalDate) {
+          let finalDueDate = cal.next_calibration_date;
+          if (!finalDueDate && inst.frequency) {
+            finalDueDate = this.instrumentsService.calculateDueDateFromFrequency(
+              newCalDate,
+              inst.frequency,
+            );
+          }
+          updatePayload.last_calibration_date = newCalDate;
+          if (finalDueDate) {
+            updatePayload.due_date = finalDueDate;
+          }
+        }
+
+        await this.instrumentsService.update(inst.id, updatePayload as any);
+        this.logger.log(`✅ Synced instrument ${inst.name} (${inst.id_code}) to 'Under Calibration' [${subStatus}]`);
+      }
+    } catch (err: any) {
+      this.logger.error(`Failed to sync in-flight instruments: ${err?.message || err}`);
+    }
+  }
 
   constructor(
     @InjectRepository(Calibration)
@@ -27,6 +115,8 @@ export class CalibrationService {
     private readonly auditLogRepository: Repository<CalibrationAuditLog>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(CalibrationTemplate)
+    private readonly templateRepository: Repository<CalibrationTemplate>,
     private readonly settingsService: SettingsService,
     private readonly instrumentsService: InstrumentsService,
     private readonly dataSource: DataSource,
@@ -498,6 +588,75 @@ export class CalibrationService {
     };
   }
 
+  /**
+   * Phase 3: Freezes template metadata snapshot onto the Calibration entity.
+   * Ensures approved/historical calibrations and generated certificates are immune
+   * to future template mutations, renames, or deletions.
+   */
+  async freezeTemplateMetadata(calibration: Calibration, templateId?: string): Promise<void> {
+    const tplId = templateId || calibration.template_id;
+    if (!tplId || tplId === 'none') {
+      return;
+    }
+
+    try {
+      let tpl: CalibrationTemplate | null = null;
+      if (this.templateRepository) {
+        tpl = await this.templateRepository.findOne({ where: { id: tplId } });
+      } else if (this.dataSource) {
+        tpl = await this.dataSource.getRepository(CalibrationTemplate).findOne({ where: { id: tplId } });
+      }
+
+      if (!tpl) return;
+
+      if (!calibration.template_name && tpl.name) {
+        calibration.template_name = tpl.name;
+      }
+      if (!calibration.doc_no && tpl.doc_no) calibration.doc_no = tpl.doc_no;
+      if (!calibration.doc_date && tpl.doc_date) calibration.doc_date = tpl.doc_date;
+      if (!calibration.doc_rev && tpl.doc_rev) calibration.doc_rev = tpl.doc_rev;
+
+      if (!calibration.procedure_reference && (tpl.procedure_reference || tpl.procedure_no)) {
+        calibration.procedure_reference = tpl.procedure_reference || tpl.procedure_no;
+      }
+      if (!calibration.procedure_no && tpl.procedure_no) calibration.procedure_no = tpl.procedure_no;
+      if (!calibration.procedure_name && tpl.procedure_name) calibration.procedure_name = tpl.procedure_name;
+      if (!calibration.procedure_date && tpl.procedure_date) calibration.procedure_date = tpl.procedure_date;
+      if (!calibration.procedure_rev && tpl.procedure_rev) calibration.procedure_rev = tpl.procedure_rev;
+
+      if (!calibration.acceptance_criteria_doc_no && tpl.acceptance_criteria_doc_no) {
+        calibration.acceptance_criteria_doc_no = tpl.acceptance_criteria_doc_no;
+      }
+      if (!calibration.acceptance_criteria_date && tpl.acceptance_criteria_date) {
+        calibration.acceptance_criteria_date = tpl.acceptance_criteria_date;
+      }
+      if (!calibration.acceptance_criteria_rev && tpl.acceptance_criteria_rev) {
+        calibration.acceptance_criteria_rev = tpl.acceptance_criteria_rev;
+      }
+      if (!calibration.acceptance_criteria_reference && tpl.acceptance_criteria_reference) {
+        calibration.acceptance_criteria_reference = tpl.acceptance_criteria_reference;
+      }
+      if (!calibration.acceptance_criteria && tpl.acceptance_criteria) {
+        calibration.acceptance_criteria = tpl.acceptance_criteria;
+      }
+
+      if (!calibration.standard_reference && tpl.standard_reference) {
+        calibration.standard_reference = tpl.standard_reference;
+      }
+
+      if (calibration.diagram_image === undefined || calibration.diagram_image === null || calibration.diagram_image === '') {
+        if (tpl.diagram_image) {
+          calibration.diagram_image = tpl.diagram_image;
+          calibration.diagram_image_width = tpl.diagram_image_width;
+          calibration.diagram_image_height = tpl.diagram_image_height;
+          calibration.diagram_image_alignment = tpl.diagram_image_alignment;
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to freeze template metadata for template ${tplId}:`, err);
+    }
+  }
+
   // ── CRUD ─────────────────────────────────────────────────────
 
   async create(dto: CreateCalibrationDto): Promise<Calibration> {
@@ -593,8 +752,39 @@ export class CalibrationService {
         } catch (e) {}
       }
 
+      // Authoritative Server-side Formula Recalculation & Verdict Gate (Phase 7)
+      let calculatedVerdict = dto.calculated_verdict;
+      let effectiveLayoutBlocks = dto.layout_blocks;
+      if (dto.layout_blocks && Array.isArray(dto.layout_blocks)) {
+        try {
+          const recalcResult = recalculateCalibrationLayoutBlocks(dto.layout_blocks);
+          effectiveLayoutBlocks = recalcResult.layoutBlocks;
+          calculatedVerdict = recalcResult.overallVerdict;
+        } catch (e) {
+          this.logger.warn(`Could not recalculate layout blocks on create: ${e}`);
+        }
+      }
+
+      // Check for explicit manual verdict override (Phase 6)
+      const isOverridden =
+        dto.is_verdict_overridden === true ||
+        dto.standard_columns_config?.is_verdict_manually_overridden === true;
+      const overrideReason =
+        dto.verdict_override_reason ||
+        dto.standard_columns_config?.verdict_override_reason ||
+        undefined;
+      const finalVerdict = isOverridden
+        ? (dto.verdict || 'PASS')
+        : (calculatedVerdict || dto.verdict || 'PASS');
+
       const calibration = manager.create(Calibration, {
         ...dto,
+        layout_blocks: effectiveLayoutBlocks,
+        verdict: finalVerdict,
+        calculated_verdict: calculatedVerdict,
+        is_verdict_overridden: isOverridden,
+        verdict_override_reason: overrideReason,
+        template_version_id: dto.template_version_id,
         certificate_number,
         ulr_number,
         approval_status,
@@ -616,6 +806,8 @@ export class CalibrationService {
         next_calibration_date: computedNextCalDate,
         created_by: dto.created_by ? ({ id: dto.created_by } as any) : undefined,
       });
+
+      await this.freezeTemplateMetadata(calibration);
 
       const savedCalibration = await manager.save(Calibration, calibration);
 
@@ -660,19 +852,66 @@ export class CalibrationService {
           }
 
           if (approval_status === 'Approved') {
+            const cleanCp = { ...updatedCp };
+            delete cleanCp.calibration_sub_status;
+
             await this.instrumentsService.update(dto.instrument_id, {
               last_calibration_date: savedCalibration.calibration_date as any,
               due_date: (savedCalibration.next_calibration_date || computedNextCalDate) as any,
               status: savedCalibration.verdict === 'FAIL' ? 'REJECTED' : 'OK',
               calibration_source: 'In-House',
               cert_no: savedCalibration.certificate_number,
-              custom_parameters: updatedCp,
+              custom_parameters: cleanCp,
             } as any);
           } else {
-            // Calibration pending approval: save custom parameters template only, do not prematurely advance schedule or log history
-            await this.instrumentsService.update(dto.instrument_id, {
+            // Calibration completed (Step 1) awaiting review/approval:
+            // 1. Mark instrument as 'Under Calibration' with sub-status 'Review Pending'
+            updatedCp.calibration_sub_status = 'Review Pending';
+
+            // 2. Validate calibration date vs existing last_calibration_date:
+            // If existing last_calibration_date is same calendar day (or newer), skip date update;
+            // Otherwise update to latest calibration date and compute new due date based on frequency.
+            const existingLastCal = inst.last_calibration_date ? new Date(inst.last_calibration_date) : null;
+            const newCalDate = savedCalibration.calibration_date ? new Date(savedCalibration.calibration_date) : null;
+
+            const isSameCalendarDay = (d1: Date | null, d2: Date | null) => {
+              if (!d1 || !d2) return false;
+              return (
+                d1.getUTCFullYear() === d2.getUTCFullYear() &&
+                d1.getUTCMonth() === d2.getUTCMonth() &&
+                d1.getUTCDate() === d2.getUTCDate()
+              );
+            };
+
+            let shouldUpdateDates = true;
+            if (existingLastCal && newCalDate) {
+              if (isSameCalendarDay(existingLastCal, newCalDate)) {
+                shouldUpdateDates = false; // same date -> skip
+              } else if (newCalDate < existingLastCal) {
+                shouldUpdateDates = false; // older date -> skip
+              }
+            }
+
+            const instUpdatePayload: Record<string, any> = {
+              status: 'Under Calibration',
               custom_parameters: updatedCp,
-            } as any);
+            };
+
+            if (shouldUpdateDates && newCalDate) {
+              let finalDueDate = savedCalibration.next_calibration_date || computedNextCalDate;
+              if (!finalDueDate && inst.frequency) {
+                finalDueDate = this.instrumentsService.calculateDueDateFromFrequency(
+                  newCalDate,
+                  inst.frequency,
+                );
+              }
+              instUpdatePayload.last_calibration_date = newCalDate;
+              if (finalDueDate) {
+                instUpdatePayload.due_date = finalDueDate;
+              }
+            }
+
+            await this.instrumentsService.update(dto.instrument_id, instUpdatePayload as any);
           }
         } catch (err) {
           console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
@@ -754,6 +993,25 @@ export class CalibrationService {
 
     const saved = await this.calibrationRepository.save(calibration);
 
+    // Update instrument sub-status to 'Approve Pending' while keeping status as 'Under Calibration'
+    if (saved.instrument_id) {
+      try {
+        const inst = await this.instrumentsService.findOne(saved.instrument_id);
+        if (inst) {
+          const cp = (inst as any)?.custom_parameters || {};
+          await this.instrumentsService.update(inst.id, {
+            status: 'Under Calibration',
+            custom_parameters: {
+              ...cp,
+              calibration_sub_status: 'Approve Pending',
+            },
+          } as any);
+        }
+      } catch (err) {
+        console.warn(`Failed to update instrument sub-status on review for ${saved.instrument_id}`, err);
+      }
+    }
+
     // Record audit log entry
     const auditLog = this.auditLogRepository.create({
       calibration_id: saved.id,
@@ -801,14 +1059,19 @@ export class CalibrationService {
     calibration.approver_remarks = remarks || undefined;
     calibration.certificate_generated = true;
 
+    await this.freezeTemplateMetadata(calibration);
+
     const saved = await this.calibrationRepository.save(calibration);
 
     // Update Instrument Master schedule now that it is Approved
     if (calibration.instrument_id) {
       try {
+        const inst = await this.instrumentsService.findOne(calibration.instrument_id);
+        const cp = { ...((inst as any)?.custom_parameters || {}) };
+        delete cp.calibration_sub_status; // clear sub-status since all verification is completed
+
         let finalDueDate = saved.next_calibration_date;
         if (!finalDueDate && saved.calibration_date) {
-          const inst = await this.instrumentsService.findOne(calibration.instrument_id);
           if (inst) {
             finalDueDate = this.instrumentsService.calculateDueDateFromFrequency(
               saved.calibration_date,
@@ -823,6 +1086,7 @@ export class CalibrationService {
           calibration_source: 'In-House',
           cert_no: saved.certificate_number,
           certificate_file: saved.certificate_file || undefined,
+          custom_parameters: cp,
         } as any);
       } catch (err) {
         console.warn(`Failed to update instrument ${calibration.instrument_id} on approval`, err);
@@ -872,6 +1136,9 @@ export class CalibrationService {
             (c) => c.id !== saved.id && c.approval_status === 'Approved',
           );
 
+          const cp = { ...((inst as any)?.custom_parameters || {}) };
+          delete cp.calibration_sub_status;
+
           if (approvedCals.length > 0) {
             const latestApproved = approvedCals[0];
             const now = new Date();
@@ -885,11 +1152,13 @@ export class CalibrationService {
               due_date: latestApproved.next_calibration_date as any,
               status: latestApproved.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
               cert_no: latestApproved.certificate_number || undefined,
+              custom_parameters: cp,
             } as any);
           } else {
             // No previous approved calibration - mark instrument as REJECTED so it cannot be used
             await this.instrumentsService.update(inst.id, {
               status: 'REJECTED',
+              custom_parameters: cp,
             } as any);
           }
         }
@@ -944,8 +1213,46 @@ export class CalibrationService {
 
     const qb = this.calibrationRepository
       .createQueryBuilder('cal')
-      .leftJoinAndSelect('cal.instrument', 'instrument')
-      .leftJoinAndSelect('cal.created_by', 'created_by');
+      .leftJoin('cal.instrument', 'instrument')
+      .leftJoin('cal.created_by', 'created_by')
+      .select([
+        'cal.id',
+        'cal.certificate_number',
+        'cal.ulr_number',
+        'cal.calibration_date',
+        'cal.calibration_type',
+        'cal.verdict',
+        'cal.calculated_verdict',
+        'cal.is_verdict_overridden',
+        'cal.verdict_override_reason',
+        'cal.approval_status',
+        'cal.calibrated_by',
+        'cal.calibrated_by_designation',
+        'cal.reviewed_by',
+        'cal.reviewed_by_designation',
+        'cal.reviewed_at',
+        'cal.approved_by',
+        'cal.approved_by_designation',
+        'cal.approved_at',
+        'cal.rejected_by',
+        'cal.rejected_at',
+        'cal.rejection_reason',
+        'cal.created_at',
+        'cal.updated_at',
+        'cal.certificate_generated',
+        'cal.instrument_id',
+        'cal.template_id',
+        'cal.template_name',
+        'cal.is_canvas_template',
+        'instrument.id',
+        'instrument.name',
+        'instrument.id_code',
+        'instrument.location',
+        'instrument.range',
+        'created_by.id',
+        'created_by.name',
+        'created_by.email',
+      ]);
 
     if (latestOnly === true || latestOnly === 'true') {
       qb.andWhere((qbSub) => {
@@ -1012,10 +1319,6 @@ export class CalibrationService {
       .take(pageSize);
 
     const [data, total] = await qb.getManyAndCount();
-
-    for (const item of data) {
-      await this.enrichSignatures(item);
-    }
 
     return {
       data,
@@ -1163,18 +1466,25 @@ export class CalibrationService {
     const userIds = await this.getCompanyUserIds(userId);
     const targetUserIds = userIds.length > 0 ? userIds : [userId];
 
-    const total = await this.calibrationRepository.count({
-      where: { created_by: { id: In(targetUserIds) } },
-    });
-    const passed = await this.calibrationRepository.count({
-      where: { created_by: { id: In(targetUserIds) }, verdict: 'PASS' },
-    });
-    const failed = await this.calibrationRepository.count({
-      where: { created_by: { id: In(targetUserIds) }, verdict: 'FAIL' },
-    });
-    const pendingCerts = await this.calibrationRepository.count({
-      where: { created_by: { id: In(targetUserIds) }, certificate_generated: false },
-    });
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoin('cal.created_by', 'created_by')
+      .where('created_by.id IN (:...targetUserIds)', { targetUserIds });
+
+    const raw = await qb
+      .select('COUNT(*)', 'total')
+      .addSelect(`COUNT(*) FILTER (WHERE cal.verdict = 'PASS')`, 'passed')
+      .addSelect(`COUNT(*) FILTER (WHERE cal.verdict = 'FAIL')`, 'failed')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE cal.certificate_generated = false OR cal.certificate_generated IS NULL)`,
+        'pendingCerts',
+      )
+      .getRawOne();
+
+    const total = parseInt(raw?.total || '0', 10);
+    const passed = parseInt(raw?.passed || '0', 10);
+    const failed = parseInt(raw?.failed || '0', 10);
+    const pendingCerts = parseInt(raw?.pendingCerts || '0', 10);
 
     return {
       total,
@@ -1182,6 +1492,59 @@ export class CalibrationService {
       failed,
       pendingCerts,
       passRate: total > 0 ? Math.round((passed / total) * 100) : 0,
+    };
+  }
+
+  async getApprovalStats(userId?: string, companyId?: string): Promise<{
+    pendingReview: number;
+    reviewed: number;
+    approved: number;
+    rejected: number;
+    total: number;
+  }> {
+    const qb = this.calibrationRepository
+      .createQueryBuilder('cal')
+      .leftJoin('cal.created_by', 'created_by');
+
+    const userIds = await this.getCompanyUserIds(userId, companyId);
+    if (userIds.length > 0) {
+      if (companyId) {
+        qb.andWhere('(created_by.id IN (:...userIds) OR cal.companyId = :companyId)', { userIds, companyId });
+      } else {
+        qb.andWhere('created_by.id IN (:...userIds)', { userIds });
+      }
+    } else if (companyId) {
+      qb.andWhere('cal.companyId = :companyId', { companyId });
+    } else {
+      return { pendingReview: 0, reviewed: 0, approved: 0, rejected: 0, total: 0 };
+    }
+
+    const raw = await qb
+      .select('COUNT(*)', 'total')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE cal.approval_status = 'Calibration Completed' OR cal.approval_status = 'Pending Review')`,
+        'pendingReview',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE cal.approval_status = 'Reviewed' OR cal.approval_status = 'Pending Approval')`,
+        'reviewed',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE cal.approval_status = 'Approved')`,
+        'approved',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE cal.approval_status = 'Rejected')`,
+        'rejected',
+      )
+      .getRawOne();
+
+    return {
+      pendingReview: parseInt(raw?.pendingReview || '0', 10),
+      reviewed: parseInt(raw?.reviewed || '0', 10),
+      approved: parseInt(raw?.approved || '0', 10),
+      rejected: parseInt(raw?.rejected || '0', 10),
+      total: parseInt(raw?.total || '0', 10),
     };
   }
 
@@ -1404,7 +1767,23 @@ export class CalibrationService {
     if (dto.template_id !== undefined) existing.template_id = dto.template_id;
     if (dto.template_name !== undefined) existing.template_name = dto.template_name;
     if (dto.is_canvas_template !== undefined) existing.is_canvas_template = dto.is_canvas_template;
-    if (dto.layout_blocks !== undefined) existing.layout_blocks = dto.layout_blocks;
+    if (dto.layout_blocks !== undefined) {
+      if (Array.isArray(dto.layout_blocks)) {
+        try {
+          const recalcResult = recalculateCalibrationLayoutBlocks(dto.layout_blocks);
+          existing.layout_blocks = recalcResult.layoutBlocks;
+          existing.calculated_verdict = recalcResult.overallVerdict;
+        } catch (e) {
+          existing.layout_blocks = dto.layout_blocks;
+        }
+      } else {
+        existing.layout_blocks = dto.layout_blocks;
+      }
+    }
+    if (dto.calculated_verdict !== undefined) existing.calculated_verdict = dto.calculated_verdict;
+    if (dto.is_verdict_overridden !== undefined) existing.is_verdict_overridden = dto.is_verdict_overridden;
+    if (dto.verdict_override_reason !== undefined) existing.verdict_override_reason = dto.verdict_override_reason;
+    if (dto.template_version_id !== undefined) existing.template_version_id = dto.template_version_id;
     if ((dto as any).procedure_reference !== undefined) (existing as any).procedure_reference = (dto as any).procedure_reference;
     if ((dto as any).procedure_no !== undefined) (existing as any).procedure_no = (dto as any).procedure_no;
     if ((dto as any).procedure_name !== undefined) (existing as any).procedure_name = (dto as any).procedure_name;
@@ -1425,7 +1804,26 @@ export class CalibrationService {
     if (dto.diagram_image_alignment !== undefined) existing.diagram_image_alignment = dto.diagram_image_alignment;
     if (dto.acceptance_criteria !== undefined) existing.acceptance_criteria = dto.acceptance_criteria;
     if (dto.uncertainty !== undefined) existing.uncertainty = dto.uncertainty;
-    if (dto.verdict !== undefined) existing.verdict = dto.verdict;
+
+    const isOverridden =
+      dto.is_verdict_overridden === true ||
+      existing.is_verdict_overridden === true ||
+      dto.standard_columns_config?.is_verdict_manually_overridden === true ||
+      existing.standard_columns_config?.is_verdict_manually_overridden === true;
+
+    if (isOverridden) {
+      existing.is_verdict_overridden = true;
+      if (dto.verdict !== undefined) existing.verdict = dto.verdict;
+      if (dto.verdict_override_reason !== undefined) {
+        existing.verdict_override_reason = dto.verdict_override_reason;
+      } else if (dto.standard_columns_config?.verdict_override_reason) {
+        existing.verdict_override_reason = dto.standard_columns_config.verdict_override_reason;
+      }
+    } else if (existing.calculated_verdict) {
+      existing.verdict = existing.calculated_verdict;
+    } else if (dto.verdict !== undefined) {
+      existing.verdict = dto.verdict;
+    }
     if (dto.remarks !== undefined) existing.remarks = dto.remarks;
     if (dto.calibrated_by !== undefined) existing.calibrated_by = dto.calibrated_by;
     if (dto.calibrated_by_designation !== undefined) existing.calibrated_by_designation = dto.calibrated_by_designation;
@@ -1453,6 +1851,8 @@ export class CalibrationService {
         console.warn('Could not compute next_calibration_date on update:', e);
       }
     }
+
+    await this.freezeTemplateMetadata(existing);
 
     const saved = await this.calibrationRepository.save(existing);
 

@@ -14,7 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -31,7 +33,13 @@ import {
   Lock,
   Info,
 } from "lucide-react";
-import { CanvasColumnDef, TableGridBlock } from "@/types/template";
+import {
+  CanvasColumnDef,
+  TableGridBlock,
+  ColumnRole,
+  ColumnSemanticRole,
+  ColumnDataType,
+} from "@/types/template";
 import { testEvaluateFormula } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
@@ -75,79 +83,146 @@ export function generateColumnKey(
   return `${base}_${counter}`;
 }
 
-const COLUMN_TYPES: {
+export interface ColumnTypeItem {
   value: CanvasColumnDef["type"];
   label: string;
   badge: string;
   description: string;
   defaultAlign: "left" | "center" | "right";
   defaultWidth: number;
-}[] = [
+  role: ColumnRole;
+  semanticRole: ColumnSemanticRole;
+  dataType: ColumnDataType;
+}
+
+export interface ColumnCategoryDef {
+  id: string;
+  categoryLabel: string;
+  types: ColumnTypeItem[];
+}
+
+export const COLUMN_CATEGORIES: ColumnCategoryDef[] = [
   {
-    value: "reading",
-    label: "Reading / Observed",
-    badge: "Direct Input",
-    description: "Direct measurement reading entered by technician during calibration.",
-    defaultAlign: "right",
-    defaultWidth: 120,
+    id: "observations",
+    categoryLabel: "1. Measurement Observation (Input)",
+    types: [
+      {
+        value: "reading",
+        label: "Reading / Observed",
+        badge: "Direct Input",
+        description: "Direct measurement reading entered by technician during calibration.",
+        defaultAlign: "right",
+        defaultWidth: 120,
+        role: "READING",
+        semanticRole: "INPUT",
+        dataType: "NUMBER",
+      },
+      {
+        value: "trial",
+        label: "Trial (t1, t2, t3...)",
+        badge: "Multi-Trial",
+        description: "Repeated trial observation for multi-run calibration points.",
+        defaultAlign: "right",
+        defaultWidth: 100,
+        role: "INPUT",
+        semanticRole: "TRIAL",
+        dataType: "NUMBER",
+      },
+    ],
   },
   {
-    value: "nominal",
-    label: "Nominal / Specification",
-    badge: "Baseline Spec",
-    description: "Target baseline standard or drawing specification value.",
-    defaultAlign: "right",
-    defaultWidth: 130,
+    id: "specifications",
+    categoryLabel: "2. Specification & Baseline (Engineering Standard)",
+    types: [
+      {
+        value: "nominal",
+        label: "Nominal / Master Standard",
+        badge: "Target Baseline",
+        description: "Target baseline standard or drawing specification value.",
+        defaultAlign: "right",
+        defaultWidth: 130,
+        role: "NOMINAL",
+        semanticRole: "SPECIFICATION",
+        dataType: "NUMBER",
+      },
+      {
+        value: "tolerance",
+        label: "Tolerance Limit (± / Asym)",
+        badge: "Allowable Limit",
+        description: "Allowable tolerance limit for this calibration point or row.",
+        defaultAlign: "right",
+        defaultWidth: 110,
+        role: "TOLERANCE",
+        semanticRole: "SPECIFICATION",
+        dataType: "NUMBER",
+      },
+    ],
   },
   {
-    value: "trial",
-    label: "Trial (t1, t2, t3...)",
-    badge: "Multi-Trial",
-    description: "Repeated trial observation for multi-run calibration points.",
-    defaultAlign: "right",
-    defaultWidth: 100,
+    id: "calculations",
+    categoryLabel: "3. Calculations & Derived Logic (Formulas)",
+    types: [
+      {
+        value: "formula",
+        label: "Formula Calculation",
+        badge: "Auto Computed",
+        description: "Calculated expression automatically derived from other columns (e.g. error, deviation, average).",
+        defaultAlign: "right",
+        defaultWidth: 120,
+        role: "CALCULATED",
+        semanticRole: "CALCULATED",
+        dataType: "FORMULA",
+      },
+    ],
   },
   {
-    value: "formula",
-    label: "Formula Calculation",
-    badge: "Auto Computed",
-    description: "Calculated expression automatically derived from other columns (e.g. error, deviation).",
-    defaultAlign: "right",
-    defaultWidth: 120,
+    id: "judgements",
+    categoryLabel: "4. Metrological Judgement & Compliance (ISO 17025)",
+    types: [
+      {
+        value: "status",
+        label: "Judgement / Pass-Fail",
+        badge: "Verdict",
+        description: "Tolerance compliance evaluation returning PASS, FAIL, or manual evaluation.",
+        defaultAlign: "center",
+        defaultWidth: 120,
+        role: "JUDGEMENT",
+        semanticRole: "JUDGEMENT",
+        dataType: "STATUS",
+      },
+    ],
   },
   {
-    value: "status",
-    label: "Judgement / Pass-Fail",
-    badge: "Metrology Verdict",
-    description: "Tolerance compliance evaluation returning PASS, FAIL, or review status.",
-    defaultAlign: "center",
-    defaultWidth: 120,
-  },
-  {
-    value: "tolerance",
-    label: "Tolerance (±)",
-    badge: "Allowable Limits",
-    description: "Allowable tolerance limit for this calibration point or row.",
-    defaultAlign: "right",
-    defaultWidth: 110,
-  },
-  {
-    value: "number",
-    label: "Numeric Value",
-    badge: "General Number",
-    description: "Standard numeric field without metrology calculation binding.",
-    defaultAlign: "right",
-    defaultWidth: 110,
-  },
-  {
-    value: "text",
-    label: "Text / Note",
-    badge: "String / Notes",
-    description: "General text, test conditions, or descriptive parameters.",
-    defaultAlign: "left",
-    defaultWidth: 140,
+    id: "general",
+    categoryLabel: "5. General Data & Annotations",
+    types: [
+      {
+        value: "text",
+        label: "Text / Note / Description",
+        badge: "Text Note",
+        description: "General text, test conditions, parameter description, or remarks.",
+        defaultAlign: "left",
+        defaultWidth: 140,
+        role: "METADATA",
+        semanticRole: "METADATA",
+        dataType: "TEXT",
+      },
+      {
+        value: "number",
+        label: "Numeric Value",
+        badge: "General Number",
+        description: "Standard numeric field without metrology calculation binding.",
+        defaultAlign: "right",
+        defaultWidth: 110,
+        role: "INPUT",
+        semanticRole: "INPUT",
+        dataType: "NUMBER",
+      },
+    ],
   },
 ];
+
+const COLUMN_TYPES: ColumnTypeItem[] = COLUMN_CATEGORIES.flatMap((c) => c.types);
 
 export function AddColumnModal({
   open,
@@ -200,7 +275,7 @@ export function AddColumnModal({
       setIsTypeManual(false);
       setColumnDecimals("inherit");
       setColumnFormula("");
-      setColumnAlign("right");
+      setColumnAlign("center");
       setColumnWidth(120);
       setColumnGroupName("");
     }
@@ -416,12 +491,17 @@ export function AddColumnModal({
     const dedicatedDec =
       columnDecimals === "inherit" ? undefined : parseInt(columnDecimals, 10);
 
+    const typeDef = COLUMN_TYPES.find((c) => c.value === columnType);
+
     const newCol: CanvasColumnDef = {
       id: trimmedKey,
       key: trimmedKey,
       label: trimmedName,
       type: columnType,
-      role: columnType === "status" ? "JUDGEMENT" : undefined,
+      role: typeDef?.role || (columnType === "status" ? "JUDGEMENT" : "INPUT"),
+      semanticRole: typeDef?.semanticRole || "INPUT",
+      dataType: typeDef?.dataType || (columnType === "text" ? "TEXT" : "NUMBER"),
+      isPassFail: columnType === "status",
       isManualJudgement: isManualJudgement,
       judgementMode: columnType === "status" ? judgementMode : undefined,
       formula:
@@ -443,9 +523,9 @@ export function AddColumnModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto p-0 gap-0 border border-slate-200 dark:border-slate-800 bg-background shadow-2xl rounded-xl">
-        {/* Header */}
-        <DialogHeader className="p-6 pb-4 border-b border-slate-200 dark:border-slate-800">
+      <DialogContent className="sm:max-w-xl h-[88vh] max-h-[760px] flex flex-col p-0 gap-0 border border-slate-200 dark:border-slate-800 bg-background shadow-2xl rounded-xl overflow-hidden">
+        {/* Header - Fixed */}
+        <DialogHeader className="p-6 pb-4 border-b border-slate-200 dark:border-slate-800 shrink-0 bg-background">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/20 text-primary shrink-0">
               <Columns className="w-5 h-5" />
@@ -471,8 +551,8 @@ export function AddColumnModal({
           </div>
         </DialogHeader>
 
-        {/* Form Body */}
-        <div className="p-6 space-y-4">
+        {/* Form Body - Scrollable only */}
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Section 1: Column Name & Disabled Key Identifier */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
             <div className="space-y-1.5">
@@ -535,22 +615,33 @@ export function AddColumnModal({
               </div>
               <Select value={columnType} onValueChange={(val: any) => handleTypeSelect(val)}>
                 <SelectTrigger className="h-10 text-sm border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <SelectValue placeholder="Select column type" />
+                  <SelectValue placeholder="Select column type">
+                    {selectedTypeConfig ? (
+                      <span className="font-medium truncate text-foreground">{selectedTypeConfig.label}</span>
+                    ) : undefined}
+                  </SelectValue>
                 </SelectTrigger>
-                <SelectContent className="max-h-64 border-slate-200 dark:border-slate-800 shadow-lg">
-                  {COLUMN_TYPES.map((typeItem) => (
-                    <SelectItem
-                      key={typeItem.value}
-                      value={typeItem.value}
-                      className="py-2.5 cursor-pointer text-sm"
-                    >
-                      <div className="flex items-center justify-between w-full gap-3">
-                        <span className="font-medium">{typeItem.label}</span>
-                        <span className="text-xs opacity-75 font-normal">
-                          ({typeItem.badge})
-                        </span>
-                      </div>
-                    </SelectItem>
+                <SelectContent className="max-h-72 border-slate-200 dark:border-slate-800 shadow-xl">
+                  {COLUMN_CATEGORIES.map((category) => (
+                    <SelectGroup key={category.id}>
+                      <SelectLabel className="text-[11px] font-semibold text-primary uppercase tracking-wider py-1.5 pl-8 pr-2 bg-slate-100/70 dark:bg-slate-800/70">
+                        {category.categoryLabel}
+                      </SelectLabel>
+                      {category.types.map((typeItem) => (
+                        <SelectItem
+                          key={typeItem.value}
+                          value={typeItem.value}
+                          className="py-2 cursor-pointer text-sm"
+                        >
+                          <div className="flex items-center justify-between w-full gap-2">
+                            <span className="font-medium text-foreground">{typeItem.label}</span>
+                            <span className="text-[11px] text-muted-foreground font-normal shrink-0">
+                              ({typeItem.badge})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -1006,8 +1097,8 @@ export function AddColumnModal({
           </div>
         </div>
 
-        {/* Footer */}
-        <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/30 flex items-center justify-between sm:justify-between">
+        {/* Footer - Fixed */}
+        <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/60 shrink-0 flex items-center justify-between sm:justify-between">
           <Button
             type="button"
             variant="outline"

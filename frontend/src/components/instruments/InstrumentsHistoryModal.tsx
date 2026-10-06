@@ -116,7 +116,7 @@ export function InstrumentsHistoryModal({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto p-0 gap-0 border rounded-xl shadow-xl">
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0 gap-0 border rounded-xl shadow-xl">
           {/* Header */}
           <div className="p-5 border-b bg-muted/20">
             <div className="flex items-start gap-3.5">

@@ -14,6 +14,7 @@ import { getInstrument } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { StatusBadge } from "@/components/common/StatusBadge";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { PageHeader } from "@/components/common/PageHeader";
 import { format } from "date-fns";
@@ -328,6 +329,15 @@ export default function CalibrationHistory() {
                                 </Badge>
                               )}
                               <VerdictBadge verdict={cal.verdict} size="sm" />
+                              {cal.approval_status === "Approved" ? (
+                                <StatusBadge status="OK" size="xs" />
+                              ) : cal.approval_status === "Reviewed" || cal.approval_status === "Pending Approval" ? (
+                                <StatusBadge status="Under Calibration" subStatus="Approve Pending" size="xs" />
+                              ) : cal.approval_status === "Rejected" ? (
+                                <StatusBadge status="REJECTED" size="xs" />
+                              ) : (
+                                <StatusBadge status="Under Calibration" subStatus="Review Pending" size="xs" />
+                              )}
                               {cal.ulr_number && (
                                 <Badge variant="outline" className="text-[10px] font-mono">ULR: {cal.ulr_number}</Badge>
                               )}

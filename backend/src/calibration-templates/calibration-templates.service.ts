@@ -10,6 +10,10 @@ import { CalibrationTemplate } from './entities/calibration-template.entity';
 import { CreateCalibrationTemplateDto } from './dto/create-calibration-template.dto';
 import { UpdateCalibrationTemplateDto } from './dto/update-calibration-template.dto';
 import { BulkDeleteCalibrationTemplatesDto } from './dto/bulk-delete-calibration-templates.dto';
+import {
+  validateTemplateBlockFormulas,
+  validateFormulaSyntax,
+} from '../calibration/utils/formula-engine.util';
 
 function slugifyTableKey(title: string): string {
   if (!title) return 'table';
@@ -89,7 +93,21 @@ export class CalibrationTemplatesService {
       dto.calibration_type = 'dimensional';
     }
     if (dto.layout_blocks) {
+      const formulaCheck = validateTemplateBlockFormulas(dto.layout_blocks as any);
+      if (!formulaCheck.valid) {
+        throw new BadRequestException(
+          `Template contains invalid formula(s): ${formulaCheck.errors.join('; ')}`,
+        );
+      }
       ensureTableKeys(dto.layout_blocks as any);
+    }
+    if (dto.status_formula) {
+      const statusCheck = validateFormulaSyntax(dto.status_formula);
+      if (!statusCheck.valid) {
+        throw new BadRequestException(
+          `Template status formula is invalid: ${statusCheck.message}`,
+        );
+      }
     }
     const template = this.repository.create(dto);
     return this.repository.save(template);
@@ -185,7 +203,21 @@ export class CalibrationTemplatesService {
       }
     }
     if (dto.layout_blocks) {
+      const formulaCheck = validateTemplateBlockFormulas(dto.layout_blocks as any);
+      if (!formulaCheck.valid) {
+        throw new BadRequestException(
+          `Template contains invalid formula(s): ${formulaCheck.errors.join('; ')}`,
+        );
+      }
       ensureTableKeys(dto.layout_blocks as any);
+    }
+    if (dto.status_formula) {
+      const statusCheck = validateFormulaSyntax(dto.status_formula);
+      if (!statusCheck.valid) {
+        throw new BadRequestException(
+          `Template status formula is invalid: ${statusCheck.message}`,
+        );
+      }
     }
     Object.assign(template, dto);
     if (dto.diagram_image !== undefined) {

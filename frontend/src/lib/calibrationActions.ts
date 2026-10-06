@@ -20,6 +20,7 @@ export async function listCalibrations(params: {
   calibrationType?: string;
   verdict?: string;
   pendingCertsOnly?: boolean;
+  approvalStatus?: string;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -28,6 +29,23 @@ export async function listCalibrations(params: {
   pageSize?: number;
 }) {
   const res = await httpClient.get("/calibrations", { params });
+  return res.data;
+}
+
+export interface ApprovalStats {
+  pendingReview: number;
+  reviewed: number;
+  approved: number;
+  rejected: number;
+  total: number;
+}
+
+/** Get approval workflow status statistics */
+export async function getApprovalStats(params?: {
+  companyId?: string;
+  userId?: string;
+}): Promise<ApprovalStats> {
+  const res = await httpClient.get("/calibrations/approval-stats", { params });
   return res.data;
 }
 

@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
-import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
+import { listCalibrations, getCalibration, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
 import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
@@ -78,7 +78,15 @@ export default function Calibration() {
   const [verdictFilter, setVerdictFilter] = useState("All");
   const [typeFilter, setTypeFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Overdue instruments state
   const [overdueCount, setOverdueCount] = useState<number>(0);
@@ -135,6 +143,7 @@ export default function Calibration() {
     const startOfCurrentMonth = startOfMonth(now);
 
     let list = overdueInstruments.filter((inst) => {
+      if (inst.status === "Under Calibration" || inst.status === "UNDER_CALIBRATION") return false;
       const dStr = inst.due_date || inst.next_due_date;
       if (!dStr) return true;
       const d = new Date(dStr);
@@ -245,7 +254,7 @@ export default function Calibration() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
-      fetchData();
+      refreshAll();
       setPendingCertsList((prev) => prev.filter((c) => c.id !== cal.id));
     } catch {
       toast.error("Failed to generate certificate");
@@ -290,46 +299,24 @@ export default function Calibration() {
     }
   }, [pendingCertsModalOpen, user?.id]);
 
-  const fetchData = async () => {
+  const fetchCalibrationsList = async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const now = new Date();
-      const startStr = overdueScope === "current_month" ? format(startOfMonth(now), "yyyy-MM-dd") : undefined;
-      const endStr = overdueScope === "current_month" ? format(endOfMonth(now), "yyyy-MM-dd") : undefined;
-      const isRefParam = overdueScope === "current_month" ? "false" : undefined;
+      const calData = await listCalibrations({
+        userId: user.id,
+        companyId: user.companyId,
+        verdict: verdictFilter !== "All" ? verdictFilter : undefined,
+        calibrationType: typeFilter !== "All" ? typeFilter : undefined,
+        pendingCertsOnly: activeTab === "pending" || certStatusFilter === "pending" ? true : undefined,
+        search: debouncedSearchQuery.trim() ? debouncedSearchQuery.trim() : undefined,
+        latestOnly: viewMode === "latest" && activeTab !== "pending",
+        page,
+        pageSize,
+      });
 
-      const [calData, statsData, draftData, overdueData, summaryData] = await Promise.all([
-        listCalibrations({
-          userId: user.id,
-          companyId: user.companyId,
-          verdict: verdictFilter !== "All" ? verdictFilter : undefined,
-          calibrationType: typeFilter !== "All" ? typeFilter : undefined,
-          pendingCertsOnly: activeTab === "pending" || certStatusFilter === "pending" ? true : undefined,
-          search: searchQuery.trim() ? searchQuery.trim() : undefined,
-          latestOnly: viewMode === "latest" && activeTab !== "pending",
-          page,
-          pageSize,
-        }),
-        getCalibrationStats(user.id),
-        getAllDrafts(user.id).catch(() => []),
-        listInstruments({
-          status: "Overdue",
-          item_status: "Active",
-          pageSize: 500,
-          companyId: user.companyId,
-        }).catch(() => ({ data: [] })),
-        getDashboardSummary(user.id, startStr, endStr, undefined, undefined, undefined, isRefParam, user.companyId).catch(() => ({} as any)),
-      ]);
-
-      setCalibrations(calData.data || []);
-      setDrafts(draftData || []);
-      setTotal(calData.total || 0);
-      setStats(statsData);
-
-      const overdueList = overdueData.data || (Array.isArray(overdueData) ? overdueData : []);
-      setOverdueInstruments(overdueList);
-      setOverdueCount(summaryData?.overdue || overdueList.length || 0);
+      setCalibrations(calData?.data || []);
+      setTotal(calData?.total || 0);
     } catch {
       toast.error("Failed to load calibrations");
     } finally {
@@ -337,9 +324,61 @@ export default function Calibration() {
     }
   };
 
+  const fetchMetadata = async () => {
+    if (!user?.id) return;
+    try {
+      const [statsData, draftData] = await Promise.all([
+        getCalibrationStats(user.id).catch(() => null),
+        getAllDrafts(user.id).catch(() => []),
+      ]);
+      if (statsData) setStats(statsData);
+      if (draftData) setDrafts(draftData);
+    } catch (e) {
+      console.warn("Could not load calibration metadata:", e);
+    }
+  };
+
+  const fetchOverdueData = async () => {
+    if (!user?.id) return;
+    try {
+      const overdueData = await listInstruments({
+        status: "Overdue",
+        item_status: "Active",
+        pageSize: 100,
+        companyId: user.companyId,
+      }).catch(() => ({ data: [] }));
+
+      const rawList = overdueData?.data || (Array.isArray(overdueData) ? overdueData : []);
+      const overdueList = rawList.filter(
+        (inst: any) => inst && inst.status !== "Under Calibration" && inst.status !== "UNDER_CALIBRATION"
+      );
+      setOverdueInstruments(overdueList);
+      setOverdueCount(overdueList.length);
+    } catch (e) {
+      console.warn("Could not load overdue instruments:", e);
+    }
+  };
+
+  const refreshAll = () => {
+    fetchCalibrationsList();
+    fetchMetadata();
+    fetchOverdueData();
+  };
+
+  // Only re-fetch the calibrations table when page, filters, or search change
   useEffect(() => {
-    fetchData();
-  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery, viewMode, overdueScope, certStatusFilter, activeTab]);
+    if (user?.id) {
+      fetchCalibrationsList();
+    }
+  }, [user?.id, user?.companyId, page, pageSize, verdictFilter, typeFilter, debouncedSearchQuery, viewMode, certStatusFilter, activeTab]);
+
+  // Fetch summary metadata and overdue instruments once on mount or when company/scope changes
+  useEffect(() => {
+    if (user?.id) {
+      fetchMetadata();
+      fetchOverdueData();
+    }
+  }, [user?.id, user?.companyId, overdueScope]);
 
   const handleOpenDeleteModal = async (cal: CalibrationRecord) => {
     setCalibrationToDelete(cal);
@@ -375,7 +414,7 @@ export default function Calibration() {
       setDeleteModalOpen(false);
       setCalibrationToDelete(null);
       setResequencePreview(null);
-      fetchData();
+      refreshAll();
     } catch {
       toast.error("Failed to delete calibration record");
     } finally {
@@ -396,7 +435,7 @@ export default function Calibration() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
-      fetchData();
+      refreshAll();
       if (pendingCertsModalOpen) {
         fetchPendingCerts();
       }
@@ -439,9 +478,17 @@ export default function Calibration() {
   const [certPreviewModalOpen, setCertPreviewModalOpen] = useState(false);
   const [previewCalibration, setPreviewCalibration] = useState<CalibrationRecord | null>(null);
 
-  const handleOpenCertPreview = (cal: CalibrationRecord) => {
+  const handleOpenCertPreview = async (cal: CalibrationRecord) => {
     setPreviewCalibration(cal);
     setCertPreviewModalOpen(true);
+    if (!cal.calibration_points || (!cal.layout_blocks && cal.is_canvas_template)) {
+      try {
+        const full = await getCalibration(cal.id);
+        if (full) {
+          setPreviewCalibration(full);
+        }
+      } catch (e) {}
+    }
   };
 
   const fmtDate = (d?: string) => {

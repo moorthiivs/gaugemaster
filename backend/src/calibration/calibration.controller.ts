@@ -201,6 +201,19 @@ export class CalibrationController {
     );
   }
 
+  @Get('approval-stats')
+  async getApprovalStats(
+    @Req() req: any,
+    @Query('companyId') companyId?: string,
+    @Query('userId') userId?: string,
+  ) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
+    const effectiveUserId = isSuperAdmin ? (userId || req?.user?.userId || req?.user?.id) : (req?.user?.userId || req?.user?.id);
+
+    return this.calibrationService.getApprovalStats(effectiveUserId, effectiveCompanyId);
+  }
+
   @Get('stats/:userId')
   @RequirePermission('calibrations', 'view')
   async getStats(@Param('userId') userId: string) {

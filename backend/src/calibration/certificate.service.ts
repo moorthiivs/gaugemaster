@@ -20,6 +20,7 @@ import {
   applyVerticalAlignmentToTable,
   walkAndAlignPdfTables,
 } from './utils/pdf-table-align.util';
+import { evaluateRowMetrology } from './utils/formula-engine.util';
 
 const fonts = getPdfFonts();
 
@@ -1033,109 +1034,15 @@ export class CertificateService {
     const buildPdfCanvasBlocks = (blocks: any[], dense: boolean): any[] => {
       const resultElements: any[] = [];
 
-      const evalRowFormula = (formula: string, row: any, tolerance: number = 0.02, dec: number = 3): string => {
-        if (!formula) return '-';
-        try {
-          let expr = formula.trim();
-          const rawNom = (row.nominal_value !== undefined && row.nominal_value !== null && String(row.nominal_value).trim() !== '')
-            ? row.nominal_value
-            : (row.nominal !== undefined && row.nominal !== null && String(row.nominal).trim() !== '' && row.nominal !== 0 && row.nominal !== '0')
-            ? row.nominal
-            : row.nom ?? row.std_spec ?? row.std_value ?? row.nominal ?? 0;
-          const nominal = parseFloat(String(rawNom)) || 0;
-          const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.02;
-
-          // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
-          const isSubtraction = expr.includes('-') || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
-          const avgMatch = !isSubtraction && expr.match(/^=?AVERAGE\(([^)]+)\)/i);
-          if (avgMatch || (!isSubtraction && (expr.toLowerCase() === 'avg' || expr.toLowerCase() === 'average'))) {
-            let trials: number[] = [];
-            if (avgMatch) {
-              const varNames = avgMatch[1].split(',').map((s: string) => s.trim());
-              varNames.forEach((v: string) => {
-                const rawVal = row[v] ?? row[`col_${v}`] ?? row[`t${v}`];
-                if (rawVal !== undefined && String(rawVal).trim() !== '') {
-                  const val = parseFloat(String(rawVal));
-                  if (!isNaN(val)) trials.push(val);
-                }
-              });
-            }
-            if (trials.length === 0) {
-              const candidateKeys = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5];
-              trials = candidateKeys
-                .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
-                .map((v) => parseFloat(String(v)))
-                .filter((v) => !isNaN(v));
-            }
-            if (trials.length === 0) return '-';
-            const avg = trials.reduce((a, b) => a + b, 0) / trials.length;
-            return avg.toFixed(dec);
-          }
-
-          // 2. ERROR (measured - nominal or nominal - measured)
-          const isError =
-            /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr) ||
-            /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr) ||
-            (/error/i.test(expr) && !/PASS.*FAIL/i.test(expr));
-
-          if (isError) {
-            const isInverted = /(nominal|std)\s*-\s*(avg|average|reading|actual)/i.test(expr);
-            let measuredVal: number | undefined = undefined;
-
-            if (row.avg !== undefined && row.avg !== '-' && String(row.avg).trim() !== '') {
-              measuredVal = parseFloat(String(row.avg));
-            } else if (row.average !== undefined && row.average !== '-' && String(row.average).trim() !== '') {
-              measuredVal = parseFloat(String(row.average));
-            } else {
-              const trials = [row.t1, row.t2, row.t3, row.t4, row.t5]
-                .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
-                .map((v) => parseFloat(String(v)))
-                .filter((v) => !isNaN(v));
-              if (trials.length > 0) {
-                measuredVal = trials.reduce((a, b) => a + b, 0) / trials.length;
-              } else if (row.actual_value !== undefined && String(row.actual_value).trim() !== '') {
-                measuredVal = parseFloat(String(row.actual_value));
-              } else if (row.reading !== undefined && String(row.reading).trim() !== '') {
-                measuredVal = parseFloat(String(row.reading));
-              } else if (row.ascending_reading !== undefined && String(row.ascending_reading).trim() !== '') {
-                measuredVal = parseFloat(String(row.ascending_reading));
-              } else if (row.t1 !== undefined && String(row.t1).trim() !== '') {
-                measuredVal = parseFloat(String(row.t1));
-              }
-            }
-
-            if (measuredVal === undefined || isNaN(measuredVal)) return '-';
-            const err = isInverted ? nominal - measuredVal : measuredVal - nominal;
-            return (err >= 0 ? '+' : '') + err.toFixed(dec);
-          }
-
-          // 3. STATUS / JUDGEMENT
-          if (/IF\(.*PASS.*FAIL.*\)/i.test(expr) || /PASS.*FAIL/i.test(expr)) {
-            const limitMatch = expr.match(/<=\s*([0-9.]+)/i) || expr.match(/<\s*([0-9.]+)/i);
-            const tolLimit = limitMatch ? parseFloat(limitMatch[1]) : tol;
-
-            const hasReading =
-              row.error !== undefined ||
-              row.avg !== undefined ||
-              row.average !== undefined ||
-              (row.reading !== undefined && String(row.reading).trim() !== '') ||
-              (row.t1 !== undefined && String(row.t1).trim() !== '');
-            if (!hasReading) return '-';
-
-            let errVal: number;
-            if (row.error !== undefined && row.error !== '-') {
-              errVal = Math.abs(typeof row.error === 'number' ? row.error : parseFloat(String(row.error).replace('+', '')) || 0);
-            } else {
-              const readVal = parseFloat(String(row.avg ?? row.average ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal));
-              errVal = Math.abs(parseFloat((readVal - nominal).toFixed(dec)) || 0);
-            }
-            return errVal <= tolLimit + 1e-9 ? 'PASS' : 'FAIL';
-          }
-
-          return row[expr] ?? row[formula] ?? '-';
-        } catch {
-          return '-';
-        }
+      const evalRowFormula = (
+        formula: string,
+        row: any,
+        tolerance: number = 0.02,
+        dec: number = 3,
+        col?: any,
+        columns: any[] = [],
+      ): string => {
+        return evaluateRowMetrology(formula, row, tolerance, dec, columns, col);
       };
 
       const resolvePdfCellValue = (
@@ -1144,6 +1051,7 @@ export class CertificateService {
         tblTolerance: number = 0.02,
         tblDec: number = 3,
         rIdx?: number,
+        columns: any[] = [],
       ): string => {
         if (!row || !col) return '-';
 
@@ -1177,15 +1085,22 @@ export class CertificateService {
           /judg|verdict|status/i.test(colLabelLower);
 
         if (isStatusCol) {
-          if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== '') {
+          if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== '' && !(typeof rawCell === 'string' && rawCell.trim().startsWith('='))) {
             return String(rawCell).trim();
           }
           const fallbackStatus = row.judgement ?? row.status ?? row.verdict ?? row.result;
           if (fallbackStatus !== undefined && fallbackStatus !== null && String(fallbackStatus).trim() !== '') {
             return String(fallbackStatus).trim();
           }
-          if (col.formula && typeof col.formula === 'string' && col.formula.trim().length > 0) {
-            const fRes = evalRowFormula(col.formula, row, tblTolerance, dec);
+          const effectiveStatusFormula =
+            (row._cellFormulas && row._cellFormulas[col.id]) ||
+            (row.cellFormulas && row.cellFormulas[col.id]) ||
+            (typeof rawCell === 'string' && rawCell.trim().startsWith('=') ? rawCell : undefined) ||
+            col.customFormula ||
+            col.formula;
+
+          if (effectiveStatusFormula && typeof effectiveStatusFormula === 'string' && effectiveStatusFormula.trim().length > 0) {
+            const fRes = evalRowFormula(effectiveStatusFormula, row, tblTolerance, dec, col, columns);
             if (fRes !== undefined && fRes !== null && String(fRes).trim() !== '' && fRes !== '-') {
               return String(fRes).trim();
             }
@@ -1243,13 +1158,25 @@ export class CertificateService {
           if (colType === 'text') return '-';
         }
 
-        // 5. Formula Column
+        // 5. Formula Column (explicit formula, customFormula, cellFormulas, or =prefix)
+        const effectiveFormula =
+          (row._cellFormulas && row._cellFormulas[col.id]) ||
+          (row.cellFormulas && row.cellFormulas[col.id]) ||
+          (typeof rawCell === 'string' && rawCell.trim().startsWith('=') ? rawCell : undefined) ||
+          col.customFormula ||
+          col.formula;
+
         const hasFormula =
           colType === 'formula' ||
-          (typeof col.formula === 'string' && col.formula.trim().length > 0);
+          (typeof effectiveFormula === 'string' && effectiveFormula.trim().length > 0);
 
         if (hasFormula) {
-          if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== '') {
+          if (
+            rawCell !== undefined &&
+            rawCell !== null &&
+            String(rawCell).trim() !== '' &&
+            !(typeof rawCell === 'string' && rawCell.trim().startsWith('='))
+          ) {
             const strCell = String(rawCell).trim();
             const p = parseFloat(strCell);
             if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(strCell)) {
@@ -1257,8 +1184,8 @@ export class CertificateService {
             }
             return strCell;
           }
-          if (col.formula && typeof col.formula === 'string' && col.formula.trim().length > 0) {
-            const fRes = evalRowFormula(col.formula, row, tblTolerance, dec);
+          if (effectiveFormula && typeof effectiveFormula === 'string' && effectiveFormula.trim().length > 0) {
+            const fRes = evalRowFormula(effectiveFormula, row, tblTolerance, dec, col, columns);
             if (fRes !== undefined && fRes !== null && String(fRes).trim() !== '') {
               return String(fRes).trim();
             }
@@ -1427,7 +1354,7 @@ export class CertificateService {
             ];
 
             (tbl.rows || []).forEach((row: any, rIdx: number) => {
-              const val = resolvePdfCellValue(row, col, tbl.tolerance, dec, rIdx);
+              const val = resolvePdfCellValue(row, col, tbl.tolerance, dec, rIdx, tbl.columns || []);
 
               const valUpper = String(val).toUpperCase().trim();
               const isPass = valUpper === 'PASS' || valUpper === 'OK' || valUpper === 'NORMAL' || valUpper === 'ACCEPT';
@@ -1726,7 +1653,7 @@ export class CertificateService {
               return;
             }
             const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-            val = resolvePdfCellValue(row, col, tbl.tolerance, decimals, rIdx);
+            val = resolvePdfCellValue(row, col, tbl.tolerance, decimals, rIdx, tbl.columns || []);
 
             const valUpper = String(val).toUpperCase().trim();
             const isPass = valUpper === 'PASS' || valUpper === 'OK' || valUpper === 'NORMAL' || valUpper === 'ACCEPT';

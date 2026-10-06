@@ -129,6 +129,18 @@ export class Calibration {
   @Column({ nullable: true })
   verdict: string; // "PASS" | "FAIL" | "CONDITIONAL"
 
+  @Column({ nullable: true })
+  calculated_verdict?: string;
+
+  @Column({ type: 'boolean', default: false })
+  is_verdict_overridden?: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  verdict_override_reason?: string;
+
+  @Column({ nullable: true })
+  template_version_id?: string;
+
   @Column({ type: 'text', nullable: true })
   remarks: string;
 

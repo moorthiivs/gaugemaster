@@ -144,6 +144,9 @@ export class CalibrationTemplate {
   @Column({ nullable: true })
   companyId?: string;
 
+  @Column({ type: 'int', default: 1 })
+  version?: number;
+
   @CreateDateColumn()
   createdAt: Date;
 

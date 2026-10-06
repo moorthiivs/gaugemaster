@@ -8,7 +8,7 @@ import {
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw } from 'typeorm';
+import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw, Not } from 'typeorm';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -220,6 +220,7 @@ export class InstrumentsService {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
                 baseWhere.due_date = LessThan(todayStart);
+                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED']));
             } else if (normalizedStatus === 'duesoon') {
                 const dueSoonEnd = new Date(todayEnd);
                 dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
@@ -652,18 +653,26 @@ export class InstrumentsService {
                 }
             }
 
-            // Automatically update status based on new due_date if not REJECTED
-            const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
-            if (finalDueDate && payload.status !== 'REJECTED') {
-                const parsedDueDate = this.parseDateSafe(finalDueDate);
-                if (parsedDueDate) {
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    if (parsedDueDate <= today) {
-                        payload.status = 'Overdue';
-                    } else if ((instrument.status === 'Overdue' || instrument.status === 'REJECTED') && (!payload.status || payload.status === 'Overdue' || payload.status === 'REJECTED')) {
-                        // If it was overdue/rejected but now date is extended into the future and verdict passed, reset to OK
-                        payload.status = 'OK';
+            // Automatically update status based on new due_date if not REJECTED or Under Calibration
+            const isUnderCalibration =
+                payload.status === 'Under Calibration' ||
+                (!payload.status && instrument.status === 'Under Calibration');
+
+            if (isUnderCalibration) {
+                payload.status = 'Under Calibration';
+            } else {
+                const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
+                if (finalDueDate && payload.status !== 'REJECTED') {
+                    const parsedDueDate = this.parseDateSafe(finalDueDate);
+                    if (parsedDueDate) {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        if (parsedDueDate <= today) {
+                            payload.status = 'Overdue';
+                        } else if ((instrument.status === 'Overdue' || instrument.status === 'REJECTED') && (!payload.status || payload.status === 'Overdue' || payload.status === 'REJECTED')) {
+                            // If it was overdue/rejected but now date is extended into the future and verdict passed, reset to OK
+                            payload.status = 'OK';
+                        }
                     }
                 }
             }
@@ -1133,6 +1142,7 @@ export class InstrumentsService {
             const overdueInstruments = await this.instrumentRepository.find({
                 where: {
                     due_date: LessThan(today),
+                    status: Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED', 'Scrapped'])),
                 },
             });
 

@@ -3,6 +3,7 @@ import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getRoleName } from "@/lib/utils";
 import httpClient from "@/lib/httpClient";
+import { listCalibrations, getCalibration, getApprovalStats, ApprovalStats } from "@/lib/calibrationActions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +47,7 @@ export default function CalibrationApprovalList() {
   const { user } = useAuth();
   const { canAccess } = usePermissions();
   const [calibrations, setCalibrations] = useState<any[]>([]);
+  const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const roleName = getRoleName(user?.role || (user as any)?.userRole).toLowerCase();
@@ -54,12 +56,33 @@ export default function CalibrationApprovalList() {
   const isReviewer = roleName.includes("review") || isAdmin;
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [statusFilterTab, setStatusFilterTab] = useState(
     isApprover && !roleName.includes("review") ? "Reviewed" : "Pending Review"
   );
   const [reviewTab, setReviewTab] = useState("readings");
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  const [stats, setStats] = useState<ApprovalStats>({
+    pendingReview: 0,
+    reviewed: 0,
+    approved: 0,
+    rejected: 0,
+    total: 0,
+  });
+
+  // Debounce search input to avoid spamming the backend
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setPageIndex(1);
+  }, [debouncedSearchQuery, statusFilterTab]);
 
   // Dialog & Detail states
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
@@ -77,29 +100,35 @@ export default function CalibrationApprovalList() {
   const [reviewerSignature, setReviewerSignature] = useState(user?.name || "");
   const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (selectedRecord?.id && !selectedRecord.layout_blocks && selectedRecord.is_canvas_template) {
-      httpClient.get(`/calibrations/${selectedRecord.id}`).then((res) => {
-        if (res.data) {
-          setSelectedRecord((prev: any) => ({ ...prev, ...res.data }));
-        }
-      }).catch(() => {});
+  const fetchStats = async () => {
+    try {
+      const data = await getApprovalStats({
+        companyId: user?.companyId,
+        userId: user?.id,
+      });
+      if (data) {
+        setStats(data);
+      }
+    } catch (e) {
+      console.warn("Could not fetch approval stats:", e);
     }
-  }, [selectedRecord?.id]);
+  };
 
   const fetchCalibrations = async () => {
     setLoading(true);
     try {
-      const res = await httpClient.get("/calibrations", {
-        params: {
-          companyId: user?.companyId,
-          userId: user?.id,
-          pageSize: 100,
-        },
+      const res = await listCalibrations({
+        companyId: user?.companyId,
+        userId: user?.id,
+        approvalStatus: statusFilterTab !== "All" ? statusFilterTab : undefined,
+        search: debouncedSearchQuery.trim() ? debouncedSearchQuery.trim() : undefined,
+        page: pageIndex,
+        pageSize: pageSize,
       });
 
-      const items = res.data?.data || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+      const items = res?.data || res?.items || (Array.isArray(res) ? res : []);
       setCalibrations(items);
+      setTotalItems(res?.total ?? items.length);
     } catch (err: any) {
       console.error("Failed to fetch calibrations for approval:", err);
       toast({
@@ -114,61 +143,29 @@ export default function CalibrationApprovalList() {
   };
 
   useEffect(() => {
-    fetchCalibrations();
-  }, []);
+    if (user?.id) {
+      fetchCalibrations();
+    }
+  }, [user?.id, user?.companyId, pageIndex, pageSize, statusFilterTab, debouncedSearchQuery]);
+
+  useEffect(() => {
+    if (user?.id) {
+      fetchStats();
+    }
+  }, [user?.id, user?.companyId]);
 
   const handleRefresh = () => {
     setRefreshing(true);
     fetchCalibrations();
+    fetchStats();
   };
 
-  // Filter items based on statusFilterTab & search
-  const filteredCalibrations = calibrations.filter((cal) => {
-    const status = cal.approval_status || "Calibration Completed";
-    let matchesTab = true;
-    if (statusFilterTab === "Pending Review") {
-      matchesTab = status === "Calibration Completed" || status === "Pending Review";
-    } else if (statusFilterTab === "Reviewed") {
-      matchesTab = status === "Reviewed" || status === "Pending Approval";
-    } else if (statusFilterTab === "Approved") {
-      matchesTab = status === "Approved";
-    } else if (statusFilterTab === "Rejected") {
-      matchesTab = status === "Rejected";
-    }
-
-    const instName = cal.instrument?.name?.toLowerCase() || "";
-    const instCode = cal.instrument?.id_code?.toLowerCase() || "";
-    const certNo = cal.certificate_number?.toLowerCase() || "";
-    const engName = cal.calibrated_by?.toLowerCase() || "";
-    const revName = cal.reviewed_by?.toLowerCase() || "";
-    const q = searchQuery.toLowerCase();
-
-    const matchesSearch =
-      !q ||
-      instName.includes(q) ||
-      instCode.includes(q) ||
-      certNo.includes(q) ||
-      engName.includes(q) ||
-      revName.includes(q);
-
-    return matchesTab && matchesSearch;
-  });
-
-  // Workflow Stage counts
-  const pendingReviewCount = calibrations.filter(
-    (c) =>
-      (c.approval_status || "Calibration Completed") === "Calibration Completed" ||
-      c.approval_status === "Pending Review"
-  ).length;
-
-  const reviewedCount = calibrations.filter(
-    (c) =>
-      c.approval_status === "Reviewed" ||
-      c.approval_status === "Pending Approval"
-  ).length;
-
-  const approvedCount = calibrations.filter((c) => c.approval_status === "Approved").length;
-  const rejectedCount = calibrations.filter((c) => c.approval_status === "Rejected").length;
+  // Workflow Stage counts from single SQL aggregation
+  const pendingReviewCount = stats.pendingReview;
+  const reviewedCount = stats.reviewed;
+  const approvedCount = stats.approved;
+  const rejectedCount = stats.rejected;
+  const allCount = stats.total;
 
   // Handle Review & Recommend Submission (Stage 1)
   const handleConfirmReview = async () => {
@@ -194,6 +191,7 @@ export default function CalibrationApprovalList() {
       setSelectedRecord(null);
       setReviewerRemarks("");
       fetchCalibrations();
+      fetchStats();
     } catch (err: any) {
       console.error("Failed to review calibration:", err);
       toast({
@@ -230,6 +228,7 @@ export default function CalibrationApprovalList() {
       setSelectedRecord(null);
       setApproverRemarks("");
       fetchCalibrations();
+      fetchStats();
     } catch (err: any) {
       console.error("Failed to approve calibration:", err);
       toast({
@@ -272,6 +271,7 @@ export default function CalibrationApprovalList() {
       setRejectionReason("");
       setSelectedRecord(null);
       fetchCalibrations();
+      fetchStats();
     } catch (err: any) {
       console.error("Failed to reject calibration:", err);
       toast({
@@ -317,14 +317,7 @@ export default function CalibrationApprovalList() {
     );
   };
 
-  useEffect(() => {
-    setPageIndex(1);
-  }, [statusFilterTab, searchQuery]);
-
-  const pageCount = Math.ceil(filteredCalibrations.length / pageSize) || 1;
-  const paginatedCalibrations = useMemo(() => {
-    return filteredCalibrations.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
-  }, [filteredCalibrations, pageIndex, pageSize]);
+  const pageCount = Math.ceil(totalItems / pageSize) || 1;
 
   const columns = useMemo<ColumnDef<any>[]>(
     () => [
@@ -483,9 +476,13 @@ export default function CalibrationApprovalList() {
                     ? "bg-blue-600 hover:bg-blue-700 text-white font-semibold"
                     : ""
                 }`}
-                onClick={() => {
+                onClick={async () => {
                   setSelectedRecord(cal);
                   setReviewDialogOpen(true);
+                  try {
+                    const full = await getCalibration(cal.id);
+                    if (full) setSelectedRecord(full);
+                  } catch (e) {}
                 }}
               >
                 <Eye className="w-3.5 h-3.5" />
@@ -611,7 +608,7 @@ export default function CalibrationApprovalList() {
               <span className="text-[10px] opacity-70">({rejectedCount})</span>
             </TabsTrigger>
             <TabsTrigger value="All" className="text-xs">
-              <span>All ({calibrations.length})</span>
+              <span>All ({allCount})</span>
             </TabsTrigger>
           </TabsList>
         </Tabs>
@@ -630,12 +627,12 @@ export default function CalibrationApprovalList() {
       {/* Calibrations Approval List Table */}
       <DataTable
         columns={columns}
-        data={paginatedCalibrations}
+        data={calibrations}
         loading={loading}
         pageCount={pageCount}
         pageIndex={pageIndex}
         pageSize={pageSize}
-        totalItems={filteredCalibrations.length}
+        totalItems={totalItems}
         onPageChange={setPageIndex}
         onPageSizeChange={(s) => { setPageSize(s); setPageIndex(1); }}
         hideSearch={true}

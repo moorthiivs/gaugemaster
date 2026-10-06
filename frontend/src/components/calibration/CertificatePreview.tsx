@@ -12,6 +12,7 @@ import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols } from "@/lib/matrixTableUtils";
 import { resolveCertificateCellValue } from "@/lib/cellValueResolver";
+import { evaluateFormulaExpression, buildRowContext } from "@/lib/formulaEngine";
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -43,7 +44,7 @@ export interface CanvasBlocksRendererProps {
 export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksRendererProps) {
   if (!blocks || blocks.length === 0) return null;
 
-  const evalCanvasFormula = (formula: string, row: any, tolerance: number = 0.01, dec: number = 3): any => {
+  const evalLegacyCanvasFormula = (formula: string, row: any, tolerance: number = 0.02, dec: number = 3): any => {
     if (!formula) return "";
     try {
       let expr = formula.trim();
@@ -53,7 +54,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
         ? row.nominal
         : row.nom ?? row.std_spec ?? row.std_value ?? row.nominal ?? 0;
       const nominal = parseFloat(String(rawNom)) || 0;
-      const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.01;
+      const tol = parseFloat(String(row.tolerance ?? tolerance)) || 0.02;
 
       // 1. AVERAGE (ensure it's not a subtraction formula like "average - nominal")
       const isSubtraction = expr.includes("-") || /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
@@ -151,6 +152,46 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
       return row[expr] ?? row[formula] ?? "-";
     } catch {
       return "-";
+    }
+  };
+
+  const evalCanvasFormula = (
+    formula: string,
+    row: any,
+    tolerance: number = 0.02,
+    dec: number = 3,
+    col?: any,
+    columns: any[] = []
+  ): any => {
+    if (!formula || typeof formula !== "string" || !formula.trim()) return "";
+    try {
+      let expr = formula.trim();
+      if (expr.startsWith("=")) expr = expr.substring(1).trim();
+
+      const ctx = buildRowContext(row, columns, tolerance, dec);
+      const evalRes = evaluateFormulaExpression(expr, ctx, dec);
+
+      if (evalRes.success && evalRes.formatted !== undefined && evalRes.formatted !== null) {
+        if (evalRes.formatted === "" || evalRes.formatted === "-") return "-";
+
+        const isErrorCol =
+          col?.id === "error" ||
+          col?.id === "deviation" ||
+          col?.label?.toLowerCase().includes("error") ||
+          col?.label?.toLowerCase().includes("deviation") ||
+          /(avg|average|reading|actual)\s*-\s*(nominal|std)/i.test(expr);
+
+        if (isErrorCol && typeof evalRes.numeric === "number") {
+          const rounded = parseFloat(evalRes.numeric.toFixed(dec));
+          return (rounded >= 0 ? "+" : "") + rounded.toFixed(dec);
+        }
+
+        return evalRes.formatted;
+      }
+
+      return evalLegacyCanvasFormula(formula, row, tolerance, dec);
+    } catch {
+      return evalLegacyCanvasFormula(formula, row, tolerance, dec);
     }
   };
 
@@ -360,7 +401,8 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         const val = resolveCertificateCellValue(row, col, {
                           tableTolerance: tbl.tolerance,
                           tableDecimals: colDec,
-                          evalFormula: evalCanvasFormula,
+                          evalFormula: (f: string, r: any, tol: number, d: number) =>
+                            evalCanvasFormula(f, r, tol, d, col, tbl.columns || []),
                           rowIndex: rIdx,
                         });
 
@@ -594,7 +636,8 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         val = resolveCertificateCellValue(row, col, {
                           tableTolerance: tbl.tolerance,
                           tableDecimals: colDec,
-                          evalFormula: evalCanvasFormula,
+                          evalFormula: (f: string, r: any, tol: number, d: number) =>
+                            evalCanvasFormula(f, r, tol, d, col, tbl.columns || []),
                           rowIndex: rIdx,
                         });
 
