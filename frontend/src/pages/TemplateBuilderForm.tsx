@@ -383,16 +383,25 @@ export default function TemplateBuilderForm() {
     setLayoutBlocks((prev) => {
       const updated = prev.map((b) => {
         if (b.id === activeTableBlock.id && b.type === "table_grid") {
-          return { ...b, ...updates } as CanvasBlock;
+          const hasTolCol = b.columns?.some((c) => c && (c.type === "tolerance" || c.id === "tolerance" || c.id === "tol"));
+          const syncedRows = updates.tolerance !== undefined && !hasTolCol && Array.isArray(b.rows)
+            ? b.rows.map((r) => ({ ...r, tolerance: updates.tolerance }))
+            : (updates.rows ?? b.rows);
+          return { ...b, ...updates, rows: syncedRows } as CanvasBlock;
         }
         if (b.type === "split_row" && b.children) {
           return {
             ...b,
-            children: b.children.map((c) =>
-              c.id === activeTableBlock.id && c.type === "table_grid"
-                ? ({ ...c, ...updates } as any)
-                : c,
-            ),
+            children: b.children.map((c) => {
+              if (c.id === activeTableBlock.id && c.type === "table_grid") {
+                const hasTolCol = c.columns?.some((col: any) => col && (col.type === "tolerance" || col.id === "tolerance" || col.id === "tol"));
+                const syncedRows = updates.tolerance !== undefined && !hasTolCol && Array.isArray(c.rows)
+                  ? c.rows.map((r: any) => ({ ...r, tolerance: updates.tolerance }))
+                  : (updates.rows ?? c.rows);
+                return { ...c, ...updates, rows: syncedRows } as any;
+              }
+              return c;
+            }),
           } as CanvasBlock;
         }
         return b;

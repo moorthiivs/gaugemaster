@@ -2932,6 +2932,7 @@ export default function CalibrationWizard() {
       ...targetTbl.rows[rowIndex],
       [colId]: val,
       ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
+      ...(colId === "required_dimensions" || colId === "required_dimension" ? { required_dimensions: val, required_dimension: val } : {}),
     };
 
     const isTolCol =
@@ -3032,6 +3033,40 @@ export default function CalibrationWizard() {
     }
 
     targetTbl.rows[rowIndex] = evaluatedRow;
+
+    // If cell is merged across rows (rowSpan > 1), sync value and specification parsing to all sibling rows in the span
+    const spanInfo = targetTbl.rows[rowIndex]?.cellSpans?.[colId];
+    const rSpan = spanInfo?.rowSpan || 1;
+    if (rSpan > 1) {
+      for (let r = rowIndex + 1; r < Math.min(targetTbl.rows.length, rowIndex + rSpan); r++) {
+        const siblingRow = {
+          ...targetTbl.rows[r],
+          [colId]: val,
+          ...(colId === "required_dimensions" || colId === "required_dimension" ? { required_dimensions: val, required_dimension: val } : {}),
+        };
+        if (isSpecCol) {
+          const specText = String(val ?? "").trim();
+          const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
+          if (parsed.isValid) {
+            siblingRow.nominal = parsed.nominal;
+            siblingRow.nom = parsed.nominal;
+            siblingRow.lower_tolerance = parsed.lowerTolerance;
+            siblingRow.upper_tolerance = parsed.upperTolerance;
+            siblingRow.lower_limit = parsed.lowerLimit;
+            siblingRow.upper_limit = parsed.upperLimit;
+            siblingRow.lowerLimit = parsed.lowerLimit;
+            siblingRow.upperLimit = parsed.upperLimit;
+          } else {
+            const num = parseFloat(specText);
+            if (!isNaN(num)) {
+              siblingRow.nominal = num;
+              siblingRow.nom = num;
+            }
+          }
+        }
+        targetTbl.rows[r] = siblingRow;
+      }
+    }
 
     // Fully re-evaluate canvas blocks with targeted cross-table dependency resolution
     const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks, {
@@ -3819,7 +3854,11 @@ export default function CalibrationWizard() {
                     if (isMerged) {
                       const cellVal = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
                         ? row[col.id]
-                        : (col.id === "nominal" ? row.nominal : "") ?? "";
+                        : (col.id === "nominal"
+                          ? row.nominal
+                          : (col.id === "required_dimensions" || col.id === "required_dimension"
+                            ? (row.required_dimensions ?? row.required_dimension ?? row.specification ?? "")
+                            : "")) ?? "";
                       const isReadingOrTrial =
                         col.type === "trial" ||
                         col.type === "reading" ||
@@ -3827,6 +3866,32 @@ export default function CalibrationWizard() {
                         col.dataType === "MEASUREMENT" ||
                         /actual|reading|trial|observed/i.test(col.id) ||
                         /actual|reading|trial|observed/i.test(col.label || "");
+
+                      const isFormulaCol = col.type === "formula" || Boolean(row.cellFormulas?.[col.id]);
+                      const isJudgementCol =
+                        !isFormulaCol &&
+                        (col.type === "status" ||
+                          col.type === "judgement" ||
+                          col.role === "JUDGEMENT" ||
+                          col.semanticRole === "JUDGEMENT" ||
+                          Boolean(col.isPassFail) ||
+                          /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || ""));
+
+                      const isDescCol = col.id === "description";
+                      const isReqDimCol = col.id === "required_dimension" || col.id === "required_dimensions" || /dimension/i.test(col.label || "") || /dimension/i.test(col.id || "");
+                      const isSpecCol = isReqDimCol || isDescCol || col.id === "specification" || col.id === "spec" || /spec/i.test(col.label || "") || /spec/i.test(col.id || "");
+
+                      const isEditableMergedText =
+                        !col.readOnly &&
+                        !isFormulaCol &&
+                        !isJudgementCol &&
+                        (col.type === "text" ||
+                          col.type === "nominal" ||
+                          col.type === "tolerance" ||
+                          col.type === "number" ||
+                          isSpecCol ||
+                          col.editable === true ||
+                          (!col.readOnly && col.type !== "formula"));
 
                       return (
                         <td
@@ -3927,6 +3992,109 @@ export default function CalibrationWizard() {
                                   className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-2 flex-1 min-w-[50px]"
                                   placeholder="0.000"
                                 />
+                              </div>
+                            )
+                          ) : isEditableMergedText ? (
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1 px-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                {isSpecCol || String(cellVal).includes("\n") ? (
+                                  <Textarea
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    rows={String(cellVal).includes("\n") || rSpan > 1 ? 2 : 1}
+                                    className="min-h-[28px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/80 hover:bg-background focus:bg-background transition-colors text-left w-full"
+                                    placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 50.80-0.02"}
+                                  />
+                                ) : (
+                                  <Input
+                                    type="text"
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    className="h-6 text-[11px] font-mono py-0 px-1.5 w-full bg-background/80 text-center"
+                                    placeholder="Value"
+                                  />
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 w-full justify-center px-1">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                {isSpecCol ? (
+                                  <Textarea
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    rows={1}
+                                    className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/80 hover:bg-background focus:bg-background transition-colors text-left flex-1"
+                                    placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 50.80-0.02"}
+                                  />
+                                ) : (
+                                  <Input
+                                    type="text"
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    className="h-6 text-[11px] font-mono py-0 px-1.5 flex-1 bg-background/80 text-center"
+                                  />
+                                )}
                               </div>
                             )
                           ) : (

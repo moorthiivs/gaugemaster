@@ -2593,8 +2593,12 @@ export function buildRowContext(
     average: trialValues.length > 0 ? actualVal : (row.average ?? ""),
     error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
     Error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
-    deviation: hasReading ? (actualVal! - nom) : (row.deviation ?? ""),
-    Deviation: hasReading ? (actualVal! - nom) : (row.deviation ?? ""),
+    deviation: (!isBlankValue(row.deviation) && row.deviation !== "-")
+      ? (typeof row.deviation === "number" ? row.deviation : (!isNaN(Number(row.deviation)) ? parseFloat(String(row.deviation)) : row.deviation))
+      : (hasReading ? (actualVal! - nom) : (row.deviation ?? "")),
+    Deviation: (!isBlankValue(row.deviation) && row.deviation !== "-")
+      ? (typeof row.deviation === "number" ? row.deviation : (!isNaN(Number(row.deviation)) ? parseFloat(String(row.deviation)) : row.deviation))
+      : (hasReading ? (actualVal! - nom) : (row.deviation ?? "")),
     MPE: acceptanceCriteriaValue || tolerance,
     mpe: acceptanceCriteriaValue || tolerance,
     Limit: acceptanceCriteriaValue || tolerance,
