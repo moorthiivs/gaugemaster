@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useReactToPrint } from "react-to-print";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw, Gauge, Pencil } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw, Gauge, Pencil, Filter, ExternalLink } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
@@ -38,7 +38,7 @@ import { VerdictBadge } from "@/components/calibration/VerdictBadge";
 import { JudgementCellControl } from "@/components/calibration/JudgementCellControl";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPicker } from "@/components/ui/calendar";
-import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
+import { YearMonthDatePicker, parseFlexibleDate } from "@/components/ui/year-month-date-picker";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn, getRoleName } from "@/lib/utils";
@@ -74,6 +74,417 @@ const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-y
   }
 };
 
+export interface ValidityCheckResult {
+  status: "valid" | "warning" | "expired" | "empty";
+  daysRemaining: number | null;
+  formattedDate: string;
+  isExpired: boolean;
+  isWarning: boolean;
+  message: string;
+}
+
+export const checkReferenceStandardValidity = (
+  validityStr?: string | Date | null
+): ValidityCheckResult => {
+  if (!validityStr) {
+    return {
+      status: "empty",
+      daysRemaining: null,
+      formattedDate: "",
+      isExpired: false,
+      isWarning: false,
+      message: "",
+    };
+  }
+
+  const valDate = parseFlexibleDate(validityStr);
+  if (!valDate || isNaN(valDate.getTime())) {
+    return {
+      status: "empty",
+      daysRemaining: null,
+      formattedDate: "",
+      isExpired: false,
+      isWarning: false,
+      message: "",
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const targetDate = new Date(valDate.getFullYear(), valDate.getMonth(), valDate.getDate());
+  targetDate.setHours(0, 0, 0, 0);
+
+  const diffMs = targetDate.getTime() - today.getTime();
+  const daysRemaining = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const formattedDate = formatDisplayDate(targetDate);
+
+  // Expired relative to today
+  if (daysRemaining < 0) {
+    const absDays = Math.abs(daysRemaining);
+    return {
+      status: "expired",
+      daysRemaining,
+      formattedDate,
+      isExpired: true,
+      isWarning: false,
+      message: `Expired ${absDays === 1 ? "1 day ago" : `${absDays} days ago`} (${formattedDate})`,
+    };
+  }
+
+  // Expiring within 15 days (0 <= daysRemaining <= 15)
+  if (daysRemaining <= 15) {
+    return {
+      status: "warning",
+      daysRemaining,
+      formattedDate,
+      isExpired: false,
+      isWarning: true,
+      message:
+        daysRemaining === 0
+          ? `Expires today (${formattedDate})`
+          : `Expires in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""} (${formattedDate})`,
+    };
+  }
+
+  return {
+    status: "valid",
+    daysRemaining,
+    formattedDate,
+    isExpired: false,
+    isWarning: false,
+    message: `Valid until ${formattedDate} (${daysRemaining} days remaining)`,
+  };
+};
+
+interface MasterStandardSelectProps {
+  masterStandards: Instrument[];
+  selectedMasterId: string;
+  onSelect: (master: Instrument) => void;
+  onClear?: () => void;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  filterMode?: "all" | "valid" | "warning" | "expired";
+  onFilterModeChange?: (mode: "all" | "valid" | "warning" | "expired") => void;
+}
+
+function MasterStandardSelect({
+  masterStandards,
+  selectedMasterId,
+  onSelect,
+  onClear,
+  isOpen,
+  onOpenChange,
+  filterMode,
+  onFilterModeChange,
+}: MasterStandardSelectProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isOpen !== undefined ? isOpen : internalOpen;
+  const setOpen = (val: boolean) => {
+    setInternalOpen(val);
+    onOpenChange?.(val);
+  };
+
+  const [internalFilter, setInternalFilter] = useState<"all" | "valid" | "warning" | "expired">("all");
+  const activeFilter = filterMode !== undefined ? filterMode : internalFilter;
+  const setFilter = (mode: "all" | "valid" | "warning" | "expired") => {
+    setInternalFilter(mode);
+    onFilterModeChange?.(mode);
+  };
+
+  const [search, setSearch] = useState("");
+
+  const selectedMaster = masterStandards.find(
+    (m) =>
+      m.id === selectedMasterId ||
+      m.id_code === selectedMasterId ||
+      (selectedMasterId && m.name?.toLowerCase() === selectedMasterId?.toLowerCase())
+  );
+
+  const counts = useMemo(() => {
+    let valid = 0;
+    let warning = 0;
+    let expired = 0;
+    masterStandards.forEach((m) => {
+      if (!m.due_date) {
+        valid++;
+        return;
+      }
+      const v = checkReferenceStandardValidity(m.due_date);
+      if (v.isExpired) expired++;
+      else if (v.isWarning) warning++;
+      else valid++;
+    });
+    return { all: masterStandards.length, valid, warning, expired };
+  }, [masterStandards]);
+
+  const filteredMasters = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return masterStandards.filter((m) => {
+      if (q) {
+        const nameMatch = (m.name || "").toLowerCase().includes(q);
+        const codeMatch = (m.id_code || "").toLowerCase().includes(q);
+        const makeMatch = (m.make || "").toLowerCase().includes(q);
+        if (!nameMatch && !codeMatch && !makeMatch) return false;
+      }
+      if (activeFilter === "all") return true;
+      const v = m.due_date ? checkReferenceStandardValidity(m.due_date) : { isExpired: false, isWarning: false };
+      if (activeFilter === "valid") return !v.isExpired;
+      if (activeFilter === "warning") return v.isWarning;
+      if (activeFilter === "expired") return v.isExpired;
+      return true;
+    });
+  }, [masterStandards, search, activeFilter]);
+
+  const selectedMasterCheck = selectedMaster?.due_date
+    ? checkReferenceStandardValidity(selectedMaster.due_date)
+    : null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(
+            "w-full justify-between font-normal bg-primary/5 hover:bg-primary/10 border-input text-left h-10 px-3 shadow-2xs",
+            selectedMasterCheck?.isExpired && "border-destructive/60 bg-destructive/5 hover:bg-destructive/10",
+            selectedMasterCheck?.isWarning && "border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10"
+          )}
+        >
+          <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+            {selectedMaster ? (
+              <div className="flex items-center gap-2 truncate flex-wrap sm:flex-nowrap">
+                <span className="font-semibold text-foreground text-xs truncate">
+                  {selectedMaster.name}
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded shrink-0">
+                  {selectedMaster.id_code}
+                </span>
+                {selectedMasterCheck?.isExpired && (
+                  <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-4 shrink-0 font-bold gap-1">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    Expired ({selectedMasterCheck.formattedDate})
+                  </Badge>
+                )}
+                {selectedMasterCheck?.isWarning && (
+                  <Badge className="text-[9px] py-0 px-1.5 h-4 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 shrink-0 font-bold gap-1">
+                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                    Due Soon ({selectedMasterCheck.daysRemaining === 0 ? "Today" : `${selectedMasterCheck.daysRemaining}d`})
+                  </Badge>
+                )}
+                {selectedMasterCheck?.status === "valid" && (
+                  <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10 shrink-0 gap-1">
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                    Valid
+                  </Badge>
+                )}
+              </div>
+            ) : (
+              <span className="text-muted-foreground text-xs">
+                -- Select a Master Instrument to auto-fill --
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {selectedMaster && onClear && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    onClear();
+                  }
+                }}
+                className="p-1 rounded-sm hover:bg-muted text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
+                title="Clear selection"
+              >
+                <X className="h-3.5 w-3.5" />
+              </span>
+            )}
+            <ChevronsUpDown className="h-4 w-4 opacity-50" />
+          </div>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[--radix-popover-trigger-width] min-w-[360px] max-w-2xl p-0 shadow-xl rounded-xl z-50 bg-popover border"
+        align="start"
+      >
+        <div className="p-2 border-b bg-muted/20 space-y-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by ID number, name, make..."
+              className="pl-8 pr-7 h-8 text-xs bg-background"
+              autoFocus
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Filter Pills for Instrument Master list */}
+          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] pt-0.5 no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setFilter("all")}
+              className={cn(
+                "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap",
+                activeFilter === "all"
+                  ? "bg-primary text-primary-foreground shadow-2xs"
+                  : "bg-muted/70 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              All ({counts.all})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter("valid")}
+              className={cn(
+                "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                activeFilter === "valid"
+                  ? "bg-emerald-600 text-white shadow-2xs"
+                  : "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20"
+              )}
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              Valid Only ({counts.valid})
+            </button>
+            {counts.warning > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilter("warning")}
+                className={cn(
+                  "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                  activeFilter === "warning"
+                    ? "bg-amber-600 text-white shadow-2xs"
+                    : "bg-amber-500/10 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20"
+                )}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                Due Soon ({counts.warning})
+              </button>
+            )}
+            {counts.expired > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilter("expired")}
+                className={cn(
+                  "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                  activeFilter === "expired"
+                    ? "bg-destructive text-destructive-foreground shadow-2xs"
+                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                )}
+              >
+                <AlertCircle className="w-3 h-3" />
+                Expired ({counts.expired})
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="max-h-60 overflow-y-auto p-1 divide-y divide-border/40">
+          {filteredMasters.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground space-y-1">
+              <p className="font-semibold text-foreground">No matching master instruments found</p>
+              <p className="text-[11px]">
+                {activeFilter !== "all"
+                  ? `Try switching from "${activeFilter}" filter to "All".`
+                  : "Try clearing your search keyword."}
+              </p>
+            </div>
+          ) : (
+            filteredMasters.map((m) => {
+              const isSelected = selectedMaster?.id === m.id;
+              const vCheck = m.due_date ? checkReferenceStandardValidity(m.due_date) : null;
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => {
+                    onSelect(m);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className={cn(
+                    "flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs hover:bg-accent",
+                    isSelected && "bg-primary/10 font-semibold"
+                  )}
+                >
+                  <div className="flex flex-col min-w-0 pr-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-foreground font-medium truncate">
+                        {m.name}
+                      </span>
+                      {vCheck?.isExpired && (
+                        <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-4 shrink-0 font-bold">
+                          Expired
+                        </Badge>
+                      )}
+                      {vCheck?.isWarning && (
+                        <Badge className="text-[9px] py-0 px-1.5 h-4 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 shrink-0 font-bold">
+                          Due Soon
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                      <span className="font-mono font-semibold text-primary/80">
+                        {m.id_code}
+                      </span>
+                      {m.make && <span>• {m.make}</span>}
+                      {m.range && <span>• {m.range}</span>}
+                      {m.due_date && (
+                        <span
+                          className={cn(
+                            "text-[10px]",
+                            vCheck?.isExpired && "text-destructive font-semibold",
+                            vCheck?.isWarning && "text-amber-600 dark:text-amber-400 font-semibold"
+                          )}
+                        >
+                          • Due: {formatDisplayDate(m.due_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <Check className="h-4 w-4 text-primary shrink-0" />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div className="p-2 border-t bg-muted/10 text-[11px] text-muted-foreground flex items-center justify-between gap-2">
+          <span>Showing {filteredMasters.length} of {masterStandards.length} master standards</span>
+          <a
+            href="/instruments?device_type=Reference Standard"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline font-semibold flex items-center gap-1 text-[11px]"
+            title="Open Instrument Master in a new tab"
+          >
+            <span>Instrument Master</span>
+            <ArrowRight className="w-3 h-3" />
+          </a>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function CalibrationWizard() {
   useSEO({ title: "New Calibration — GaugeMaster", description: "Perform instrument calibration" });
   const navigate = useNavigate();
@@ -97,6 +508,11 @@ export default function CalibrationWizard() {
     { name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }
   ]);
   const [masterStandards, setMasterStandards] = useState<Instrument[]>([]);
+  const [expiredRefStandardsModalOpen, setExpiredRefStandardsModalOpen] = useState(false);
+  const [expiredStandardsList, setExpiredStandardsList] = useState<any[]>([]);
+  const [warningRefStandardsModalOpen, setWarningRefStandardsModalOpen] = useState(false);
+  const [warningStandardsList, setWarningStandardsList] = useState<any[]>([]);
+  const [acknowledgedRefStandardWarning, setAcknowledgedRefStandardWarning] = useState(false);
 
   // Step 3 — Environmental + Data
   const [envTemp, setEnvTemp] = useState("");
@@ -524,6 +940,10 @@ export default function CalibrationWizard() {
   const [newTemplateName, setNewTemplateName] = useState("");
   const [newTemplateDescription, setNewTemplateDescription] = useState("");
   const [savingTemplateVariant, setSavingTemplateVariant] = useState(false);
+
+  // Reference Standard Master Select Controlled State
+  const [activeMasterSelectIndex, setActiveMasterSelectIndex] = useState<number | null>(null);
+  const [masterSelectFilter, setMasterSelectFilter] = useState<"all" | "valid" | "warning" | "expired">("all");
 
   const hasMasterSavedTemplate = Boolean(
     (selectedInstrument?.custom_parameters?.specifications && Array.isArray(selectedInstrument.custom_parameters.specifications) && selectedInstrument.custom_parameters.specifications.length > 0) ||
@@ -2717,10 +3137,85 @@ export default function CalibrationWizard() {
     }
   }, [calDate, selectedInstrument?.frequency]);
 
+  // Validate all reference standards for expired validity (blocking) or due within 15 days (warning)
+  const validateReferenceStandards = () => {
+    const expiredItems: any[] = [];
+    const warningItems: any[] = [];
+
+    referenceStandards.forEach((ref, idx) => {
+      const hasData = !!(ref.name?.trim() || ref.id?.trim() || ref.validity?.trim());
+      if (!hasData) return;
+
+      if (ref.validity) {
+        const check = checkReferenceStandardValidity(ref.validity);
+        if (check.isExpired) {
+          expiredItems.push({
+            index: idx + 1,
+            name: ref.name || `Reference Standard ${idx + 1}`,
+            id: ref.id || "N/A",
+            traceable_to: ref.traceable_to || ref.cert_no || "N/A",
+            validity: ref.validity,
+            formattedDate: check.formattedDate,
+            daysAgo: Math.abs(check.daysRemaining ?? 0),
+            message: check.message,
+          });
+        } else if (check.isWarning) {
+          warningItems.push({
+            index: idx + 1,
+            name: ref.name || `Reference Standard ${idx + 1}`,
+            id: ref.id || "N/A",
+            traceable_to: ref.traceable_to || ref.cert_no || "N/A",
+            validity: ref.validity,
+            formattedDate: check.formattedDate,
+            daysRemaining: check.daysRemaining ?? 0,
+            message: check.message,
+          });
+        }
+      }
+    });
+
+    return {
+      hasExpired: expiredItems.length > 0,
+      hasWarning: warningItems.length > 0,
+      expiredItems,
+      warningItems,
+    };
+  };
+
+  const handleNextStep = () => {
+    // When leaving Step 2 (Reference Standard) to Step 3
+    if (step === 1) {
+      const { hasExpired, hasWarning, expiredItems, warningItems } = validateReferenceStandards();
+
+      if (hasExpired) {
+        setExpiredStandardsList(expiredItems);
+        setExpiredRefStandardsModalOpen(true);
+        toast.error("Calibration Blocked: Reference Standard validity has expired!");
+        return;
+      }
+
+      if (hasWarning && !acknowledgedRefStandardWarning) {
+        setWarningStandardsList(warningItems);
+        setWarningRefStandardsModalOpen(true);
+        return;
+      }
+    }
+
+    setStep(step + 1);
+  };
+
   // Save calibration and move to certificate step
   const handleSaveAndContinue = async () => {
     if (!selectedInstrument || !selectedType) {
       toast.error("Please select an instrument and type");
+      return;
+    }
+
+    const { hasExpired, expiredItems } = validateReferenceStandards();
+    if (hasExpired) {
+      setExpiredStandardsList(expiredItems);
+      setExpiredRefStandardsModalOpen(true);
+      toast.error("Calibration Blocked: Reference Standard validity has expired!");
       return;
     }
 
@@ -2747,6 +3242,14 @@ export default function CalibrationWizard() {
     }
     if (!isEditMode && !canAccess("calibrations", "create")) {
       toast.error("You do not have permission to create calibrations");
+      return;
+    }
+
+    const { hasExpired, expiredItems } = validateReferenceStandards();
+    if (hasExpired) {
+      setExpiredStandardsList(expiredItems);
+      setExpiredRefStandardsModalOpen(true);
+      toast.error("Cannot proceed: Reference Standard validity has expired!");
       return;
     }
     setSaving(true);
@@ -4654,6 +5157,16 @@ export default function CalibrationWizard() {
                 disabled={!isCompleted && i > step}
                 onClick={() => {
                   if (isCompleted || i <= step) {
+                    // Prevent advancing past Step 2 if reference standard is expired
+                    if (i > 1 && step <= 1) {
+                      const { hasExpired, expiredItems } = validateReferenceStandards();
+                      if (hasExpired) {
+                        setExpiredStandardsList(expiredItems);
+                        setExpiredRefStandardsModalOpen(true);
+                        toast.error("Calibration Blocked: Reference Standard validity has expired!");
+                        return;
+                      }
+                    }
                     setStep(i);
                   }
                 }}
@@ -4780,7 +5293,18 @@ export default function CalibrationWizard() {
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                           <div><span className="text-muted-foreground block text-[10px]">Traceable To</span><span className="font-medium">{ref.traceable_to || "NABL Accredited Lab"}</span></div>
-                          <div><span className="text-muted-foreground block text-[10px]">Validity</span><span className="font-medium">{ref.validity ? formatDisplayDate(ref.validity) : "-"}</span></div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px]">Validity</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-medium">{ref.validity ? formatDisplayDate(ref.validity) : "-"}</span>
+                              {ref.validity && (() => {
+                                const v = checkReferenceStandardValidity(ref.validity);
+                                if (v.isExpired) return <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-3.5">Expired</Badge>;
+                                if (v.isWarning) return <Badge className="text-[9px] py-0 px-1.5 h-3.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">Due Soon</Badge>;
+                                return null;
+                              })()}
+                            </div>
+                          </div>
                           <div><span className="text-muted-foreground block text-[10px]">Range</span><span className="font-medium">{ref.range || "-"}</span></div>
                           <div><span className="text-muted-foreground block text-[10px]">Least Count</span><span className="font-medium">{ref.least_count || "-"}</span></div>
                         </div>
@@ -4949,33 +5473,148 @@ export default function CalibrationWizard() {
           {/* ═══ Step 2: Reference Standard ═══ */}
           {step === 1 && (
             <div className="space-y-6">
-              {referenceStandards.map((ref, index) => (
-                <div key={index} className="relative p-4 border rounded-xl bg-card">
-                  {referenceStandards.length > 1 && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="absolute right-2 top-2 h-6 w-6 text-destructive hover:bg-destructive/10"
-                      onClick={() => {
-                        const newRefs = [...referenceStandards];
-                        newRefs.splice(index, 1);
-                        setReferenceStandards(newRefs);
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  )}
-                  <h4 className="font-semibold text-sm mb-4">Reference Standard {index + 1}</h4>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Choose from Master Instrument */}
-                    <div className="space-y-1.5 md:col-span-2">
-                      <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
-                      <Select 
-                        value={masterStandards.find(m => m.id === ref.id || m.id_code === ref.id || (ref.name && m.name.toLowerCase() === ref.name.toLowerCase()))?.id || ""}
-                        onValueChange={(val) => {
-                          const master = masterStandards.find(m => m.id === val);
-                          if (master) {
+              {/* Step 2 Global Expiration or Warning Alert Banner */}
+              {(() => {
+                const { hasExpired, hasWarning, expiredItems, warningItems } = validateReferenceStandards();
+                if (hasExpired) {
+                  return (
+                    <div className="flex items-start gap-3 p-4 rounded-xl bg-destructive/10 border-2 border-destructive/40 text-destructive text-xs shadow-xs animate-in fade-in duration-200">
+                      <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-destructive" />
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <p className="font-bold text-sm">Calibration Blocked: Reference Standard Validity Expired</p>
+                          <Badge variant="destructive" className="text-[10px] font-bold">Action Required</Badge>
+                        </div>
+                        <p className="text-xs opacity-90 leading-relaxed">
+                          {expiredItems.length === 1
+                            ? `Reference Standard "${expiredItems[0].name}" (${expiredItems[0].id}) expired on ${expiredItems[0].formattedDate} (${expiredItems[0].daysAgo} days ago).`
+                            : `${expiredItems.length} selected Reference Standards have expired calibration validity.`}
+                          {" "}ISO/IEC 17025 and quality compliance rules strictly prohibit using expired reference standards. You cannot proceed to calibration data entry until a valid standard is provided.
+                        </p>
+                        <div className="flex items-center gap-2 pt-2 flex-wrap">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setMasterSelectFilter("valid");
+                              const firstExpiredIdx = referenceStandards.findIndex((r) => {
+                                const c = r.validity ? checkReferenceStandardValidity(r.validity) : null;
+                                return c?.isExpired;
+                              });
+                              setActiveMasterSelectIndex(firstExpiredIdx >= 0 ? firstExpiredIdx : 0);
+                              toast.info("Instrument Master dropdown opened and filtered to show only Valid reference standards");
+                            }}
+                            className="h-7 text-xs font-semibold gap-1.5 bg-background shadow-2xs hover:bg-muted text-foreground"
+                          >
+                            <Filter className="w-3 h-3 text-emerald-600" />
+                            Select Valid Standard from Inventory
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => window.open("/instruments?is_reference_standard=true&device_type=Reference Standard", "_blank")}
+                            className="h-7 text-xs font-semibold gap-1.5 bg-background/80 hover:bg-background border-destructive/30 text-destructive hover:text-destructive"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Filter in Instrument Master List
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                if (hasWarning) {
+                  return (
+                    <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-900 dark:text-amber-200 text-xs shadow-xs animate-in fade-in duration-200">
+                      <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <p className="font-bold text-sm text-amber-800 dark:text-amber-300">Warning: Reference Standard Expiring Within 15 Days</p>
+                          <Badge className="text-[10px] font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 border-amber-500/40">Expiring Soon</Badge>
+                        </div>
+                        <p className="text-xs opacity-90 leading-relaxed">
+                          {warningItems.length === 1
+                            ? `Reference Standard "${warningItems[0].name}" (${warningItems[0].id}) is due for calibration in ${warningItems[0].daysRemaining === 0 ? "today" : `${warningItems[0].daysRemaining} days`} (${warningItems[0].formattedDate}).`
+                            : `${warningItems.length} Reference Standards are due for recalibration within 15 days.`}
+                          {" "}You may proceed with today's calibration, but please arrange recalibration for this standard promptly.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {referenceStandards.map((ref, index) => {
+                const vCheck = ref.validity ? checkReferenceStandardValidity(ref.validity) : null;
+                return (
+                  <div
+                    key={index}
+                    className={cn(
+                      "relative p-4 border rounded-xl bg-card transition-all duration-200",
+                      vCheck?.isExpired && "border-destructive/60 bg-destructive/[0.02] shadow-xs ring-1 ring-destructive/20",
+                      vCheck?.isWarning && "border-amber-500/50 bg-amber-500/[0.01] shadow-xs ring-1 ring-amber-500/20"
+                    )}
+                  >
+                    {referenceStandards.length > 1 && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="absolute right-2 top-2 h-6 w-6 text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                          const newRefs = [...referenceStandards];
+                          newRefs.splice(index, 1);
+                          setReferenceStandards(newRefs);
+                          setAcknowledgedRefStandardWarning(false);
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+
+                    <div className="flex items-center justify-between mb-4 pr-8 flex-wrap gap-2">
+                      <h4 className="font-semibold text-sm">Reference Standard {index + 1}</h4>
+                      {vCheck?.isExpired && (
+                        <Badge variant="destructive" className="text-[10px] font-bold gap-1 py-0.5 px-2">
+                          <AlertCircle className="w-3 h-3" />
+                          Expired ({vCheck.formattedDate})
+                        </Badge>
+                      )}
+                      {vCheck?.isWarning && (
+                        <Badge className="text-[10px] font-bold gap-1 py-0.5 px-2 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">
+                          <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                          Expiring Soon ({vCheck.daysRemaining === 0 ? "Today" : `${vCheck.daysRemaining}d`})
+                        </Badge>
+                      )}
+                      {vCheck?.status === "valid" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 py-0.5 px-2 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Valid ({vCheck.formattedDate})
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Choose from Master Instrument */}
+                      <div className="space-y-1.5 md:col-span-2">
+                        <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
+                        <MasterStandardSelect
+                          masterStandards={masterStandards}
+                          selectedMasterId={
+                            masterStandards.find(
+                              (m) =>
+                                m.id === ref.id ||
+                                m.id_code === ref.id ||
+                                (ref.name && m.name.toLowerCase() === ref.name.toLowerCase())
+                            )?.id || ""
+                          }
+                          isOpen={activeMasterSelectIndex === index}
+                          onOpenChange={(isOpen) => setActiveMasterSelectIndex(isOpen ? index : null)}
+                          filterMode={masterSelectFilter}
+                          onFilterModeChange={setMasterSelectFilter}
+                          onSelect={(master) => {
                             const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || master.id_code || master.id || "";
                             const newRefs = [...referenceStandards];
                             newRefs[index] = {
@@ -4990,75 +5629,138 @@ export default function CalibrationWizard() {
                               cert_no: initialCertNo,
                             };
                             setReferenceStandards(newRefs);
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="w-full bg-primary/5">
-                          <SelectValue placeholder="-- Select a Master Instrument to auto-fill --" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {masterStandards.map(m => (
-                            <SelectItem key={m.id} value={m.id}>{m.name} ({m.id_code})</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                            setAcknowledgedRefStandardWarning(false);
+                            setActiveMasterSelectIndex(null);
+                          }}
+                          onClear={() => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index] = {
+                              ...newRefs[index],
+                              name: "",
+                              make: "",
+                              id: "",
+                              range: "",
+                              least_count: "",
+                              validity: "",
+                              traceable_to: "",
+                              cert_no: "",
+                            };
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                            setActiveMasterSelectIndex(null);
+                          }}
+                        />
+                      </div>
 
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Reference Standard Name</Label>
-                      <Input 
-                        value={ref.name} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].name = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., Dead Weight Tester" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">ID / Serial Number</Label>
-                      <Input 
-                        value={ref.id} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].id = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., DWT-001" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Traceable To (NABL Lab / Cert No)</Label>
-                      <Input 
-                        value={ref.traceable_to || ref.cert_no || ""} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].traceable_to = e.target.value;
-                          newRefs[index].cert_no = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., NABL Cert 12345" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-semibold">Validity / Due Date</Label>
-                      <YearMonthDatePicker
-                        value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""}
-                        onChange={(newDate) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].validity = newDate;
-                          setReferenceStandards(newRefs);
-                        }}
-                        placeholder="Select validity date"
-                        className="h-9 text-xs"
-                        formatPattern="dd-MMM-yyyy"
-                        clearable
-                      />
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Reference Standard Name</Label>
+                        </div>
+                        <Input 
+                          value={ref.name} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].name = e.target.value;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }} 
+                          placeholder="e.g., Dead Weight Tester" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">ID / Serial Number</Label>
+                        </div>
+                        <Input 
+                          value={ref.id} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].id = e.target.value;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }} 
+                          placeholder="e.g., DWT-001" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Traceable To (NABL Lab / Cert No)</Label>
+                        </div>
+                        <Input 
+                          value={ref.traceable_to || ref.cert_no || ""} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].traceable_to = e.target.value;
+                            newRefs[index].cert_no = e.target.value;
+                            setReferenceStandards(newRefs);
+                          }} 
+                          placeholder="e.g., NABL Cert 12345" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Validity / Due Date</Label>
+                          {vCheck?.isExpired && (
+                            <span className="text-[10px] font-bold text-destructive flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" /> EXPIRED
+                            </span>
+                          )}
+                          {vCheck?.isWarning && (
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" /> EXPIRING SOON
+                            </span>
+                          )}
+                        </div>
+                        <YearMonthDatePicker
+                          value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""}
+                          onChange={(newDate) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].validity = newDate;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }}
+                          placeholder="Select validity date"
+                          className={cn(
+                            "h-9 text-sm transition-colors",
+                            vCheck?.isExpired && "border-destructive text-destructive focus-visible:ring-destructive/30 ring-1 ring-destructive/20",
+                            vCheck?.isWarning && "border-amber-500 text-amber-900 dark:text-amber-200 focus-visible:ring-amber-500/30 ring-1 ring-amber-500/20"
+                          )}
+                          formatPattern="dd-MMM-yyyy"
+                          clearable
+                        />
+                        {vCheck?.isExpired && (
+                          <div className="flex items-start gap-1.5 p-2.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs animate-in fade-in">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-destructive" />
+                            <div className="space-y-0.5 leading-tight">
+                              <p className="font-bold">Validity Expired — Calibration Blocked</p>
+                              <p className="text-[11px] opacity-90">
+                                {vCheck.message}. In compliance with calibration quality standards, this standard cannot be used for calibration.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {vCheck?.isWarning && (
+                          <div className="flex items-start gap-1.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs animate-in fade-in">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                            <div className="space-y-0.5 leading-tight">
+                              <p className="font-bold">Validity Warning — Recalibration Due Soon</p>
+                              <p className="text-[11px] opacity-90">
+                                {vCheck.message}. Standard validity will expire within 15 days. Please ensure recalibration is scheduled.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {vCheck?.status === "valid" && (
+                          <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-[11px]">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>{vCheck.message}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
 
               <Button
                 variant="outline"
@@ -6519,7 +7221,7 @@ export default function CalibrationWizard() {
 
         {step < 3 ? (
           <Button
-            onClick={() => setStep(step + 1)}
+            onClick={handleNextStep}
             disabled={!canProceed()}
             className="gap-2"
           >
@@ -6594,6 +7296,173 @@ export default function CalibrationWizard() {
               setRecentCalModalOpen(false);
             }}>
               Proceed with Calibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Reference Standard Validity Expired Modal (BLOCKING ERROR POPUP) ═══ */}
+      <Dialog open={expiredRefStandardsModalOpen} onOpenChange={setExpiredRefStandardsModalOpen}>
+        <DialogContent className="max-w-lg border-destructive/40 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0 border border-destructive/20">
+                <AlertTriangle className="w-5 h-5 text-destructive" />
+              </div>
+              <div>
+                <DialogTitle className="text-destructive font-bold text-base flex items-center gap-2">
+                  Calibration Blocked: Reference Standard Expired
+                </DialogTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Metrology &amp; Quality Compliance Rule (ISO/IEC 17025 &amp; NABL)
+                </p>
+              </div>
+            </div>
+            <DialogDescription className="space-y-3 pt-3 text-xs text-foreground">
+              <p>
+                You cannot proceed with this calibration. One or more selected Reference Standards have <strong>expired validity</strong> dates. In accordance with calibration quality standards, all master standards must have active validity at the time of testing.
+              </p>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {expiredStandardsList.map((item, i) => (
+                  <div key={i} className="p-3 bg-destructive/5 border border-destructive/20 rounded-xl space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-foreground text-xs">
+                        {item.name}
+                      </span>
+                      <Badge variant="destructive" className="text-[10px] font-bold shrink-0">
+                        Expired {item.daysAgo} {item.daysAgo === 1 ? "day" : "days"} ago
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      <div>ID / Serial No: <strong className="text-foreground">{item.id}</strong></div>
+                      <div>Traceable To: <strong className="text-foreground">{item.traceable_to}</strong></div>
+                      <div className="col-span-2">
+                        Validity Due Date: <span className="font-bold text-destructive">{item.formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-2.5 bg-muted/40 rounded-lg border text-[11px] text-muted-foreground flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                <span>
+                  Please update the Reference Standard with an active validity date, or select a different in-date master standard from your inventory to continue.
+                </span>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center w-full pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                window.open("/instruments?is_reference_standard=true&device_type=Reference Standard", "_blank");
+              }}
+              className="w-full sm:w-auto text-xs font-semibold gap-1.5 border-input hover:bg-muted"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Filter in Instrument Master List
+            </Button>
+
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={() => {
+                setExpiredRefStandardsModalOpen(false);
+                setStep(1); // Ensure stays on Reference Standard step
+                setMasterSelectFilter("valid"); // Pre-filter master inventory to Valid Only
+                const firstExpiredIdx = referenceStandards.findIndex((r) => {
+                  const c = r.validity ? checkReferenceStandardValidity(r.validity) : null;
+                  return c?.isExpired;
+                });
+                const targetIdx = firstExpiredIdx >= 0 ? firstExpiredIdx : 0;
+                setActiveMasterSelectIndex(targetIdx);
+                toast.info("Instrument Master dropdown opened and filtered to show only Valid reference standards");
+              }}
+              className="w-full sm:w-auto text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Review Reference Standards (Valid Only)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Reference Standard Expiring Soon Warning Modal (<= 15 Days) ═══ */}
+      <Dialog open={warningRefStandardsModalOpen} onOpenChange={setWarningRefStandardsModalOpen}>
+        <DialogContent className="max-w-lg border-amber-500/40 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 border border-amber-500/20">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-500" />
+              </div>
+              <div>
+                <DialogTitle className="text-amber-700 dark:text-amber-400 font-bold text-base">
+                  Warning: Reference Standard Expiring Soon
+                </DialogTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Calibration validity due within 15 days
+                </p>
+              </div>
+            </div>
+            <DialogDescription className="space-y-3 pt-3 text-xs text-foreground">
+              <p>
+                The following Reference Standard is nearing its calibration expiration date. You may proceed with today's calibration, but please ensure this master standard is sent for recalibration promptly.
+              </p>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {warningStandardsList.map((item, i) => (
+                  <div key={i} className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-foreground text-xs">
+                        {item.name}
+                      </span>
+                      <Badge className="text-[10px] font-bold shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">
+                        {item.daysRemaining === 0 ? "Expires Today" : `Expires in ${item.daysRemaining} days`}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      <div>ID / Serial No: <strong className="text-foreground">{item.id}</strong></div>
+                      <div>Traceable To: <strong className="text-foreground">{item.traceable_to}</strong></div>
+                      <div className="col-span-2">
+                        Validity Due Date: <span className="font-bold text-amber-700 dark:text-amber-400">{item.formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0 justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setWarningRefStandardsModalOpen(false);
+              }}
+              className="text-xs"
+            >
+              Review Standards
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setAcknowledgedRefStandardWarning(true);
+                setWarningRefStandardsModalOpen(false);
+                setStep(step + 1);
+              }}
+              className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold gap-1.5"
+            >
+              Acknowledge &amp; Proceed
+              <ArrowRight className="w-3.5 h-3.5" />
             </Button>
           </DialogFooter>
         </DialogContent>

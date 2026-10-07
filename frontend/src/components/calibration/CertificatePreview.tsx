@@ -1913,7 +1913,7 @@ export function CertificatePreview({
                         {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
                       </td>
                       <td className={isCompact ? "p-0.5" : "p-1"}>
-                        {ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || "NABL Lab"}
+                        {ref.agency || ref.cal_agency || ref.calibration_agency || (calibration as any)?.instrument?.agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || "NABL Lab"}
                       </td>
                     </tr>
                   ),
@@ -1936,7 +1936,7 @@ export function CertificatePreview({
                     {fmtDate((calibration as any)?.reference_standard_validity)}
                   </td>
                   <td className={isCompact ? "p-0.5" : "p-1"}>
-                    {(calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || "NABL Accredited Lab"}
+                    {(calibration as any)?.reference_standard_agency || (calibration as any)?.instrument?.agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || "NABL Accredited Lab"}
                   </td>
                 </tr>
               )}

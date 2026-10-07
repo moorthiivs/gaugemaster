@@ -795,12 +795,19 @@ export class CertificateService {
     ];
 
     // ── Reference Standard rows ──
+    // Resolve calibration agency from the instrument's agency field (set via Instrument form "Agency & TC No")
+    const instrumentAgency: string = (calibration as any)?.instrument?.agency || '';
+
     let referenceStandards: any[] = [];
     if (
       calibration.reference_standards &&
       calibration.reference_standards.length > 0
     ) {
-      referenceStandards = calibration.reference_standards;
+      // Enrich existing rows: if a row has no agency set, use the instrument-level agency
+      referenceStandards = calibration.reference_standards.map((ref: any) => ({
+        ...ref,
+        agency: ref.agency || ref.cal_agency || ref.calibration_agency || instrumentAgency || 'NABL Accredited Lab',
+      }));
     } else {
       referenceStandards = [
         {
@@ -810,7 +817,7 @@ export class CertificateService {
           cert_no: (calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/101',
           cal_date: calibration.calibration_date,
           validity: (calibration as any)?.reference_standard_validity,
-          agency: (calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || 'NABL Accredited Lab',
+          agency: (calibration as any)?.reference_standard_agency || instrumentAgency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || 'NABL Accredited Lab',
         },
       ];
     }
@@ -3099,15 +3106,9 @@ export class CertificateService {
                     ref.agency ||
                     ref.cal_agency ||
                     ref.calibration_agency ||
-                    ref.traceable_to ||
-                    ref.traceable ||
+                    instrumentAgency ||
                     (calibration as any)?.calibration_agency ||
                     (calibration as any)?.calibration_source ||
-                    (calibration as any)?.traceable_to ||
-                    ((calibration as any)?.instrument &&
-                      ((calibration as any).instrument.calibration_agency ||
-                        (calibration as any).instrument.calibration_source ||
-                        (calibration as any).instrument.traceable)) ||
                     'NABL Lab',
                   style: 'tdCell',
                   fontSize: contentFontSize,

@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck, LayoutDashboard } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { listCalibrations, getCalibration, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
@@ -96,6 +96,16 @@ export default function Calibration() {
   const [overdueScope, setOverdueScope] = useState<"current_month" | "all_time">("all_time");
   const [viewMode, setViewMode] = useState<"latest" | "all">("latest");
   const [activeTab, setActiveTab] = useState<string>("recent");
+
+  // Dashboard toggle state (persisted, defaults to false for full page table view)
+  const [showDashboard, setShowDashboard] = useState<boolean>(() => {
+    const saved = localStorage.getItem("gaugemaster_calibration_show_dashboard");
+    return saved === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("gaugemaster_calibration_show_dashboard", String(showDashboard));
+  }, [showDashboard]);
 
   // Delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -509,7 +519,7 @@ export default function Calibration() {
           <button
             type="button"
             onClick={() => handleOpenCertPreview(row.original)}
-            className="font-semibold text-primary tabular-nums hover:underline flex items-center gap-1 cursor-pointer text-left font-mono"
+            className="font-semibold text-primary tabular-nums hover:underline flex items-center gap-1 cursor-pointer text-left"
             title="Preview Certificate"
           >
             <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
@@ -962,137 +972,159 @@ export default function Calibration() {
         title="Calibration"
         description="Calibrate instruments and generate professional certificates"
         actions={
-          canAccess("calibrations", "create") && (
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
+              variant={showDashboard ? "secondary" : "outline"}
               size="sm"
-              onClick={() => navigate("/calibration/new")}
-              className="h-8 px-3.5 text-xs font-semibold gap-2"
+              onClick={() => setShowDashboard((prev) => !prev)}
+              className="h-8 px-3 text-xs font-semibold gap-1.5 transition-colors shadow-2xs"
+              title={showDashboard ? "Hide dashboard metrics & shortcuts" : "Show dashboard metrics & shortcuts"}
             >
-              <PlusCircle className="w-4 h-4" />
-              New Calibration
+              <LayoutDashboard className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>{showDashboard ? "Hide Dashboard" : "Show Dashboard"}</span>
+              {!showDashboard && stats && (
+                <Badge variant="secondary" className="ml-1 text-[10px] font-mono px-1.5 py-0 h-4 bg-muted text-muted-foreground">
+                  {stats.total}
+                </Badge>
+              )}
             </Button>
-          )
+            {canAccess("calibrations", "create") && (
+              <Button
+                size="sm"
+                onClick={() => navigate("/calibration/new")}
+                className="h-8 px-3.5 text-xs font-semibold gap-2 shadow-2xs"
+              >
+                <PlusCircle className="w-4 h-4" />
+                New Calibration
+              </Button>
+            )}
+          </div>
         }
       />
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          <Card className="rounded-xl border border-border bg-card shadow-2xs">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                  <Activity className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground font-medium">Total Calibrations</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="rounded-xl border border-border bg-card shadow-2xs">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-success/10 text-success">
-                  <TrendingUp className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.passRate}%</p>
-                  <p className="text-xs text-muted-foreground font-medium">Pass Rate</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="rounded-xl border border-border bg-card shadow-2xs">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-destructive/10 text-destructive">
-                  <XCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.failed}</p>
-                  <p className="text-xs text-muted-foreground font-medium">Failed</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card
-            onClick={() => { setActiveTab("pending"); setPage(1); }}
-            className="rounded-xl border border-border hover:border-warning/50 bg-card shadow-2xs transition-all cursor-pointer group"
-          >
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-warning/10 text-warning group-hover:scale-105 transition-transform">
-                  <Clock className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{stats.pendingCerts}</p>
-                    {stats.pendingCerts > 0 && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase bg-warning/10 text-warning border-warning/20">
-                        Pending
-                      </Badge>
-                    )}
+      {/* Collapsible Dashboard Section */}
+      {showDashboard && (
+        <div className="space-y-4 animate-in fade-in-50 duration-200">
+          {/* Stats Cards */}
+          {stats && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                      <Activity className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.total}</p>
+                      <p className="text-xs text-muted-foreground font-medium">Total Calibrations</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Pending Certificates <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card
-            onClick={() => { setActiveTab("overdue"); setPage(1); }}
-            className="rounded-xl border border-border hover:border-destructive/50 bg-card shadow-2xs transition-all cursor-pointer group"
-          >
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-destructive/10 text-destructive group-hover:scale-105 transition-transform">
-                  <AlertTriangle className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{activeOverdueCount}</p>
-                    {activeOverdueCount > 0 && (
-                      <Badge variant="destructive" className="text-[10px] px-1.5 py-0 uppercase">
-                        Overdue
-                      </Badge>
-                    )}
+                </CardContent>
+              </Card>
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-success/10 text-success">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.passRate}%</p>
+                      <p className="text-xs text-muted-foreground font-medium">Pass Rate</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Overdue Instruments <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-destructive/10 text-destructive">
+                      <XCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.failed}</p>
+                      <p className="text-xs text-muted-foreground font-medium">Failed</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card
+                onClick={() => { setActiveTab("pending"); setPage(1); }}
+                className="rounded-xl border border-border hover:border-warning/50 bg-card shadow-2xs transition-all cursor-pointer group"
+              >
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-warning/10 text-warning group-hover:scale-105 transition-transform">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{stats.pendingCerts}</p>
+                        {stats.pendingCerts > 0 && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase bg-warning/10 text-warning border-warning/20">
+                            Pending
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                        Pending Certificates <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card
+                onClick={() => { setActiveTab("overdue"); setPage(1); }}
+                className="rounded-xl border border-border hover:border-destructive/50 bg-card shadow-2xs transition-all cursor-pointer group"
+              >
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-destructive/10 text-destructive group-hover:scale-105 transition-transform">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{activeOverdueCount}</p>
+                        {activeOverdueCount > 0 && (
+                          <Badge variant="destructive" className="text-[10px] px-1.5 py-0 uppercase">
+                            Overdue
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                        Overdue Instruments <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Instrument Type Quick Links */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            {CALIBRATION_TYPES.map((ct) => {
+              const IconComp = quickLinkIconMap[ct.icon] || Gauge;
+              const style = quickLinkColorMap[ct.type] || quickLinkColorMap.pressure;
+
+              return (
+                <Card
+                  key={ct.type}
+                  onClick={() => navigate(`/calibration/new?type=${ct.type}`)}
+                  className="p-2.5 flex items-center gap-2.5 hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group bg-card"
+                >
+                  <div className={`p-2 rounded-xl border ${style.badge} transition-transform group-hover:scale-110 shadow-2xs`}>
+                    <IconComp className={`w-4 h-4 ${style.icon}`} />
+                  </div>
+                  <span className="text-[11px] font-semibold text-foreground leading-tight group-hover:text-primary transition-colors">{ct.label}</span>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* Instrument Type Quick Links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        {CALIBRATION_TYPES.map((ct) => {
-          const IconComp = quickLinkIconMap[ct.icon] || Gauge;
-          const style = quickLinkColorMap[ct.type] || quickLinkColorMap.pressure;
-
-          return (
-            <Card
-              key={ct.type}
-              onClick={() => navigate(`/calibration/new?type=${ct.type}`)}
-              className="p-2.5 flex items-center gap-2.5 hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group bg-card"
-            >
-              <div className={`p-2 rounded-xl border ${style.badge} transition-transform group-hover:scale-110 shadow-2xs`}>
-                <IconComp className={`w-4 h-4 ${style.icon}`} />
-              </div>
-              <span className="text-[11px] font-semibold text-foreground leading-tight group-hover:text-primary transition-colors">{ct.label}</span>
-            </Card>
-          );
-        })}
-      </div>
-
         <Tabs value={activeTab} onValueChange={(val) => { setActiveTab(val); setPage(1); }} className="w-full">
-        <Card>
+        <Card className="rounded-xl border border-border/80 bg-card shadow-xs overflow-hidden">
           <CardHeader className="pb-2 space-y-3">
             {/* Row 1: Full-width Tabs */}
             <TabsList className="w-full justify-start h-11 bg-muted/50 p-1 rounded-xl gap-1">
@@ -1305,7 +1337,7 @@ export default function Calibration() {
               <>
                 <div className="overflow-x-auto border rounded-xl shadow-2xs">
                   <Table>
-                    <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
+                    <TableHeader className="bg-rose-50/90 dark:bg-rose-950/80 border-b border-rose-100 dark:border-rose-900/40 sticky top-0 z-10 backdrop-blur-xs">
                       <TableRow className="hover:bg-transparent">
                         <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
                         <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
@@ -1431,7 +1463,7 @@ export default function Calibration() {
               <>
                 <div className="overflow-x-auto border rounded-xl shadow-2xs">
                   <Table>
-                    <TableHeader className="bg-muted/50">
+                    <TableHeader className="bg-muted/90 backdrop-blur-xs sticky top-0 z-10 border-b">
                       <TableRow>
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
                         <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>

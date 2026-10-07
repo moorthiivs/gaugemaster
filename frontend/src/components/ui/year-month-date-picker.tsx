@@ -154,14 +154,14 @@ export function YearMonthDatePicker({
           size={className?.includes("h-8") || className?.includes("h-7") ? "sm" : "default"}
           disabled={disabled}
           className={cn(
-            "w-full justify-between text-left font-normal text-xs bg-background border-input hover:border-primary/50 transition-all gap-1 shadow-2xs px-2",
+            "w-full justify-between text-left font-normal text-sm bg-background border-input hover:border-primary/50 transition-all gap-2 shadow-xs px-3",
             !className?.includes("h-") && "h-9",
             !parsedDate && "text-muted-foreground",
             className
           )}
         >
-          <div className="flex items-center gap-1.5 truncate flex-1 min-w-0">
-            <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+            <CalendarIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
             <span className="truncate">{formattedDisplay}</span>
           </div>
           {clearable && parsedDate && !disabled && (
@@ -178,10 +178,10 @@ export function YearMonthDatePicker({
                   onChange("");
                 }
               }}
-              className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground/60 hover:text-foreground shrink-0 transition-colors cursor-pointer"
+              className="p-0.5 rounded-sm hover:bg-muted text-muted-foreground/60 hover:text-foreground shrink-0 transition-colors cursor-pointer -mr-1"
               title="Clear date"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </span>
           )}
         </Button>

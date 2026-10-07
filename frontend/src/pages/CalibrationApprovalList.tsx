@@ -40,6 +40,7 @@ import {
   X,
   Edit,
   RotateCcw,
+  LayoutDashboard,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
@@ -63,6 +64,16 @@ export default function CalibrationApprovalList() {
   const [reviewTab, setReviewTab] = useState("readings");
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
+  // Dashboard toggle state (persisted, defaults to false for full page view)
+  const [showDashboard, setShowDashboard] = useState<boolean>(() => {
+    const saved = localStorage.getItem("gaugemaster_cal_approval_show_dashboard");
+    return saved === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("gaugemaster_cal_approval_show_dashboard", String(showDashboard));
+  }, [showDashboard]);
 
   const [stats, setStats] = useState<ApprovalStats>({
     pendingReview: 0,
@@ -503,81 +514,100 @@ export default function CalibrationApprovalList() {
         title="Calibration Approval"
         description="Review completed calibration records, inspect reading accuracy & certificate drafts, and issue Manager Approval."
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleRefresh}
-            disabled={refreshing || loading}
-            className="h-8 gap-1.5 text-xs font-semibold"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-primary ${refreshing ? "animate-spin" : ""}`} />
-            <span>Refresh</span>
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant={showDashboard ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowDashboard((prev) => !prev)}
+              className="h-8 px-3 text-xs font-semibold gap-1.5 transition-colors shadow-2xs"
+              title={showDashboard ? "Hide approval KPI metrics" : "Show approval KPI metrics"}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>{showDashboard ? "Hide Dashboard" : "Show Dashboard"}</span>
+              {!showDashboard && (
+                <Badge variant="secondary" className="ml-1 text-[10px] font-mono px-1.5 py-0 h-4 bg-muted text-muted-foreground">
+                  {pendingReviewCount + reviewedCount}
+                </Badge>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing || loading}
+              className="h-8 gap-1.5 text-xs font-semibold shadow-2xs"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-primary ${refreshing ? "animate-spin" : ""}`} />
+              <span>Refresh</span>
+            </Button>
+          </div>
         }
       />
 
-      {/* Summary KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className="rounded-xl border border-border bg-card shadow-2xs">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Pending Review</span>
-              <div className="p-1.5 rounded-lg bg-warning/10 text-warning">
-                <Clock className="w-4 h-4" />
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{pendingReviewCount}</div>
-            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Awaiting Reviewer action</p>
-          </CardContent>
-        </Card>
+      {/* Summary KPI Cards (Collapsible) */}
+      {showDashboard && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-in fade-in-50 duration-200">
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+                <span>Pending Review</span>
+                <div className="p-1.5 rounded-lg bg-warning/10 text-warning">
+                  <Clock className="w-4 h-4" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{pendingReviewCount}</div>
+              <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Awaiting Reviewer action</p>
+            </CardContent>
+          </Card>
 
-        <Card className="rounded-xl border border-border bg-card shadow-2xs">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Reviewed (Awaiting Final)</span>
-              <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
-                <UserCheck className="w-4 h-4" />
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{reviewedCount}</div>
-            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Recommended for Approver sign-off</p>
-          </CardContent>
-        </Card>
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+                <span>Reviewed (Awaiting Final)</span>
+                <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-600">
+                  <UserCheck className="w-4 h-4" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{reviewedCount}</div>
+              <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Recommended for Approver sign-off</p>
+            </CardContent>
+          </Card>
 
-        <Card className="rounded-xl border border-border bg-card shadow-2xs">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Approved Certificates</span>
-              <div className="p-1.5 rounded-lg bg-success/10 text-success">
-                <CheckCircle2 className="w-4 h-4" />
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{approvedCount}</div>
-            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Verified & released for production</p>
-          </CardContent>
-        </Card>
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+                <span>Approved Certificates</span>
+                <div className="p-1.5 rounded-lg bg-success/10 text-success">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{approvedCount}</div>
+              <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Verified & released for production</p>
+            </CardContent>
+          </Card>
 
-        <Card className="rounded-xl border border-border bg-card shadow-2xs">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
-              <span>Returned / Rejected</span>
-              <div className="p-1.5 rounded-lg bg-destructive/10 text-destructive">
-                <XCircle className="w-4 h-4" />
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{rejectedCount}</div>
-            <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Returned to Engineer for rework</p>
-          </CardContent>
-        </Card>
-      </div>
+          <Card className="rounded-xl border border-border bg-card shadow-2xs">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-semibold text-muted-foreground flex items-center justify-between">
+                <span>Returned / Rejected</span>
+                <div className="p-1.5 rounded-lg bg-destructive/10 text-destructive">
+                  <XCircle className="w-4 h-4" />
+                </div>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{rejectedCount}</div>
+              <p className="text-[11px] text-muted-foreground font-medium mt-0.5">Returned to Engineer for rework</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Tabs & Search Toolbar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-card p-3 rounded-xl border">

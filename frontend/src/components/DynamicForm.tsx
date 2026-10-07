@@ -14,11 +14,8 @@ import {
   SelectItem,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CalendarPicker } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { CalendarIcon, Loader2, AlertCircle } from "lucide-react";
-import { format } from "date-fns";
-import { parseLocalDate } from "@/lib/dateUtils";
+import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
+import { Loader2, AlertCircle } from "lucide-react";
 
 export interface FormFieldConfig {
   name: string;
@@ -28,6 +25,7 @@ export interface FormFieldConfig {
   placeholder?: string;
   options?: string[] | { label: string; value: string }[] | ((watchedValues: any) => string[]);
   defaultValue?: any;
+  formatPattern?: string;
 }
 
 interface DynamicFormProps {
@@ -331,39 +329,22 @@ export default function DynamicForm({
                 <Controller
                   control={control}
                   name={field.name}
-                  render={({ field: dateField }) => {
-                    const dateValue = dateField.value ? parseLocalDate(dateField.value) : undefined;
-                    return (
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className={`w-full h-9 justify-start text-left font-normal bg-background border-input ${
-                              !dateValue ? "text-muted-foreground" : ""
-                            } ${fieldError ? "border-destructive text-destructive" : ""}`}
-                          >
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            {dateValue ? format(dateValue, "yyyy-MM-dd") : field.placeholder || "Pick a date"}
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <CalendarPicker
-                            mode="single"
-                            selected={dateValue}
-                            onSelect={(date) => {
-                              if (date) {
-                                const localDate = format(date, "yyyy-MM-dd");
-                                dateField.onChange(localDate);
-                                if (onChangeEffects) {
-                                  onChangeEffects(field.name, localDate, setValue, getValues);
-                                }
-                              }
-                            }}
-                          />
-                        </PopoverContent>
-                      </Popover>
-                    );
-                  }}
+                  render={({ field: dateField }) => (
+                    <YearMonthDatePicker
+                      value={dateField.value}
+                      onChange={(dateStr) => {
+                        dateField.onChange(dateStr);
+                        if (onChangeEffects) {
+                          onChangeEffects(field.name, dateStr, setValue, getValues);
+                        }
+                      }}
+                      placeholder={field.placeholder || "Pick a date"}
+                      formatPattern={field.formatPattern || "yyyy-MM-dd"}
+                      outputFormat="yyyy-MM-dd"
+                      className={`w-full h-9 ${fieldError ? "border-destructive text-destructive" : ""}`}
+                      clearable
+                    />
+                  )}
                 />
               )}
             </div>

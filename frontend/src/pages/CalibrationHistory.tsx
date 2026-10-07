@@ -7,9 +7,36 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowLeft, Download, FileText, Calendar, User, Edit, History, Eye, Trash2, Printer, Clock, AlertTriangle, Loader2 } from "lucide-react";
-import { getCalibrationHistory, downloadCertificate, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  ArrowLeft,
+  Download,
+  FileText,
+  Calendar,
+  User,
+  Edit,
+  History,
+  Eye,
+  Trash2,
+  Printer,
+  Clock,
+  AlertTriangle,
+  Loader2,
+} from "lucide-react";
+import {
+  getCalibrationHistory,
+  downloadCertificate,
+  getCalibrationAuditLogs,
+  deleteCalibration,
+  getResequencePreview,
+  ResequencePreviewData,
+} from "@/lib/calibrationActions";
 import { getInstrument } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
@@ -34,9 +61,22 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const CalibrationPointsDiff = ({ oldPoints, newPoints }: { oldPoints?: any; newPoints?: any }) => {
-  if (!oldPoints || !newPoints || !Array.isArray(oldPoints) || !Array.isArray(newPoints)) {
-    return <span className="text-muted-foreground italic">Data format changed</span>;
+const CalibrationPointsDiff = ({
+  oldPoints,
+  newPoints,
+}: {
+  oldPoints?: any;
+  newPoints?: any;
+}) => {
+  if (
+    !oldPoints ||
+    !newPoints ||
+    !Array.isArray(oldPoints) ||
+    !Array.isArray(newPoints)
+  ) {
+    return (
+      <span className="text-muted-foreground italic">Data format changed</span>
+    );
   }
 
   const changes = [];
@@ -45,36 +85,68 @@ const CalibrationPointsDiff = ({ oldPoints, newPoints }: { oldPoints?: any; newP
   for (let i = 0; i < maxLen; i++) {
     const oldP = oldPoints[i];
     const newP = newPoints[i];
-    
+
     if (!oldP && newP) {
-      changes.push(<div key={i} className="text-emerald-600 mb-1 font-mono">Added Point {i + 1}: Nominal {newP.nominal}, Actual {newP.ascending_reading}</div>);
+      changes.push(
+        <div key={i} className="text-emerald-600 mb-1 font-mono">
+          Added Point {i + 1}: Nominal {newP.nominal}, Actual{" "}
+          {newP.ascending_reading}
+        </div>,
+      );
     } else if (oldP && !newP) {
-      changes.push(<div key={i} className="text-red-500 line-through mb-1 font-mono">Removed Point {i + 1}: Nominal {oldP.nominal}</div>);
+      changes.push(
+        <div key={i} className="text-red-500 line-through mb-1 font-mono">
+          Removed Point {i + 1}: Nominal {oldP.nominal}
+        </div>,
+      );
     } else if (oldP && newP) {
       const diffs = [];
-      if (oldP.nominal !== newP.nominal) diffs.push(`Nominal: ${oldP.nominal} → ${newP.nominal}`);
-      if (oldP.ascending_reading !== newP.ascending_reading) diffs.push(`Actual: ${oldP.ascending_reading} → ${newP.ascending_reading}`);
-      if (oldP.descending_reading !== newP.descending_reading) diffs.push(`Desc: ${oldP.descending_reading} → ${newP.descending_reading}`);
-      if (oldP.error !== newP.error) diffs.push(`Error: ${oldP.error} → ${newP.error}`);
-      if (oldP.status !== newP.status) diffs.push(`Status: ${oldP.status} → ${newP.status}`);
+      if (oldP.nominal !== newP.nominal)
+        diffs.push(`Nominal: ${oldP.nominal} → ${newP.nominal}`);
+      if (oldP.ascending_reading !== newP.ascending_reading)
+        diffs.push(
+          `Actual: ${oldP.ascending_reading} → ${newP.ascending_reading}`,
+        );
+      if (oldP.descending_reading !== newP.descending_reading)
+        diffs.push(
+          `Desc: ${oldP.descending_reading} → ${newP.descending_reading}`,
+        );
+      if (oldP.error !== newP.error)
+        diffs.push(`Error: ${oldP.error} → ${newP.error}`);
+      if (oldP.status !== newP.status)
+        diffs.push(`Status: ${oldP.status} → ${newP.status}`);
 
       if (diffs.length > 0) {
         changes.push(
-          <div key={i} className="text-[10px] mb-1.5 p-1.5 bg-slate-50 border rounded font-mono">
-            <span className="font-bold text-slate-700">Point {newP.point_number || i + 1}</span>: {diffs.join(", ")}
-          </div>
+          <div
+            key={i}
+            className="text-[10px] mb-1.5 p-1.5 bg-slate-50 border rounded font-mono"
+          >
+            <span className="font-bold text-slate-700">
+              Point {newP.point_number || i + 1}
+            </span>
+            : {diffs.join(", ")}
+          </div>,
         );
       }
     }
   }
 
-  if (changes.length === 0) return <span className="text-muted-foreground italic">No values changed in points</span>;
+  if (changes.length === 0)
+    return (
+      <span className="text-muted-foreground italic">
+        No values changed in points
+      </span>
+    );
 
   return <div className="space-y-1 mt-1">{changes}</div>;
 };
 
 export default function CalibrationHistory() {
-  useSEO({ title: "Calibration History — GaugeMaster", description: "View calibration history" });
+  useSEO({
+    title: "Calibration History — GaugeMaster",
+    description: "View calibration history",
+  });
   const { id } = useParams(); // This is the instrument ID
   const navigate = useNavigate();
   const { canAccess } = usePermissions();
@@ -91,14 +163,19 @@ export default function CalibrationHistory() {
 
   // View Certificate state
   const [viewCertModalOpen, setViewCertModalOpen] = useState(false);
-  const [selectedViewCalibration, setSelectedViewCalibration] = useState<CalibrationRecord | null>(null);
+  const [selectedViewCalibration, setSelectedViewCalibration] =
+    useState<CalibrationRecord | null>(null);
 
   // Delete state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [selectedDeleteCalibration, setSelectedDeleteCalibration] = useState<CalibrationRecord | null>(null);
+  const [selectedDeleteCalibration, setSelectedDeleteCalibration] =
+    useState<CalibrationRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [resequenceChoice, setResequenceChoice] = useState<"resequence" | "keep">("resequence");
-  const [resequencePreview, setResequencePreview] = useState<ResequencePreviewData | null>(null);
+  const [resequenceChoice, setResequenceChoice] = useState<
+    "resequence" | "keep"
+  >("resequence");
+  const [resequencePreview, setResequencePreview] =
+    useState<ResequencePreviewData | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
 
   const handleOpenDeleteModal = async (cal: CalibrationRecord) => {
@@ -138,18 +215,24 @@ export default function CalibrationHistory() {
     try {
       const shouldResequence = resequenceChoice === "resequence";
       await deleteCalibration(selectedDeleteCalibration.id, shouldResequence);
-      const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
+      const affectedCount =
+        resequencePreview?.affectedCalibrations?.length || 0;
       if (shouldResequence && affectedCount > 0) {
         toast.success(
-          `Calibration ${selectedDeleteCalibration.certificate_number || ""} deleted & ${affectedCount} subsequent certificates renumbered.`
+          `Calibration ${selectedDeleteCalibration.certificate_number || ""} deleted & ${affectedCount} subsequent certificates renumbered.`,
         );
       } else {
-        toast.success("Calibration record deleted and instrument dates rolled back");
+        toast.success(
+          "Calibration record deleted and instrument dates rolled back",
+        );
       }
       setDeleteModalOpen(false);
       setSelectedDeleteCalibration(null);
       setResequencePreview(null);
-      const [inst, hist] = await Promise.all([getInstrument(id), getCalibrationHistory(id)]);
+      const [inst, hist] = await Promise.all([
+        getInstrument(id),
+        getCalibrationHistory(id),
+      ]);
       setInstrument(inst);
       setHistory(hist);
     } catch (err: any) {
@@ -162,10 +245,7 @@ export default function CalibrationHistory() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([
-      getInstrument(id),
-      getCalibrationHistory(id),
-    ])
+    Promise.all([getInstrument(id), getCalibrationHistory(id)])
       .then(([inst, hist]) => {
         setInstrument(inst);
         setHistory(hist);
@@ -181,8 +261,12 @@ export default function CalibrationHistory() {
   // Sorted history: Most recent calibrations at top (by database creation timestamp)
   const sortedHistory = useMemo(() => {
     return [...history].sort((a, b) => {
-      const createA = new Date(a.created_at || a.calibration_date || 0).getTime();
-      const createB = new Date(b.created_at || b.calibration_date || 0).getTime();
+      const createA = new Date(
+        a.created_at || a.calibration_date || 0,
+      ).getTime();
+      const createB = new Date(
+        b.created_at || b.calibration_date || 0,
+      ).getTime();
       if (createA !== createB) return createB - createA;
       const timeA = new Date(a.calibration_date || 0).getTime();
       const timeB = new Date(b.calibration_date || 0).getTime();
@@ -211,12 +295,14 @@ export default function CalibrationHistory() {
       const d = new Date(mainStr);
       const datePart = format(d, "dd-MMM-yyyy");
 
-      // Strip trailing 'Z' if timestamp was stored as local wall-clock time in DB
-      const timeSourceStr = (createdAtStr || dateStr || "").replace(/Z$/i, "");
-      const timeObj = new Date(timeSourceStr);
-      const timePart = format(timeObj, "hh:mm a");
+      // Format time in local timezone if createdAtStr exists
+      if (createdAtStr) {
+        const timePart = format(new Date(createdAtStr), "hh:mm a");
+        return `${datePart} (${timePart})`;
+      }
 
-      return `${datePart} (${timePart})`;
+      // Fallback to just the date if no created_at timestamp exists
+      return datePart;
     } catch {
       return dateStr || "-";
     }
@@ -272,20 +358,36 @@ export default function CalibrationHistory() {
           <CardContent className="pt-4 pb-4">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div>
-                <span className="text-[11px] text-muted-foreground block font-medium">Name</span>
-                <span className="font-semibold text-foreground">{instrument.name}</span>
+                <span className="text-[11px] text-muted-foreground block font-medium">
+                  Name
+                </span>
+                <span className="font-semibold text-foreground">
+                  {instrument.name}
+                </span>
               </div>
               <div>
-                <span className="text-[11px] text-muted-foreground block font-medium">ID Code</span>
-                <span className="font-mono font-semibold text-foreground">{instrument.id_code}</span>
+                <span className="text-[11px] text-muted-foreground block font-medium">
+                  ID Code
+                </span>
+                <span className="font-mono font-semibold text-foreground">
+                  {instrument.id_code}
+                </span>
               </div>
               <div>
-                <span className="text-[11px] text-muted-foreground block font-medium">Make</span>
-                <span className="font-medium text-foreground">{instrument.make || "—"}</span>
+                <span className="text-[11px] text-muted-foreground block font-medium">
+                  Make
+                </span>
+                <span className="font-medium text-foreground">
+                  {instrument.make || "—"}
+                </span>
               </div>
               <div>
-                <span className="text-[11px] text-muted-foreground block font-medium">Range</span>
-                <span className="font-medium text-foreground">{instrument.range || "—"}</span>
+                <span className="text-[11px] text-muted-foreground block font-medium">
+                  Range
+                </span>
+                <span className="font-medium text-foreground">
+                  {instrument.range || "—"}
+                </span>
               </div>
             </div>
           </CardContent>
@@ -311,10 +413,18 @@ export default function CalibrationHistory() {
                 return (
                   <div key={cal.id} className="relative pl-14">
                     {/* Timeline dot */}
-                    <div className={`absolute left-4 top-5 w-5 h-5 rounded-full border-2 border-background shadow-sm flex items-center justify-center ${
-                      cal.verdict === "PASS" ? "bg-emerald-500" : cal.verdict === "FAIL" ? "bg-red-500" : "bg-amber-500"
-                    }`}>
-                      <span className="text-white text-[8px] font-bold">{itemIndex}</span>
+                    <div
+                      className={`absolute left-4 top-5 w-5 h-5 rounded-full border-2 border-background shadow-sm flex items-center justify-center ${
+                        cal.verdict === "PASS"
+                          ? "bg-emerald-500"
+                          : cal.verdict === "FAIL"
+                            ? "bg-red-500"
+                            : "bg-amber-500"
+                      }`}
+                    >
+                      <span className="text-white text-[8px] font-bold">
+                        {itemIndex}
+                      </span>
                     </div>
 
                     <Card className="transition-all hover:shadow-md">
@@ -322,7 +432,9 @@ export default function CalibrationHistory() {
                         <div className="flex items-start justify-between gap-3 flex-wrap">
                           <div className="space-y-2 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono text-sm font-bold text-primary">{cal.certificate_number}</span>
+                              <span className="font-mono text-sm font-bold text-primary">
+                                {cal.certificate_number}
+                              </span>
                               {itemIndex === 1 && (
                                 <Badge className="bg-emerald-600 text-white font-bold text-[10px] uppercase tracking-wider px-2 py-0.5 shadow-2xs">
                                   Recent / Latest
@@ -331,23 +443,45 @@ export default function CalibrationHistory() {
                               <VerdictBadge verdict={cal.verdict} size="sm" />
                               {cal.approval_status === "Approved" ? (
                                 <StatusBadge status="OK" size="xs" />
-                              ) : cal.approval_status === "Reviewed" || cal.approval_status === "Pending Approval" ? (
-                                <StatusBadge status="Under Calibration" subStatus="Approve Pending" size="xs" />
+                              ) : cal.approval_status === "Reviewed" ||
+                                cal.approval_status === "Pending Approval" ? (
+                                <StatusBadge
+                                  status="Under Calibration"
+                                  subStatus="Approve Pending"
+                                  size="xs"
+                                />
                               ) : cal.approval_status === "Rejected" ? (
                                 <StatusBadge status="REJECTED" size="xs" />
                               ) : (
-                                <StatusBadge status="Under Calibration" subStatus="Review Pending" size="xs" />
+                                <StatusBadge
+                                  status="Under Calibration"
+                                  subStatus="Review Pending"
+                                  size="xs"
+                                />
                               )}
                               {cal.ulr_number && (
-                                <Badge variant="outline" className="text-[10px] font-mono">ULR: {cal.ulr_number}</Badge>
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] font-mono"
+                                >
+                                  ULR: {cal.ulr_number}
+                                </Badge>
                               )}
-                              <Badge variant="outline" className="text-[10px] capitalize">{cal.calibration_type}</Badge>
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] capitalize"
+                              >
+                                {cal.calibration_type}
+                              </Badge>
                             </div>
 
                             <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
                               <span className="flex items-center gap-1.5 font-semibold text-foreground">
                                 <Calendar className="w-3.5 h-3.5 text-primary" />
-                                {fmtDateWithTime(cal.calibration_date, cal.created_at)}
+                                {fmtDateWithTime(
+                                  cal.calibration_date,
+                                  cal.created_at,
+                                )}
                               </span>
                               {cal.next_calibration_date && (
                                 <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400 font-medium">
@@ -364,10 +498,14 @@ export default function CalibrationHistory() {
                             </div>
 
                             {cal.uncertainty && (
-                              <p className="text-xs"><b>Uncertainty:</b> {cal.uncertainty}</p>
+                              <p className="text-xs">
+                                <b>Uncertainty:</b> {cal.uncertainty}
+                              </p>
                             )}
                             {cal.remarks && (
-                              <p className="text-xs text-muted-foreground">{cal.remarks}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {cal.remarks}
+                              </p>
                             )}
                           </div>
 
@@ -388,7 +526,9 @@ export default function CalibrationHistory() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                                onClick={() =>
+                                  navigate(`/calibration/new?editId=${cal.id}`)
+                                }
                                 className="gap-1 text-xs text-amber-600 hover:text-amber-700 hover:bg-amber-50 font-semibold"
                               >
                                 <Edit className="w-3.5 h-3.5" />
@@ -405,7 +545,12 @@ export default function CalibrationHistory() {
                               Audit Log
                             </Button>
                             {cal.certificate_generated && (
-                              <Button variant="outline" size="sm" onClick={() => handleDownload(cal)} className="gap-1 text-xs font-semibold">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDownload(cal)}
+                                className="gap-1 text-xs font-semibold"
+                              >
                                 <Download className="w-3.5 h-3.5" />
                                 PDF
                               </Button>
@@ -435,11 +580,25 @@ export default function CalibrationHistory() {
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-6 pt-4 border-t text-[13px]">
             <div className="flex items-center gap-3">
               <span className="text-muted-foreground">
-                Showing <strong>{sortedHistory.length === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, sortedHistory.length)}</strong> of <strong>{sortedHistory.length}</strong> calibration records
+                Showing{" "}
+                <strong>
+                  {sortedHistory.length === 0 ? 0 : (page - 1) * pageSize + 1}
+                </strong>{" "}
+                to{" "}
+                <strong>
+                  {Math.min(page * pageSize, sortedHistory.length)}
+                </strong>{" "}
+                of <strong>{sortedHistory.length}</strong> calibration records
               </span>
               <div className="flex items-center gap-1.5 ml-2">
                 <span className="text-muted-foreground">Per page:</span>
-                <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(val) => {
+                    setPageSize(Number(val));
+                    setPage(1);
+                  }}
+                >
                   <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
                     <SelectValue />
                   </SelectTrigger>
@@ -463,10 +622,17 @@ export default function CalibrationHistory() {
               >
                 Previous
               </Button>
-              {Array.from({ length: Math.ceil(sortedHistory.length / pageSize) || 1 }).map((_, idx) => {
+              {Array.from({
+                length: Math.ceil(sortedHistory.length / pageSize) || 1,
+              }).map((_, idx) => {
                 const pNum = idx + 1;
-                const totalPages = Math.ceil(sortedHistory.length / pageSize) || 1;
-                if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
+                const totalPages =
+                  Math.ceil(sortedHistory.length / pageSize) || 1;
+                if (
+                  pNum === 1 ||
+                  pNum === totalPages ||
+                  Math.abs(pNum - page) <= 1
+                ) {
                   return (
                     <Button
                       key={pNum}
@@ -479,8 +645,24 @@ export default function CalibrationHistory() {
                     </Button>
                   );
                 }
-                if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
-                if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
+                if (pNum === 2 && page > 3)
+                  return (
+                    <span
+                      key="dots-left"
+                      className="px-1 text-muted-foreground"
+                    >
+                      ...
+                    </span>
+                  );
+                if (pNum === totalPages - 1 && page < totalPages - 2)
+                  return (
+                    <span
+                      key="dots-right"
+                      className="px-1 text-muted-foreground"
+                    >
+                      ...
+                    </span>
+                  );
                 return null;
               })}
               <Button
@@ -498,9 +680,14 @@ export default function CalibrationHistory() {
       ) : (
         <div className="text-center py-12">
           <FileText className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground">No calibration history for this instrument</p>
+          <p className="text-sm text-muted-foreground">
+            No calibration history for this instrument
+          </p>
           {canAccess("calibrations", "create") && (
-            <Button onClick={() => navigate(`/calibration/new/${id}`)} className="mt-4 gap-2">
+            <Button
+              onClick={() => navigate(`/calibration/new/${id}`)}
+              className="mt-4 gap-2"
+            >
               Start First Calibration
             </Button>
           )}
@@ -520,15 +707,26 @@ export default function CalibrationHistory() {
                 <h3 className="text-lg font-bold tracking-tight text-foreground">
                   Certificate Preview
                 </h3>
-                <Badge variant="outline" className="font-mono text-xs bg-primary/10 text-primary border-primary/20">
+                <Badge
+                  variant="outline"
+                  className="font-mono text-xs bg-primary/10 text-primary border-primary/20"
+                >
                   {selectedViewCalibration?.certificate_number}
                 </Badge>
                 {selectedViewCalibration?.verdict && (
-                  <VerdictBadge verdict={selectedViewCalibration.verdict} size="sm" />
+                  <VerdictBadge
+                    verdict={selectedViewCalibration.verdict}
+                    size="sm"
+                  />
                 )}
               </div>
               <p className="text-xs text-muted-foreground pl-8">
-                Instrument: <span className="font-semibold text-foreground">{instrument?.name}</span> ({instrument?.id_code}) — Calibrated on {fmtDate(selectedViewCalibration?.calibration_date)}
+                Instrument:{" "}
+                <span className="font-semibold text-foreground">
+                  {instrument?.name}
+                </span>{" "}
+                ({instrument?.id_code}) — Calibrated on{" "}
+                {fmtDate(selectedViewCalibration?.calibration_date)}
               </p>
             </div>
 
@@ -536,7 +734,10 @@ export default function CalibrationHistory() {
               <Button
                 variant="default"
                 size="sm"
-                onClick={() => selectedViewCalibration && handleDownload(selectedViewCalibration)}
+                onClick={() =>
+                  selectedViewCalibration &&
+                  handleDownload(selectedViewCalibration)
+                }
                 className="gap-1.5 text-xs font-semibold shadow-sm"
               >
                 <Download className="w-3.5 h-3.5" /> Download PDF Certificate
@@ -569,7 +770,11 @@ export default function CalibrationHistory() {
                   Delete Calibration Record
                 </DialogTitle>
                 <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
-                  Certificate: <strong className="font-mono text-foreground font-bold">{selectedDeleteCalibration?.certificate_number || selectedDeleteCalibration?.id}</strong>
+                  Certificate:{" "}
+                  <strong className="font-mono text-foreground font-bold">
+                    {selectedDeleteCalibration?.certificate_number ||
+                      selectedDeleteCalibration?.id}
+                  </strong>
                 </DialogDescription>
               </div>
             </div>
@@ -579,14 +784,25 @@ export default function CalibrationHistory() {
             {loadingPreview ? (
               <div className="py-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
                 <Loader2 className="w-6 h-6 animate-spin text-primary" />
-                <p className="text-xs">Analyzing certificate sequence and subsequent records...</p>
+                <p className="text-xs">
+                  Analyzing certificate sequence and subsequent records...
+                </p>
               </div>
-            ) : resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 ? (
+            ) : resequencePreview &&
+              resequencePreview.canResequence &&
+              resequencePreview.affectedCalibrations.length > 0 ? (
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <p className="font-semibold text-foreground">Sequence Reassignment Options</p>
+                  <p className="font-semibold text-foreground">
+                    Sequence Reassignment Options
+                  </p>
                   <p className="text-muted-foreground text-xs">
-                    This calibration is followed by <strong>{resequencePreview.affectedCalibrations.length}</strong> subsequent certificate(s). Select how you would like to handle downstream sequence numbers:
+                    This calibration is followed by{" "}
+                    <strong>
+                      {resequencePreview.affectedCalibrations.length}
+                    </strong>{" "}
+                    subsequent certificate(s). Select how you would like to
+                    handle downstream sequence numbers:
                   </p>
                 </div>
 
@@ -610,13 +826,19 @@ export default function CalibrationHistory() {
                       />
                       <div className="space-y-1">
                         <div className="flex items-center gap-1.5">
-                          <p className="font-bold text-foreground">Reassign Sequence</p>
-                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-semibold px-1.5 py-0">
+                          <p className="font-bold text-foreground">
+                            Reassign Sequence
+                          </p>
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] bg-primary/10 text-primary border-primary/20 font-semibold px-1.5 py-0"
+                          >
                             Recommended
                           </Badge>
                         </div>
                         <p className="text-[11px] text-muted-foreground leading-normal">
-                          Shifts downstream certificate numbers back by 1 from deleted record to end. Prevents sequence gaps.
+                          Shifts downstream certificate numbers back by 1 from
+                          deleted record to end. Prevents sequence gaps.
                         </p>
                       </div>
                     </div>
@@ -639,9 +861,12 @@ export default function CalibrationHistory() {
                         className="mt-0.5 cursor-pointer"
                       />
                       <div className="space-y-1">
-                        <p className="font-bold text-foreground">Keep Existing Numbers</p>
+                        <p className="font-bold text-foreground">
+                          Keep Existing Numbers
+                        </p>
                         <p className="text-[11px] text-muted-foreground leading-normal">
-                          Leaves downstream certificates as-is. Creates an intentional gap in the certificate number sequence.
+                          Leaves downstream certificates as-is. Creates an
+                          intentional gap in the certificate number sequence.
                         </p>
                       </div>
                     </div>
@@ -653,10 +878,19 @@ export default function CalibrationHistory() {
                   <div className="space-y-2 pt-1">
                     <div className="flex items-center justify-between">
                       <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">
-                        Sequence Number Shift Preview ({resequencePreview.affectedCalibrations.length + 1} Records)
+                        Sequence Number Shift Preview (
+                        {resequencePreview.affectedCalibrations.length + 1}{" "}
+                        Records)
                       </p>
                       <span className="text-[11px] text-muted-foreground">
-                        Next Counter: <strong className="text-foreground font-mono">{resequencePreview.currentNextSeq}</strong> → <strong className="text-primary font-mono">{resequencePreview.newNextSeq}</strong>
+                        Next Counter:{" "}
+                        <strong className="text-foreground font-mono">
+                          {resequencePreview.currentNextSeq}
+                        </strong>{" "}
+                        →{" "}
+                        <strong className="text-primary font-mono">
+                          {resequencePreview.newNextSeq}
+                        </strong>
                       </span>
                     </div>
 
@@ -664,10 +898,16 @@ export default function CalibrationHistory() {
                       <Table className="text-xs">
                         <TableHeader className="bg-muted/70">
                           <TableRow>
-                            <TableHead className="py-2 font-bold text-foreground">Instrument</TableHead>
-                            <TableHead className="py-2 font-bold text-foreground">Current Cert No</TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">
+                              Instrument
+                            </TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">
+                              Current Cert No
+                            </TableHead>
                             <TableHead className="py-2 w-6 text-center"></TableHead>
-                            <TableHead className="py-2 font-bold text-foreground">Updated Cert No</TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">
+                              Updated Cert No
+                            </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -675,41 +915,69 @@ export default function CalibrationHistory() {
                           <TableRow className="bg-red-50/30 dark:bg-red-950/20 border-b">
                             <TableCell className="py-2 font-medium">
                               <div>
-                                <p className="font-semibold text-foreground">{resequencePreview.targetCalibration.instrumentName || instrument?.name || "Selected Item"}</p>
-                                <p className="text-[10px] text-muted-foreground font-mono">{resequencePreview.targetCalibration.idCode || instrument?.id_code || ""}</p>
+                                <p className="font-semibold text-foreground">
+                                  {resequencePreview.targetCalibration
+                                    .instrumentName ||
+                                    instrument?.name ||
+                                    "Selected Item"}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-mono">
+                                  {resequencePreview.targetCalibration.idCode ||
+                                    instrument?.id_code ||
+                                    ""}
+                                </p>
                               </div>
                             </TableCell>
                             <TableCell className="py-2 font-mono font-bold text-red-600">
-                              {resequencePreview.targetCalibration.certificate_number}
+                              {
+                                resequencePreview.targetCalibration
+                                  .certificate_number
+                              }
                             </TableCell>
-                            <TableCell className="py-2 text-center text-muted-foreground">→</TableCell>
+                            <TableCell className="py-2 text-center text-muted-foreground">
+                              →
+                            </TableCell>
                             <TableCell className="py-2">
-                              <Badge variant="destructive" className="text-[10px] font-bold">
+                              <Badge
+                                variant="destructive"
+                                className="text-[10px] font-bold"
+                              >
                                 DELETED (REMOVED)
                               </Badge>
                             </TableCell>
                           </TableRow>
 
                           {/* Downstream Affected Rows */}
-                          {resequencePreview.affectedCalibrations.map((item) => (
-                            <TableRow key={item.id} className="hover:bg-muted/30 transition-colors">
-                              <TableCell className="py-2 font-medium">
-                                <div>
-                                  <p className="font-semibold text-foreground">{item.instrumentName || "Instrument"}</p>
-                                  <p className="text-[10px] text-muted-foreground font-mono">{item.idCode || ""}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell className="py-2 font-mono text-muted-foreground line-through">
-                                {item.oldCertificateNumber}
-                              </TableCell>
-                              <TableCell className="py-2 text-center text-muted-foreground font-bold">→</TableCell>
-                              <TableCell className="py-2">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300">
-                                  {item.newCertificateNumber}
-                                </span>
-                              </TableCell>
-                            </TableRow>
-                          ))}
+                          {resequencePreview.affectedCalibrations.map(
+                            (item) => (
+                              <TableRow
+                                key={item.id}
+                                className="hover:bg-muted/30 transition-colors"
+                              >
+                                <TableCell className="py-2 font-medium">
+                                  <div>
+                                    <p className="font-semibold text-foreground">
+                                      {item.instrumentName || "Instrument"}
+                                    </p>
+                                    <p className="text-[10px] text-muted-foreground font-mono">
+                                      {item.idCode || ""}
+                                    </p>
+                                  </div>
+                                </TableCell>
+                                <TableCell className="py-2 font-mono text-muted-foreground line-through">
+                                  {item.oldCertificateNumber}
+                                </TableCell>
+                                <TableCell className="py-2 text-center text-muted-foreground font-bold">
+                                  →
+                                </TableCell>
+                                <TableCell className="py-2">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300">
+                                    {item.newCertificateNumber}
+                                  </span>
+                                </TableCell>
+                              </TableRow>
+                            ),
+                          )}
                         </TableBody>
                       </Table>
                     </div>
@@ -718,7 +986,15 @@ export default function CalibrationHistory() {
                   <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-xs">
                     <p className="font-semibold">Gap Notice:</p>
                     <p className="text-[11px] mt-0.5">
-                      Subsequent records will retain current numbers ({resequencePreview.affectedCalibrations.map((c) => c.oldCertificateNumber).join(", ")}). The number <strong>{resequencePreview.targetCalibration.certificate_number}</strong> will be skipped permanently.
+                      Subsequent records will retain current numbers (
+                      {resequencePreview.affectedCalibrations
+                        .map((c) => c.oldCertificateNumber)
+                        .join(", ")}
+                      ). The number{" "}
+                      <strong>
+                        {resequencePreview.targetCalibration.certificate_number}
+                      </strong>{" "}
+                      will be skipped permanently.
                     </p>
                   </div>
                 )}
@@ -728,18 +1004,26 @@ export default function CalibrationHistory() {
                 <p className="text-muted-foreground">
                   Are you sure you want to permanently delete calibration record{" "}
                   <strong className="font-mono text-foreground font-bold">
-                    {selectedDeleteCalibration?.certificate_number || selectedDeleteCalibration?.id}
+                    {selectedDeleteCalibration?.certificate_number ||
+                      selectedDeleteCalibration?.id}
                   </strong>
                   ? This action cannot be undone.
                 </p>
-                {resequencePreview && resequencePreview.affectedCalibrations.length === 0 && (
-                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">
-                    <p className="font-semibold text-primary">Sequence Counter Adjustment</p>
-                    <p className="text-muted-foreground text-[11px]">
-                      This is the latest issued certificate in the current series. Deleting it will adjust the next sequence counter from <strong>{resequencePreview.currentNextSeq}</strong> to <strong>{resequencePreview.newNextSeq}</strong>.
-                    </p>
-                  </div>
-                )}
+                {resequencePreview &&
+                  resequencePreview.affectedCalibrations.length === 0 && (
+                    <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">
+                      <p className="font-semibold text-primary">
+                        Sequence Counter Adjustment
+                      </p>
+                      <p className="text-muted-foreground text-[11px]">
+                        This is the latest issued certificate in the current
+                        series. Deleting it will adjust the next sequence
+                        counter from{" "}
+                        <strong>{resequencePreview.currentNextSeq}</strong> to{" "}
+                        <strong>{resequencePreview.newNextSeq}</strong>.
+                      </p>
+                    </div>
+                  )}
               </div>
             )}
 
@@ -750,7 +1034,9 @@ export default function CalibrationHistory() {
                 Automatic Instrument History Rollback
               </p>
               <p className="text-muted-foreground text-[10px] leading-relaxed">
-                If this calibration was the instrument's latest record, its last calibration date and due date in Instrument Master will roll back automatically to the prior calibration.
+                If this calibration was the instrument's latest record, its last
+                calibration date and due date in Instrument Master will roll
+                back automatically to the prior calibration.
               </p>
             </div>
           </div>
@@ -772,7 +1058,10 @@ export default function CalibrationHistory() {
               className="gap-1.5 font-bold"
             >
               {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 && resequenceChoice === "resequence"
+              {resequencePreview &&
+              resequencePreview.canResequence &&
+              resequencePreview.affectedCalibrations.length > 0 &&
+              resequenceChoice === "resequence"
                 ? "Confirm & Reassign Sequence"
                 : "Delete Record"}
             </Button>
@@ -789,7 +1078,8 @@ export default function CalibrationHistory() {
               Audit Trail — Certificate: {selectedCertNo}
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Complete modification history showing who edited the calibration, when it was edited, and what values were changed.
+              Complete modification history showing who edited the calibration,
+              when it was edited, and what values were changed.
             </DialogDescription>
           </DialogHeader>
 
@@ -797,58 +1087,108 @@ export default function CalibrationHistory() {
             {loadingAudit ? (
               <div className="space-y-3 py-6">
                 {[...Array(3)].map((_, i) => (
-                  <div key={i} className="h-16 bg-muted animate-pulse rounded-lg" />
+                  <div
+                    key={i}
+                    className="h-16 bg-muted animate-pulse rounded-lg"
+                  />
                 ))}
               </div>
             ) : auditLogs.length > 0 ? (
               <div className="space-y-4">
                 {auditLogs.map((log) => (
-                  <div key={log.id} className="p-3 border rounded-xl bg-card space-y-2 text-xs">
+                  <div
+                    key={log.id}
+                    className="p-3 border rounded-xl bg-card space-y-2 text-xs"
+                  >
                     <div className="flex items-center justify-between border-b pb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px]">
-                          Edited by {log.edited_by_name || (typeof log.edited_by === "object" && log.edited_by && "name" in log.edited_by ? String((log.edited_by as any).name) : (typeof log.edited_by === "string" ? log.edited_by : "User"))}
+                          Edited by{" "}
+                          {log.edited_by_name ||
+                            (typeof log.edited_by === "object" &&
+                            log.edited_by &&
+                            "name" in log.edited_by
+                              ? String((log.edited_by as any).name)
+                              : typeof log.edited_by === "string"
+                                ? log.edited_by
+                                : "User")}
                         </Badge>
                       </div>
                       <span className="text-[10px] text-muted-foreground font-mono">
-                        {log.edited_at ? format(new Date(log.edited_at), "dd-MMM-yyyy hh:mm a") : "-"}
+                        {log.edited_at
+                          ? format(
+                              new Date(log.edited_at),
+                              "dd-MMM-yyyy hh:mm a",
+                            )
+                          : "-"}
                       </span>
                     </div>
 
                     {log.changes_summary && log.changes_summary.length > 0 ? (
                       <div className="space-y-1.5 pt-1">
-                        <p className="font-semibold text-[11px] text-muted-foreground">Changes Made:</p>
+                        <p className="font-semibold text-[11px] text-muted-foreground">
+                          Changes Made:
+                        </p>
                         <div className="rounded-lg overflow-hidden border">
                           <table className="w-full text-[11px]">
                             <thead>
                               <tr className="bg-muted/60">
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Field</th>
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Previous Value</th>
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">
+                                  Field
+                                </th>
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">
+                                  Previous Value
+                                </th>
                                 <th className="text-center px-1 py-1.5 w-6"></th>
-                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Updated Value</th>
+                                <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">
+                                  Updated Value
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
                               {log.changes_summary.map((change, idx) => {
                                 if (change.field === "calibration_points") {
                                   return (
-                                    <tr key={idx} className="border-t border-muted/40 hover:bg-muted/20 transition-colors">
-                                      <td className="px-3 py-2 font-semibold text-primary align-top pt-3 whitespace-nowrap">{getAuditFieldLabel(change.field)}</td>
+                                    <tr
+                                      key={idx}
+                                      className="border-t border-muted/40 hover:bg-muted/20 transition-colors"
+                                    >
+                                      <td className="px-3 py-2 font-semibold text-primary align-top pt-3 whitespace-nowrap">
+                                        {getAuditFieldLabel(change.field)}
+                                      </td>
                                       <td colSpan={3} className="px-3 py-2">
-                                        <CalibrationPointsDiff oldPoints={change.oldValue} newPoints={change.newValue} />
+                                        <CalibrationPointsDiff
+                                          oldPoints={change.oldValue}
+                                          newPoints={change.newValue}
+                                        />
                                       </td>
                                     </tr>
                                   );
                                 }
                                 return (
-                                  <tr key={idx} className="border-t border-muted/40 hover:bg-muted/20 transition-colors">
-                                    <td className="px-3 py-2 font-semibold text-primary whitespace-nowrap">{getAuditFieldLabel(change.field)}</td>
-                                    <td className="px-3 py-2 text-red-500/80 max-w-[200px]">
-                                      <span className="line-through">{formatAuditValue(change.field, change.oldValue)}</span>
+                                  <tr
+                                    key={idx}
+                                    className="border-t border-muted/40 hover:bg-muted/20 transition-colors"
+                                  >
+                                    <td className="px-3 py-2 font-semibold text-primary whitespace-nowrap">
+                                      {getAuditFieldLabel(change.field)}
                                     </td>
-                                    <td className="px-1 py-2 text-center text-muted-foreground">→</td>
+                                    <td className="px-3 py-2 text-red-500/80 max-w-[200px]">
+                                      <span className="line-through">
+                                        {formatAuditValue(
+                                          change.field,
+                                          change.oldValue,
+                                        )}
+                                      </span>
+                                    </td>
+                                    <td className="px-1 py-2 text-center text-muted-foreground">
+                                      →
+                                    </td>
                                     <td className="px-3 py-2 text-emerald-600 dark:text-emerald-400 font-semibold max-w-[200px]">
-                                      {formatAuditValue(change.field, change.newValue)}
+                                      {formatAuditValue(
+                                        change.field,
+                                        change.newValue,
+                                      )}
                                     </td>
                                   </tr>
                                 );
@@ -858,7 +1198,9 @@ export default function CalibrationHistory() {
                         </div>
                       </div>
                     ) : (
-                      <p className="text-muted-foreground text-[11px]">Calibration saved with updated parameters.</p>
+                      <p className="text-muted-foreground text-[11px]">
+                        Calibration saved with updated parameters.
+                      </p>
                     )}
                   </div>
                 ))}
