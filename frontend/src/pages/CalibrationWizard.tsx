@@ -5615,7 +5615,7 @@ export default function CalibrationWizard() {
                           filterMode={masterSelectFilter}
                           onFilterModeChange={setMasterSelectFilter}
                           onSelect={(master) => {
-                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || master.id_code || master.id || "";
+                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || master.id_code || master.id || "";
                             const newRefs = [...referenceStandards];
                             newRefs[index] = {
                               ...newRefs[index],
@@ -5627,6 +5627,7 @@ export default function CalibrationWizard() {
                               validity: master.due_date ? toLocalYyyyMmDd(master.due_date) : "",
                               traceable_to: initialCertNo,
                               cert_no: initialCertNo,
+                              agency: master.agency || "",
                             };
                             setReferenceStandards(newRefs);
                             setAcknowledgedRefStandardWarning(false);
@@ -5644,6 +5645,7 @@ export default function CalibrationWizard() {
                               validity: "",
                               traceable_to: "",
                               cert_no: "",
+                              agency: "",
                             };
                             setReferenceStandards(newRefs);
                             setAcknowledgedRefStandardWarning(false);
@@ -5682,6 +5684,37 @@ export default function CalibrationWizard() {
                           placeholder="e.g., DWT-001" 
                         />
                       </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <div className="h-5 flex items-center">
+                            <Label className="text-xs font-semibold leading-none">Make</Label>
+                          </div>
+                          <Input
+                            value={ref.make || ""}
+                            onChange={(e) => {
+                              const newRefs = [...referenceStandards];
+                              newRefs[index].make = e.target.value;
+                              setReferenceStandards(newRefs);
+                            }}
+                            placeholder="e.g., Mitutoyo"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="h-5 flex items-center">
+                            <Label className="text-xs font-semibold leading-none">Cal.Agency</Label>
+                          </div>
+                          <Input
+                            value={ref.agency || ""}
+                            onChange={(e) => {
+                              const newRefs = [...referenceStandards];
+                              newRefs[index].agency = e.target.value;
+                              setReferenceStandards(newRefs);
+                            }}
+                            placeholder="e.g., VIPL / TEST CAL (NABL)"
+                          />
+                        </div>
+                      </div>
+
                       <div className="space-y-1.5">
                         <div className="h-5 flex items-center justify-between">
                           <Label className="text-xs font-semibold leading-none">Traceable To (NABL Lab / Cert No)</Label>
@@ -5765,7 +5798,7 @@ export default function CalibrationWizard() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", traceable_to: "", cert_no: "", validity: "" }])}
+                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", make: "", agency: "", traceable_to: "", cert_no: "", validity: "" }])}
                 className="w-full text-xs font-semibold border-dashed"
               >
                 + Add Another Reference Standard

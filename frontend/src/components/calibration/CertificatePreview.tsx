@@ -1876,7 +1876,7 @@ export function CertificatePreview({
             <thead>
               <tr>
                 <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-center border-b border-black`}>
-                  TRACEABILITY OF MASTER USED :
+                  TRACEABILITY OF MASTER USED
                 </th>
               </tr>
               <tr className="bg-slate-100 border-b border-black font-bold text-center">
@@ -1913,7 +1913,7 @@ export function CertificatePreview({
                         {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
                       </td>
                       <td className={isCompact ? "p-0.5" : "p-1"}>
-                        {ref.agency || ref.cal_agency || ref.calibration_agency || (calibration as any)?.instrument?.agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || "NABL Lab"}
+                        {(ref.agency && ref.agency.trim()) ? ref.agency.trim() : "-"}
                       </td>
                     </tr>
                   ),
@@ -1936,7 +1936,7 @@ export function CertificatePreview({
                     {fmtDate((calibration as any)?.reference_standard_validity)}
                   </td>
                   <td className={isCompact ? "p-0.5" : "p-1"}>
-                    {(calibration as any)?.reference_standard_agency || (calibration as any)?.instrument?.agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || "NABL Accredited Lab"}
+                    {((calibration as any)?.reference_standard_agency && (calibration as any).reference_standard_agency.trim()) ? (calibration as any).reference_standard_agency.trim() : "-"}
                   </td>
                 </tr>
               )}

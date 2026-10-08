@@ -803,10 +803,10 @@ export class CertificateService {
       calibration.reference_standards &&
       calibration.reference_standards.length > 0
     ) {
-      // Enrich existing rows: if a row has no agency set, use the instrument-level agency
+      // Enrich existing rows: use only the agency stored on the reference standard itself
       referenceStandards = calibration.reference_standards.map((ref: any) => ({
         ...ref,
-        agency: ref.agency || ref.cal_agency || ref.calibration_agency || instrumentAgency || 'NABL Accredited Lab',
+        agency: (ref.agency && String(ref.agency).trim()) ? String(ref.agency).trim() : '-',
       }));
     } else {
       referenceStandards = [
@@ -817,7 +817,7 @@ export class CertificateService {
           cert_no: (calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/101',
           cal_date: calibration.calibration_date,
           validity: (calibration as any)?.reference_standard_validity,
-          agency: (calibration as any)?.reference_standard_agency || instrumentAgency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || 'NABL Accredited Lab',
+          agency: ((calibration as any)?.reference_standard_agency && String((calibration as any).reference_standard_agency).trim()) ? String((calibration as any).reference_standard_agency).trim() : '-',
         },
       ];
     }
@@ -3031,7 +3031,7 @@ export class CertificateService {
             body: [
               [
                 {
-                  text: 'TRACEABILITY OF MASTER USED :',
+                  text: 'TRACEABILITY OF MASTER USED',
                   style: 'boxHeader',
                   alignment: 'center',
                   fontSize: titleFontSize,
@@ -3103,13 +3103,7 @@ export class CertificateService {
                 },
                 {
                   text:
-                    ref.agency ||
-                    ref.cal_agency ||
-                    ref.calibration_agency ||
-                    instrumentAgency ||
-                    (calibration as any)?.calibration_agency ||
-                    (calibration as any)?.calibration_source ||
-                    'NABL Lab',
+                    (ref.agency && String(ref.agency).trim()) ? String(ref.agency).trim() : '-',
                   style: 'tdCell',
                   fontSize: contentFontSize,
                   margin: [0, 0.5, 0, 0.5],
