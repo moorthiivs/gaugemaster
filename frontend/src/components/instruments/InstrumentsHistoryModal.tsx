@@ -230,7 +230,7 @@ export function InstrumentsHistoryModal({
                             {dueDate || "—"}
                           </TableCell>
                           <TableCell className="py-2.5">
-                            {record.calibration_source === "In-House" ? (
+                            {/in-?house/i.test(record.calibration_source || "") ? (
                               <Badge
                                 variant="outline"
                                 className="text-[10px] font-medium inline-flex items-center gap-1 bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
@@ -238,13 +238,20 @@ export function InstrumentsHistoryModal({
                                 <Layers className="w-3 h-3" />
                                 In-House
                               </Badge>
-                            ) : (
+                            ) : /external/i.test(record.calibration_source || "") ? (
                               <Badge
                                 variant="outline"
                                 className="text-[10px] font-medium inline-flex items-center gap-1 bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800"
                               >
                                 <ExternalLink className="w-3 h-3" />
                                 External
+                              </Badge>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] font-medium inline-flex items-center gap-1 bg-muted/50 text-muted-foreground border-muted-foreground/20"
+                              >
+                                {record.calibration_source || "—"}
                               </Badge>
                             )}
                           </TableCell>
@@ -367,7 +374,7 @@ export function InstrumentsHistoryModal({
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Source:</span>
                 <span className="font-medium text-foreground">
-                  {recordToDelete.calibration_source || "External"}
+                  {recordToDelete.calibration_source || "—"}
                 </span>
               </div>
               {(recordToDelete.certificate_number || recordToDelete.cert_no) && (

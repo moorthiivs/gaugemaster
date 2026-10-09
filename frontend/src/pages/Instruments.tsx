@@ -981,6 +981,7 @@ export default function Instruments() {
         due_date: new Date(newDueDate).toISOString(),
         status: "OK",
         cert_no: newCertNo.trim() || undefined,
+        calibration_source: "External",
       });
 
       if (certificateFile) {
@@ -1216,7 +1217,7 @@ export default function Instruments() {
                       <div className="flex items-center justify-between pt-0.5">
                         <span className="text-muted-foreground text-[10px] uppercase font-medium">Source</span>
                         <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300">
-                          {row.original.calibration_source || "External"}
+                          {row.original.calibration_source || "—"}
                         </Badge>
                       </div>
                     </div>

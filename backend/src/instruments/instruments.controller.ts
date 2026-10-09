@@ -153,7 +153,6 @@ export class InstrumentsController {
         
         await this.instrumentsService.update(id, { 
             certificate_file: fileUrl,
-            calibration_source: 'External' 
         });
         return { message: "Certificate uploaded successfully", url: fileUrl };
     }

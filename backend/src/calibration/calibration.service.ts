@@ -894,6 +894,7 @@ export class CalibrationService implements OnModuleInit {
 
             const instUpdatePayload: Record<string, any> = {
               status: 'Under Calibration',
+              calibration_source: 'In-House',
               custom_parameters: updatedCp,
             };
 
@@ -1001,6 +1002,7 @@ export class CalibrationService implements OnModuleInit {
           const cp = (inst as any)?.custom_parameters || {};
           await this.instrumentsService.update(inst.id, {
             status: 'Under Calibration',
+            calibration_source: 'In-House',
             custom_parameters: {
               ...cp,
               calibration_sub_status: 'Approve Pending',
@@ -1907,6 +1909,7 @@ export class CalibrationService implements OnModuleInit {
           } as any);
         } else {
           await this.instrumentsService.update(saved.instrument_id, {
+            calibration_source: 'In-House',
             custom_parameters: updatedCp,
           } as any);
         }

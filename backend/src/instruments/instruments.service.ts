@@ -882,7 +882,7 @@ export class InstrumentsService {
                     instrument.last_calibration_date = latestHistory.last_calibration_date;
                     instrument.due_date = latestHistory.due_date;
                     instrument.certificate_file = latestHistory.certificate_file;
-                    instrument.calibration_source = latestHistory.calibration_source || 'External';
+                    instrument.calibration_source = latestHistory.calibration_source || instrument.calibration_source;
                     instrument.status = isOverdue ? 'Overdue' : 'OK';
                     updatedInstrument = await this.instrumentRepository.save(instrument);
                 } else {
