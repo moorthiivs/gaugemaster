@@ -32,7 +32,7 @@ import { getInstrument } from "@/lib/instrumentActions";
 import { formatNominalDisplay } from "@/components/calibration/CanvasTemplateEditor";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
-import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { CertificatePreview, CanvasBlocksRenderer } from "@/components/calibration/CertificatePreview";
 import { UlrGate } from "@/components/calibration/UlrGate";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
 import { JudgementCellControl } from "@/components/calibration/JudgementCellControl";
@@ -620,6 +620,32 @@ export default function CalibrationWizard() {
       }
     });
     return tables;
+  };
+
+  // Helper: extract standardized CalibrationPoint array from Canvas layout blocks for fallback & consistency
+  const syncCalPointsFromCanvas = (blocks: any[]): CalibrationPoint[] => {
+    const allTables = getAllCanvasTables(blocks);
+    const synced: CalibrationPoint[] = [];
+    allTables.forEach((tbl, tIdx) => {
+      if (Array.isArray(tbl.rows)) {
+        tbl.rows.forEach((r: any, rIdx: number) => {
+          if (!r.is_merged && !r.isMerged) {
+            const rawStatus = String(r.status || r.judgement || r.result || r.verdict || "PASS").trim().toUpperCase();
+            synced.push({
+              point_number: r.point_number ?? (synced.length + 1),
+              description: r.description || r.specification || r.required_dimension || `Point ${synced.length + 1}`,
+              nominal: typeof r.nominal === "number" ? r.nominal : parseFloat(String(r.nominal ?? r.nominal_value ?? 0)) || 0,
+              unit: r.unit || tbl.unit || calUnit || "mm",
+              tolerance: typeof r.tolerance === "number" ? r.tolerance : parseFloat(String(r.tolerance ?? tbl.tolerance ?? 0.02)) || 0.02,
+              ascending_reading: typeof r.reading === "number" ? r.reading : parseFloat(String(r.reading ?? r.ascending_reading ?? r.actual ?? r.t1 ?? 0)) || 0,
+              error: r.error !== undefined ? (typeof r.error === "number" ? r.error : parseFloat(String(r.error)) || 0) : undefined,
+              status: rawStatus === "FAIL" || rawStatus === "REJECT" || rawStatus === "NG" ? "FAIL" : "PASS",
+            });
+          }
+        });
+      }
+    });
+    return synced;
   };
 
   // Helper: synchronize template column formulas and row cellFormulas into existing calibration blocks
@@ -2203,6 +2229,10 @@ export default function CalibrationWizard() {
       const evaluatedBlocks = evaluateAllCanvasBlocks(sanitizedBlocks, { forceFull: true });
       initialSanitizedBlocks = evaluatedBlocks;
       setWizardLayoutBlocks(evaluatedBlocks);
+      const synced = syncCalPointsFromCanvas(evaluatedBlocks);
+      if (synced.length > 0) {
+        setCalPoints(synced);
+      }
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
@@ -2592,7 +2622,12 @@ export default function CalibrationWizard() {
             syncFormulasFromTemplate(sanitizedBlocks, targetTpl.layout_blocks, { preserveExistingFormulas: true });
           }
           const blocksWithKeys = ensureTableKeys(sanitizedBlocks);
-          setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
+          const evaluatedBlocks = evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true });
+          setWizardLayoutBlocks(evaluatedBlocks);
+          const synced = syncCalPointsFromCanvas(evaluatedBlocks);
+          if (synced.length > 0) {
+            setCalPoints(synced);
+          }
         }
 
         const calDiagram = ((cal as any).diagram_image !== undefined && (cal as any).diagram_image !== null)
@@ -3201,6 +3236,16 @@ export default function CalibrationWizard() {
       }
     }
 
+    // When leaving Step 3 (Calibration Data) to Step 4
+    if (step === 2 && wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+      const evaluated = evaluateAllCanvasBlocks(wizardLayoutBlocks, { forceFull: true });
+      setWizardLayoutBlocks(evaluated);
+      const synced = syncCalPointsFromCanvas(evaluated);
+      if (synced.length > 0) {
+        setCalPoints(synced);
+      }
+    }
+
     setStep(step + 1);
   };
 
@@ -3254,6 +3299,15 @@ export default function CalibrationWizard() {
     }
     setSaving(true);
     try {
+      let pointsToSave = calPoints;
+      if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+        const synced = syncCalPointsFromCanvas(wizardLayoutBlocks);
+        if (synced.length > 0) {
+          pointsToSave = synced;
+          setCalPoints(synced);
+        }
+      }
+
       const data = {
         instrument_id: selectedInstrument.id,
         calibration_date: calDate,
@@ -3284,7 +3338,7 @@ export default function CalibrationWizard() {
         standard_reference: standardReference || remarks || undefined,
         is_canvas_template: wizardIsCanvas,
         layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
-        calibration_points: calPoints,
+        calibration_points: pointsToSave,
         custom_columns: wizardCustomColumns,
         standard_columns_config: {
           ...(wizardStandardColumnConfigs || {}),
@@ -5167,6 +5221,14 @@ export default function CalibrationWizard() {
                         return;
                       }
                     }
+                    if (step === 2 && i > 2 && wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+                      const evaluated = evaluateAllCanvasBlocks(wizardLayoutBlocks, { forceFull: true });
+                      setWizardLayoutBlocks(evaluated);
+                      const synced = syncCalPointsFromCanvas(evaluated);
+                      if (synced.length > 0) {
+                        setCalPoints(synced);
+                      }
+                    }
                     setStep(i);
                   }
                 }}
@@ -5329,7 +5391,23 @@ export default function CalibrationWizard() {
                       <div>
                         <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Step 3: Calibration Data</span>
                         <p className="text-sm font-semibold text-foreground">
-                          {calPoints.length} Test Points • Unit: {calUnit || "mm"} {procedureNo || procedureReference ? `• Proc: ${procedureNo || procedureReference}` : ""}
+                          {(() => {
+                            if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+                              const allTables = getAllCanvasTables(wizardLayoutBlocks);
+                              let totalPoints = 0;
+                              allTables.forEach((tbl) => {
+                                if (Array.isArray(tbl.rows)) {
+                                  totalPoints += tbl.rows.filter((r: any) => !r.is_merged && !r.isMerged).length;
+                                }
+                              });
+                              const ptsText = totalPoints > 0 ? `${totalPoints} Test Points • ` : "";
+                              const sectionsText = `${wizardLayoutBlocks.length} Section${wizardLayoutBlocks.length > 1 ? "s" : ""}`;
+                              const unitText = calUnit || (allTables[0]?.unit) || "mm";
+                              const procText = procedureNo || procedureReference ? `• Proc: ${procedureNo || procedureReference}` : "";
+                              return `${ptsText}${sectionsText} • Unit: ${unitText} ${procText}`.trim();
+                            }
+                            return `${calPoints.length} Test Points • Unit: ${calUnit || "mm"} ${procedureNo || procedureReference ? `• Proc: ${procedureNo || procedureReference}` : ""}`;
+                          })()}
                         </p>
                       </div>
                     </div>
@@ -5340,7 +5418,7 @@ export default function CalibrationWizard() {
                   </button>
 
                   {!step3Collapsed && (
-                    <div className="p-4 border-t bg-card text-xs space-y-3 animate-in fade-in-50 duration-200">
+                    <div className="p-4 border-t bg-card text-xs space-y-4 animate-in fade-in-50 duration-200">
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs bg-muted/20 p-2.5 rounded-lg border">
                         <div><span className="text-muted-foreground block text-[10px]">Procedure No</span><span className="font-medium">{procedureNo || procedureReference || "-"}</span></div>
                         <div><span className="text-muted-foreground block text-[10px]">Doc. No.</span><span className="font-medium">{docNo || "-"}</span></div>
@@ -5349,39 +5427,66 @@ export default function CalibrationWizard() {
                         <div><span className="text-muted-foreground block text-[10px]">Soaking Time</span><span className="font-medium text-primary">{envSoakingTime || (envSoakingStartTime && envSoakingEndTime ? `${envSoakingStartTime} - ${envSoakingEndTime}` : "-")}</span></div>
                       </div>
 
-                      {calPoints.length > 0 && (
+                      {wizardIsCanvas && wizardLayoutBlocks.length > 0 ? (
+                        <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                          <CanvasBlocksRenderer blocks={wizardLayoutBlocks} isScreen={true} />
+                        </div>
+                      ) : calPoints.length > 0 ? (
                         <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
-                          <table className="w-full text-xs text-left border-collapse">
-                            <thead className="bg-muted text-muted-foreground font-semibold sticky top-0 text-[10px] uppercase">
-                              <tr>
-                                <th className="p-2 border-b border-r">Pt</th>
-                                <th className="p-2 border-b border-r">Description</th>
-                                <th className="p-2 border-b border-r">Nominal ({calUnit})</th>
-                                <th className="p-2 border-b border-r">Actual ({calUnit})</th>
-                                <th className="p-2 border-b border-r">Error ({calUnit})</th>
-                                <th className="p-2 border-b">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                              {calPoints.map((pt, i) => (
-                                <tr key={i} className="hover:bg-muted/30">
-                                  <td className="p-2 border-r font-medium text-center">{pt.point_number || i + 1}</td>
-                                  <td className="p-2 border-r">{pt.description || `Point ${i + 1}`}</td>
-                                  <td className="p-2 border-r font-mono">{pt.nominal ?? (pt as any).nominal_value ?? "-"}</td>
-                                  <td className="p-2 border-r font-mono">{pt.ascending_reading ?? (pt as any).actual_reading ?? "-"}</td>
-                                  <td className="p-2 border-r font-mono">{pt.error ?? "-"}</td>
-                                  <td className="p-2">
-                                    <span className={cn(
-                                      "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
-                                      pt.status?.toUpperCase() === "PASS" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"
-                                    )}>
-                                      {pt.status || "PASS"}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          {(() => {
+                            const hasDescending = calPoints.some((pt: any) => pt.descending_reading !== undefined && pt.descending_reading !== null && pt.descending_reading !== 0);
+                            const customCols = wizardCustomColumns || [];
+                            return (
+                              <table className="w-full text-xs text-left border-collapse">
+                                <thead className="bg-muted text-muted-foreground font-semibold sticky top-0 text-[10px] uppercase">
+                                  <tr>
+                                    <th className="p-2 border-b border-r">Pt</th>
+                                    <th className="p-2 border-b border-r">Description</th>
+                                    <th className="p-2 border-b border-r">Nominal ({calUnit})</th>
+                                    <th className="p-2 border-b border-r">{hasDescending ? "Actual / Ascending" : `Actual (${calUnit})`}</th>
+                                    {hasDescending && <th className="p-2 border-b border-r">Descending ({calUnit})</th>}
+                                    {customCols.map((c) => (
+                                      <th key={c.id} className="p-2 border-b border-r">{(c as any).label || c.name}</th>
+                                    ))}
+                                    <th className="p-2 border-b border-r">Error ({calUnit})</th>
+                                    <th className="p-2 border-b">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {calPoints.map((pt, i) => (
+                                    <tr key={i} className="hover:bg-muted/30">
+                                      <td className="p-2 border-r font-medium text-center">{pt.point_number || i + 1}</td>
+                                      <td className="p-2 border-r">{pt.description || `Point ${i + 1}`}</td>
+                                      <td className="p-2 border-r font-mono">{pt.nominal ?? (pt as any).nominal_value ?? "-"}</td>
+                                      <td className="p-2 border-r font-mono">{pt.ascending_reading ?? (pt as any).actual_reading ?? "-"}</td>
+                                      {hasDescending && (
+                                        <td className="p-2 border-r font-mono">{pt.descending_reading ?? "-"}</td>
+                                      )}
+                                      {customCols.map((c) => {
+                                        const cVal = (pt as any).customFields?.[c.id]?.value ?? (pt as any).customFields?.[c.id] ?? (pt as any)[c.id] ?? "-";
+                                        return (
+                                          <td key={c.id} className="p-2 border-r font-mono">{String(cVal)}</td>
+                                        );
+                                      })}
+                                      <td className="p-2 border-r font-mono">{pt.error ?? "-"}</td>
+                                      <td className="p-2">
+                                        <span className={cn(
+                                          "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
+                                          pt.status?.toUpperCase() === "PASS" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"
+                                        )}>
+                                          {pt.status || "PASS"}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <div className="p-4 text-center text-muted-foreground italic text-xs border rounded-lg">
+                          No calibration test points recorded yet.
                         </div>
                       )}
                     </div>

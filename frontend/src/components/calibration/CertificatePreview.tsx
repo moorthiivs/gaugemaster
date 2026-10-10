@@ -479,7 +479,10 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                 ? "text-[7.5px]"
                 : "text-[8px]"
             }`}
-            style={{ tableLayout: "fixed" }}
+            style={{
+              tableLayout: "fixed",
+              minWidth: isScreen && (tbl.columns?.length || 0) > 6 ? `${Math.max(620, (tbl.columns?.length || 0) * 65)}px` : undefined,
+            }}
           >
             <colgroup>
               {computeColPercentages(tbl.columns || [], isHalf).map((pct, cIdx) => (
