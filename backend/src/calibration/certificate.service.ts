@@ -3302,6 +3302,54 @@ export class CertificateService {
               ]
             : []),
 
+        // Remarks / Notes Section (when provided)
+        ...(calibration.remarks &&
+        typeof calibration.remarks === 'string' &&
+        calibration.remarks.trim()
+          ? [
+              {
+                table: {
+                  widths: ['*'],
+                  body: [
+                    [
+                      {
+                        stack: [
+                          {
+                            text: 'Remarks / Notes:',
+                            bold: true,
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                            margin: [0, 0, 0, 1] as [number, number, number, number],
+                          },
+                          {
+                            text: calibration.remarks.trim(),
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                            lineHeight: 1.15,
+                          },
+                        ],
+                        fillColor: '#f8fafc',
+                        margin: [2, 1, 2, 1] as [number, number, number, number],
+                      },
+                    ],
+                  ],
+                },
+                layout: {
+                  hLineWidth: () => 0.5,
+                  vLineWidth: () => 0.5,
+                  hLineColor: () => '#000000',
+                  vLineColor: () => '#000000',
+                },
+                margin: [0, 0, 0, tableGap] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ],
+              },
+            ]
+          : []),
+
       ],
 
       styles: {

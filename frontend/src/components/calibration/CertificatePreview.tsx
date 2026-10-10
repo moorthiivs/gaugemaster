@@ -2009,6 +2009,22 @@ export function CertificatePreview({
           {/* Calibration Result */}
           {renderCalibrationResult()}
 
+          {/* Remarks Section */}
+          {Boolean(calibration.remarks && typeof calibration.remarks === "string" && calibration.remarks.trim()) && (
+            <div
+              className={`border border-black bg-white ${
+                isCompact ? "p-1 px-1.5 mb-1 text-[7.5px]" : "p-1.5 px-2 mb-1.5 text-[8.5px]"
+              } leading-normal text-left`}
+            >
+              <span className="font-bold text-black uppercase tracking-wider block text-[7.5px] mb-0.5">
+                Remarks / Notes:
+              </span>
+              <div className="font-medium text-black whitespace-pre-line leading-relaxed font-sans">
+                {calibration.remarks.trim()}
+              </div>
+            </div>
+          )}
+
           {/* Signature & Authentication Block (3 Columns: Calibrated By | Reviewed By | Approved By) */}
           {(() => {
             const isImgUrl = (str?: string) =>

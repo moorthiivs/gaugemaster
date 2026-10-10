@@ -520,12 +520,8 @@ export default function TemplateBuilderForm() {
     toast.success(`Reordered column "${moved.label}"`);
   };
 
-  const [remarks, setRemarks] = useState(
-    "Standard calibration per ISO/IEC 17025",
-  );
-  const [standardReference, setStandardReference] = useState(
-    "Standard calibration per ISO/IEC 17025",
-  );
+  const [remarks, setRemarks] = useState("");
+  const [standardReference, setStandardReference] = useState("");
   const [procedureReference, setProcedureReference] = useState("");
   const [procedureNo, setProcedureNo] = useState("");
   const [procedureName, setProcedureName] = useState("");
@@ -1080,7 +1076,6 @@ export default function TemplateBuilderForm() {
         setRemarks(tpl.remarks || "");
         setStandardReference(
           (tpl as any).standard_reference ||
-            tpl.remarks ||
             "Standard calibration per ISO/IEC 17025",
         );
         const loadedProcNo = (tpl as any).procedure_no || (tpl as any).procedureNo || tpl.procedure_reference || "";
@@ -1954,7 +1949,6 @@ export default function TemplateBuilderForm() {
                             value={standardReference}
                             onChange={(e) => {
                               setStandardReference(e.target.value);
-                              setRemarks(e.target.value);
                               markDirty();
                             }}
                             className="text-xs font-medium"
@@ -1968,7 +1962,10 @@ export default function TemplateBuilderForm() {
                           <Textarea
                             placeholder="Default certificate notes or compliance remarks..."
                             value={remarks}
-                            onChange={(e) => setRemarks(e.target.value)}
+                            onChange={(e) => {
+                              setRemarks(e.target.value);
+                              markDirty();
+                            }}
                             className="text-xs resize-none"
                             rows={2}
                           />
@@ -2082,6 +2079,20 @@ export default function TemplateBuilderForm() {
                               onChange={(e) => {
                                 setProcedureNo(e.target.value);
                                 setProcedureReference(e.target.value);
+                                markDirty();
+                              }}
+                              className="text-xs h-8"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-tiny text-muted-foreground">
+                              Standard Reference (Governing Norm)
+                            </Label>
+                            <Input
+                              placeholder="e.g., IS 4213-1991 or ISO/IEC 17025"
+                              value={standardReference}
+                              onChange={(e) => {
+                                setStandardReference(e.target.value);
                                 markDirty();
                               }}
                               className="text-xs h-8"
@@ -4257,7 +4268,7 @@ export default function TemplateBuilderForm() {
               {/* Document Control Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {/* Card 1: Document Control */}
-                <Card className="border shadow-xs bg-card flex flex-col justify-between">
+                <Card className="border shadow-xs bg-card flex flex-col">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-primary" />
@@ -4274,7 +4285,7 @@ export default function TemplateBuilderForm() {
                             setDocNo(e.target.value);
                             markDirty();
                           }}
-                          placeholder="e.g. DOC-CAL-001"
+                          placeholder="e.g. DOC-CAL-001 or R/QCM/GI/001/04"
                           className="text-xs h-8 font-medium"
                         />
                       </div>
@@ -4306,17 +4317,41 @@ export default function TemplateBuilderForm() {
                           />
                         </div>
                       </div>
-                    </div>
-                    <div className="pt-1 flex items-center h-8">
-                      <span className="text-xxs px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 border border-emerald-500/20">
-                        ✓ ISO/IEC 17025 Accredited
-                      </span>
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Calibration Discipline</Label>
+                        <Select
+                          value={calibrationType}
+                          onValueChange={(val) => {
+                            setCalibrationType(val);
+                            markDirty();
+                          }}
+                        >
+                          <SelectTrigger className="text-xs h-8 font-medium bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CALIBRATION_TYPES.map((t) => (
+                              <SelectItem key={t.type} value={t.type}>
+                                {t.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Accreditation Standard</Label>
+                        <div className="h-8 flex items-center">
+                          <span className="text-xxs px-2.5 py-1.5 rounded bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1 border border-emerald-500/20 w-full justify-center">
+                            ✓ ISO/IEC 17025 Accredited
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* Card 2: Calibration SOP Reference */}
-                <Card className="border shadow-xs bg-card flex flex-col justify-between">
+                <Card className="border shadow-xs bg-card flex flex-col">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
@@ -4334,7 +4369,7 @@ export default function TemplateBuilderForm() {
                             setProcedureReference(e.target.value);
                             markDirty();
                           }}
-                          placeholder="e.g. PC-01"
+                          placeholder="e.g. D/QCM/GI/006/01"
                           className="text-xs h-8 font-medium"
                         />
                       </div>
@@ -4366,24 +4401,36 @@ export default function TemplateBuilderForm() {
                           />
                         </div>
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Procedure Name</Label>
-                      <Input
-                        value={procedureName}
-                        onChange={(e) => {
-                          setProcedureName(e.target.value);
-                          markDirty();
-                        }}
-                        placeholder="e.g. Master procedure"
-                        className="text-xs h-8 font-medium"
-                      />
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Procedure Name</Label>
+                        <Input
+                          value={procedureName}
+                          onChange={(e) => {
+                            setProcedureName(e.target.value);
+                            markDirty();
+                          }}
+                          placeholder="e.g. Procedure for Gauges and Instruments Calibration"
+                          className="text-xs h-8 font-medium"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Standard Reference (Governing Norm)</Label>
+                        <Input
+                          value={standardReference}
+                          onChange={(e) => {
+                            setStandardReference(e.target.value);
+                            markDirty();
+                          }}
+                          placeholder="e.g. IS 4213-1991 or ISO/IEC 17025"
+                          className="text-xs h-8 font-medium"
+                        />
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
 
                 {/* Card 3: Acceptance Reference */}
-                <Card className="border shadow-xs bg-card flex flex-col justify-between">
+                <Card className="border shadow-xs bg-card flex flex-col">
                   <CardHeader className="py-2.5 px-3.5 border-b bg-muted/20">
                     <CardTitle className="text-xs font-bold flex items-center gap-2">
                       <FileCheck2 className="w-3.5 h-3.5 text-amber-500" />
@@ -4432,18 +4479,29 @@ export default function TemplateBuilderForm() {
                           />
                         </div>
                       </div>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-tiny">Reference Description</Label>
-                      <Input
-                        value={acceptanceCriteriaReference}
-                        onChange={(e) => {
-                          setAcceptanceCriteriaReference(e.target.value);
-                          markDirty();
-                        }}
-                        placeholder="e.g. Table 1 Permissible Deviations"
-                        className="text-xs h-8 font-medium"
-                      />
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Reference Description</Label>
+                        <Input
+                          value={acceptanceCriteriaReference}
+                          onChange={(e) => {
+                            setAcceptanceCriteriaReference(e.target.value);
+                            markDirty();
+                          }}
+                          placeholder="e.g. Table 1 Permissible Deviations"
+                          className="text-xs h-8 font-medium"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-tiny">Acceptance Conformance</Label>
+                        <div className="h-8 flex items-center">
+                          <span
+                            className="text-xxs px-2.5 py-1.5 rounded bg-amber-500/10 text-amber-700 dark:text-amber-400 font-semibold inline-flex items-center gap-1 border border-amber-500/20 w-full justify-center truncate"
+                            title={acceptanceCriteriaReference || acceptanceCriteriaDocNo ? `AS Per ${acceptanceCriteriaDocNo || acceptanceCriteriaReference}` : "Conformance to Permissible Tolerances"}
+                          >
+                            ✓ {acceptanceCriteriaDocNo ? `AS Per ${acceptanceCriteriaDocNo}` : "Conformance to Tolerances"}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -4948,40 +5006,61 @@ export default function TemplateBuilderForm() {
                 <div className="space-y-6">
                   <Card className="border shadow-xs bg-card">
                     <CardHeader className="py-3 px-4 border-b bg-muted/20">
-                      <CardTitle className="text-xs font-bold flex items-center gap-2">
-                        <FileCheck2 className="w-3.5 h-3.5 text-primary" />
-                        Notes & Standard Reference
-                      </CardTitle>
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-xs font-bold flex items-center gap-2">
+                          <FileText className="w-3.5 h-3.5 text-primary" />
+                          Template Remarks &amp; Notes
+                        </CardTitle>
+                        <Badge
+                          variant="outline"
+                          className="text-xxs font-mono bg-primary/5 text-primary border-primary/20"
+                        >
+                          Certificate Footer
+                        </Badge>
+                      </div>
+                      <CardDescription className="text-tiny">
+                        Multi-line compliance observations and general remarks printed above signatures on the calibration certificate
+                      </CardDescription>
                     </CardHeader>
                     <CardContent className="p-4 space-y-3">
                       <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">
-                          Standard Reference Remarks
-                        </Label>
-                        <Input
-                          value={standardReference}
-                          onChange={(e) => {
-                            setStandardReference(e.target.value);
-                            markDirty();
-                          }}
-                          placeholder="Standard calibration per ISO/IEC 17025"
-                          className="text-xs h-8"
-                        />
-                      </div>
-
-                      <div className="space-y-1.5">
-                        <Label className="text-xs font-semibold">
-                          General Template Remarks
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-semibold">
+                            General Template Remarks
+                          </Label>
+                          <span className="text-xxs text-muted-foreground font-mono">
+                            Format: 1. ... 2. ...
+                          </span>
+                        </div>
                         <Textarea
                           value={remarks}
                           onChange={(e) => {
                             setRemarks(e.target.value);
                             markDirty();
                           }}
-                          rows={3}
-                          className="text-xs resize-none"
+                          rows={4}
+                          placeholder={`1. Cleaned and checked for physical damage before testing.\n2. Thermal stabilization maintained as per standard soaking time.\n3. Calibration carried out within specified master limits.`}
+                          className="text-xs font-sans leading-relaxed resize-none"
                         />
+                        <div className="flex items-center justify-between text-xxs text-muted-foreground pt-0.5">
+                          <span>Enter point-by-point notes separated by new lines.</span>
+                          <span className="font-mono">
+                            {remarks.split("\n").filter((l) => l.trim()).length} points
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t flex items-center justify-between text-xxs text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-blue-500" />
+                          <span>Governing SOP Standard:</span>
+                        </span>
+                        <span
+                          className="font-mono font-medium text-foreground bg-muted/60 px-2 py-0.5 rounded border text-xxs truncate max-w-[220px]"
+                          title={standardReference || "Configured in Certificate Layout > Calibration Procedure (SOP)"}
+                        >
+                          {standardReference || "Configured in Certificate Layout (SOP)"}
+                        </span>
                       </div>
                     </CardContent>
                   </Card>
@@ -5244,7 +5323,6 @@ export default function TemplateBuilderForm() {
                   acceptanceCriteriaReference || undefined,
                 standard_reference:
                   standardReference ||
-                  remarks ||
                   "Standard calibration per ISO/IEC 17025",
                 is_canvas_template: true,
                 layout_blocks: layoutBlocks,
@@ -5265,7 +5343,7 @@ export default function TemplateBuilderForm() {
                 diagram_image_alignment: diagramAlignment,
                 uncertainty: "± 0.0015 mm",
                 verdict: "PASS",
-                remarks: remarks || "Standard calibration per ISO/IEC 17025",
+                remarks: remarks || "",
                 calibrated_by: "Calibrator",
                 calibrated_by_designation: "Calibration Engineer",
                 reviewed_by: "Quality Manager",
