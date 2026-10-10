@@ -1756,7 +1756,7 @@ export default function Instruments() {
                 </SelectTrigger>
                 <SelectContent>
                   {StatusFillter.filter(s => s && s.trim() !== "").map((status) => (
-                    <SelectItem key={status} value={status}>{status}</SelectItem>
+                    <SelectItem key={status} value={status}>{status === "All" ? "All Status" : status}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

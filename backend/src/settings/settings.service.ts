@@ -1,4 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
+
+export const CANONICAL_INSTRUMENT_STATUSES = [
+  'OK',
+  'Upcoming Calibration (10 days before )',
+  'Sent for Calibration',
+  'Overdue',
+];
+
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -259,5 +267,76 @@ export class SettingsService {
     await this.locationEmailRepository.delete(id);
     return { success: true, message: 'Location mapping deleted successfully' };
   }
+
+  async getCustomInstrumentStatuses(companyId: string): Promise<string[]> {
+    if (!companyId) return [];
+    const setting = await this.settingsRepository.findOne({ where: { companyId } });
+    const statuses = setting?.customInstrumentStatuses || [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const s of statuses) {
+      if (typeof s === 'string' && s.trim()) {
+        const clean = s.trim();
+        const key = clean.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(clean);
+        }
+      }
+    }
+    return result;
+  }
+
+  async addCustomInstrumentStatus(companyId: string, status: string): Promise<{ success: boolean; status: string; statuses: string[] }> {
+    if (!companyId) {
+      throw new BadRequestException('Company ID is required');
+    }
+    const cleanStatus = (status || '').trim();
+    if (!cleanStatus) {
+      throw new BadRequestException('Status name cannot be empty');
+    }
+
+    // 1. Check against Canonical statuses (case-insensitive)
+    const isCanonicalDuplicate = CANONICAL_INSTRUMENT_STATUSES.some(
+      (c) => c.toLowerCase() === cleanStatus.toLowerCase()
+    );
+    if (isCanonicalDuplicate) {
+      throw new BadRequestException(`Status "${cleanStatus}" already exists as a standard system status.`);
+    }
+
+    // 2. Fetch or create setting record for the company
+    let setting = await this.settingsRepository.findOne({ where: { companyId } });
+    if (!setting) {
+      setting = this.settingsRepository.create({
+        companyId,
+        customInstrumentStatuses: [],
+      });
+      setting = await this.settingsRepository.save(setting);
+    }
+
+    const currentStatuses: string[] = Array.isArray(setting.customInstrumentStatuses)
+      ? setting.customInstrumentStatuses
+      : [];
+
+    // 3. Check against existing custom statuses (case-insensitive)
+    const isCustomDuplicate = currentStatuses.some(
+      (s) => typeof s === 'string' && s.trim().toLowerCase() === cleanStatus.toLowerCase()
+    );
+    if (isCustomDuplicate) {
+      throw new BadRequestException(`Status "${cleanStatus}" already exists.`);
+    }
+
+    const updatedStatuses = [...currentStatuses, cleanStatus];
+    await this.settingsRepository.update(setting.id, {
+      customInstrumentStatuses: updatedStatuses,
+    });
+
+    return {
+      success: true,
+      status: cleanStatus,
+      statuses: updatedStatuses,
+    };
+  }
 }
+
 

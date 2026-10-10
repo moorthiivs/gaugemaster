@@ -63,6 +63,8 @@ const toLocalYyyyMmDd = (d?: string | Date | null): string => {
   }
 };
 
+export { getStatusVerdict } from "@/lib/statusVerdict";
+
 const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-yyyy"): string => {
   if (!d) return "-";
   try {
@@ -3911,63 +3913,7 @@ export default function CalibrationWizard() {
                         {col.label}
                       </span>
                     </td>
-                    {tbl.rows.map((row: any, rIdx: number) => {
-                      const colDec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? 3;
-                      const cellFormula = row.cellFormulas?.[col.id];
-                      const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
-                      const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
-                      const isFormulaCell = hasCellFormula || hasColFormula;
-
-                      if (isFormulaCell) {
-                        const val = row[col.id] ?? "-";
-                        return (
-                          <td
-                            key={rIdx}
-                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
-                            className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5"
-                          >
-                            <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
-                              <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded">fx</span>
-                              <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
-                            </div>
-                          </td>
-                        );
-                      }
-
-                      if (col.type === "nominal") {
-                        const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
-                          ? row[col.id]
-                          : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
-                          ? row.nominal_value
-                          : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
-                        const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
-                          ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
-                          : "-";
-                        return (
-                          <td
-                            key={rIdx}
-                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
-                            className="py-0.5 px-1 font-bold text-foreground text-[11px]"
-                          >
-                            {val}
-                          </td>
-                        );
-                      }
-                      if (col.type === "text") {
-                        const cellVal =
-                          col.id === "description"
-                            ? (row.description ?? row[col.id] ?? "")
-                            : (row[col.id] ?? (col.id === "required_dimension" ? row.required_dimension : "") ?? "");
-                        return (
-                          <td
-                            key={rIdx}
-                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
-                            className="py-0.5 px-1 font-medium text-[11px]"
-                          >
-                            {cellVal || "-"}
-                          </td>
-                        );
-                      }
+                    {(() => {
                       const isToleranceCol =
                         col.type === "tolerance" ||
                         col.role === "TOLERANCE" ||
@@ -4005,64 +3951,140 @@ export default function CalibrationWizard() {
                             /judg|verdict/i.test(col.label) &&
                             !/tol|reading|trial|nominal|dimension/i.test(col.label)));
 
-                      const cellRaw = isJudgementCol
-                        ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
-                        : (row[col.id] ?? "-");
-                      const cellStr = String(cellRaw).trim().toUpperCase();
+                      return tbl.rows.map((row: any, rIdx: number) => {
+                        const colDec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? 3;
+                        const cellFormula = row.cellFormulas?.[col.id];
+                        const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                        const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                        const isFormulaCell = hasCellFormula || hasColFormula;
 
-                      if (isJudgementCol) {
-                        const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
-                        const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+                        if (isFormulaCell) {
+                          const val = row[col.id] ?? "-";
+                          const verdict = getStatusVerdict(val);
+                          const isJudgementLike = isJudgementCol || verdict !== null;
 
-                        if (isManualJudge) {
-                          const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5 text-center"
+                            >
+                              <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                                <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded shrink-0">fx</span>
+                                {isJudgementLike ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] font-bold py-0 px-1.5 ${
+                                      verdict === "pass"
+                                        ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                        : verdict === "fail"
+                                          ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                          : "border-border text-muted-foreground bg-muted"
+                                    }`}
+                                  >
+                                    {val !== undefined && val !== null && val !== "" ? String(val) : "-"}
+                                  </Badge>
+                                ) : (
+                                  <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        }
+
+                        if (col.type === "nominal") {
+                          const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                            ? row[col.id]
+                            : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
+                            ? row.nominal_value
+                            : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
+                          const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
+                            ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
+                            : "-";
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-bold text-foreground text-[11px]"
+                            >
+                              {val}
+                            </td>
+                          );
+                        }
+                        if (col.type === "text") {
+                          const cellVal =
+                            col.id === "description"
+                              ? (row.description ?? row[col.id] ?? "")
+                              : (row[col.id] ?? (col.id === "required_dimension" ? row.required_dimension : "") ?? "");
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-medium text-[11px]"
+                            >
+                              {cellVal || "-"}
+                            </td>
+                          );
+                        }
+
+                        const cellRaw = isJudgementCol
+                          ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
+                          : (row[col.id] ?? "-");
+
+                        if (isJudgementCol) {
+                          const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
+                          const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+
+                          if (isManualJudge) {
+                            const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
+                            return (
+                              <td
+                                key={rIdx}
+                                style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                                className="py-0.5 px-1 text-center"
+                              >
+                                <JudgementCellControl
+                                  value={currentVal}
+                                  onChange={(newVal) => {
+                                    handleWizardCanvasCellChange(
+                                      bIdx,
+                                      false,
+                                      0,
+                                      rIdx,
+                                      col.id,
+                                      newVal,
+                                    );
+                                  }}
+                                />
+                              </td>
+                            );
+                          }
+
+                          const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
+                          const verdict = getStatusVerdict(st);
+                          const isPass = verdict === "pass";
+                          const isFail = verdict === "fail";
                           return (
                             <td
                               key={rIdx}
                               style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
                               className="py-0.5 px-1 text-center"
                             >
-                              <JudgementCellControl
-                                value={currentVal}
-                                onChange={(newVal) => {
-                                  handleWizardCanvasCellChange(
-                                    bIdx,
-                                    false,
-                                    0,
-                                    rIdx,
-                                    col.id,
-                                    newVal,
-                                  );
-                                }}
-                              />
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] font-bold py-0 px-1.5 ${
+                                  isPass
+                                    ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                    : isFail
+                                      ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                      : "border-border text-muted-foreground bg-muted"
+                                }`}
+                              >
+                                {st}
+                              </Badge>
                             </td>
                           );
                         }
-
-                        const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
-                        const isPass = cellStr === "PASS" || cellStr === "OK" || cellStr === "NORMAL";
-                        const isFail = cellStr === "FAIL" || cellStr === "REJECT" || cellStr === "NOT OK";
-                        return (
-                          <td
-                            key={rIdx}
-                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
-                            className="py-0.5 px-1"
-                          >
-                            <Badge
-                              variant="outline"
-                              className={`text-[9px] font-bold py-0 px-1 ${
-                                isPass
-                                  ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                  : isFail
-                                    ? "border-red-500 text-red-600 bg-red-500/10"
-                                    : "border-border text-muted-foreground bg-muted"
-                              }`}
-                            >
-                              {st}
-                            </Badge>
-                          </td>
-                        );
-                      }
                       // Editable cell: reading, trial, tolerance, nominal, number, measurement, or non-formula row in a formula column
                       const isEditable =
                         !col.readOnly &&
@@ -4173,7 +4195,8 @@ export default function CalibrationWizard() {
                           {row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}
                         </td>
                       );
-                    })}
+                    });
+                  })()}
                   </tr>
                 ))}
               </tbody>
@@ -4766,23 +4789,6 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    const cellFormula = row.cellFormulas?.[col.id];
-                    const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
-                    const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
-                    const isFormulaCell = hasCellFormula || hasColFormula;
-
-                    if (isFormulaCell) {
-                      const val = row[col.id] ?? "-";
-                      return (
-                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5">
-                          <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
-                            <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded">fx</span>
-                            <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
-                          </div>
-                        </td>
-                      );
-                    }
-
                     const isToleranceCol =
                       col.type === "tolerance" ||
                       col.role === "TOLERANCE" ||
@@ -4820,10 +4826,44 @@ export default function CalibrationWizard() {
                           /judg|verdict/i.test(col.label) &&
                           !/tol|reading|trial|nominal|dimension/i.test(col.label)));
 
+                    const cellFormula = row.cellFormulas?.[col.id];
+                    const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                    const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                    const isFormulaCell = hasCellFormula || hasColFormula;
+
+                    if (isFormulaCell) {
+                      const val = row[col.id] ?? "-";
+                      const verdict = getStatusVerdict(val);
+                      const isJudgementLike = isJudgementCol || verdict !== null;
+
+                      return (
+                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5 text-center">
+                          <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                            <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded shrink-0">fx</span>
+                            {isJudgementLike ? (
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] font-bold py-0 px-1.5 ${
+                                  verdict === "pass"
+                                    ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                    : verdict === "fail"
+                                      ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                      : "border-border text-muted-foreground bg-muted"
+                                }`}
+                              >
+                                {val !== undefined && val !== null && val !== "" ? String(val) : "-"}
+                              </Badge>
+                            ) : (
+                              <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    }
+
                     const cellRaw = isJudgementCol
                       ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
                       : (row[col.id] ?? "-");
-                    const cellStr = String(cellRaw).trim().toUpperCase();
 
                     if (isJudgementCol) {
                       const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
@@ -4850,17 +4890,16 @@ export default function CalibrationWizard() {
                         );
                       }
                       const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
-                      const isPass = cellStr === "PASS" || cellStr === "OK";
-                      const isFail = cellStr === "FAIL" || cellStr === "REJECT";
+                      const verdict = getStatusVerdict(st);
                       return (
-                        <td key={col.id} className="py-0.5 px-1">
+                        <td key={col.id} className="py-0.5 px-1 text-center">
                           <Badge
                             variant="outline"
                             className={`text-[9px] font-bold py-0 px-1.5 ${
-                              isPass
-                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                : isFail
-                                  ? "border-red-500 text-red-600 bg-red-500/10"
+                              verdict === "pass"
+                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                : verdict === "fail"
+                                  ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
                                   : "border-border text-muted-foreground bg-muted"
                             }`}
                           >

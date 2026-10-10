@@ -75,6 +75,24 @@ export async function getFilterParams(userId: string, companyId?: string) {
   return res.data;
 }
 
+/** Fetch custom instrument statuses for a company */
+export async function getCustomInstrumentStatuses(companyId?: string): Promise<string[]> {
+  const res = await httpClient.get("/settings/instrument-statuses", {
+    params: { companyId },
+  });
+  return res.data || [];
+}
+
+/** Add a new custom instrument status for a company */
+export async function addCustomInstrumentStatus(companyId: string, status: string): Promise<{ success: boolean; status: string; statuses: string[] }> {
+  const res = await httpClient.post("/settings/instrument-statuses", {
+    companyId,
+    status,
+  });
+  return res.data;
+}
+
+
 /** Parse frequency string (e.g., "12 Months", "1 Year", "Once in year", "Once in 6 months", "Quarterly") into total number of months */
 export function parseFrequencyMonths(freq: string | undefined | null): number {
   if (!freq) return 0;

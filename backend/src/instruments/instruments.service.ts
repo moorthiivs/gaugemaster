@@ -151,6 +151,21 @@ export class InstrumentsService {
             select: ['status', 'item_status', 'frequency', 'location', 'calibration_source', 'device_type'],
         });
 
+        let customStatuses: string[] = [];
+        if (targetCompanyId) {
+            try {
+                const settingRes = await this.instrumentRepository.query(
+                    `SELECT "customInstrumentStatuses" FROM settings WHERE "companyId" = $1 LIMIT 1`,
+                    [targetCompanyId],
+                );
+                if (settingRes?.[0]?.customInstrumentStatuses && Array.isArray(settingRes[0].customInstrumentStatuses)) {
+                    customStatuses = settingRes[0].customInstrumentStatuses;
+                }
+            } catch (err) {
+                // Ignore if settings query fails
+            }
+        }
+
         const unique = (arr: string[]) => {
             const seen = new Set<string>();
             return arr.filter(Boolean).filter(item => {
@@ -161,6 +176,13 @@ export class InstrumentsService {
             }).map(item => item.trim());
         };
 
+        const canonicalStatuses = [
+            'OK',
+            'Upcoming Calibration (10 days before )',
+            'Sent for Calibration',
+            'Overdue',
+        ];
+
         const itemStatuses = instruments.map(i => this.normalizeItemStatus(i.item_status));
 
         const deviceTypes = instruments.map(i => {
@@ -170,7 +192,11 @@ export class InstrumentsService {
         });
 
         return {
-            status: unique(instruments.map(i => i.status)),
+            status: unique([
+                ...canonicalStatuses,
+                ...instruments.map(i => i.status),
+                ...customStatuses,
+            ]),
             item_status: unique([...itemStatuses, 'Active', 'SPARE', 'Inactive', 'STOCK']),
             frequency: unique(instruments.map(i => i.frequency)),
             location: unique(instruments.map(i => i.location)),

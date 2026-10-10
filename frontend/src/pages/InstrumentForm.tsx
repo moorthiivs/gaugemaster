@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,30 +12,41 @@ import { Instrument } from "@/types/instrument";
 import DynamicForm, { FormFieldConfig } from "@/components/DynamicForm";
 import { computeNextDueDate, isDatePast } from "@/lib/dateUtils";
 import { CANONICAL_ITEM_STATUSES, normalizeItemStatus } from "@/lib/itemStatus";
+import { AddCustomStatusModal } from "@/components/instruments/AddCustomStatusModal";
+import { getCustomInstrumentStatuses } from "@/lib/instrumentActions";
 
-const computeStatusOptions = (currentStatus: string, dueDate: string) => {
+const computeStatusOptions = (
+  currentStatus: string,
+  dueDate: string,
+  customList: string[] = []
+) => {
+  const standardList = [
+    "OK",
+    "Upcoming Calibration (10 days before )",
+    "Sent for Calibration",
+    "Overdue",
+  ];
+
   // 1. Overdue condition
   if (dueDate && isDatePast(dueDate)) {
-    return ["Overdue"];
+    if (customList.some((s) => s.toLowerCase() === currentStatus.toLowerCase())) {
+      return ["Overdue", currentStatus, ...customList.filter((s) => s.toLowerCase() !== currentStatus.toLowerCase())];
+    }
+    return ["Overdue", ...customList];
   }
 
   // 2. Upcoming Calibration condition
   if (currentStatus === "Upcoming Calibration (10 days before )") {
-    return ["Upcoming Calibration (10 days before )", "Sent for Calibration"];
+    return ["Upcoming Calibration (10 days before )", "Sent for Calibration", ...customList];
   }
 
   // 3. Sent for Calibration condition
   if (currentStatus === "Sent for Calibration") {
-    return ["Sent for Calibration", "Overdue"];
+    return ["Sent for Calibration", "Overdue", ...customList];
   }
 
   // 4. Default: OK
-  return [
-    "OK",
-    "Upcoming Calibration (10 days before )",
-    "Sent for Calibration",
-    "Overdue"
-  ];
+  return [...standardList, ...customList];
 };
 
 const INSTRUMENT_FIELDS: FormFieldConfig[] = [
@@ -110,6 +121,40 @@ export default function InstrumentForm() {
   const [rulesLoaded, setRulesLoaded] = useState(false);
   const [instrumentData, setInstrumentData] = useState<any>(null);
   const [rawCustomParameters, setRawCustomParameters] = useState<Record<string, any>>({});
+  const [customStatuses, setCustomStatuses] = useState<string[]>([]);
+  const [isCustomStatusModalOpen, setIsCustomStatusModalOpen] = useState(false);
+  const formSetValueRef = useRef<any>(null);
+
+  // Fetch company custom statuses on mount
+  useEffect(() => {
+    const fetchCustomStatuses = async () => {
+      if (!user?.companyId) return;
+      try {
+        const statuses = await getCustomInstrumentStatuses(user.companyId);
+        setCustomStatuses(statuses || []);
+      } catch (err) {
+        console.error("Failed to fetch custom statuses", err);
+      }
+    };
+    fetchCustomStatuses();
+  }, [user?.companyId]);
+
+  const handleCustomStatusCreated = (newStatus: string) => {
+    setCustomStatuses((prev) => {
+      if (prev.some((s) => s.toLowerCase() === newStatus.toLowerCase())) {
+        return prev;
+      }
+      return [...prev, newStatus];
+    });
+
+    if (formSetValueRef.current) {
+      formSetValueRef.current("status", newStatus, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    }
+    setInstrumentData((prev: any) => ({ ...(prev || {}), status: newStatus }));
+  };
 
   // 1. Fetch dynamic validation rules
   useEffect(() => {
@@ -137,7 +182,29 @@ export default function InstrumentForm() {
       col: 4,
     }));
 
-  const dynamicFormFields: FormFieldConfig[] = [...INSTRUMENT_FIELDS, ...customFields];
+  const dynamicFormFields: FormFieldConfig[] = useMemo(() => {
+    const baseFields: FormFieldConfig[] = INSTRUMENT_FIELDS.map((f) => {
+      if (f.name === "status") {
+        return {
+          ...f,
+          customAction: {
+            label: "+ Custom Status",
+            onAction: () => setIsCustomStatusModalOpen(true),
+          },
+          options: (watchedValues: any) => {
+            return computeStatusOptions(
+              watchedValues.status || "OK",
+              watchedValues.due_date || new Date().toISOString(),
+              customStatuses
+            );
+          },
+        };
+      }
+      return f;
+    });
+
+    return [...baseFields, ...customFields];
+  }, [customFields, customStatuses]);
 
   // 2. Fetch instrument details if in Edit Mode
   useEffect(() => {
@@ -315,6 +382,11 @@ export default function InstrumentForm() {
     setValue: any,
     getValues: any
   ) => {
+    const currentStatus = getValues("status") || "OK";
+    const isCustomStatus = customStatuses.some(
+      (s) => s.toLowerCase() === currentStatus.toLowerCase()
+    );
+
     if (name === "last_calibration_date") {
       const frequency = getValues("frequency") || "12 MONTH";
       if (value && frequency) {
@@ -322,10 +394,12 @@ export default function InstrumentForm() {
         if (nextDueDate) {
           setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
 
-          if (isDatePast(nextDueDate)) {
-            setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
-          } else if (getValues("status") === "Overdue") {
-            setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+          if (!isCustomStatus) {
+            if (isDatePast(nextDueDate)) {
+              setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+            } else if (getValues("status") === "Overdue") {
+              setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+            }
           }
         }
       }
@@ -336,15 +410,17 @@ export default function InstrumentForm() {
         if (nextDueDate) {
           setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
 
-          if (isDatePast(nextDueDate)) {
-            setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
-          } else if (getValues("status") === "Overdue") {
-            setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+          if (!isCustomStatus) {
+            if (isDatePast(nextDueDate)) {
+              setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+            } else if (getValues("status") === "Overdue") {
+              setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+            }
           }
         }
       }
     } else if (name === "due_date") {
-      if (value) {
+      if (value && !isCustomStatus) {
         if (isDatePast(value)) {
           setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
         } else if (getValues("status") === "Overdue") {
@@ -398,10 +474,25 @@ export default function InstrumentForm() {
               onCancel={() => navigate("/instruments")}
               isSubmitting={isSaving}
               onChangeEffects={onChangeEffects}
+              setFormValueRef={formSetValueRef}
             />
           )}
         </CardContent>
       </Card>
+
+      <AddCustomStatusModal
+        open={isCustomStatusModalOpen}
+        onOpenChange={setIsCustomStatusModalOpen}
+        existingStatuses={[
+          "OK",
+          "Upcoming Calibration (10 days before )",
+          "Sent for Calibration",
+          "Overdue",
+          ...customStatuses,
+        ]}
+        companyId={user?.companyId}
+        onStatusCreated={handleCustomStatusCreated}
+      />
     </div>
   );
 }

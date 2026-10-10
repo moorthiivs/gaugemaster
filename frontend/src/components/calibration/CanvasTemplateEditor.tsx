@@ -26,6 +26,12 @@ import {
   clearMatrixRows,
   clearMatrixCell,
   getMatrixTotalCols,
+  mergeMatrixCellAcrossCols,
+  mergeMatrixCellDownRows,
+  normalizeMatrixTableGeometry,
+  createVernierCaliper7ColPreset,
+  createCaliper5ColPreset,
+  createBlankMatrixPreset,
   createIS2092DialGaugePreset,
 } from "@/lib/matrixTableUtils";
 import { Button } from "@/components/ui/button";
@@ -89,6 +95,7 @@ import {
   ArrowDown,
   Calculator,
   Hash,
+  Wrench,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -1194,35 +1201,20 @@ export function CanvasTemplateEditor({
   };
 
   const addMatrixBlock = () => {
+    const preset = createVernierCaliper7ColPreset();
     const newBlock: MatrixTableBlock = {
       id: `matrix_${Date.now()}`,
       type: "matrix_table",
-      title: "Acceptance Criteria Reference Matrix",
+      title: preset.title || "Acceptance Criteria Reference Matrix",
       width: "100%",
-      headers: [
-        [
-          { text: "LEAST COUNT", rowSpan: 2 },
-          { text: "0.01mm", colSpan: 2 },
-          { text: "0.02mm", colSpan: 2 },
-        ],
-        [{ text: "Maximum Permissible Error (MPE)", colSpan: 4 }],
-        [
-          { text: "Length (mm)" },
-          { text: "New" },
-          { text: "Recalib" },
-          { text: "New" },
-          { text: "Recalib" },
-        ],
-      ],
-      rows: [
-        ["0 - 100", "±0.010", "±0.020", "±0.020", "±0.030"],
-        ["100 - 300", "±0.020", "±0.030", "±0.030", "±0.040"],
-      ],
+      headers: (preset.headers as any) || [],
+      rows: (preset.rows as any) || [],
+      footerNote: preset.footerNote,
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
     setSelectedChildTableId(null);
-    toast.success("Added Acceptance Criteria Matrix table");
+    toast.success("Added Acceptance Criteria Matrix table (7-Col Caliper Standard)");
   };
 
   const addTextBlock = () => {
@@ -2174,7 +2166,7 @@ export function CanvasTemplateEditor({
   ) => {
     const block = blocks[blockIndex] as MatrixTableBlock;
     if (!block || block.type !== "matrix_table") return;
-    const updated = updateMatrixCell(block, isHeader, rIdx, cIdx, { colSpan: span });
+    const updated = mergeMatrixCellAcrossCols(block, isHeader, rIdx, cIdx, span);
     updateBlock(blockIndex, updated);
     toast.success(span > 1 ? `Merged across ${span} columns` : "Reset horizontal column merge");
   };
@@ -2188,9 +2180,17 @@ export function CanvasTemplateEditor({
   ) => {
     const block = blocks[blockIndex] as MatrixTableBlock;
     if (!block || block.type !== "matrix_table") return;
-    const updated = updateMatrixCell(block, isHeader, rIdx, cIdx, { rowSpan: span });
+    const updated = mergeMatrixCellDownRows(block, isHeader, rIdx, cIdx, span);
     updateBlock(blockIndex, updated);
     toast.success(span > 1 ? `Merged down ${span} rows` : "Reset vertical row merge");
+  };
+
+  const handleNormalizeMatrixTableBtn = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = normalizeMatrixTableGeometry(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Aligned table geometry across all header tiers and data rows");
   };
 
   const handleSetMatrixCellAlign = (
@@ -2836,6 +2836,12 @@ export function CanvasTemplateEditor({
       return row.tolerance ? `±${row.tolerance.toFixed(dec)}` : "-";
     }
     if (col.type === "trial" || col.type === "reading") {
+      if (row.cellFormulas?.[col.id]) {
+        const evalRes = evalFormulaWithContext(row.cellFormulas[col.id]);
+        if (evalRes.success && evalRes.formatted) {
+          return evalRes.formatted;
+        }
+      }
       return formatNumericVal(cellVal);
     }
     if (col.type === "formula") {
@@ -8745,29 +8751,96 @@ export function CanvasTemplateEditor({
                             </button>
                           </div>
 
-                          {/* Load IS 2092 Dial Gauge Reference Preset */}
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (
-                                confirm(
-                                  "Load IS 2092:1983 Dial Gauge Limits of Error preset? This will populate the exact 3-column reference matrix with grouped headers and 6 standard test rows."
-                                )
-                              ) {
-                                const preset = createIS2092DialGaugePreset();
-                                updateBlock(index, { ...matrix, ...preset });
-                                toast.success("Loaded IS 2092 Dial Gauge Reference Matrix");
-                              }
-                            }}
-                            className="h-6 px-2 text-2xs font-semibold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/40 border-purple-300 dark:border-purple-800 hover:bg-purple-100 dark:hover:bg-purple-900/60 gap-1 shadow-2xs"
-                            title="Load IS 2092:1983 Dial Gauge Reference Matrix (Grouped Headers + 6 Standard Test Rows)"
-                          >
-                            <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
-                            <span>IS 2092 Preset</span>
-                          </Button>
+                          {/* Preset Buttons & Geometry Healing */}
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-0.5 rounded-md border border-slate-300 dark:border-slate-700 shadow-2xs">
+                            {/* IS 3651 (7-Col Caliper) Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load standard 7-Column Vernier Caliper Acceptance Criteria Matrix (0.01mm, 0.02mm, 0.05mm least counts)? This will configure standard grouped MPE headers and length rows."
+                                  )
+                                ) {
+                                  const preset = createVernierCaliper7ColPreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded 7-Column Caliper Acceptance Criteria Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 gap-1"
+                              title="Load 7-Column Vernier Caliper Matrix (0.01, 0.02, 0.05 mm MPE)"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              <span>7-Col Caliper</span>
+                            </Button>
+
+                            {/* 5-Col Caliper Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load standard 5-Column Acceptance Criteria Matrix (0.01mm & 0.02mm least counts)?"
+                                  )
+                                ) {
+                                  const preset = createCaliper5ColPreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded 5-Column Caliper Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 gap-1"
+                              title="Load 5-Column Caliper Matrix (0.01, 0.02 mm MPE)"
+                            >
+                              <Sparkles className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                              <span>5-Col</span>
+                            </Button>
+
+                            {/* Load IS 2092 Dial Gauge Reference Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load IS 2092:1983 Dial Gauge Limits of Error preset? This will populate the exact 3-column reference matrix with grouped headers and 6 standard test rows."
+                                  )
+                                ) {
+                                  const preset = createIS2092DialGaugePreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded IS 2092 Dial Gauge Reference Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 gap-1"
+                              title="Load IS 2092:1983 Dial Gauge Reference Matrix (Grouped Headers + 6 Standard Test Rows)"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                              <span>IS 2092</span>
+                            </Button>
+
+                            {/* Align & Heal Table Geometry */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNormalizeMatrixTableBtn(index);
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 gap-1"
+                              title="Fix & Align Columns: removes empty phantom columns and synchronizes all header tiers and rows"
+                            >
+                              <Wrench className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                              <span>Align Table</span>
+                            </Button>
+                          </div>
 
                           {/* Direct Delete Table Button */}
                           <Button
@@ -8809,7 +8882,7 @@ export function CanvasTemplateEditor({
                                     const cell = normalizeMatrixCell(rawCell);
                                     colPointer += (cell.colSpan || 1);
 
-                                    if (coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                                    if (actualCol >= totalCols || coveredHeaders.has(`${hIdx}_${actualCol}`)) {
                                       return null;
                                     }
 
@@ -8918,7 +8991,7 @@ export function CanvasTemplateEditor({
                                       const cell = normalizeMatrixCell(rawVal);
                                       colPointer += (cell.colSpan || 1);
 
-                                      if (coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                      if (actualCol >= totalCols || coveredRows.has(`${rIdx}_${actualCol}`)) {
                                         return null;
                                       }
 
@@ -9741,13 +9814,15 @@ export function CanvasTemplateEditor({
             )}
           </div>
           <div className="py-0.5 px-1 flex flex-col gap-0.5">
-            {[2, 3, 4, 5]
-              .filter(
-                (span) =>
-                  span <=
-                  matrixCellContextMenu.totalCols - matrixCellContextMenu.colIndex,
-              )
-              .map((span) => (
+            {Array.from(
+              {
+                length: Math.max(
+                  0,
+                  matrixCellContextMenu.totalCols - matrixCellContextMenu.colIndex - 1
+                ),
+              },
+              (_, i) => i + 2
+            ).map((span) => (
                 <button
                   key={span}
                   type="button"
@@ -9800,13 +9875,15 @@ export function CanvasTemplateEditor({
             )}
           </div>
           <div className="py-0.5 px-1 flex flex-col gap-0.5">
-            {[2, 3, 4]
-              .filter(
-                (span) =>
-                  span <=
-                  matrixCellContextMenu.totalRows - matrixCellContextMenu.rowIndex,
-              )
-              .map((span) => (
+            {Array.from(
+              {
+                length: Math.max(
+                  0,
+                  matrixCellContextMenu.totalRows - matrixCellContextMenu.rowIndex - 1
+                ),
+              },
+              (_, i) => i + 2
+            ).map((span) => (
                 <button
                   key={span}
                   type="button"

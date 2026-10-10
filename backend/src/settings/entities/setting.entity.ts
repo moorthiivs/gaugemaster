@@ -136,5 +136,8 @@ export class Setting {
         enabled?: boolean;
         floatingBotEnabled?: boolean;
     };
+
+    @Column({ type: "jsonb", nullable: true, default: () => "'[]'" })
+    customInstrumentStatuses: string[];
 }
 

@@ -12,6 +12,7 @@ import {
   Archive,
   Layers,
   FileCheck,
+  Tag,
 } from "lucide-react";
 import {
   Tooltip,
@@ -266,12 +267,17 @@ export function StatusBadge({
     );
   }
 
-  // Fallback neutral
+  // Fallback for custom statuses
   return (
     <Badge
       variant="outline"
-      className={cn("whitespace-nowrap inline-flex items-center capitalize", sizeClasses[size], className)}
+      className={cn(
+        "bg-primary/5 text-foreground border-primary/20 hover:border-primary/40 whitespace-nowrap inline-flex items-center font-medium shadow-2xs",
+        sizeClasses[size],
+        className
+      )}
     >
+      {showIcon && <Tag className={iconSizes[size]} />}
       <span>{raw}</span>
     </Badge>
   );

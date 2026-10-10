@@ -181,5 +181,23 @@ export class SettingsController {
     return this.settingsService.deleteLocationEmail(id);
   }
 
+  @Get('instrument-statuses')
+  async getInstrumentStatuses(
+    @Query('companyId') companyId: string,
+    @Req() req: any,
+  ) {
+    const effectiveCompanyId = companyId || req?.user?.companyId;
+    return this.settingsService.getCustomInstrumentStatuses(effectiveCompanyId);
+  }
+
+  @Post('instrument-statuses')
+  async addInstrumentStatus(
+    @Body('companyId') bodyCompanyId: string,
+    @Body('status') status: string,
+    @Req() req: any,
+  ) {
+    const effectiveCompanyId = bodyCompanyId || req?.user?.companyId;
+    return this.settingsService.addCustomInstrumentStatus(effectiveCompanyId, status);
+  }
 }
 

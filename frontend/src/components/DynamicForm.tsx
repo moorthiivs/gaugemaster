@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, PlusCircle } from "lucide-react";
 
 export interface FormFieldConfig {
   name: string;
@@ -26,6 +26,10 @@ export interface FormFieldConfig {
   options?: string[] | { label: string; value: string }[] | ((watchedValues: any) => string[]);
   defaultValue?: any;
   formatPattern?: string;
+  customAction?: {
+    label: string;
+    onAction: () => void;
+  };
 }
 
 interface DynamicFormProps {
@@ -41,6 +45,7 @@ interface DynamicFormProps {
     setValue: UseFormSetValue<any>,
     getValues: UseFormGetValues<any>
   ) => void;
+  setFormValueRef?: React.MutableRefObject<UseFormSetValue<any> | null>;
 }
 
 export default function DynamicForm({
@@ -51,6 +56,7 @@ export default function DynamicForm({
   onCancel,
   isSubmitting = false,
   onChangeEffects,
+  setFormValueRef,
 }: DynamicFormProps) {
   // 1. Generate Zod Schema Dynamically & Synchronously
   const dynamicSchema = useMemo(() => {
@@ -132,6 +138,13 @@ export default function DynamicForm({
     }
   }, [defaultValues, reset]);
 
+  // Expose setValue via ref if provided
+  useEffect(() => {
+    if (setFormValueRef) {
+      setFormValueRef.current = setValue;
+    }
+  }, [setValue, setFormValueRef]);
+
   // Watch form values for conditional options or side-effects
   const watchedValues = watch();
 
@@ -181,10 +194,24 @@ export default function DynamicForm({
 
         return (
           <div key={field.name} className={`${spanClass} space-y-2`}>
-            <Label htmlFor={field.name} className="text-sm font-semibold flex items-center gap-1">
-              {field.type !== "checkbox" && labelText}
-              {field.type !== "checkbox" && required && <span className="text-destructive font-bold">*</span>}
-            </Label>
+            {field.type !== "checkbox" ? (
+              <div className="flex items-center justify-between">
+                <Label htmlFor={field.name} className="text-sm font-semibold flex items-center gap-1">
+                  {labelText}
+                  {required && <span className="text-destructive font-bold">*</span>}
+                </Label>
+                {field.customAction && (
+                  <button
+                    type="button"
+                    onClick={field.customAction.onAction}
+                    className="text-xs text-primary hover:text-primary/80 font-medium flex items-center gap-1 transition-colors hover:underline cursor-pointer"
+                  >
+                    <PlusCircle className="h-3 w-3" />
+                    <span>{field.customAction.label}</span>
+                  </button>
+                )}
+              </div>
+            ) : null}
 
             <div className="relative">
               {/* Type: CHECKBOX */}
@@ -297,6 +324,10 @@ export default function DynamicForm({
                     return (
                       <Select
                         onValueChange={(val) => {
+                          if (val === "__CUSTOM_ACTION__") {
+                            field.customAction?.onAction();
+                            return;
+                          }
                           selectField.onChange(val);
                           if (onChangeEffects) {
                             onChangeEffects(field.name, val, setValue, getValues);
@@ -317,6 +348,17 @@ export default function DynamicForm({
                               {item.label}
                             </SelectItem>
                           ))}
+                          {field.customAction && (
+                            <SelectItem
+                              value="__CUSTOM_ACTION__"
+                              className="text-primary font-medium focus:text-primary focus:bg-primary/10 border-t border-border/50 mt-1 cursor-pointer"
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <PlusCircle className="h-3.5 w-3.5" />
+                                {field.customAction.label}
+                              </span>
+                            </SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
                     );

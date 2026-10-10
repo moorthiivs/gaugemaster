@@ -135,24 +135,273 @@ export function updateMatrixCell(
 }
 
 /**
+ * Simulates 2D row placement accounting for colSpan and rowSpan to determine the true maximum column width.
+ */
+function getRows2DMaxCols(rows: any[][]): number {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const covered = new Map<number, Set<number>>();
+  let overallMaxCol = 0;
+
+  rows.forEach((row, rIdx) => {
+    if (!Array.isArray(row)) return;
+    let colPointer = 0;
+    const coveredInThisRow = covered.get(rIdx);
+
+    row.forEach((rawCell) => {
+      while (coveredInThisRow && coveredInThisRow.has(colPointer)) {
+        colPointer++;
+      }
+      const norm = normalizeMatrixCell(rawCell);
+      const cSpan = norm.colSpan || 1;
+      const rSpan = norm.rowSpan || 1;
+
+      if (rSpan > 1) {
+        for (let dr = 1; dr < rSpan; dr++) {
+          const targetR = rIdx + dr;
+          if (!covered.has(targetR)) covered.set(targetR, new Set());
+          const covSet = covered.get(targetR)!;
+          for (let dc = 0; dc < cSpan; dc++) {
+            covSet.add(colPointer + dc);
+          }
+        }
+      }
+
+      colPointer += cSpan;
+      if (colPointer > overallMaxCol) {
+        overallMaxCol = colPointer;
+      }
+    });
+  });
+
+  return overallMaxCol;
+}
+
+/**
  * Calculates the true maximum number of columns in the 2D grid across headers and rows.
  */
 export function getMatrixTotalCols(block: MatrixTableBlock): number {
-  let maxCols = 1;
-  const checkRows = (rows: any[][]) => {
-    (rows || []).forEach((row) => {
-      if (!Array.isArray(row)) return;
-      let sum = 0;
-      row.forEach((cell) => {
-        const norm = normalizeMatrixCell(cell);
-        sum += (norm.colSpan || 1);
-      });
-      if (sum > maxCols) maxCols = sum;
+  const hCols = getRows2DMaxCols(block.headers || []);
+  const rCols = getRows2DMaxCols(block.rows || []);
+  return Math.max(1, hCols, rCols);
+}
+
+/**
+ * Merges a cell horizontally across `targetColSpan` columns.
+ * CRITICAL GEOMETRY INVARIANT:
+ * - When expanding colSpan: absorbs (removes or shrinks) adjacent cells to the right so row width NEVER increases.
+ * - When reducing/resetting colSpan: inserts freed 1-span cells so row width NEVER collapses.
+ */
+export function mergeMatrixCellAcrossCols(
+  block: MatrixTableBlock,
+  isHeader: boolean,
+  rIdx: number,
+  cellArrayIdx: number,
+  targetColSpan: number
+): MatrixTableBlock {
+  const targetSpan = Math.max(1, targetColSpan);
+
+  const processRowGroup = <T extends any[]>(rows: T[]): T[] => {
+    return rows.map((row, r) => {
+      if (r !== rIdx) return [...row] as unknown as T;
+      const rowCopy: MatrixCell[] = row.map((c) => ({ ...normalizeMatrixCell(c), isHeader }));
+      const currentCell = rowCopy[cellArrayIdx];
+      if (!currentCell) return rowCopy as unknown as T;
+      const currentSpan = currentCell.colSpan || 1;
+
+      if (targetSpan === currentSpan) return rowCopy as unknown as T;
+
+      if (targetSpan > currentSpan) {
+        let neededCols = targetSpan - currentSpan;
+        let nextIdx = cellArrayIdx + 1;
+
+        while (neededCols > 0 && nextIdx < rowCopy.length) {
+          const nextCell = rowCopy[nextIdx];
+          const nextSpan = nextCell.colSpan || 1;
+
+          if (nextSpan <= neededCols) {
+            neededCols -= nextSpan;
+            rowCopy.splice(nextIdx, 1);
+          } else {
+            rowCopy[nextIdx] = {
+              ...nextCell,
+              colSpan: nextSpan - neededCols,
+            };
+            neededCols = 0;
+            break;
+          }
+        }
+
+        const actualNewSpan = targetSpan - neededCols;
+        rowCopy[cellArrayIdx] = {
+          ...currentCell,
+          colSpan: actualNewSpan,
+        };
+      } else {
+        const freedCols = currentSpan - targetSpan;
+        rowCopy[cellArrayIdx] = {
+          ...currentCell,
+          colSpan: targetSpan,
+        };
+
+        for (let k = 0; k < freedCols; k++) {
+          const fillerCell: MatrixCell = {
+            text: isHeader ? "" : "-",
+            colSpan: 1,
+            rowSpan: 1,
+            align: "center",
+            isHeader,
+          };
+          rowCopy.splice(cellArrayIdx + 1 + k, 0, fillerCell);
+        }
+      }
+
+      return rowCopy as unknown as T;
     });
   };
-  checkRows(block.headers || []);
-  checkRows(block.rows || []);
-  return maxCols;
+
+  if (isHeader) {
+    if (!block.headers || !block.headers[rIdx] || !block.headers[rIdx][cellArrayIdx]) return block;
+    const cleanHeaders = processRowGroup(block.headers);
+    return normalizeMatrixTableGeometry({ ...block, headers: cleanHeaders });
+  } else {
+    if (!block.rows || !block.rows[rIdx] || !block.rows[rIdx][cellArrayIdx]) return block;
+    const cleanRows = processRowGroup(block.rows);
+    return normalizeMatrixTableGeometry({ ...block, rows: cleanRows });
+  }
+}
+
+/**
+ * Merges a cell vertically down across `targetRowSpan` rows.
+ * In HTML tables, cells in lower rows within the covered column range must be absorbed
+ * so they do not shift lower tiers out and spawn phantom columns.
+ */
+export function mergeMatrixCellDownRows(
+  block: MatrixTableBlock,
+  isHeader: boolean,
+  rIdx: number,
+  cellArrayIdx: number,
+  targetRowSpan: number
+): MatrixTableBlock {
+  const targetSpan = Math.max(1, targetRowSpan);
+
+  if (isHeader) {
+    if (!block.headers || !block.headers[rIdx] || !block.headers[rIdx][cellArrayIdx]) return block;
+    const clampedSpan = Math.min(targetSpan, block.headers.length - rIdx);
+    const updatedHeaders: MatrixCell[][] = block.headers.map((row) =>
+      row.map((c) => ({ ...normalizeMatrixCell(c), isHeader: true }))
+    );
+    const currentCell = normalizeMatrixCell(updatedHeaders[rIdx][cellArrayIdx]);
+    updatedHeaders[rIdx][cellArrayIdx] = {
+      ...currentCell,
+      rowSpan: clampedSpan,
+      isHeader: true,
+    };
+    return normalizeMatrixTableGeometry({ ...block, headers: updatedHeaders });
+  } else {
+    if (!block.rows || !block.rows[rIdx] || !block.rows[rIdx][cellArrayIdx]) return block;
+    const clampedSpan = Math.min(targetSpan, block.rows.length - rIdx);
+    const updatedRows = block.rows.map((row) =>
+      row.map((c) => ({ ...normalizeMatrixCell(c), isHeader: false }))
+    );
+    const currentCell = normalizeMatrixCell(updatedRows[rIdx][cellArrayIdx]);
+    updatedRows[rIdx][cellArrayIdx] = {
+      ...currentCell,
+      rowSpan: clampedSpan,
+      isHeader: false,
+    };
+    return normalizeMatrixTableGeometry({ ...block, rows: updatedRows });
+  }
+}
+
+/**
+ * Normalizes and heals a MatrixTableBlock so that all header tiers and body rows
+ * have EXACT matching total column counts in 2D space.
+ * Eliminates empty phantom columns, orphan cells, and misalignment.
+ */
+export function normalizeMatrixTableGeometry(block: MatrixTableBlock): MatrixTableBlock {
+  const currentTotalCols = getMatrixTotalCols(block);
+  if (currentTotalCols <= 0) return block;
+
+  const normalizeRowGroup = (rows: any[][], isHeader: boolean): MatrixCell[][] => {
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+
+    const numRows = rows.length;
+    const grid: (MatrixCell | null)[][] = Array.from({ length: numRows }, () =>
+      Array(currentTotalCols).fill(null)
+    );
+
+    const resultRows: MatrixCell[][] = [];
+
+    rows.forEach((row, rIdx) => {
+      let colPointer = 0;
+      const cleanRow: MatrixCell[] = [];
+
+      (row || []).forEach((rawCell) => {
+        // Advance past covered slots from upper rows' rowSpan
+        while (colPointer < currentTotalCols && grid[rIdx][colPointer] !== null) {
+          colPointer++;
+        }
+        if (colPointer >= currentTotalCols) return; // Discard cells extending past currentTotalCols
+
+        const norm = normalizeMatrixCell(rawCell);
+        const cSpan = Math.min(norm.colSpan || 1, currentTotalCols - colPointer);
+        const rSpan = Math.min(norm.rowSpan || 1, numRows - rIdx);
+
+        const clampedCell: MatrixCell = {
+          ...norm,
+          colSpan: cSpan,
+          rowSpan: rSpan,
+          isHeader,
+        };
+
+        cleanRow.push(clampedCell);
+
+        // Mark 2D grid slots
+        for (let dr = 0; dr < rSpan; dr++) {
+          for (let dc = 0; dc < cSpan; dc++) {
+            const tr = rIdx + dr;
+            const tc = colPointer + dc;
+            if (tr < numRows && tc < currentTotalCols) {
+              grid[tr][tc] = clampedCell;
+            }
+          }
+        }
+
+        colPointer += cSpan;
+      });
+
+      // If this row is short of currentTotalCols, fill remaining slots with default cells
+      while (colPointer < currentTotalCols) {
+        if (grid[rIdx][colPointer] !== null) {
+          colPointer++;
+        } else {
+          const fillCell: MatrixCell = {
+            text: isHeader ? `Col ${colPointer + 1}` : "-",
+            colSpan: 1,
+            rowSpan: 1,
+            align: "center",
+            isHeader,
+          };
+          cleanRow.push(fillCell);
+          grid[rIdx][colPointer] = fillCell;
+          colPointer++;
+        }
+      }
+
+      resultRows.push(cleanRow);
+    });
+
+    return resultRows;
+  };
+
+  const cleanHeaders = normalizeRowGroup(block.headers || [], true);
+  const cleanRows = normalizeRowGroup(block.rows || [], false);
+
+  return {
+    ...block,
+    headers: cleanHeaders,
+    rows: cleanRows,
+  };
 }
 
 /**
@@ -175,7 +424,7 @@ export function addMatrixColumn(block: MatrixTableBlock): MatrixTableBlock {
         { text: "-", colSpan: 1, rowSpan: 1, align: "center" as const },
       ]);
 
-  return { ...block, headers: newHeaders, rows: newRows };
+  return normalizeMatrixTableGeometry({ ...block, headers: newHeaders, rows: newRows });
 }
 
 /**
@@ -240,7 +489,7 @@ export function removeMatrixColumn(block: MatrixTableBlock, target2DCol?: number
   const newHeaders = processRowGroup(block.headers || [], true);
   const newRows = processRowGroup(block.rows || [], false);
 
-  return { ...block, headers: newHeaders, rows: newRows };
+  return normalizeMatrixTableGeometry({ ...block, headers: newHeaders, rows: newRows });
 }
 
 /**
@@ -408,6 +657,143 @@ export function createIS2092DialGaugePreset(): Partial<MatrixTableBlock> {
       ],
     ],
     footerNote: "As Per IS 2092:1983 / AE/CAL-SOP/01",
+  };
+}
+
+/**
+ * Standard 7-Column Acceptance Criteria Reference Matrix Preset for Vernier Calipers (IS 3651 / AE/CAL-SOP/01).
+ * Features:
+ * - Tier 1: LEAST COUNT (rowSpan 2) + 0.01mm (colSpan 2) + 0.02mm (colSpan 2) + 0.05mm (colSpan 2)
+ * - Tier 2: Maximum Permissible Error (MPE) (colSpan 6 across all least count columns)
+ * - Tier 3: Length (mm), New, Recalib, New, Recalib, New, Recalib (7 cols)
+ * - Rows: Standard calibration length ranges (0-100, 100-300, 300-600)
+ */
+export function createVernierCaliper7ColPreset(): Partial<MatrixTableBlock> {
+  return {
+    title: "Acceptance Criteria Reference Matrix (Vernier Caliper)",
+    width: "100%",
+    headers: [
+      [
+        { text: "LEAST COUNT", rowSpan: 2, colSpan: 1, align: "center", isHeader: true },
+        { text: "0.01mm", colSpan: 2, rowSpan: 1, align: "center", isHeader: true },
+        { text: "0.02mm", colSpan: 2, rowSpan: 1, align: "center", isHeader: true },
+        { text: "0.05mm", colSpan: 2, rowSpan: 1, align: "center", isHeader: true },
+      ],
+      [
+        { text: "Maximum Permissible Error (MPE)", colSpan: 6, rowSpan: 1, align: "center", isHeader: true },
+      ],
+      [
+        { text: "Length (mm)", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "New", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "Recalib", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "New", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "Recalib", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "New", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "Recalib", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+      ],
+    ],
+    rows: [
+      [
+        { text: "0 - 100", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.010", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.050", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.050", colSpan: 1, rowSpan: 1, align: "center" },
+      ],
+      [
+        { text: "100 - 300", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.040", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.050", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.060", colSpan: 1, rowSpan: 1, align: "center" },
+      ],
+      [
+        { text: "300 - 600", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.040", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.040", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.050", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.060", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.080", colSpan: 1, rowSpan: 1, align: "center" },
+      ],
+    ],
+    footerNote: "As Per IS 3651 (Part 1 & 2) / AE/CAL-SOP/01",
+  };
+}
+
+/**
+ * Standard 5-Column Acceptance Criteria Reference Matrix Preset (0.01mm & 0.02mm).
+ */
+export function createCaliper5ColPreset(): Partial<MatrixTableBlock> {
+  return {
+    title: "Acceptance Criteria Reference Matrix",
+    width: "100%",
+    headers: [
+      [
+        { text: "LEAST COUNT", rowSpan: 2, colSpan: 1, align: "center", isHeader: true },
+        { text: "0.01mm", colSpan: 2, rowSpan: 1, align: "center", isHeader: true },
+        { text: "0.02mm", colSpan: 2, rowSpan: 1, align: "center", isHeader: true },
+      ],
+      [
+        { text: "Maximum Permissible Error (MPE)", colSpan: 4, rowSpan: 1, align: "center", isHeader: true },
+      ],
+      [
+        { text: "Length (mm)", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "New", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "Recalib", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "New", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+        { text: "Recalib", colSpan: 1, rowSpan: 1, align: "center", isHeader: true },
+      ],
+    ],
+    rows: [
+      [
+        { text: "0 - 100", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.010", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+      ],
+      [
+        { text: "100 - 300", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.020", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.030", colSpan: 1, rowSpan: 1, align: "center" },
+        { text: "±0.040", colSpan: 1, rowSpan: 1, align: "center" },
+      ],
+    ],
+    footerNote: "As Per ISO 17025 / AE/CAL-SOP/01",
+  };
+}
+
+/**
+ * Clean Blank Matrix Table Preset (customizable column and row count).
+ */
+export function createBlankMatrixPreset(cols = 4, rows = 3): Partial<MatrixTableBlock> {
+  return {
+    title: "Reference Matrix Table",
+    width: "100%",
+    headers: [
+      Array.from({ length: cols }, (_, i) => ({
+        text: `Header ${i + 1}`,
+        colSpan: 1,
+        rowSpan: 1,
+        align: "center" as const,
+        isHeader: true,
+      })),
+    ],
+    rows: Array.from({ length: rows }, (_, r) =>
+      Array.from({ length: cols }, (_, c) => ({
+        text: c === 0 ? `Point ${r + 1}` : "-",
+        colSpan: 1,
+        rowSpan: 1,
+        align: "center" as const,
+      }))
+    ),
+    footerNote: "",
   };
 }
 

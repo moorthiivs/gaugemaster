@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Download, ImageIcon, Loader2 } from "lucide-react";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
-import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols } from "@/lib/matrixTableUtils";
+import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols, normalizeMatrixTableGeometry } from "@/lib/matrixTableUtils";
 import { resolveCertificateCellValue } from "@/lib/cellValueResolver";
 import { evaluateFormulaExpression, buildRowContext } from "@/lib/formulaEngine";
 
@@ -754,18 +754,19 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
           );
         }
         if (block.type === "matrix_table") {
-          const totalCols = getMatrixTotalCols(block as any);
-          const { coveredCells: coveredHeaders } = computeMatrix2DGrid(block.headers || [], totalCols);
-          const { coveredCells: coveredRows } = computeMatrix2DGrid(block.rows || [], totalCols);
+          const matrixBlock = normalizeMatrixTableGeometry(block as any);
+          const totalCols = getMatrixTotalCols(matrixBlock);
+          const { coveredCells: coveredHeaders } = computeMatrix2DGrid(matrixBlock.headers || [], totalCols);
+          const { coveredCells: coveredRows } = computeMatrix2DGrid(matrixBlock.rows || [], totalCols);
 
           return (
             <div
-              key={block.id || idx}
+              key={matrixBlock.id || idx}
               style={{
                 ...blockSpacingStyle,
-                width: block.width === "50%" ? "50%" : "100%",
-                marginLeft: block.width === "50%" ? "auto" : undefined,
-                marginRight: block.width === "50%" ? "auto" : undefined,
+                width: matrixBlock.width === "50%" ? "50%" : "100%",
+                marginLeft: matrixBlock.width === "50%" ? "auto" : undefined,
+                marginRight: matrixBlock.width === "50%" ? "auto" : undefined,
               }}
               className={
                 isScreen
@@ -773,7 +774,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                   : "border border-black flex flex-col bg-white overflow-hidden"
               }
             >
-              {Boolean(block.title && String(block.title).trim() !== "") && (
+              {Boolean(matrixBlock.title && String(matrixBlock.title).trim() !== "") && (
                 <div
                   className={
                     isScreen
@@ -781,7 +782,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                       : "bg-slate-200 text-black text-[9px] font-bold py-1 px-2 text-center uppercase tracking-wide border-b border-black"
                   }
                 >
-                  {String(block.title).trim()}
+                  {String(matrixBlock.title).trim()}
                 </div>
               )}
               <div
@@ -793,7 +794,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                   style={{ tableLayout: "fixed" }}
                 >
                   <thead>
-                    {block.headers?.map((hRow: any[], hIdx: number) => {
+                    {matrixBlock.headers?.map((hRow: any[], hIdx: number) => {
                       const cells = Array.isArray(hRow) ? hRow : [hRow];
                       let colPointer = 0;
                       return (
@@ -806,7 +807,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                             const cell = normalizeMatrixCell(rawCell);
                             colPointer += (cell.colSpan || 1);
 
-                            if (coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                            if (actualCol >= totalCols || coveredHeaders.has(`${hIdx}_${actualCol}`)) {
                               return null;
                             }
 
@@ -829,7 +830,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                     })}
                   </thead>
                   <tbody>
-                    {(!block.rows || block.rows.length === 0) ? (
+                    {(!matrixBlock.rows || matrixBlock.rows.length === 0) ? (
                       <tr>
                         <td
                           colSpan={totalCols}
@@ -841,7 +842,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         </td>
                       </tr>
                     ) : (
-                      block.rows.map((row: any[], rIdx: number) => {
+                      matrixBlock.rows.map((row: any[], rIdx: number) => {
                         const cells = Array.isArray(row) ? row : [row];
                         let colPointer = 0;
                         return (
@@ -854,7 +855,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                               const cell = normalizeMatrixCell(rawCell);
                               colPointer += (cell.colSpan || 1);
 
-                              if (coveredRows.has(`${rIdx}_${actualCol}`)) {
+                              if (actualCol >= totalCols || coveredRows.has(`${rIdx}_${actualCol}`)) {
                                 return null;
                               }
 
