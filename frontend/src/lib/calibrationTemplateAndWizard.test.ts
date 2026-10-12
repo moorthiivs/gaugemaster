@@ -308,6 +308,29 @@ async function runTestSuite() {
   const resText = resolveCertificateCellValue({ remark: "Surface clean, no pitting" }, textColDef);
   assert("5.4 Descriptive text is preserved intact in certificate cell", resText === "Surface clean, no pitting", resText);
 
+  // 5.5 Custom metadata columns (MinTol, MaxTol) preserve entered values, NEVER row numbers
+  const testRowWithPointNo = {
+    point_number: 3,
+    sl_no: "3",
+    description: "DEPTH MIN",
+    required_dimension: "22.00",
+    mintol: "22.00",
+    maxtol: "22.10",
+    actual_dimension: "22.050",
+  };
+  const minTolCol = { id: "mintol", label: "MinTol", role: "METADATA", type: "reading", dataType: "TEXT" };
+  const maxTolCol = { id: "maxtol", label: "MaxTol", role: "METADATA", type: "reading", dataType: "TEXT" };
+  const slNoCol = { id: "sl_no", label: "SL.NO", type: "number" };
+
+  const resMinTol = resolveCertificateCellValue(testRowWithPointNo, minTolCol, { tableDecimals: 2 });
+  assert("5.5a MinTol resolves to entered '22.00' (not point_number 3)", resMinTol === "22.00", resMinTol);
+
+  const resMaxTol = resolveCertificateCellValue(testRowWithPointNo, maxTolCol, { tableDecimals: 2 });
+  assert("5.5b MaxTol resolves to entered '22.10' (not point_number 3)", resMaxTol === "22.10", resMaxTol);
+
+  const resSlNo = resolveCertificateCellValue(testRowWithPointNo, slNoCol);
+  assert("5.5c SL.NO continues to resolve to point_number 3", resSlNo === "3", resSlNo);
+
   // ============================================================================
   // SUITE 6: PRODUCTION REGRESSION INVARIANT SWEEP (ALL 67 DB TEMPLATES)
   // ============================================================================

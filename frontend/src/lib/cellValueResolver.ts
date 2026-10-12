@@ -55,19 +55,27 @@ export function resolveCertificateCellValue(
     (options?.tableDecimals !== undefined ? options.tableDecimals : 3);
   const tolerance = options?.tableTolerance ?? 0.02;
 
-  // 1. Point Number / Serial No / Metadata
+  // 1. Point Number / Serial No (never match general METADATA or custom columns)
   const isPointNo =
     colIdLower === "point_number" ||
     colIdLower === "sl_no" ||
     colIdLower === "sino" ||
-    colRole === "METADATA";
+    colIdLower === "sr_no" ||
+    colIdLower === "srno" ||
+    colIdLower === "pt" ||
+    colIdLower === "item_no" ||
+    colRole === "POINT_NUMBER" ||
+    colRole === "SL_NO" ||
+    /^(sl|sr|item)[\._\s]*no$/i.test(colLabelLower) ||
+    /^(point|pt)[\._\s]*no$/i.test(colLabelLower);
 
   if (isPointNo) {
     const pt =
-      row.point_number ??
-      row.sl_no ??
-      rawCell ??
-      (options?.rowIndex !== undefined ? options.rowIndex + 1 : undefined);
+      rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== ""
+        ? rawCell
+        : row.point_number ??
+          row.sl_no ??
+          (options?.rowIndex !== undefined ? options.rowIndex + 1 : undefined);
     return pt !== undefined && pt !== null && String(pt).trim() !== "" ? String(pt) : "-";
   }
 
@@ -224,6 +232,7 @@ export function resolveCertificateCellValue(
   // Fallbacks for well-known aliases when rawCell is empty
   if (colIdLower.includes("actual") && row.actual_dimension) return String(row.actual_dimension);
   if (colIdLower.includes("required") && row.required_dimension) return String(row.required_dimension);
+  if ((colIdLower === "tolerance" || colIdLower === "tol") && row.tolerance !== undefined && row.tolerance !== null) return String(row.tolerance);
 
   return "-";
 }
