@@ -472,7 +472,7 @@ const Index = () => {
   });
   const [activePreset, setActivePreset] = useState<string | null>("This Month");
   const [itemStatus, setItemStatus] = useState<string>("All");
-  const [category, setCategory] = useState<string>("Working"); // Default to "Working" Gauges
+  const [category, setCategory] = useState<string>("All"); // Default to All Inventory (Working + Ref Standards)
   const [calibrationStatus, setCalibrationStatus] = useState<
     string | undefined
   >(undefined);
@@ -488,7 +488,7 @@ const Index = () => {
     if (location && location !== "All") count++;
     if (itemStatus && itemStatus !== "All") count++;
     if (calibrationStatus && calibrationStatus !== "All") count++;
-    if (category && category !== "Working") count++;
+    if (category && category !== "All") count++;
     return count;
   }, [startDate, endDate, location, itemStatus, calibrationStatus, category]);
 
@@ -691,7 +691,7 @@ const Index = () => {
     setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     setActivePreset("This Month");
     setItemStatus("All");
-    setCategory("Working");
+    setCategory("All");
     setCalibrationStatus(undefined);
     setLocation(undefined);
   };

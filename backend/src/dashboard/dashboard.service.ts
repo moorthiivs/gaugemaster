@@ -361,7 +361,7 @@ export class DashboardService {
             END
         `;
 
-        // 1. Pending instruments due in date range grouped by device type
+        // 1. Pending instruments due in date range grouped by device type (excluding already calibrated)
         const devicePendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select(deviceCategorySql, 'device_category')
             .addSelect('COUNT(*)', 'count');
@@ -372,7 +372,10 @@ export class DashboardService {
             devicePendingQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
         }
         devicePendingQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
-        devicePendingQuery.andWhere('instrument.status != :calibrated', { calibrated: 'OK' });
+        devicePendingQuery.andWhere(
+            'instrument.id NOT IN (SELECT DISTINCT h.instrument_id FROM calibration_history h WHERE h.last_calibration_date BETWEEN :startRange AND :endRange)',
+            { startRange, endRange },
+        );
 
         if (itemStatus && itemStatus !== 'All') {
             devicePendingQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -383,11 +386,9 @@ export class DashboardService {
         if (location && location !== 'All') {
             devicePendingQuery.andWhere('instrument.location ILIKE :location', { location });
         }
-        if (isReferenceStandard === 'true') {
-            devicePendingQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            devicePendingQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
-        }
+        // NOTE: The workloadByDeviceType chart represents all 3 device categories
+        // (GAUGES, INSTRUMENTS, and EXTERNAL/REF STANDARDS) side-by-side.
+        // Therefore, we deliberately do NOT filter out reference standards here.
         devicePendingQuery.groupBy(deviceCategorySql);
         const devicePendingRows = await devicePendingQuery.getRawMany();
 
@@ -412,11 +413,6 @@ export class DashboardService {
         }
         if (location && location !== 'All') {
             deviceActualQuery.andWhere('instrument.location ILIKE :location', { location });
-        }
-        if (isReferenceStandard === 'true') {
-            deviceActualQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            deviceActualQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
         deviceActualQuery.groupBy(deviceCategorySql);
         const deviceActualRows = await deviceActualQuery.getRawMany();
