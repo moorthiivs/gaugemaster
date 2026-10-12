@@ -718,52 +718,61 @@ export class InstrumentsService {
             }
 
             const updatedInstrument = this.instrumentRepository.merge(instrument, payload);
-            const savedInstrument = await this.instrumentRepository.save(updatedInstrument);
 
-            // History logic
-            if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
-                // Prevent duplicate history entries for the exact same calibration date on this instrument
-                const existingHistory = savedInstrument.last_calibration_date ? await this.calibrationHistoryRepository.findOne({
-                    where: {
-                        instrument: { id: savedInstrument.id },
-                        last_calibration_date: savedInstrument.last_calibration_date,
-                    },
-                    order: { created_at: 'DESC' },
-                }) : null;
+            // Execute instrument save and calibration history update atomically in a single transaction
+            const savedInstrument = await this.instrumentRepository.manager.transaction(async (transactionalEntityManager) => {
+                const instRepo = transactionalEntityManager.getRepository(Instrument);
+                const histRepo = transactionalEntityManager.getRepository(CalibrationHistory);
 
-                if (existingHistory) {
-                    existingHistory.due_date = savedInstrument.due_date;
-                    if (savedInstrument.certificate_file) {
-                        existingHistory.certificate_file = savedInstrument.certificate_file;
+                const savedInst = await instRepo.save(updatedInstrument);
+
+                // History logic
+                if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
+                    // Prevent duplicate history entries for the exact same calibration date on this instrument
+                    const existingHistory = savedInst.last_calibration_date ? await histRepo.findOne({
+                        where: {
+                            instrument: { id: savedInst.id },
+                            last_calibration_date: savedInst.last_calibration_date,
+                        },
+                        order: { created_at: 'DESC' },
+                    }) : null;
+
+                    if (existingHistory) {
+                        existingHistory.due_date = savedInst.due_date;
+                        if (savedInst.certificate_file) {
+                            existingHistory.certificate_file = savedInst.certificate_file;
+                        }
+                        if (savedInst.calibration_source) {
+                            existingHistory.calibration_source = savedInst.calibration_source;
+                        }
+                        await histRepo.save(existingHistory);
+                    } else {
+                        const history = histRepo.create({
+                            instrument: { id: savedInst.id },
+                            last_calibration_date: savedInst.last_calibration_date,
+                            due_date: savedInst.due_date,
+                            certificate_file: savedInst.certificate_file,
+                            calibration_source: savedInst.calibration_source,
+                        });
+                        await histRepo.save(history);
                     }
-                    if (savedInstrument.calibration_source) {
-                        existingHistory.calibration_source = savedInstrument.calibration_source;
-                    }
-                    await this.calibrationHistoryRepository.save(existingHistory);
-                } else {
-                    const history = this.calibrationHistoryRepository.create({
-                        instrument: { id: savedInstrument.id },
-                        last_calibration_date: savedInstrument.last_calibration_date,
-                        due_date: savedInstrument.due_date,
-                        certificate_file: savedInstrument.certificate_file,
-                        calibration_source: savedInstrument.calibration_source,
+                } else if (updateInstrumentDto.certificate_file) {
+                    // If only certificate is uploaded, update the latest history entry
+                    const latestHistory = await histRepo.findOne({
+                        where: { instrument: { id: savedInst.id } },
+                        order: { created_at: 'DESC' },
                     });
-                    await this.calibrationHistoryRepository.save(history);
-                }
-            } else if (updateInstrumentDto.certificate_file) {
-                // If only certificate is uploaded, update the latest history entry
-                const latestHistory = await this.calibrationHistoryRepository.findOne({
-                    where: { instrument: { id: savedInstrument.id } },
-                    order: { created_at: 'DESC' },
-                });
-                if (latestHistory) {
-                    latestHistory.certificate_file = updateInstrumentDto.certificate_file;
-                    if (updateInstrumentDto.calibration_source) {
-                        latestHistory.calibration_source = updateInstrumentDto.calibration_source;
+                    if (latestHistory) {
+                        latestHistory.certificate_file = updateInstrumentDto.certificate_file;
+                        if (updateInstrumentDto.calibration_source) {
+                            latestHistory.calibration_source = updateInstrumentDto.calibration_source;
+                        }
+                        await histRepo.save(latestHistory);
                     }
-                    await this.calibrationHistoryRepository.save(latestHistory);
                 }
-            }
+
+                return savedInst;
+            });
 
             // Trigger collection notification to Location Head if instrument was calibrated/updated to OK
             if (
