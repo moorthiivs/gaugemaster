@@ -1631,8 +1631,19 @@ export function CertificatePreview({
         `}</style>
         {/* Dynamic Watermark for Unapproved Draft / Pending Approvals / Template Preview */}
         {calibration.approval_status !== "Approved" && (
-          <div className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-20">
-            <span className="text-red-500/12 text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg border-4 border-red-500/15 py-3 px-6 rounded-xl">
+          <div
+            className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-10"
+            style={{ mixBlendMode: "multiply" }}
+          >
+            <span
+              className="text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg py-3 px-6 rounded-xl"
+              style={{
+                color: "rgba(239, 68, 68, 0.08)",
+                borderColor: "rgba(239, 68, 68, 0.12)",
+                borderWidth: "3px",
+                borderStyle: "solid",
+              }}
+            >
               {isPreviewMode
                 ? "TEMPLATE PREVIEW"
                 : calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"

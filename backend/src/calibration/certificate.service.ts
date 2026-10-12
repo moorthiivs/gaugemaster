@@ -2114,7 +2114,7 @@ export class CertificateService {
                   ? 'REVIEWED - PENDING FINAL APPROVAL'
                   : 'DRAFT - PENDING REVIEW',
               color: '#ef4444',
-              opacity: 0.18,
+              opacity: 0.08,
               bold: true,
               italics: false,
             },
