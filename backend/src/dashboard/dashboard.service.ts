@@ -99,18 +99,25 @@ export class DashboardService {
             ...extraConditions,
         });
 
-        // Helper to count distinct instruments with history calibrations
-        const countHistoryCalibrations = async (sDate: Date, eDate: Date) => {
+        // Helper to count distinct instruments with history calibrations (in date range AND today in a single query)
+        const countCombinedCalibrations = async () => {
             const q = this.calibrationHistoryRepository.createQueryBuilder('history')
                 .innerJoin('history.instrument', 'instrument')
-                .select('COUNT(DISTINCT instrument.id)', 'count');
+                .select(`COUNT(DISTINCT CASE WHEN history.last_calibration_date BETWEEN :startRange AND :endRange THEN instrument.id END)`, 'calibratedCount')
+                .addSelect(`COUNT(DISTINCT CASE WHEN history.last_calibration_date BETWEEN :todayStart AND :todayEnd THEN instrument.id END)`, 'completedTodayCount');
 
             if (targetCompanyId) {
                 q.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
             } else {
                 q.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
             }
-            q.andWhere('history.last_calibration_date BETWEEN :sDate AND :eDate', { sDate, eDate });
+            const minDate = todayStart < startRange ? todayStart : startRange;
+            const maxDate = todayEnd > endRange ? todayEnd : endRange;
+            q.andWhere('history.last_calibration_date BETWEEN :minDate AND :maxDate', { minDate, maxDate });
+            q.setParameter('startRange', startRange);
+            q.setParameter('endRange', endRange);
+            q.setParameter('todayStart', todayStart);
+            q.setParameter('todayEnd', todayEnd);
 
             if (itemStatus && itemStatus !== 'All') {
                 q.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
@@ -128,11 +135,14 @@ export class DashboardService {
             }
 
             const res = await q.getRawOne();
-            return Number(res?.count || 0);
+            return {
+                calibratedCount: Number(res?.calibratedCount || 0),
+                completedTodayCount: Number(res?.completedTodayCount || 0),
+            };
         };
 
         // ═══════════════════════════════════════════════════════════════
-        // Single query for KPI summary counts & Working vs Reference standard breakdowns
+        // 1. Single query for all KPI summary counts, Working vs Ref breakdowns, and Due Today counts
         // ═══════════════════════════════════════════════════════════════
         const kpiQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select('COUNT(*)', 'total')
@@ -145,7 +155,11 @@ export class DashboardService {
 
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
             .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon');
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon')
+
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd THEN 1 ELSE 0 END)`, 'dueToday')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueToday')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueToday');
 
         if (targetCompanyId) {
             kpiQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
@@ -156,6 +170,7 @@ export class DashboardService {
         const dueSoonEnd = new Date(todayEnd);
         dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
         kpiQuery.setParameter('todayStart', todayStart);
+        kpiQuery.setParameter('todayEnd', todayEnd);
         kpiQuery.setParameter('dueSoonEnd', dueSoonEnd);
 
         if (itemStatus && itemStatus !== 'All') {
@@ -168,7 +183,9 @@ export class DashboardService {
             kpiQuery.andWhere('instrument.location ILIKE :location', { location });
         }
 
-        // Pending (due in range) count query: instruments due in range excluding those already calibrated in this period
+        // ═══════════════════════════════════════════════════════════════
+        // 2. Pending (due in range) count query excluding instruments already calibrated
+        // ═══════════════════════════════════════════════════════════════
         const pendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select('COUNT(*)', 'count');
 
@@ -179,7 +196,7 @@ export class DashboardService {
         }
         pendingQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
         pendingQuery.andWhere(
-            'instrument.id NOT IN (SELECT DISTINCT h.instrument_id FROM calibration_history h WHERE h.last_calibration_date BETWEEN :startRange AND :endRange)',
+            'instrument.id NOT IN (SELECT h.instrument_id FROM calibration_history h WHERE h.instrument_id IS NOT NULL AND h.last_calibration_date BETWEEN :startRange AND :endRange)',
             { startRange, endRange },
         );
 
@@ -198,59 +215,9 @@ export class DashboardService {
             pendingQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        // OPTIMIZED: Dispatch independent KPI and count queries concurrently
-        const [
-            kpiResult,
-            calibratedCount,
-            pendingRes,
-            dueTodayCount,
-            workingDueTodayCount,
-            referenceDueTodayCount,
-            completedTodayCount,
-            nextCalibrationInstrument,
-        ] = await Promise.all([
-            kpiQuery.getRawOne(),
-            countHistoryCalibrations(startRange, endRange),
-            pendingQuery.getRawOne(),
-            this.instrumentRepository.count({
-                where: getBaseWhere({
-                    due_date: Between(todayStart, todayEnd),
-                }),
-            }),
-            this.instrumentRepository.count({
-                where: getBaseWhere({
-                    due_date: Between(todayStart, todayEnd),
-                    is_reference_standard: false,
-                }),
-            }),
-            this.instrumentRepository.count({
-                where: getBaseWhere({
-                    due_date: Between(todayStart, todayEnd),
-                    is_reference_standard: true,
-                }),
-            }),
-            countHistoryCalibrations(todayStart, todayEnd),
-            this.instrumentRepository.findOne({
-                where: getBaseWhere({
-                    due_date: MoreThan(now),
-                }),
-                order: { due_date: 'ASC' },
-            }),
-        ]);
-
-        const total = Number(kpiResult?.total || 0);
-        const overdue = Number(kpiResult?.overdue || 0);
-        const dueSoonCount = Number(kpiResult?.dueSoon || 0);
-        const pendingCount = Number(pendingRes?.count || 0);
-        const dueThisMonth = pendingCount + calibratedCount;
-
         // ═══════════════════════════════════════════════════════════════
-        // OPTIMIZED: Monthly trend data via single GROUP BY query
-        // Replaces the 12-24 iteration loop (2 queries per iteration)
+        // 3. Monthly trend queries (Plan vs Actual)
         // ═══════════════════════════════════════════════════════════════
-        const monthsCount: { month: string; plan: number; actual: number }[] = [];
-
-        // Determine month range
         let monthStart: Date;
         let monthEnd: Date;
         if (startDateStr && endDateStr) {
@@ -265,7 +232,6 @@ export class DashboardService {
             monthEnd = sixMonthsAhead;
         }
 
-        // Plan counts (instruments due) grouped by month — single query
         const planQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
             .addSelect(`TO_CHAR(instrument.due_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'Mon')`, 'month_label')
@@ -292,10 +258,8 @@ export class DashboardService {
         } else if (isReferenceStandard === 'false') {
             planQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
-
         planQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
 
-        // Actual completed counts grouped by month — single query
         const actualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
             .innerJoin('history.instrument', 'instrument')
             .select(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM')`, 'month_key')
@@ -323,36 +287,10 @@ export class DashboardService {
         } else if (isReferenceStandard === 'false') {
             actualQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
-
         actualQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
 
-        // OPTIMIZED: Run monthly plan & actual queries concurrently
-        const [planRows, actualRows] = await Promise.all([
-            planQuery.getRawMany(),
-            actualQuery.getRawMany(),
-        ]);
-
-        // Merge plan + actual into monthly series
-        const planMap = new Map(planRows.map(r => [r.month_key, { label: r.month_label, count: Number(r.count) }]));
-        const actualMap = new Map(actualRows.map(r => [r.month_key, Number(r.count)]));
-
-        const allMonthKeys = new Set([...planMap.keys(), ...actualMap.keys()]);
-        const sortedKeys = [...allMonthKeys].sort();
-
-        for (const key of sortedKeys) {
-            const planInfo = planMap.get(key);
-            const actualCount = actualMap.get(key) || 0;
-            const planCount = (planInfo?.count || 0) + actualCount;
-            monthsCount.push({
-                month: planInfo?.label || key.split('-')[1] || key,
-                plan: planCount,
-                actual: actualCount,
-            });
-        }
-
         // ═══════════════════════════════════════════════════════════════
-        // Workload grouped by Device Type (GAUGES, INSTRUMENTS, EXTERNAL/REF STANDARDS)
-        // Mirrors Excel calibration status template
+        // 4. Device Type Workload Queries (GAUGES, INSTRUMENTS, EXTERNAL/REF STANDARDS)
         // ═══════════════════════════════════════════════════════════════
         const deviceCategorySql = `
             CASE
@@ -367,7 +305,6 @@ export class DashboardService {
             END
         `;
 
-        // 1. Pending instruments due in date range grouped by device type (excluding already calibrated)
         const devicePendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select(deviceCategorySql, 'device_category')
             .addSelect('COUNT(*)', 'count');
@@ -379,7 +316,7 @@ export class DashboardService {
         }
         devicePendingQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
         devicePendingQuery.andWhere(
-            'instrument.id NOT IN (SELECT DISTINCT h.instrument_id FROM calibration_history h WHERE h.last_calibration_date BETWEEN :startRange AND :endRange)',
+            'instrument.id NOT IN (SELECT h.instrument_id FROM calibration_history h WHERE h.instrument_id IS NOT NULL AND h.last_calibration_date BETWEEN :startRange AND :endRange)',
             { startRange, endRange },
         );
 
@@ -392,12 +329,8 @@ export class DashboardService {
         if (location && location !== 'All') {
             devicePendingQuery.andWhere('instrument.location ILIKE :location', { location });
         }
-        // NOTE: The workloadByDeviceType chart represents all 3 device categories
-        // (GAUGES, INSTRUMENTS, and EXTERNAL/REF STANDARDS) side-by-side.
-        // Therefore, we deliberately do NOT filter out reference standards here.
         devicePendingQuery.groupBy(deviceCategorySql);
 
-        // 2. Actual completed calibrations in date range grouped by device type
         const deviceActualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
             .innerJoin('history.instrument', 'instrument')
             .select(deviceCategorySql, 'device_category')
@@ -421,12 +354,248 @@ export class DashboardService {
         }
         deviceActualQuery.groupBy(deviceCategorySql);
 
-        // OPTIMIZED: Run device pending and actual queries concurrently
-        const [devicePendingRows, deviceActualRows] = await Promise.all([
+        // ═══════════════════════════════════════════════════════════════
+        // 5. Due soon and recent activity queries
+        // ═══════════════════════════════════════════════════════════════
+        let dueSoonPromise;
+        if (startDateStr && endDateStr) {
+            dueSoonPromise = this.instrumentRepository.find({
+                where: getBaseWhere({
+                    due_date: Between(startRange, endRange),
+                }),
+                order: { due_date: 'ASC' },
+                select: ['id', 'name', 'due_date', 'location', 'status'],
+                take: 50,
+            });
+        } else {
+            const next30Days = new Date(now);
+            next30Days.setDate(now.getDate() + 30);
+            dueSoonPromise = this.instrumentRepository.find({
+                where: getBaseWhere({
+                    due_date: Between(now, next30Days),
+                }),
+                order: { due_date: 'ASC' },
+                select: ['id', 'name', 'due_date', 'location', 'status'],
+                take: 50,
+            });
+        }
+
+        const recentActivityPromise = this.instrumentRepository.find({
+            where: getBaseWhere(),
+            take: 10,
+            order: { updated_at: 'DESC' },
+            select: ['id', 'name', 'status', 'updated_at', 'id_code', 'location'],
+        });
+
+        // ═══════════════════════════════════════════════════════════════
+        // 6. Distributions: Item Status, Calibration Status, Module
+        // ═══════════════════════════════════════════════════════════════
+        const itemStatusQuery = this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')", 'item_status')
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            itemStatusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            itemStatusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        if (location && location !== 'All') {
+            itemStatusQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            itemStatusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            itemStatusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+        itemStatusQuery.groupBy("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')");
+
+        const statusQuery = this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')", 'status')
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            statusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            statusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        if (itemStatus && itemStatus !== 'All') {
+            statusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (location && location !== 'All') {
+            statusQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            statusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            statusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+        statusQuery.groupBy("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')");
+
+        const moduleQuery = this.instrumentRepository
+            .createQueryBuilder('instrument')
+            .select("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')", 'module_name')
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            moduleQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            moduleQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        if (itemStatus && itemStatus !== 'All') {
+            moduleQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            moduleQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            moduleQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            moduleQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            moduleQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+        moduleQuery.groupBy("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')").orderBy('COUNT(*)', 'DESC');
+
+        // ═══════════════════════════════════════════════════════════════
+        // 7. Weekly and Daily queries
+        // ═══════════════════════════════════════════════════════════════
+        const weeklyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+            .innerJoin('history.instrument', 'instrument')
+            .select(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
+            .addSelect(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
+            .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+        if (targetCompanyId) {
+            weeklyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            weeklyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        weeklyQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
+
+        if (itemStatus) {
+            weeklyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status) {
+            weeklyQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location) {
+            weeklyQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        weeklyQuery.groupBy('week_start').addGroupBy('week_end').orderBy('MIN(history.last_calibration_date)', 'ASC');
+
+        const nowUtc = new Date();
+        const nowLocalDaily = new Date(nowUtc.getTime() + tzOffsetMinutes * 60 * 1000);
+        const endRangeLocal = new Date(endRange.getTime() + tzOffsetMinutes * 60 * 1000);
+        const anchorLocal = endRangeLocal < nowLocalDaily ? endRangeLocal : nowLocalDaily;
+
+        const sevenDaysAgo = new Date(anchorLocal);
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+
+        const dStart = new Date(Date.UTC(sevenDaysAgo.getFullYear(), sevenDaysAgo.getMonth(), sevenDaysAgo.getDate(), 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
+        const dEnd = new Date(Date.UTC(anchorLocal.getFullYear(), anchorLocal.getMonth(), anchorLocal.getDate(), 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
+        const effectiveStart = dStart < startRange ? startRange : dStart;
+
+        const dailyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+            .innerJoin('history.instrument', 'instrument')
+            .select(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
+            .addSelect(`EXTRACT(DOW FROM history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
+            .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+        if (targetCompanyId) {
+            dailyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            dailyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        dailyQuery.andWhere('history.last_calibration_date BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
+
+        if (itemStatus) {
+            dailyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status) {
+            dailyQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location) {
+            dailyQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        dailyQuery.groupBy('date_key').addGroupBy('dow').orderBy('date_key', 'ASC');
+
+        // ═══════════════════════════════════════════════════════════════
+        // MASTER CONCURRENT BATCH: All 15 database operations run in parallel
+        // ═══════════════════════════════════════════════════════════════
+        const [
+            kpiResult,
+            calibrationsResult,
+            pendingRes,
+            nextCalibrationInstrument,
+            planRows,
+            actualRows,
+            devicePendingRows,
+            deviceActualRows,
+            dueSoonInstruments,
+            recentActivityRaw,
+            rawItemStatusGroups,
+            rawStatusGroups,
+            moduleGroups,
+            weeklyRows,
+            dailyRows,
+        ] = await Promise.all([
+            kpiQuery.getRawOne(),
+            countCombinedCalibrations(),
+            pendingQuery.getRawOne(),
+            this.instrumentRepository.findOne({
+                where: getBaseWhere({
+                    due_date: MoreThan(now),
+                }),
+                order: { due_date: 'ASC' },
+                select: ['id', 'due_date'],
+            }),
+            planQuery.getRawMany(),
+            actualQuery.getRawMany(),
             devicePendingQuery.getRawMany(),
             deviceActualQuery.getRawMany(),
+            dueSoonPromise,
+            recentActivityPromise,
+            itemStatusQuery.getRawMany(),
+            statusQuery.getRawMany(),
+            moduleQuery.getRawMany(),
+            weeklyQuery.getRawMany(),
+            dailyQuery.getRawMany(),
         ]);
 
+        const total = Number(kpiResult?.total || 0);
+        const overdue = Number(kpiResult?.overdue || 0);
+        const dueSoonCount = Number(kpiResult?.dueSoon || 0);
+        const calibratedCount = calibrationsResult.calibratedCount;
+        const completedTodayCount = calibrationsResult.completedTodayCount;
+        const dueTodayCount = Number(kpiResult?.dueToday || 0);
+        const workingDueTodayCount = Number(kpiResult?.workingDueToday || 0);
+        const referenceDueTodayCount = Number(kpiResult?.referenceDueToday || 0);
+        const pendingCount = Number(pendingRes?.count || 0);
+        const dueThisMonth = pendingCount + calibratedCount;
+
+        // Merge plan + actual into monthly series
+        const monthsCount: { month: string; plan: number; actual: number }[] = [];
+        const planMap = new Map(planRows.map(r => [r.month_key, { label: r.month_label, count: Number(r.count) }]));
+        const actualMap = new Map(actualRows.map(r => [r.month_key, Number(r.count)]));
+
+        const allMonthKeys = new Set([...planMap.keys(), ...actualMap.keys()]);
+        const sortedKeys = [...allMonthKeys].sort();
+
+        for (const key of sortedKeys) {
+            const planInfo = planMap.get(key);
+            const actualCount = actualMap.get(key) || 0;
+            const planCount = (planInfo?.count || 0) + actualCount;
+            monthsCount.push({
+                month: planInfo?.label || key.split('-')[1] || key,
+                plan: planCount,
+                actual: actualCount,
+            });
+        }
+
+        // Format device category workload
         const devicePendingMap = new Map<string, number>(devicePendingRows.map(r => [r.device_category, Number(r.count)]));
         const deviceActualMap = new Map<string, number>(deviceActualRows.map(r => [r.device_category, Number(r.count)]));
 
@@ -441,32 +610,7 @@ export class DashboardService {
             };
         });
 
-        // ═══════════════════════════════════════════════════════════════
-        // Due soon instruments (paginated, limited)
-        // ═══════════════════════════════════════════════════════════════
-        let dueSoonInstruments;
-        if (startDateStr && endDateStr) {
-            dueSoonInstruments = await this.instrumentRepository.find({
-                where: getBaseWhere({
-                    due_date: Between(startRange, endRange),
-                }),
-                order: { due_date: 'ASC' },
-                select: ['id', 'name', 'due_date', 'location', 'status'],
-                take: 50,
-            });
-        } else {
-            const next30Days = new Date(now);
-            next30Days.setDate(now.getDate() + 30);
-            dueSoonInstruments = await this.instrumentRepository.find({
-                where: getBaseWhere({
-                    due_date: Between(now, next30Days),
-                }),
-                order: { due_date: 'ASC' },
-                select: ['id', 'name', 'due_date', 'location', 'status'],
-                take: 50,
-            });
-        }
-
+        // Format due soon instruments
         const dueSoonList = dueSoonInstruments.map(inst => ({
             id: inst.id,
             name: inst.name,
@@ -475,16 +619,7 @@ export class DashboardService {
             status: inst.status,
         }));
 
-        // ═══════════════════════════════════════════════════════════════
-        // Recent activity
-        // ═══════════════════════════════════════════════════════════════
-        const recentActivityRaw = await this.instrumentRepository.find({
-            where: getBaseWhere(),
-            take: 10,
-            order: { updated_at: 'DESC' },
-            select: ['id', 'name', 'status', 'updated_at', 'id_code', 'location'],
-        });
-
+        // Format recent activity
         const recentActivityFormatted = recentActivityRaw.map(r => {
             let action = 'Updated';
             if (r.status === 'OK') action = 'Calibrated';
@@ -502,101 +637,7 @@ export class DashboardService {
             };
         });
 
-        // ═══════════════════════════════════════════════════════════════
-        // FIXED: Status & Item Status distributions
-        // Item Status: Overall inventory lifecycle breakdown (Active, SPARE, STOCK, Inactive, etc.)
-        // Calibration Status: Compliance breakdown (OK, Overdue, Due Soon, etc.)
-        // ═══════════════════════════════════════════════════════════════
-
-        // 1. Item Status Distribution (Overall inventory lifecycle breakdown: Active, SPARE, STOCK, Inactive, etc.)
-        // Must show ALL item statuses across the inventory, NOT filtered by item_status or due_date range!
-        const itemStatusQuery = this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')", 'item_status')
-            .addSelect('COUNT(*)', 'count');
-
-        if (targetCompanyId) {
-            itemStatusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-        } else {
-            itemStatusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-        }
-
-        if (location && location !== 'All') {
-            itemStatusQuery.andWhere('instrument.location ILIKE :location', { location });
-        }
-        if (isReferenceStandard === 'true') {
-            itemStatusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            itemStatusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
-        }
-
-        // 2. Calibration Status Distribution (Compliance breakdown: OK, Overdue, Due Soon, etc.)
-        // Shows full distribution across calibration results, NOT filtered by status so the breakdown is preserved.
-        const statusQuery = this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')", 'status')
-            .addSelect('COUNT(*)', 'count');
-
-        if (targetCompanyId) {
-            statusQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-        } else {
-            statusQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-        }
-
-        if (itemStatus && itemStatus !== 'All') {
-            statusQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
-        }
-        if (location && location !== 'All') {
-            statusQuery.andWhere('instrument.location ILIKE :location', { location });
-        }
-        if (isReferenceStandard === 'true') {
-            statusQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            statusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
-        }
-
-        // 3. Module distribution (Full Inventory breakdown with UPPER case normalization)
-        const moduleQuery = this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')", 'module_name')
-            .addSelect('COUNT(*)', 'count');
-
-        if (targetCompanyId) {
-            moduleQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-        } else {
-            moduleQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-        }
-
-        if (itemStatus && itemStatus !== 'All') {
-            moduleQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
-        }
-        if (status && status !== 'All') {
-            moduleQuery.andWhere('instrument.status ILIKE :status', { status });
-        }
-        if (location && location !== 'All') {
-            moduleQuery.andWhere('instrument.location ILIKE :location', { location });
-        }
-        if (isReferenceStandard === 'true') {
-            moduleQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
-        } else if (isReferenceStandard === 'false') {
-            moduleQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
-        }
-
-        // OPTIMIZED: Run item status, calibration status, and module distribution queries concurrently
-        const [rawItemStatusGroups, rawStatusGroups, moduleGroups] = await Promise.all([
-            itemStatusQuery
-                .groupBy("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')")
-                .getRawMany(),
-            statusQuery
-                .groupBy("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')")
-                .getRawMany(),
-            moduleQuery
-                .groupBy("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')")
-                .orderBy('COUNT(*)', 'DESC')
-                .getRawMany(),
-        ]);
-
-        // Normalize item statuses (e.g. merge 'SPARE' and 'Spare', 'STOCK' and 'Stock')
+        // Normalize and format item status distribution
         const itemStatusMap = new Map<string, number>();
         for (const g of rawItemStatusGroups) {
             const normalized = this.normalizeItemStatus(g.item_status);
@@ -633,103 +674,24 @@ export class DashboardService {
             moduleDistribution = rawModuleDistribution;
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // OPTIMIZED: Weekly completed — single GROUP BY query
-        // Replaces 52-iteration loop with single SQL
-        // ═══════════════════════════════════════════════════════════════
+        // Format weekly and daily completed
         const weeklyCompleted: { week: string; completed: number }[] = [];
-        {
-            const weeklyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
-                .innerJoin('history.instrument', 'instrument')
-                .select(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes'), 'Mon DD')`, 'week_start')
-                .addSelect(`TO_CHAR(DATE_TRUNC('week', history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes') + INTERVAL '6 days', 'Mon DD')`, 'week_end')
-                .addSelect('COUNT(DISTINCT instrument.id)', 'count');
-
-            if (targetCompanyId) {
-                weeklyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-            } else {
-                weeklyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-            }
-            weeklyQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
-
-            if (itemStatus) {
-                weeklyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
-            }
-            if (status) {
-                weeklyQuery.andWhere('instrument.status ILIKE :status', { status });
-            }
-            if (location) {
-                weeklyQuery.andWhere('instrument.location ILIKE :location', { location });
-            }
-
-            weeklyQuery.groupBy('week_start').addGroupBy('week_end')
-                .orderBy('MIN(history.last_calibration_date)', 'ASC');
-
-            const weeklyRows = await weeklyQuery.getRawMany();
-            for (const row of weeklyRows) {
-                weeklyCompleted.push({
-                    week: `${row.week_start} - ${row.week_end}`,
-                    completed: Number(row.count),
-                });
-            }
+        for (const row of weeklyRows) {
+            weeklyCompleted.push({
+                week: `${row.week_start} - ${row.week_end}`,
+                completed: Number(row.count),
+            });
         }
 
-        // ═══════════════════════════════════════════════════════════════
-        // OPTIMIZED: Daily completed — single GROUP BY query
-        // Replaces 7-iteration loop
-        // ═══════════════════════════════════════════════════════════════
         const dailyCompleted: { day: string; date: string; completed: number }[] = [];
-        {
-            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-            
-            const nowUtc = new Date();
-            const nowLocal = new Date(nowUtc.getTime() + tzOffsetMinutes * 60 * 1000);
-            const endRangeLocal = new Date(endRange.getTime() + tzOffsetMinutes * 60 * 1000);
-            const anchorLocal = endRangeLocal < nowLocal ? endRangeLocal : nowLocal;
-
-            const sevenDaysAgo = new Date(anchorLocal);
-            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-
-            const dStart = new Date(Date.UTC(sevenDaysAgo.getFullYear(), sevenDaysAgo.getMonth(), sevenDaysAgo.getDate(), 0, 0, 0, 0) - tzOffsetMinutes * 60 * 1000);
-            const dEnd = new Date(Date.UTC(anchorLocal.getFullYear(), anchorLocal.getMonth(), anchorLocal.getDate(), 23, 59, 59, 999) - tzOffsetMinutes * 60 * 1000);
-
-            // Clamp to filter range
-            const effectiveStart = dStart < startRange ? startRange : dStart;
-
-            const dailyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
-                .innerJoin('history.instrument', 'instrument')
-                .select(`TO_CHAR(history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes', 'YYYY-MM-DD')`, 'date_key')
-                .addSelect(`EXTRACT(DOW FROM history.last_calibration_date AT TIME ZONE 'UTC' + INTERVAL '${tzOffsetMinutes} minutes')`, 'dow')
-                .addSelect('COUNT(DISTINCT instrument.id)', 'count');
-
-            if (targetCompanyId) {
-                dailyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-            } else {
-                dailyQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-            }
-            dailyQuery.andWhere('history.last_calibration_date BETWEEN :effectiveStart AND :dEnd', { effectiveStart, dEnd });
-
-            if (itemStatus) {
-                dailyQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
-            }
-            if (status) {
-                dailyQuery.andWhere('instrument.status ILIKE :status', { status });
-            }
-            if (location) {
-                dailyQuery.andWhere('instrument.location ILIKE :location', { location });
-            }
-
-            dailyQuery.groupBy('date_key').addGroupBy('dow').orderBy('date_key', 'ASC');
-
-            const dailyRows = await dailyQuery.getRawMany();
-            for (const row of dailyRows) {
-                const dow = Number(row.dow);
-                dailyCompleted.push({
-                    day: dayNames[dow] || 'N/A',
-                    date: row.date_key,
-                    completed: Number(row.count),
-                });
-            }
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        for (const row of dailyRows) {
+            const dow = Number(row.dow);
+            dailyCompleted.push({
+                day: dayNames[dow] || 'N/A',
+                date: row.date_key,
+                completed: Number(row.count),
+            });
         }
 
         const grandTotal = Number(kpiResult.total || 0);
@@ -843,6 +805,7 @@ export class DashboardService {
                 where: getBaseWhere(),
                 order: { name: 'ASC' },
                 select: selectFields as any,
+                take: 1000,
             });
         }
 
@@ -853,6 +816,7 @@ export class DashboardService {
                 }),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,
+                take: 1000,
             });
         }
 
@@ -864,41 +828,28 @@ export class DashboardService {
                 }),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,
+                take: 1000,
             });
         }
 
         if (listType === 'calibrated') {
-            const query = this.calibrationHistoryRepository.createQueryBuilder('history')
-                .innerJoinAndSelect('history.instrument', 'instrument');
+            const historyInstIds = await this.calibrationHistoryRepository.createQueryBuilder('history')
+                .innerJoin('history.instrument', 'instrument')
+                .select('DISTINCT instrument.id', 'id')
+                .where(targetCompanyId ? 'instrument."companyId" = :targetCompanyId' : 'instrument.created_by IN (:...targetUserIds)', targetCompanyId ? { targetCompanyId } : { targetUserIds })
+                .andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange })
+                .limit(1000)
+                .getRawMany();
 
-            if (targetCompanyId) {
-                query.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
-            } else {
-                query.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
-            }
+            const distinctIds = historyInstIds.map(h => h.id).filter(Boolean);
+            if (distinctIds.length === 0) return [];
 
-            if (itemStatus) {
-                query.andWhere('instrument.item_status = :itemStatus', { itemStatus });
-            }
-            if (status) {
-                query.andWhere('instrument.status = :status', { status });
-            }
-            if (location) {
-                query.andWhere('instrument.location = :location', { location });
-            }
-
-            query.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange })
-                 .orderBy('history.last_calibration_date', 'DESC');
-
-            const historyEntries = await query.getMany();
-
-            const instrumentsMap = new Map<string, Instrument>();
-            for (const entry of historyEntries) {
-                if (entry.instrument && !instrumentsMap.has(entry.instrument.id)) {
-                    instrumentsMap.set(entry.instrument.id, entry.instrument);
-                }
-            }
-            return Array.from(instrumentsMap.values());
+            return this.instrumentRepository.find({
+                where: getBaseWhere({ id: In(distinctIds) }),
+                order: { name: 'ASC' },
+                select: selectFields as any,
+                take: 1000,
+            });
         }
         return [];
     }

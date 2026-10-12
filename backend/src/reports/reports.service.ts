@@ -408,15 +408,16 @@ export class ReportsService {
             where.location = ILike(`%${location}%`);
         }
 
+        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
+        const needsCreatedBy = selectedColumns ? selectedColumns.includes('created_by') : true;
+
         const instruments = await this.instrumentRepository.find({
             where,
-            relations: ['created_by'],
+            relations: needsCreatedBy ? ['created_by'] : [],
             order: {
                 due_date: 'ASC',
             },
         });
-
-        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
 
         if (format === 'xlsx') {
             const columnMap: Record<string, string> = {
