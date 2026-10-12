@@ -103,6 +103,7 @@ export type DashboardSummary = {
   completedTodayCount?: number;
   nextCalibrationDate: string | null;
   dueDatesByMonth: { month: string; plan: number; actual: number }[];
+  workloadByDeviceType?: { deviceType: string; plan: number; actual: number }[];
   dueSoonList: { id: string; name: string; dueDate: string; location?: string; status?: string; is_reference_standard?: boolean }[];
   recentActivity: { id: string; name: string; action: string; at: string; idCode?: string; location?: string }[];
   statusDistribution?: { name: string; value: number }[];

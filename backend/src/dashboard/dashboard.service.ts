@@ -345,6 +345,97 @@ export class DashboardService {
         }
 
         // ═══════════════════════════════════════════════════════════════
+        // Workload grouped by Device Type (GAUGES, INSTRUMENTS, EXTERNAL/REF STANDARDS)
+        // Mirrors Excel calibration status template
+        // ═══════════════════════════════════════════════════════════════
+        const deviceCategorySql = `
+            CASE
+                WHEN instrument.is_reference_standard = true 
+                     OR instrument.device_type ILIKE '%reference%' 
+                     OR instrument.device_type ILIKE '%master%' 
+                THEN 'EXTERNAL/REF STANDARDS'
+                WHEN instrument.device_type ILIKE '%gauge%' 
+                     OR (instrument.device_type IS NULL AND instrument.name ILIKE '%gauge%') 
+                THEN 'GAUGES'
+                ELSE 'INSTRUMENTS'
+            END
+        `;
+
+        // 1. Pending instruments due in date range grouped by device type
+        const devicePendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
+            .select(deviceCategorySql, 'device_category')
+            .addSelect('COUNT(*)', 'count');
+
+        if (targetCompanyId) {
+            devicePendingQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            devicePendingQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        devicePendingQuery.andWhere('instrument.due_date BETWEEN :startRange AND :endRange', { startRange, endRange });
+        devicePendingQuery.andWhere('instrument.status != :calibrated', { calibrated: 'OK' });
+
+        if (itemStatus && itemStatus !== 'All') {
+            devicePendingQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            devicePendingQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            devicePendingQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            devicePendingQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            devicePendingQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+        devicePendingQuery.groupBy(deviceCategorySql);
+        const devicePendingRows = await devicePendingQuery.getRawMany();
+
+        // 2. Actual completed calibrations in date range grouped by device type
+        const deviceActualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
+            .innerJoin('history.instrument', 'instrument')
+            .select(deviceCategorySql, 'device_category')
+            .addSelect('COUNT(DISTINCT instrument.id)', 'count');
+
+        if (targetCompanyId) {
+            deviceActualQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            deviceActualQuery.where('instrument.created_by IN (:...targetUserIds)', { targetUserIds });
+        }
+        deviceActualQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
+
+        if (itemStatus && itemStatus !== 'All') {
+            deviceActualQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        }
+        if (status && status !== 'All') {
+            deviceActualQuery.andWhere('instrument.status ILIKE :status', { status });
+        }
+        if (location && location !== 'All') {
+            deviceActualQuery.andWhere('instrument.location ILIKE :location', { location });
+        }
+        if (isReferenceStandard === 'true') {
+            deviceActualQuery.andWhere('instrument.is_reference_standard = :isRef', { isRef: true });
+        } else if (isReferenceStandard === 'false') {
+            deviceActualQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
+        }
+        deviceActualQuery.groupBy(deviceCategorySql);
+        const deviceActualRows = await deviceActualQuery.getRawMany();
+
+        const devicePendingMap = new Map<string, number>(devicePendingRows.map(r => [r.device_category, Number(r.count)]));
+        const deviceActualMap = new Map<string, number>(deviceActualRows.map(r => [r.device_category, Number(r.count)]));
+
+        const deviceCategories = ['GAUGES', 'INSTRUMENTS', 'EXTERNAL/REF STANDARDS'];
+        const workloadByDeviceType = deviceCategories.map(cat => {
+            const act = deviceActualMap.get(cat) || 0;
+            const pnd = devicePendingMap.get(cat) || 0;
+            return {
+                deviceType: cat,
+                plan: pnd + act,
+                actual: act,
+            };
+        });
+
+        // ═══════════════════════════════════════════════════════════════
         // Due soon instruments (paginated, limited)
         // ═══════════════════════════════════════════════════════════════
         let dueSoonInstruments;
@@ -684,6 +775,7 @@ export class DashboardService {
             completedTodayCount,
             nextCalibrationDate: nextCalibrationInstrument?.due_date || null,
             dueDatesByMonth: monthsCount,
+            workloadByDeviceType,
             dueSoonList,
             recentActivity: recentActivityFormatted,
             statusDistribution,

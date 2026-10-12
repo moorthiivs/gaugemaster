@@ -1221,7 +1221,36 @@ const Index = () => {
         {loading ? (
           <Skeleton className="h-[360px] rounded-xl" />
         ) : (
-          <DashboardChart data={chartData} />
+          <DashboardChart
+            data={chartData}
+            deviceTypeData={data?.workloadByDeviceType}
+            dateRangeLabel={dateRangeLabel}
+            onCategoryClick={(categoryName, type) => {
+              const params = new URLSearchParams();
+              if (location && location !== "All") params.append("location", location);
+              if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+
+              if (categoryName === "GAUGES") {
+                params.append("is_reference_standard", "false");
+                params.append("device_type", "Gauge");
+              } else if (categoryName === "EXTERNAL/REF STANDARDS") {
+                params.append("is_reference_standard", "true");
+              } else if (categoryName === "INSTRUMENTS") {
+                params.append("is_reference_standard", "false");
+                params.append("device_type", "Instrument");
+              }
+
+              if (type === "actual") {
+                if (startDate) params.append("calibrated_in_range_start", format(startDate, "yyyy-MM-dd"));
+                if (endDate) params.append("calibrated_in_range_end", format(endDate, "yyyy-MM-dd"));
+              } else {
+                if (startDate) params.append("due_date_start", format(startDate, "yyyy-MM-dd"));
+                if (endDate) params.append("due_date_end", format(endDate, "yyyy-MM-dd"));
+              }
+
+              navigate(`/instruments?${params.toString()}`);
+            }}
+          />
         )}
         {loading ? (
           <Skeleton className="h-[360px] rounded-xl" />
