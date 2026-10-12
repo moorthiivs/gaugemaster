@@ -140,17 +140,7 @@ export class InstrumentsService {
 
     async findFilterParams(createdById: string, companyId?: string) {
         const targetCompanyId = await this.resolveTargetCompanyId(createdById, companyId);
-        let whereCondition: any = {};
-        if (targetCompanyId) {
-            whereCondition = { companyId: targetCompanyId };
-        } else if (createdById) {
-            whereCondition = { created_by: { id: createdById } };
-        }
-        const instruments = await this.instrumentRepository.find({
-            where: whereCondition,
-            select: ['status', 'item_status', 'frequency', 'location', 'calibration_source', 'device_type'],
-        });
-
+        
         let customStatuses: string[] = [];
         if (targetCompanyId) {
             try {
@@ -165,6 +155,30 @@ export class InstrumentsService {
                 // Ignore if settings query fails
             }
         }
+
+        // OPTIMIZED: Query distinct values in a single SQL aggregation instead of loading all instruments into Node.js heap memory
+        let filterSql = `
+            SELECT
+                ARRAY(SELECT DISTINCT status FROM instruments WHERE status IS NOT NULL AND status != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS statuses,
+                ARRAY(SELECT DISTINCT item_status FROM instruments WHERE item_status IS NOT NULL AND item_status != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS item_statuses,
+                ARRAY(SELECT DISTINCT frequency FROM instruments WHERE frequency IS NOT NULL AND frequency != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS frequencies,
+                ARRAY(SELECT DISTINCT location FROM instruments WHERE location IS NOT NULL AND location != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS locations,
+                ARRAY(SELECT DISTINCT calibration_source FROM instruments WHERE calibration_source IS NOT NULL AND calibration_source != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS sources,
+                ARRAY(SELECT DISTINCT device_type FROM instruments WHERE device_type IS NOT NULL AND device_type != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS device_types
+        `;
+
+        const filterRes = await this.instrumentRepository.query(filterSql, [
+            targetCompanyId || null,
+            targetCompanyId ? null : (createdById || null),
+        ]);
+
+        const raw = filterRes?.[0] || {};
+        const rawStatuses: string[] = raw.statuses || [];
+        const rawItemStatuses: string[] = raw.item_statuses || [];
+        const rawFrequencies: string[] = raw.frequencies || [];
+        const rawLocations: string[] = raw.locations || [];
+        const rawSources: string[] = raw.sources || [];
+        const rawDeviceTypes: string[] = raw.device_types || [];
 
         const unique = (arr: string[]) => {
             const seen = new Set<string>();
@@ -183,24 +197,24 @@ export class InstrumentsService {
             'Overdue',
         ];
 
-        const itemStatuses = instruments.map(i => this.normalizeItemStatus(i.item_status));
+        const itemStatuses = rawItemStatuses.map(s => this.normalizeItemStatus(s));
 
-        const deviceTypes = instruments.map(i => {
-            const dt = (i.device_type || '').trim();
-            if (/reference|master/i.test(dt)) return 'Reference Standard';
-            return dt;
+        const deviceTypes = rawDeviceTypes.map(dt => {
+            const trimmed = (dt || '').trim();
+            if (/reference|master/i.test(trimmed)) return 'Reference Standard';
+            return trimmed;
         });
 
         return {
             status: unique([
                 ...canonicalStatuses,
-                ...instruments.map(i => i.status),
+                ...rawStatuses,
                 ...customStatuses,
             ]),
             item_status: unique([...itemStatuses, 'Active', 'SPARE', 'Inactive', 'STOCK']),
-            frequency: unique(instruments.map(i => i.frequency)),
-            location: unique(instruments.map(i => i.location)),
-            calibration_source: unique(instruments.map(i => i.calibration_source)),
+            frequency: unique(rawFrequencies),
+            location: unique(rawLocations),
+            calibration_source: unique(rawSources),
             device_type: unique([...deviceTypes, 'Instrument', 'Gauge', 'Reference Standard']),
         };
     }

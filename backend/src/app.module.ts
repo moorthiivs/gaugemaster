@@ -50,6 +50,10 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       uuidExtension: 'pgcrypto',
       extra: {
+        max: parseInt(process.env.DB_POOL_MAX || '30', 10),
+        min: parseInt(process.env.DB_POOL_MIN || '5', 10),
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
         options: '-c timezone=UTC',
       },
     }),

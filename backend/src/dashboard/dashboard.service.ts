@@ -168,15 +168,7 @@ export class DashboardService {
             kpiQuery.andWhere('instrument.location ILIKE :location', { location });
         }
 
-        const kpiResult = await kpiQuery.getRawOne();
-        const total = Number(kpiResult.total || 0);
-        const overdue = Number(kpiResult.overdue || 0);
-        const dueSoonCount = Number(kpiResult.dueSoon || 0);
-
-        // Calibrated count for selected range (from calibration history)
-        const calibratedCount = await countHistoryCalibrations(startRange, endRange);
-
-        // Pending (due in range) count: instruments due in range excluding those already calibrated in this period
+        // Pending (due in range) count query: instruments due in range excluding those already calibrated in this period
         const pendingQuery = this.instrumentRepository.createQueryBuilder('instrument')
             .select('COUNT(*)', 'count');
 
@@ -206,41 +198,51 @@ export class DashboardService {
             pendingQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        const pendingRes = await pendingQuery.getRawOne();
+        // OPTIMIZED: Dispatch independent KPI and count queries concurrently
+        const [
+            kpiResult,
+            calibratedCount,
+            pendingRes,
+            dueTodayCount,
+            workingDueTodayCount,
+            referenceDueTodayCount,
+            completedTodayCount,
+            nextCalibrationInstrument,
+        ] = await Promise.all([
+            kpiQuery.getRawOne(),
+            countHistoryCalibrations(startRange, endRange),
+            pendingQuery.getRawOne(),
+            this.instrumentRepository.count({
+                where: getBaseWhere({
+                    due_date: Between(todayStart, todayEnd),
+                }),
+            }),
+            this.instrumentRepository.count({
+                where: getBaseWhere({
+                    due_date: Between(todayStart, todayEnd),
+                    is_reference_standard: false,
+                }),
+            }),
+            this.instrumentRepository.count({
+                where: getBaseWhere({
+                    due_date: Between(todayStart, todayEnd),
+                    is_reference_standard: true,
+                }),
+            }),
+            countHistoryCalibrations(todayStart, todayEnd),
+            this.instrumentRepository.findOne({
+                where: getBaseWhere({
+                    due_date: MoreThan(now),
+                }),
+                order: { due_date: 'ASC' },
+            }),
+        ]);
+
+        const total = Number(kpiResult?.total || 0);
+        const overdue = Number(kpiResult?.overdue || 0);
+        const dueSoonCount = Number(kpiResult?.dueSoon || 0);
         const pendingCount = Number(pendingRes?.count || 0);
-
         const dueThisMonth = pendingCount + calibratedCount;
-
-        // Today's due and completed counts
-        const dueTodayCount = await this.instrumentRepository.count({
-            where: getBaseWhere({
-                due_date: Between(todayStart, todayEnd),
-            }),
-        });
-
-        const workingDueTodayCount = await this.instrumentRepository.count({
-            where: getBaseWhere({
-                due_date: Between(todayStart, todayEnd),
-                is_reference_standard: false,
-            }),
-        });
-
-        const referenceDueTodayCount = await this.instrumentRepository.count({
-            where: getBaseWhere({
-                due_date: Between(todayStart, todayEnd),
-                is_reference_standard: true,
-            }),
-        });
-
-        const completedTodayCount = await countHistoryCalibrations(todayStart, todayEnd);
-
-        // Next calibration instrument
-        const nextCalibrationInstrument = await this.instrumentRepository.findOne({
-            where: getBaseWhere({
-                due_date: MoreThan(now),
-            }),
-            order: { due_date: 'ASC' },
-        });
 
         // ═══════════════════════════════════════════════════════════════
         // OPTIMIZED: Monthly trend data via single GROUP BY query
@@ -292,7 +294,6 @@ export class DashboardService {
         }
 
         planQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
-        const planRows = await planQuery.getRawMany();
 
         // Actual completed counts grouped by month — single query
         const actualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
@@ -324,7 +325,12 @@ export class DashboardService {
         }
 
         actualQuery.groupBy('month_key').addGroupBy('month_label').orderBy('month_key', 'ASC');
-        const actualRows = await actualQuery.getRawMany();
+
+        // OPTIMIZED: Run monthly plan & actual queries concurrently
+        const [planRows, actualRows] = await Promise.all([
+            planQuery.getRawMany(),
+            actualQuery.getRawMany(),
+        ]);
 
         // Merge plan + actual into monthly series
         const planMap = new Map(planRows.map(r => [r.month_key, { label: r.month_label, count: Number(r.count) }]));
@@ -390,7 +396,6 @@ export class DashboardService {
         // (GAUGES, INSTRUMENTS, and EXTERNAL/REF STANDARDS) side-by-side.
         // Therefore, we deliberately do NOT filter out reference standards here.
         devicePendingQuery.groupBy(deviceCategorySql);
-        const devicePendingRows = await devicePendingQuery.getRawMany();
 
         // 2. Actual completed calibrations in date range grouped by device type
         const deviceActualQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
@@ -415,7 +420,12 @@ export class DashboardService {
             deviceActualQuery.andWhere('instrument.location ILIKE :location', { location });
         }
         deviceActualQuery.groupBy(deviceCategorySql);
-        const deviceActualRows = await deviceActualQuery.getRawMany();
+
+        // OPTIMIZED: Run device pending and actual queries concurrently
+        const [devicePendingRows, deviceActualRows] = await Promise.all([
+            devicePendingQuery.getRawMany(),
+            deviceActualQuery.getRawMany(),
+        ]);
 
         const devicePendingMap = new Map<string, number>(devicePendingRows.map(r => [r.device_category, Number(r.count)]));
         const deviceActualMap = new Map<string, number>(deviceActualRows.map(r => [r.device_category, Number(r.count)]));
@@ -520,21 +530,6 @@ export class DashboardService {
             itemStatusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        const rawItemStatusGroups = await itemStatusQuery
-            .groupBy("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')")
-            .getRawMany();
-
-        // Normalize item statuses (e.g. merge 'SPARE' and 'Spare', 'STOCK' and 'Stock')
-        const itemStatusMap = new Map<string, number>();
-        for (const g of rawItemStatusGroups) {
-            const normalized = this.normalizeItemStatus(g.item_status);
-            itemStatusMap.set(normalized, (itemStatusMap.get(normalized) || 0) + Number(g.count));
-        }
-
-        const itemStatusDistribution = Array.from(itemStatusMap.entries())
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value);
-
         // 2. Calibration Status Distribution (Compliance breakdown: OK, Overdue, Due Soon, etc.)
         // Shows full distribution across calibration results, NOT filtered by status so the breakdown is preserved.
         const statusQuery = this.instrumentRepository
@@ -560,22 +555,7 @@ export class DashboardService {
             statusQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        const rawStatusGroups = await statusQuery
-            .groupBy("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')")
-            .getRawMany();
-
-        const statusDistribution = rawStatusGroups
-            .map(g => ({
-                name: g.status || 'OK',
-                value: Number(g.count),
-            }))
-            .sort((a, b) => b.value - a.value);
-
-        // ═══════════════════════════════════════════════════════════════
-        // Module distribution (GROUP BY TRIM(instrument.module))
-        // ═══════════════════════════════════════════════════════════════
-        // Module distribution (Full Inventory breakdown with UPPER case normalization)
-        // ═══════════════════════════════════════════════════════════════
+        // 3. Module distribution (Full Inventory breakdown with UPPER case normalization)
         const moduleQuery = this.instrumentRepository
             .createQueryBuilder('instrument')
             .select("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')", 'module_name')
@@ -602,10 +582,37 @@ export class DashboardService {
             moduleQuery.andWhere('(instrument.is_reference_standard = :isRef OR instrument.is_reference_standard IS NULL)', { isRef: false });
         }
 
-        const moduleGroups = await moduleQuery
-            .groupBy("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')")
-            .orderBy('COUNT(*)', 'DESC')
-            .getRawMany();
+        // OPTIMIZED: Run item status, calibration status, and module distribution queries concurrently
+        const [rawItemStatusGroups, rawStatusGroups, moduleGroups] = await Promise.all([
+            itemStatusQuery
+                .groupBy("COALESCE(NULLIF(TRIM(instrument.item_status), ''), 'Active')")
+                .getRawMany(),
+            statusQuery
+                .groupBy("COALESCE(NULLIF(TRIM(instrument.status), ''), 'OK')")
+                .getRawMany(),
+            moduleQuery
+                .groupBy("COALESCE(NULLIF(UPPER(TRIM(instrument.module)), ''), 'Unassigned')")
+                .orderBy('COUNT(*)', 'DESC')
+                .getRawMany(),
+        ]);
+
+        // Normalize item statuses (e.g. merge 'SPARE' and 'Spare', 'STOCK' and 'Stock')
+        const itemStatusMap = new Map<string, number>();
+        for (const g of rawItemStatusGroups) {
+            const normalized = this.normalizeItemStatus(g.item_status);
+            itemStatusMap.set(normalized, (itemStatusMap.get(normalized) || 0) + Number(g.count));
+        }
+
+        const itemStatusDistribution = Array.from(itemStatusMap.entries())
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+
+        const statusDistribution = rawStatusGroups
+            .map(g => ({
+                name: g.status || 'OK',
+                value: Number(g.count),
+            }))
+            .sort((a, b) => b.value - a.value);
 
         let rawModuleDistribution = moduleGroups.map(g => ({
             name: g.module_name || 'Others',
