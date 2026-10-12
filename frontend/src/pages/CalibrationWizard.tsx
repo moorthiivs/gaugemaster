@@ -43,6 +43,7 @@ import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn, getRoleName } from "@/lib/utils";
 import { computeNextDueDate, parseFrequencyMonths } from "@/lib/dateUtils";
+import { getStatusVerdict } from "@/lib/statusVerdict";
 
 const STEPS = [
   "Select Instrument",
@@ -63,7 +64,7 @@ const toLocalYyyyMmDd = (d?: string | Date | null): string => {
   }
 };
 
-export { getStatusVerdict } from "@/lib/statusVerdict";
+export { getStatusVerdict };
 
 const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-yyyy"): string => {
   if (!d) return "-";
