@@ -91,12 +91,15 @@ export interface CalibrationRecord {
 
   // Signatories
   calibrated_by: string;
+  calibrated_by_id?: string;
   calibrated_by_designation?: string;
   calibrated_by_signature?: string;
   reviewed_by: string;
+  reviewed_by_id?: string;
   reviewed_by_designation?: string;
   reviewed_by_signature?: string;
   approved_by: string;
+  approved_by_id?: string;
   approved_by_designation?: string;
   approved_by_signature?: string;
 

@@ -2046,7 +2046,8 @@ export function CertificatePreview({
               !isPreviewMode &&
               (calibration.approval_status === "Approved" ||
                 (calibration as any).approval_status === "APPROVED" ||
-                Boolean((calibration as any).approved_at)) &&
+                Boolean((calibration as any).approved_at) ||
+                (Boolean(calibration.approved_by) && calibration.approved_by !== "Pending Approval")) &&
               Boolean(calibration.approved_by && calibration.approved_by.trim() !== "" && calibration.approved_by !== "Pending Approval");
 
             const isReviewed =
@@ -2056,7 +2057,8 @@ export function CertificatePreview({
                 calibration.approval_status === "Approved" ||
                 (calibration as any).approval_status === "APPROVED" ||
                 Boolean((calibration as any).reviewed_at) ||
-                Boolean((calibration as any).reviewed_by_signature));
+                Boolean((calibration as any).reviewed_by_signature) ||
+                Boolean(calibration.reviewed_by && calibration.reviewed_by !== "Pending Review"));
 
             const rawCalibratedSig = !isPreviewMode ? (calibration as any).calibrated_by_signature : null;
             const calibratedSigImg = isPreviewMode

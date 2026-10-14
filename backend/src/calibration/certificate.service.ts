@@ -87,7 +87,8 @@ export class CertificateService {
 
     const isApproved =
       calibration.approval_status === 'Approved' ||
-      Boolean((calibration as any).approved_at);
+      Boolean((calibration as any).approved_at) ||
+      (Boolean(calibration.approved_by) && calibration.approved_by !== 'Pending Approval');
     let approvedSig = isApproved ? calibration.approved_by_signature : null;
     const approvedName = isApproved ? calibration.approved_by : null;
     if (isApproved && (!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {

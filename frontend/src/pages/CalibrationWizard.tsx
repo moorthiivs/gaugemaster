@@ -948,12 +948,15 @@ export default function CalibrationWizard() {
   const [calibratedBy, setCalibratedBy] = useState("");
   const [calibratedByDesignation, setCalibratedByDesignation] = useState("");
   const [calibratedBySignature, setCalibratedBySignature] = useState("");
+  const [calibratedById, setCalibratedById] = useState("");
   const [reviewedBy, setReviewedBy] = useState("");
   const [reviewedByDesignation, setReviewedByDesignation] = useState("");
   const [reviewedBySignature, setReviewedBySignature] = useState("");
+  const [reviewedById, setReviewedById] = useState("");
   const [approvedBy, setApprovedBy] = useState("");
   const [approvedByDesignation, setApprovedByDesignation] = useState("");
   const [approvedBySignature, setApprovedBySignature] = useState("");
+  const [approvedById, setApprovedById] = useState("");
   const [calDate, setCalDate] = useState(toLocalYyyyMmDd(new Date()));
   const [certIssueDate, setCertIssueDate] = useState(toLocalYyyyMmDd(new Date()));
   const [nextCalDate, setNextCalDate] = useState("");
@@ -1578,19 +1581,19 @@ export default function CalibrationWizard() {
   useEffect(() => {
     if (systemUsers.length > 0) {
       if (calibratedBy && (!calibratedBySignature || !calibratedBySignature.startsWith("data:image"))) {
-        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
+        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy || (calibratedById && userItem.id === calibratedById));
         if (u?.signature && u.signature.startsWith("data:image")) setCalibratedBySignature(u.signature);
       }
       if (reviewedBy && (!reviewedBySignature || !reviewedBySignature.startsWith("data:image"))) {
-        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
+        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy || (reviewedById && userItem.id === reviewedById));
         if (u?.signature && u.signature.startsWith("data:image")) setReviewedBySignature(u.signature);
       }
       if (approvedBy && (!approvedBySignature || !approvedBySignature.startsWith("data:image"))) {
-        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
+        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy || (approvedById && userItem.id === approvedById));
         if (u?.signature && u.signature.startsWith("data:image")) setApprovedBySignature(u.signature);
       }
     }
-  }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
+  }, [systemUsers, calibratedBy, calibratedById, reviewedBy, reviewedById, approvedBy, approvedById, calibratedBySignature, reviewedBySignature, approvedBySignature]);
 
   // Pre-select calibration type if type URL parameter is present
   useEffect(() => {
@@ -2658,12 +2661,15 @@ export default function CalibrationWizard() {
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
         setCalibratedBySignature((cal as any).calibrated_by_signature || "");
+        setCalibratedById((cal as any).calibrated_by_id || (cal as any).created_by?.id || "");
         setReviewedBy(cal.reviewed_by || "");
         setReviewedByDesignation(cal.reviewed_by_designation || "");
         setReviewedBySignature((cal as any).reviewed_by_signature || "");
+        setReviewedById((cal as any).reviewed_by_id || "");
         setApprovedBy(cal.approved_by || "");
         setApprovedByDesignation(cal.approved_by_designation || "");
         setApprovedBySignature((cal as any).approved_by_signature || "");
+        setApprovedById((cal as any).approved_by_id || "");
         
         if (!isRecalibration) {
           setCalDate(
@@ -2761,10 +2767,13 @@ export default function CalibrationWizard() {
         remarks,
         calibratedBy,
         calibratedByDesignation,
+        calibratedById,
         reviewedBy,
         reviewedByDesignation,
+        reviewedById,
         approvedBy,
         approvedByDesignation,
+        approvedById,
         calDate,
         certIssueDate,
         nextCalDate,
@@ -2852,10 +2861,13 @@ export default function CalibrationWizard() {
     setRemarks(d.remarks || "");
     setCalibratedBy(d.calibratedBy || "");
     setCalibratedByDesignation(d.calibratedByDesignation || "");
+    setCalibratedById(d.calibratedById || "");
     setReviewedBy(d.reviewedBy || "");
     setReviewedByDesignation(d.reviewedByDesignation || "");
+    setReviewedById(d.reviewedById || "");
     setApprovedBy(d.approvedBy || "");
     setApprovedByDesignation(d.approvedByDesignation || "");
+    setApprovedById(d.approvedById || "");
     setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
     setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
     setNextCalDate(d.nextCalDate || "");
@@ -3366,12 +3378,15 @@ export default function CalibrationWizard() {
         calibrated_by: calibratedBy,
         calibrated_by_designation: calibratedByDesignation,
         calibrated_by_signature: calibratedBySignature,
+        calibrated_by_id: calibratedById || undefined,
         reviewed_by: reviewedBy,
         reviewed_by_designation: reviewedByDesignation,
         reviewed_by_signature: reviewedBySignature,
+        reviewed_by_id: reviewedById || undefined,
         approved_by: approvedBy,
         approved_by_designation: approvedByDesignation,
         approved_by_signature: approvedBySignature,
+        approved_by_id: approvedById || undefined,
         ulr_enabled: ulrEnabled,
         next_calibration_date: nextCalDate || undefined,
         recalibration_of_id: recalibrateIdParam || undefined,
@@ -7217,14 +7232,16 @@ export default function CalibrationWizard() {
                     {(() => {
                       const userRoleStr = getRoleName(user?.role);
                       const isAdmin = userRoleStr.toLowerCase().includes("admin") || userRoleStr === "Admin" || userRoleStr === "Administrator";
-                      return isAdmin ? (
+                      const canEditCalibrated = isAdmin || isEditMode;
+                      return canEditCalibrated ? (
                         <Select
-                          value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy)?.id || calibratedBy}
+                          value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy || (calibratedById && u.id === calibratedById))?.id || calibratedBy}
                           onValueChange={(val) => {
                             const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
                             if (selectedUser) {
                               setCalibratedBy(selectedUser.name);
                               setCalibratedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Calibration Engineer");
+                              setCalibratedById(selectedUser.id);
                               if (selectedUser.signature) {
                                 setCalibratedBySignature(selectedUser.signature);
                               }
@@ -7258,27 +7275,141 @@ export default function CalibrationWizard() {
                     </div>
                   </div>
 
-                  {/* Reviewed By (Pending Manager Review) */}
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Reviewed By</Label>
-                    <Input
-                      value={reviewedBy || "Pending Review"}
-                      readOnly
-                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
-                    />
-                    <span className="text-[10px] text-muted-foreground block">Will be assigned upon Quality Review</span>
-                  </div>
+                  {/* Reviewed By (Editable in Edit Mode, Read-Only for Fresh Calibrations) */}
+                  {(() => {
+                    if (isEditMode) {
+                      const selectedReviewerId =
+                        systemUsers.find((u) => u.name === reviewedBy || u.id === reviewedBy || (reviewedById && u.id === reviewedById))?.id ||
+                        (reviewedBy && reviewedBy !== "Pending Review" ? reviewedBy : "__PENDING_REVIEW__");
 
-                  {/* Approved By (Captured automatically on Approval) */}
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Approved By</Label>
-                    <Input
-                      value={approvedBy || "Pending Approval"}
-                      readOnly
-                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
-                    />
-                    <span className="text-[10px] text-muted-foreground block">Captured automatically when Manager Approves</span>
-                  </div>
+                      return (
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">Reviewed By</Label>
+                          <Select
+                            value={selectedReviewerId}
+                            onValueChange={(val) => {
+                              if (val === "__PENDING_REVIEW__") {
+                                setReviewedBy("Pending Review");
+                                setReviewedByDesignation("");
+                                setReviewedBySignature("");
+                                setReviewedById("");
+                                return;
+                              }
+                              const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                              if (selectedUser) {
+                                setReviewedBy(selectedUser.name);
+                                setReviewedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Quality Reviewer");
+                                setReviewedById(selectedUser.id);
+                                if (selectedUser.signature) {
+                                  setReviewedBySignature(selectedUser.signature);
+                                }
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                              <SelectValue placeholder="Select Quality Reviewer" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__PENDING_REVIEW__" className="italic text-muted-foreground">
+                                Pending Review (Unassigned)
+                              </SelectItem>
+                              {systemUsers.map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.name} ({getRoleName(u.designation) || getRoleName(u.role) || "Reviewer"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/50 rounded-md border border-emerald-200 dark:border-emerald-800 text-xs shadow-sm">
+                            <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                            <span className="font-bold text-emerald-950 dark:text-emerald-100 uppercase tracking-wide text-[11px]">
+                              {getRoleName(reviewedByDesignation) || (reviewedBy && reviewedBy !== "Pending Review" ? "QUALITY REVIEWER" : "PENDING REVIEW")}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold">Reviewed By</Label>
+                        <Input
+                          value={reviewedBy || "Pending Review"}
+                          readOnly
+                          className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                        />
+                        <span className="text-[10px] text-muted-foreground block">Will be assigned upon Quality Review</span>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Approved By (Editable in Edit Mode, Captured automatically on Approval for Fresh Calibrations) */}
+                  {(() => {
+                    if (isEditMode) {
+                      const selectedApproverId =
+                        systemUsers.find((u) => u.name === approvedBy || u.id === approvedBy || (approvedById && u.id === approvedById))?.id ||
+                        (approvedBy && approvedBy !== "Pending Approval" ? approvedBy : "__PENDING_APPROVAL__");
+
+                      return (
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">Approved By</Label>
+                          <Select
+                            value={selectedApproverId}
+                            onValueChange={(val) => {
+                              if (val === "__PENDING_APPROVAL__") {
+                                setApprovedBy("Pending Approval");
+                                setApprovedByDesignation("");
+                                setApprovedBySignature("");
+                                setApprovedById("");
+                                return;
+                              }
+                              const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                              if (selectedUser) {
+                                setApprovedBy(selectedUser.name);
+                                setApprovedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Quality Manager");
+                                setApprovedById(selectedUser.id);
+                                if (selectedUser.signature) {
+                                  setApprovedBySignature(selectedUser.signature);
+                                }
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                              <SelectValue placeholder="Select Quality Manager / Approver" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__PENDING_APPROVAL__" className="italic text-muted-foreground">
+                                Pending Approval (Unassigned)
+                              </SelectItem>
+                              {systemUsers.map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.name} ({getRoleName(u.designation) || getRoleName(u.role) || "Approver"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 dark:bg-purple-950/50 rounded-md border border-purple-200 dark:border-purple-800 text-xs shadow-sm">
+                            <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                            <span className="font-bold text-purple-950 dark:text-purple-100 uppercase tracking-wide text-[11px]">
+                              {getRoleName(approvedByDesignation) || (approvedBy && approvedBy !== "Pending Approval" ? "QUALITY MANAGER / APPROVER" : "PENDING APPROVAL")}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold">Approved By</Label>
+                        <Input
+                          value={approvedBy || "Pending Approval"}
+                          readOnly
+                          className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                        />
+                        <span className="text-[10px] text-muted-foreground block">Captured automatically when Manager Approves</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -7360,12 +7491,15 @@ export default function CalibrationWizard() {
                       calibrated_by: calibratedBy,
                       calibrated_by_designation: calibratedByDesignation,
                       calibrated_by_signature: calibratedBySignature,
+                      calibrated_by_id: calibratedById,
                       reviewed_by: reviewedBy,
                       reviewed_by_designation: reviewedByDesignation,
                       reviewed_by_signature: reviewedBySignature,
+                      reviewed_by_id: reviewedById,
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
                       approved_by_signature: approvedBySignature,
+                      approved_by_id: approvedById,
                       approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
@@ -7784,12 +7918,15 @@ export default function CalibrationWizard() {
                 calibrated_by: calibratedBy,
                 calibrated_by_designation: calibratedByDesignation,
                 calibrated_by_signature: calibratedBySignature,
+                calibrated_by_id: calibratedById,
                 reviewed_by: reviewedBy,
                 reviewed_by_designation: reviewedByDesignation,
                 reviewed_by_signature: reviewedBySignature,
+                reviewed_by_id: reviewedById,
                 approved_by: approvedBy,
                 approved_by_designation: approvedByDesignation,
                 approved_by_signature: approvedBySignature,
+                approved_by_id: approvedById,
                 approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
                 column_order: wizardColumnOrder,
                 hidden_columns: wizardHiddenColumns,

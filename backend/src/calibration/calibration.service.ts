@@ -1373,7 +1373,8 @@ export class CalibrationService implements OnModuleInit {
     // 3. Approved By Signature
     const isApproved =
       calibration.approval_status === 'Approved' ||
-      Boolean((calibration as any).approved_at);
+      Boolean((calibration as any).approved_at) ||
+      (Boolean(calibration.approved_by) && calibration.approved_by !== 'Pending Approval');
     if (
       isApproved &&
       (!calibration.approved_by_signature || !calibration.approved_by_signature.startsWith('data:image')) &&
@@ -1718,8 +1719,11 @@ export class CalibrationService implements OnModuleInit {
       'verdict',
       'remarks',
       'calibrated_by',
+      'calibrated_by_designation',
       'reviewed_by',
+      'reviewed_by_designation',
       'approved_by',
+      'approved_by_designation',
       'next_calibration_date',
     ];
 
@@ -1829,9 +1833,13 @@ export class CalibrationService implements OnModuleInit {
     if (dto.remarks !== undefined) existing.remarks = dto.remarks;
     if (dto.calibrated_by !== undefined) existing.calibrated_by = dto.calibrated_by;
     if (dto.calibrated_by_designation !== undefined) existing.calibrated_by_designation = dto.calibrated_by_designation;
+    if ((dto as any).calibrated_by_id !== undefined) (existing as any).calibrated_by_id = (dto as any).calibrated_by_id;
     if (dto.reviewed_by !== undefined) existing.reviewed_by = dto.reviewed_by;
     if (dto.reviewed_by_designation !== undefined) existing.reviewed_by_designation = dto.reviewed_by_designation;
+    if ((dto as any).reviewed_by_id !== undefined) existing.reviewed_by_id = (dto as any).reviewed_by_id;
     if (dto.approved_by !== undefined) existing.approved_by = dto.approved_by;
+    if (dto.approved_by_designation !== undefined) existing.approved_by_designation = dto.approved_by_designation;
+    if ((dto as any).approved_by_id !== undefined) existing.approved_by_id = (dto as any).approved_by_id;
     if (dto.calibrated_by_signature !== undefined) existing.calibrated_by_signature = dto.calibrated_by_signature;
     if (dto.reviewed_by_signature !== undefined) existing.reviewed_by_signature = dto.reviewed_by_signature;
     if (dto.approved_by_signature !== undefined) existing.approved_by_signature = dto.approved_by_signature;

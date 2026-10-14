@@ -258,7 +258,15 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calibrated_by_id?: string;
+
+  @IsOptional()
+  @IsString()
   reviewed_by?: string;
+
+  @IsOptional()
+  @IsString()
+  reviewed_by_id?: string;
 
   @IsOptional()
   @IsString()
@@ -271,6 +279,10 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   approved_by?: string;
+
+  @IsOptional()
+  @IsString()
+  approved_by_id?: string;
 
   @IsOptional()
   @IsString()
