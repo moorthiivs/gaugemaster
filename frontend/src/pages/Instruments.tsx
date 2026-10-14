@@ -1126,12 +1126,29 @@ export default function Instruments() {
     status: {
       accessorKey: "status",
       header: "Status",
-      cell: ({ row }) => (
-        <StatusBadge
-          status={row.original.status}
-          subStatus={row.original.custom_parameters?.calibration_sub_status}
-        />
-      ),
+      cell: ({ row }) => {
+        const inst = row.original;
+        let effectiveStatus = inst.status;
+        const sLower = (inst.status || "").toLowerCase().trim();
+        const isExempt = sLower.includes("calibration") || sLower === "rejected" || sLower === "scrapped";
+
+        if (!isExempt && inst.due_date) {
+          const dueDate = new Date(inst.due_date);
+          dueDate.setHours(0, 0, 0, 0);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (dueDate < today) {
+            effectiveStatus = "Overdue";
+          }
+        }
+
+        return (
+          <StatusBadge
+            status={effectiveStatus}
+            subStatus={inst.custom_parameters?.calibration_sub_status}
+          />
+        );
+      },
     },
     item_status: {
       accessorKey: "item_status",

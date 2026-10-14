@@ -525,7 +525,22 @@ export default function Reports() {
           enableFilter: true,
           filterOptions: statusOptions,
         },
-        cell: ({ row }) => <StatusBadge status={row.getValue("status") as string} />,
+        cell: ({ row }) => {
+          let s = (row.getValue("status") as string) || "OK";
+          const sLower = s.toLowerCase().trim();
+          const isExempt = sLower.includes("calibration") || sLower === "rejected" || sLower === "scrapped";
+          const dueDateRaw = (row.original as any)?.due_date;
+          if (!isExempt && dueDateRaw) {
+            const dueDate = new Date(dueDateRaw);
+            dueDate.setHours(0, 0, 0, 0);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (dueDate < today) {
+              s = "Overdue";
+            }
+          }
+          return <StatusBadge status={s} />;
+        },
       },
       item_status: {
         id: "item_status",

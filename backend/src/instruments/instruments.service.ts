@@ -4,6 +4,7 @@ import {
     InternalServerErrorException,
     NotFoundException,
     BadRequestException,
+    OnApplicationBootstrap,
 } from '@nestjs/common';
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
@@ -45,7 +46,7 @@ interface InstrumentFilters {
 }
 
 @Injectable()
-export class InstrumentsService {
+export class InstrumentsService implements OnApplicationBootstrap {
     constructor(
         @InjectRepository(Instrument)
         private readonly instrumentRepository: Repository<Instrument>,
@@ -57,6 +58,56 @@ export class InstrumentsService {
         private readonly validationService: ValidationService,
         private readonly statusNotificationService: StatusNotificationService,
     ) { }
+
+    async onApplicationBootstrap() {
+        await this.autoupdateinstrumentStatus().catch((err) => {
+            console.error('Failed to run initial autoupdateinstrumentStatus on bootstrap:', err);
+        });
+    }
+
+    public getTodayStart(): Date {
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+        const now = new Date();
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        return new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+    }
+
+    public resolveEffectiveStatus(inst: Instrument, todayStart?: Date): string {
+        const current = (inst.status || '').trim();
+        const lower = current.toLowerCase();
+
+        // 1. Preserve active calibration or rejection/scrap state
+        if (
+            lower.includes('calibration') ||
+            lower === 'rejected' ||
+            lower === 'scrapped'
+        ) {
+            return current;
+        }
+
+        const effectiveToday = todayStart || this.getTodayStart();
+
+        // 2. Overdue if due_date has passed
+        if (inst.due_date) {
+            const dueDate = new Date(inst.due_date);
+            if (!isNaN(dueDate.getTime()) && dueDate < effectiveToday) {
+                return 'Overdue';
+            }
+        }
+
+        // 3. Reset Overdue to OK if due date is in the future
+        if (lower.includes('overdue') || lower === 'over due') {
+            if (inst.due_date) {
+                const dueDate = new Date(inst.due_date);
+                if (!isNaN(dueDate.getTime()) && dueDate >= effectiveToday) {
+                    return 'OK';
+                }
+            }
+        }
+
+        return current || 'OK';
+    }
 
     private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
         const targetCompanyId = companyId || (userId ? (await this.userRepository.findOne({ where: { id: userId } }))?.companyId : undefined);
@@ -227,6 +278,7 @@ export class InstrumentsService {
         if (!instrument) {
             throw new NotFoundException(`Instrument with ID ${id} not found`);
         }
+        instrument.status = this.resolveEffectiveStatus(instrument);
         return instrument;
     }
 
@@ -260,13 +312,16 @@ export class InstrumentsService {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
                 baseWhere.due_date = LessThan(todayStart);
-                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED']));
+                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped']));
             } else if (normalizedStatus === 'duesoon') {
                 const dueSoonEnd = new Date(todayEnd);
                 dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
                 baseWhere.due_date = Between(todayStart, dueSoonEnd);
             } else if (normalizedStatus === 'duetoday' || normalizedStatus === 'today') {
                 baseWhere.due_date = Between(todayStart, todayEnd);
+            } else if (normalizedStatus === 'ok' || normalizedStatus === 'calibrated') {
+                baseWhere.due_date = Raw(alias => `(${alias} >= :todayStart OR ${alias} IS NULL)`, { todayStart });
+                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped', 'Overdue']));
             } else {
                 baseWhere.status = ILike(status);
             }
@@ -410,6 +465,10 @@ export class InstrumentsService {
             order: orderOption,
         });
 
+        data.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst, todayStart);
+        });
+
         return {
             data,
             total,
@@ -515,6 +574,11 @@ export class InstrumentsService {
             .skip((page - 1) * pageSize)
             .take(pageSize)
             .getMany();
+
+        const todayStart = this.getTodayStart();
+        data.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst, todayStart);
+        });
 
         return {
             data,
@@ -1174,41 +1238,38 @@ export class InstrumentsService {
         await this.mailerService.sendCalibrationAgency(data);
     }
 
-    //@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-    @Cron('27 12 * * *')
+    @Cron('5 0 * * *', { timeZone: 'Asia/Kolkata' })
     async autoupdateinstrumentStatus() {
         const logger = new Logger('InstrumentsService');
 
         try {
             logger.log('🕒 Running auto-overdue status update job...');
 
-            const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
-            const now = new Date();
-            const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
-            const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
-            const today = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+            const today = this.getTodayStart();
 
-            const overdueInstruments = await this.instrumentRepository.find({
-                where: {
-                    due_date: LessThan(today),
-                    status: Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED', 'Scrapped'])),
-                },
-            });
+            // 1. Single atomic SQL update: marks all expired instruments as Overdue (exempting active calibrations, rejected, scrapped)
+            const resultOverdue = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: 'Overdue' })
+                .where('due_date < :today', { today })
+                .andWhere(
+                    "status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped', 'Overdue')",
+                )
+                .execute();
 
+            // 2. Reverse sync: if due_date is in the future, reset any stale 'Overdue' status back to 'OK'
+            const resultRestored = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: 'OK' })
+                .where('due_date >= :today', { today })
+                .andWhere("status = 'Overdue'")
+                .execute();
 
-            if (!overdueInstruments.length) {
-                logger.log('✅ No overdue instruments found.');
-                return;
-            }
-
-            // 🔹 Update each to status = 'Overdue'
-            for (const instrument of overdueInstruments) {
-                instrument.status = 'Overdue';
-                await this.instrumentRepository.save(instrument);
-                logger.log(`⚠️ Instrument ${instrument.name} (${instrument.id_code}) marked as Overdue.`);
-            }
-
-            logger.log(`✅ ${overdueInstruments.length} instruments updated to 'Overdue'`);
+            logger.log(
+                `✅ Auto-status sync completed: ${resultOverdue.affected || 0} marked Overdue, ${resultRestored.affected || 0} restored to OK.`,
+            );
         } catch (error) {
             console.error('❌ Error in autoupdateinstrumentStatus cron:', error);
         }

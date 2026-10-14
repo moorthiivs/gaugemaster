@@ -81,6 +81,23 @@ export class ReportsService {
         }
     }
 
+    private resolveEffectiveStatus(inst: Instrument): string {
+        const current = (inst.status || '').trim();
+        const lower = current.toLowerCase();
+        if (lower.includes('calibration') || lower === 'rejected' || lower === 'scrapped') {
+            return current;
+        }
+        if (inst.due_date) {
+            const dueDate = new Date(inst.due_date);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (!isNaN(dueDate.getTime()) && dueDate < today) {
+                return 'Overdue';
+            }
+        }
+        return current || 'OK';
+    }
+
     private async generatePdfReport(
         instruments: Instrument[],
         selectedColumns?: string[],
@@ -439,6 +456,10 @@ export class ReportsService {
             order: {
                 due_date: 'ASC',
             },
+        });
+
+        instruments.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
         });
 
         if (format === 'xlsx') {
@@ -868,6 +889,10 @@ export class ReportsService {
             },
             skip: (page - 1) * pageSize,
             take: pageSize,
+        });
+
+        items.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
         });
 
         return { items, total };
