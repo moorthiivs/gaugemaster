@@ -204,14 +204,24 @@ export class InstrumentsController {
 
     @Delete(':id')
     @RequirePermission('instruments', 'delete')
-    async remove(@Param('id') id: string) {
-        return this.instrumentsService.remove(id);
+    async remove(
+        @Param('id') id: string,
+        @Req() req: any,
+        @Query('reason') queryReason?: string,
+        @Body('reason') bodyReason?: string,
+    ) {
+        const reason = bodyReason || queryReason;
+        return this.instrumentsService.remove(id, req.user, reason);
     }
 
     @Post('bulk-delete')
     @RequirePermission('instruments', 'delete')
-    async bulkRemove(@Body('ids') ids: string[]) {
-        return this.instrumentsService.bulkRemove(ids);
+    async bulkRemove(
+        @Req() req: any,
+        @Body('ids') ids: string[],
+        @Body('reason') reason?: string,
+    ) {
+        return this.instrumentsService.bulkRemove(ids, req.user, reason);
     }
 
 }

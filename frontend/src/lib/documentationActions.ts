@@ -36,8 +36,8 @@ export async function updateCalibrationProcedure(id: string, formData: FormData)
   return response.data;
 }
 
-export async function deleteCalibrationProcedure(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await httpClient.delete(`/calibration-procedures/${id}`);
+export async function deleteCalibrationProcedure(id: string, reason?: string): Promise<{ success: boolean; message: string }> {
+  const response = await httpClient.delete(`/calibration-procedures/${id}`, { params: { reason } });
   return response.data;
 }
 
@@ -79,8 +79,8 @@ export async function updateGaugeDiagram(id: string, formData: FormData): Promis
   return response.data;
 }
 
-export async function deleteGaugeDiagram(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await httpClient.delete(`/gauge-diagrams/${id}`);
+export async function deleteGaugeDiagram(id: string, reason?: string): Promise<{ success: boolean; message: string }> {
+  const response = await httpClient.delete(`/gauge-diagrams/${id}`, { params: { reason } });
   return response.data;
 }
 
@@ -122,8 +122,8 @@ export async function updateWorkInstruction(id: string, formData: FormData): Pro
   return response.data;
 }
 
-export async function deleteWorkInstruction(id: string): Promise<{ success: boolean; message: string }> {
-  const response = await httpClient.delete(`/work-instructions/${id}`);
+export async function deleteWorkInstruction(id: string, reason?: string): Promise<{ success: boolean; message: string }> {
+  const response = await httpClient.delete(`/work-instructions/${id}`, { params: { reason } });
   return response.data;
 }
 

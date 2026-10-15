@@ -272,10 +272,14 @@ export class CalibrationController {
   @RequirePermission('calibrations', 'delete')
   async remove(
     @Param('id') id: string,
+    @Req() req: any,
     @Query('resequence') resequence?: string,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
   ) {
     const shouldResequence = resequence === 'true' || resequence === '1';
-    return this.calibrationService.remove(id, shouldResequence);
+    const reason = bodyReason || queryReason;
+    return this.calibrationService.remove(id, shouldResequence, req.user, reason);
   }
 
   /**

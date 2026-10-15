@@ -2113,7 +2113,12 @@ export class CalibrationService implements OnModuleInit {
     };
   }
 
-  async remove(id: string, resequence: boolean = false): Promise<{ success: boolean; affectedCount: number }> {
+  async remove(
+    id: string,
+    resequence: boolean = false,
+    user?: any,
+    reason?: string,
+  ): Promise<{ success: boolean; affectedCount: number }> {
     const calibration = await this.calibrationRepository.findOne({
       where: { id },
       relations: ['instrument', 'created_by'],
@@ -2125,6 +2130,8 @@ export class CalibrationService implements OnModuleInit {
 
     const userId = calibration.created_by?.id || '';
     const companyId = (calibration as any).companyId || calibration.created_by?.companyId || '';
+    const actingUserId = user?.id || user?.userId || userId;
+    const actingUserName = user?.name || user?.email || 'User';
 
     let affectedCalibrations: Array<{
       id: string;
@@ -2170,7 +2177,7 @@ export class CalibrationService implements OnModuleInit {
 
           const audit = queryRunner.manager.create(CalibrationAuditLog, {
             calibration_id: aff.id,
-            edited_by_id: userId,
+            edited_by_id: actingUserId,
             edited_by_name: 'System (Sequence Shift on Delete)',
             changes_summary: [
               {
@@ -2189,11 +2196,11 @@ export class CalibrationService implements OnModuleInit {
         }
 
         // Adjust settings counter down if appropriate
-        if (shouldUpdateConfig && userId && companyId) {
-          const settings = await this.settingsService.findOne(userId, companyId);
+        if (shouldUpdateConfig && actingUserId && companyId) {
+          const settings = await this.settingsService.findOne(actingUserId, companyId);
           if (settings?.certificateConfig) {
             await this.settingsService.create({
-              userId,
+              userId: actingUserId,
               companyId,
               certificateConfig: {
                 ...settings.certificateConfig,
@@ -2208,8 +2215,29 @@ export class CalibrationService implements OnModuleInit {
       const calDate = calibration.calibration_date;
       const nextDate = calibration.next_calibration_date;
 
-      await queryRunner.manager.delete(CalibrationAuditLog, { calibration_id: id });
-      await queryRunner.manager.remove(Calibration, calibration);
+      // Soft delete the calibration record (Preserving record & audit log!)
+      await queryRunner.manager.update(Calibration, id, {
+        deleted_at: new Date(),
+        deleted_by_id: actingUserId,
+        deleted_by_name: actingUserName,
+        deletion_reason: reason || null,
+      });
+
+      // Append audit log for the soft-delete event
+      const deleteAudit = queryRunner.manager.create(CalibrationAuditLog, {
+        calibration_id: id,
+        edited_by_id: actingUserId,
+        edited_by_name: actingUserName,
+        changes_summary: [
+          {
+            field: 'status',
+            oldValue: calibration.approval_status || 'Active',
+            newValue: 'Moved to Recovery Center',
+          },
+          ...(reason ? [{ field: 'deletion_reason', oldValue: null, newValue: reason }] : []),
+        ],
+      });
+      await queryRunner.manager.save(CalibrationAuditLog, deleteAudit);
 
       await queryRunner.commitTransaction();
 

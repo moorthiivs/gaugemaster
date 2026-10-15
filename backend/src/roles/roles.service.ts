@@ -21,6 +21,7 @@ export const DEFAULT_MODULES = [
   'gauge_diagrams',
   // Administration
   'reports',
+  'recovery',
   'users',
   'settings',
 ];
@@ -38,6 +39,7 @@ const FULL_ACCESS_PERMISSIONS: RolePermissions = {
   work_instructions: { create: true, edit: true, view: true, delete: true },
   gauge_diagrams: { create: true, edit: true, view: true, delete: true },
   reports: { create: true, edit: true, view: true, delete: true },
+  recovery: { create: true, edit: true, view: true, delete: true },
   users: { create: true, edit: true, view: true, delete: true },
   settings: { create: true, edit: true, view: true, delete: true },
 };
@@ -55,6 +57,7 @@ const QUALITY_MANAGER_PERMISSIONS: RolePermissions = {
   work_instructions: { create: true, edit: true, view: true, delete: true },
   gauge_diagrams: { create: true, edit: true, view: true, delete: true },
   reports: { create: true, edit: true, view: true, delete: false },
+  recovery: { create: true, edit: true, view: true, delete: false },
   users: { create: false, edit: false, view: true, delete: false },
   settings: { create: false, edit: false, view: true, delete: false },
 };
@@ -72,6 +75,7 @@ const CALIBRATION_REVIEWER_PERMISSIONS: RolePermissions = {
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
+  recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -89,6 +93,7 @@ const CALIBRATION_APPROVER_PERMISSIONS: RolePermissions = {
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
+  recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -106,6 +111,7 @@ const CALIBRATION_ENGINEER_PERMISSIONS: RolePermissions = {
   work_instructions: { create: true, edit: true, view: true, delete: false },
   gauge_diagrams: { create: true, edit: true, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
+  recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -123,6 +129,7 @@ const LAB_TECHNICIAN_PERMISSIONS: RolePermissions = {
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
   reports: { create: false, edit: false, view: true, delete: false },
+  recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -140,6 +147,7 @@ const VIEWER_PERMISSIONS: RolePermissions = {
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
   reports: { create: false, edit: false, view: true, delete: false },
+  recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
   settings: { create: false, edit: false, view: false, delete: false },
 };
@@ -254,6 +262,18 @@ export class RolesService implements OnModuleInit {
             }
             modified = true;
           }
+        }
+
+        // 7. recovery
+        if (!p.recovery) {
+          if (isAdmin) {
+            p.recovery = { create: true, edit: true, view: true, delete: true };
+          } else if (isQualityManager) {
+            p.recovery = { create: true, edit: true, view: true, delete: false };
+          } else {
+            p.recovery = { create: false, edit: false, view: false, delete: false };
+          }
+          modified = true;
         }
 
         if (modified) {

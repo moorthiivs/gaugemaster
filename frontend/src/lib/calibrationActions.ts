@@ -200,9 +200,9 @@ export async function getResequencePreview(id: string): Promise<ResequencePrevie
   return res.data;
 }
 
-/** Delete a completed calibration record, optionally shifting subsequent sequence numbers */
-export async function deleteCalibration(id: string, resequence: boolean = false): Promise<void> {
+/** Delete a calibration record (soft-delete), optionally shifting subsequent sequence numbers */
+export async function deleteCalibration(id: string, resequence: boolean = false, reason?: string): Promise<void> {
   await httpClient.delete(`/calibrations/${id}`, {
-    params: { resequence: resequence ? 'true' : 'false' },
+    params: { resequence: resequence ? 'true' : 'false', reason },
   });
 }

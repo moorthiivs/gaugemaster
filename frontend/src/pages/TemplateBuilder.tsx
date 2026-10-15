@@ -34,6 +34,7 @@ import {
   Search,
   Edit,
   Trash2,
+  ArchiveRestore,
   Copy,
   Layers,
   Ruler,
@@ -155,6 +156,7 @@ export default function TemplateBuilder() {
 
   // Delete Dialog State
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // View Mode: "card" | "table" (defaults to table for full page table view)
   const [viewMode, setViewMode] = useState<"card" | "table">(() => {
@@ -307,8 +309,8 @@ export default function TemplateBuilder() {
   const handleDeleteTemplate = async () => {
     if (!deleteId) return;
     try {
-      await deleteTemplate(deleteId);
-      toast.success("Template deleted successfully");
+      await deleteTemplate(deleteId, deleteReason.trim() || undefined);
+      toast.success("Template moved to Trash");
       setTemplates((prev) => prev.filter((t) => t.id !== deleteId));
       setSelectedIds((prev) => prev.filter((id) => id !== deleteId));
     } catch (err: any) {
@@ -316,6 +318,7 @@ export default function TemplateBuilder() {
       toast.error(msg);
     } finally {
       setDeleteId(null);
+      setDeleteReason("");
     }
   };
 
@@ -1303,21 +1306,37 @@ export default function TemplateBuilder() {
       )}
 
       {/* Delete Confirmation Alert */}
-      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => { if (!open) { setDeleteId(null); setDeleteReason(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Calibration Template?</AlertDialogTitle>
-            <AlertDialogDescription className="text-xs leading-relaxed">
-              Are you sure you want to delete this template? Existing calibrations created using this template will not be affected.
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <Trash2 className="w-5 h-5" />
+              Move Template to Trash?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed space-y-2 pt-1">
+              <span>
+                Are you sure you want to move this template to the Trash (Recovery Center)? It can be restored at any time. Existing calibrations created using this template will not be affected.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="py-1 space-y-1">
+            <label htmlFor="tpl-delete-reason" className="text-xs text-muted-foreground">Reason for deletion (optional)</label>
+            <Input
+              id="tpl-delete-reason"
+              placeholder="e.g. Obsolete layout, replaced by revision B"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
           <AlertDialogFooter>
-            <AlertDialogCancel className="text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="text-xs" onClick={() => setDeleteReason("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground text-xs"
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold flex items-center gap-1.5"
               onClick={handleDeleteTemplate}
             >
-              Delete Template
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Move Template to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

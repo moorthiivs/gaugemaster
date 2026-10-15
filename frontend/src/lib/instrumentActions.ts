@@ -31,14 +31,14 @@ export async function updateInstrument(id: string, data: Partial<Instrument>) {
 }
 
 /** Delete an instrument record */
-export async function deleteInstrument(id: string) {
-  const res = await httpClient.delete(`/instruments/${id}`);
+export async function deleteInstrument(id: string, reason?: string) {
+  const res = await httpClient.delete(`/instruments/${id}`, { params: { reason } });
   return res.data;
 }
 
 /** Bulk delete multiple instrument records */
-export async function deleteInstrumentsBulk(ids: string[]) {
-  const res = await httpClient.post('/instruments/bulk-delete', { ids });
+export async function deleteInstrumentsBulk(ids: string[], reason?: string) {
+  const res = await httpClient.post('/instruments/bulk-delete', { ids, reason });
   return res.data;
 }
 

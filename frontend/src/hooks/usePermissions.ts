@@ -16,6 +16,18 @@ export function usePermissions() {
     // Standard un-restricted modules
     if (moduleKey === "dashboard" || moduleKey === "profile") return true;
 
+    // Recovery module access: strictly respect matrix, or fallback to admin/manager
+    if (moduleKey === "recovery") {
+      const rolePermissions: RolePermissions | undefined =
+        user.userRole?.permissions || (typeof user.role === "object" ? user.role?.permissions : undefined);
+      if (rolePermissions && (rolePermissions as any).recovery !== undefined) {
+        return !!(rolePermissions as any).recovery[action];
+      }
+      const roleName = typeof user.role === "string" ? user.role : user.role?.name || "";
+      if (roleName.toLowerCase().includes("admin") || roleName.toLowerCase().includes("manager") || roleName.toLowerCase() === "superadmin") return true;
+      return false;
+    }
+
     // Retrieve role permissions matrix object from userRole or role
     const rolePermissions: RolePermissions | undefined =
       user.userRole?.permissions || (typeof user.role === "object" ? user.role?.permissions : undefined);

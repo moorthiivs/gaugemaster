@@ -127,10 +127,16 @@ export class CalibrationProceduresController {
 
   @Delete(':id')
   @RequirePermission('calibration_procedures', 'delete')
-  async remove(@Param('id') id: string, @Req() req: any) {
+  async remove(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
+  ) {
     const user = req.user || {};
     const companyId = user.companyId;
-    return this.service.remove(id, companyId);
+    const reason = bodyReason || queryReason;
+    return this.service.remove(id, companyId, user, reason);
   }
 
   @Get(':id/history')

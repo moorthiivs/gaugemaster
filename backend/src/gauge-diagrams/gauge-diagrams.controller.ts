@@ -129,10 +129,16 @@ export class GaugeDiagramsController {
 
   @Delete(':id')
   @RequirePermission('gauge_diagrams', 'delete')
-  async remove(@Param('id') id: string, @Req() req: any) {
+  async remove(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
+  ) {
     const user = req.user || {};
     const companyId = user.companyId;
-    return this.service.remove(id, companyId);
+    const reason = bodyReason || queryReason;
+    return this.service.remove(id, companyId, user, reason);
   }
 
   @Get(':id/history')

@@ -9,7 +9,8 @@ import {
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw, Not } from 'typeorm';
+import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw, Not, DataSource } from 'typeorm';
+import { Calibration } from '../calibration/calibration.entity';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -57,6 +58,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
         private readonly mailerService: MailerService,
         private readonly validationService: ValidationService,
         private readonly statusNotificationService: StatusNotificationService,
+        private readonly dataSource: DataSource,
     ) { }
 
     async onApplicationBootstrap() {
@@ -1452,18 +1454,70 @@ export class InstrumentsService implements OnApplicationBootstrap {
         };
     }
 
-    async remove(id: string) {
+    async remove(id: string, user?: any, reason?: string) {
         const instrument = await this.instrumentRepository.findOne({ where: { id } });
         if (!instrument) {
-            throw new Error('Instrument not found');
+            throw new NotFoundException('Instrument not found');
         }
-        return this.instrumentRepository.remove(instrument);
+
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
+        try {
+            const now = new Date();
+            const userId = user?.id || user?.userId;
+            const userName = user?.name || user?.email || 'User';
+
+            // 1. Soft delete the instrument
+            await queryRunner.manager.update(Instrument, id, {
+                deleted_at: now,
+                deleted_by_id: userId,
+                deleted_by_name: userName,
+                deletion_reason: reason || null,
+            });
+
+            // 2. Coordinated soft delete of active child calibrations
+            await queryRunner.manager
+                .createQueryBuilder()
+                .update(Calibration)
+                .set({
+                    deleted_at: now,
+                    deleted_by_id: userId,
+                    deleted_by_name: userName,
+                    deletion_reason: reason ? `Deleted with instrument: ${reason}` : 'Deleted with parent instrument',
+                    deleted_with_parent_id: id,
+                })
+                .where('instrument_id = :id AND deleted_at IS NULL', { id })
+                .execute();
+
+            await queryRunner.commitTransaction();
+
+            return {
+                success: true,
+                message: `Instrument "${instrument.name}" moved to Recovery Center`,
+                id,
+            };
+        } catch (err) {
+            await queryRunner.rollbackTransaction();
+            throw err;
+        } finally {
+            await queryRunner.release();
+        }
     }
 
-    async bulkRemove(ids: string[]) {
+    async bulkRemove(ids: string[], user?: any, reason?: string) {
         if (!ids || ids.length === 0) return { deletedCount: 0 };
-        const result = await this.instrumentRepository.delete(ids);
-        return { deletedCount: result.affected || 0 };
+        let deletedCount = 0;
+        for (const id of ids) {
+            try {
+                await this.remove(id, user, reason);
+                deletedCount++;
+            } catch (e) {
+                // Continue with next
+            }
+        }
+        return { deletedCount };
     }
 
     /**

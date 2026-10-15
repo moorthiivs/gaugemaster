@@ -226,7 +226,7 @@ export class CalibrationTemplatesService {
     return this.repository.save(template);
   }
 
-  async remove(id: string, currentUser?: any): Promise<void> {
+  async remove(id: string, currentUser?: any, reason?: string): Promise<void> {
     const template = await this.findOne(id);
 
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
@@ -266,25 +266,13 @@ export class CalibrationTemplatesService {
       }
     }
 
-    // Referential integrity check against calibrations
-    try {
-      const usageCount = await this.repository.manager.query(
-        `SELECT COUNT(*)::text as count FROM calibrations WHERE template_id = $1`,
-        [template.id],
-      );
-      const count = parseInt(usageCount?.[0]?.count, 10) || 0;
-      if (count > 0) {
-        throw new BadRequestException(
-          `Template "${template.name}" is currently referenced by ${count} calibration record(s) and cannot be deleted.`,
-        );
-      }
-    } catch (err) {
-      if (err instanceof BadRequestException) {
-        throw err;
-      }
-    }
-
-    await this.repository.remove(template);
+    // Soft delete template
+    await this.repository.update(template.id, {
+      deleted_at: new Date(),
+      deleted_by_id: currentUserId,
+      deleted_by_name: currentUser?.name || currentUser?.email || 'User',
+      deletion_reason: reason || null,
+    });
   }
 
   async bulkRemove(
@@ -408,9 +396,20 @@ export class CalibrationTemplatesService {
       // If table query encounters an issue (e.g. table not created in dev), continue with deletion
     }
 
-    // 4. Atomic transaction deletion
+    // 4. Atomic transaction soft-deletion
+    const now = new Date();
+    const actingUserId = currentUserId;
+    const actingUserName = currentUser?.name || currentUser?.email || 'User';
+
     await this.repository.manager.transaction(async (transactionalEntityManager) => {
-      await transactionalEntityManager.remove(CalibrationTemplate, templates);
+      for (const t of templates) {
+        await transactionalEntityManager.update(CalibrationTemplate, t.id, {
+          deleted_at: now,
+          deleted_by_id: actingUserId,
+          deleted_by_name: actingUserName,
+          deletion_reason: (dto as any)?.reason || null,
+        });
+      }
     });
 
     return {

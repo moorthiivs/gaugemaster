@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck, LayoutDashboard } from "lucide-react";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck, LayoutDashboard, ArchiveRestore } from "lucide-react";
 import { ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { listCalibrations, getCalibration, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
@@ -114,6 +114,7 @@ export default function Calibration() {
   const [resequenceChoice, setResequenceChoice] = useState<"resequence" | "keep">("resequence");
   const [resequencePreview, setResequencePreview] = useState<ResequencePreviewData | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Audit trail modal state
   const [auditModalOpen, setAuditModalOpen] = useState(false);
@@ -394,6 +395,7 @@ export default function Calibration() {
     setCalibrationToDelete(cal);
     setResequenceChoice("resequence");
     setResequencePreview(null);
+    setDeleteReason("");
     setDeleteModalOpen(true);
     setLoadingPreview(true);
     try {
@@ -412,17 +414,18 @@ export default function Calibration() {
     setDeleting(true);
     try {
       const shouldResequence = resequenceChoice === "resequence";
-      await deleteCalibration(calibrationToDelete.id, shouldResequence);
+      await deleteCalibration(calibrationToDelete.id, shouldResequence, deleteReason.trim() || undefined);
       const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
       if (shouldResequence && affectedCount > 0) {
         toast.success(
-          `Calibration ${calibrationToDelete.certificate_number || ""} deleted & ${affectedCount} subsequent certificates renumbered.`
+          `Calibration ${calibrationToDelete.certificate_number || ""} moved to Trash & ${affectedCount} subsequent certificates renumbered.`
         );
       } else {
-        toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} deleted`);
+        toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} moved to Trash`);
       }
       setDeleteModalOpen(false);
       setCalibrationToDelete(null);
+      setDeleteReason("");
       setResequencePreview(null);
       refreshAll();
     } catch {
@@ -1684,14 +1687,14 @@ export default function Calibration() {
       {/* Smart Delete Confirmation Modal with Resequence Options & Preview */}
       <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
         <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
-          <DialogHeader className="p-4 border-b bg-red-50/50 dark:bg-red-950/20">
+          <DialogHeader className="p-4 border-b bg-amber-50/50 dark:bg-amber-950/20">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400">
+              <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400">
                 <Trash2 className="w-5 h-5" />
               </div>
               <div>
-                <DialogTitle className="text-base font-bold text-red-700 dark:text-red-400">
-                  Delete Calibration Record
+                <DialogTitle className="text-base font-bold text-amber-700 dark:text-amber-400">
+                  Move Calibration to Trash
                 </DialogTitle>
                 <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
                   Certificate: <strong className="font-mono text-foreground font-bold">{calibrationToDelete?.certificate_number || calibrationToDelete?.id}</strong>
@@ -1851,12 +1854,15 @@ export default function Calibration() {
             ) : (
               <div className="space-y-3">
                 <p className="text-muted-foreground">
-                  Are you sure you want to permanently delete calibration record{" "}
+                  Are you sure you want to delete calibration record{" "}
                   <strong className="font-mono text-foreground font-bold">
                     {calibrationToDelete?.certificate_number || calibrationToDelete?.id}
                   </strong>
-                  ? This action cannot be undone.
+                  ?
                 </p>
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
+                  This calibration will be moved to the <strong>Trash (Recovery Center)</strong> and can be restored at any time.
+                </div>
                 {resequencePreview && resequencePreview.affectedCalibrations.length === 0 && (
                   <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">
                     <p className="font-semibold text-primary">Sequence Counter Adjustment</p>
@@ -1867,6 +1873,20 @@ export default function Calibration() {
                 )}
               </div>
             )}
+
+            {/* Deletion Reason Input */}
+            <div className="space-y-1.5 p-3 rounded-lg border bg-muted/20">
+              <label htmlFor="cal-delete-reason-main" className="text-xs font-medium text-foreground">
+                Reason for deletion (optional)
+              </label>
+              <Input
+                id="cal-delete-reason-main"
+                placeholder="e.g. Data entry error, replaced calibration, test run"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                className="text-xs h-8 bg-background"
+              />
+            </div>
 
             {/* Instrument Master Rollback Notice */}
             <div className="p-2.5 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-[11px] space-y-0.5">
@@ -1894,12 +1914,15 @@ export default function Calibration() {
               size="sm"
               onClick={handleConfirmDelete}
               disabled={deleting}
-              className="gap-1.5 font-bold"
             >
-              {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {deleting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+              )}
               {resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 && resequenceChoice === "resequence"
-                ? "Confirm & Reassign Sequence"
-                : "Delete Record"}
+                ? "Move & Reassign Sequence"
+                : "Move Calibration to Trash"}
             </Button>
           </div>
         </DialogContent>

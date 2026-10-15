@@ -169,11 +169,15 @@ export class WorkInstructionsService {
     return updated;
   }
 
-  async remove(id: string, companyId?: string) {
+  async remove(id: string, companyId?: string, user?: any, reason?: string) {
     const instruction = await this.findOne(id, companyId);
-    await this.historyRepo.delete({ instruction_id: id });
-    await this.instructionRepo.remove(instruction);
-    return { success: true, message: 'Work instruction deleted successfully' };
+    await this.instructionRepo.update(id, {
+      deleted_at: new Date(),
+      deleted_by_id: user?.id,
+      deleted_by_name: user?.name || user?.email || 'User',
+      deletion_reason: reason || null,
+    });
+    return { success: true, message: 'Work instruction moved to Recovery Center' };
   }
 
   async getHistory(instructionId: string, companyId?: string) {

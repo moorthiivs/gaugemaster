@@ -1024,14 +1024,14 @@ export default function Instruments() {
     setDeleteModalOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (reason?: string) => {
     if (!instrumentToDelete) return;
     try {
       setDeleting(true);
-      await deleteInstrument(instrumentToDelete.id);
+      await deleteInstrument(instrumentToDelete.id, reason);
       toast({
-        title: "Success",
-        description: "Instrument deleted successfully.",
+        title: "Moved to Trash",
+        description: "Instrument and its active calibrations moved to Trash (Recovery Center).",
       });
       setDeleteModalOpen(false);
       fetchData();
@@ -1052,13 +1052,13 @@ export default function Instruments() {
     setBulkDeleteModalOpen(true);
   };
 
-  const confirmBulkDelete = async () => {
+  const confirmBulkDelete = async (reason?: string) => {
     try {
       setDeleting(true);
-      await deleteInstrumentsBulk(selectedIds);
+      await deleteInstrumentsBulk(selectedIds, reason);
       toast({
-        title: "Success",
-        description: "Selected instruments deleted successfully.",
+        title: "Moved to Trash",
+        description: "Selected instruments moved to Trash (Recovery Center).",
       });
       setSelected({});
       setSelectedObjects({});

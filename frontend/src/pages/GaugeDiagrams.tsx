@@ -37,6 +37,7 @@ import {
   Eye,
   Edit2,
   Trash2,
+  ArchiveRestore,
   History,
   FileText,
   Image as ImageIcon,
@@ -109,6 +110,7 @@ export default function GaugeDiagrams() {
 
   // Delete State
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Viewer Modal State
   const [viewerDoc, setViewerDoc] = useState<{
@@ -317,9 +319,10 @@ export default function GaugeDiagrams() {
   const handleDeleteConfirm = async () => {
     if (!deletingId) return;
     try {
-      await deleteGaugeDiagram(deletingId);
-      toast.success("Gauge diagram deleted successfully");
+      await deleteGaugeDiagram(deletingId, deleteReason.trim() || undefined);
+      toast.success("Gauge diagram moved to Trash");
       setDeletingId(null);
+      setDeleteReason("");
       fetchDiagrams();
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to delete gauge diagram");
@@ -1040,22 +1043,41 @@ export default function GaugeDiagrams() {
       </Dialog>
 
       {/* DELETE CONFIRMATION */}
-      <AlertDialog open={!!deletingId} onOpenChange={(open) => !open && setDeletingId(null)}>
+      <AlertDialog open={!!deletingId} onOpenChange={(open) => { if (!open) { setDeletingId(null); setDeleteReason(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Gauge Diagram?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this gauge diagram and its revision history?
-              This action cannot be undone.
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <Trash2 className="w-5 h-5" />
+              Move Gauge Diagram to Trash?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-1 text-xs leading-relaxed">
+              <span>
+                Are you sure you want to delete this gauge diagram? It will be moved to the Trash (Recovery Center) and can be restored at any time.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="py-1 space-y-1">
+            <Label htmlFor="diag-delete-reason" className="text-xs text-muted-foreground">
+              Reason for deletion (optional)
+            </Label>
+            <Input
+              id="diag-delete-reason"
+              placeholder="e.g. Schematic updated, obsolete dimensional drawing"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
+
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setDeleteReason("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-1.5"
             >
-              Delete Diagram
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Move Gauge Diagram to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
