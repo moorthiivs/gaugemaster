@@ -52,6 +52,7 @@ import {
   Loader2,
   Archive,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -61,6 +62,8 @@ import {
   getRecoveryItemDetail,
   restoreRecord,
   bulkRestoreRecords,
+  permanentDeleteRecord,
+  bulkPermanentDeleteRecords,
   RecoveryItem,
   RecoveryStats,
 } from '@/lib/recoveryActions';
@@ -82,7 +85,18 @@ export default function RecoveryCenter() {
   });
 
   const { canAccess } = usePermissions();
-  const canRestore = canAccess('recovery', 'delete') || canAccess('recovery', 'edit');
+  const canRestore = canAccess('recovery', 'edit') || canAccess('recovery', 'delete');
+  const canPermanentDelete = canAccess('recovery', 'delete');
+
+  const canRestoreItem = (item: RecoveryItem) => {
+    if (!canRestore) return false;
+    return canAccess(item.module, 'edit') || canAccess(item.module, 'create') || canAccess(item.module, 'delete');
+  };
+
+  const canPermanentDeleteItem = (item: RecoveryItem) => {
+    if (!canPermanentDelete) return false;
+    return canAccess(item.module, 'delete');
+  };
 
   const [stats, setStats] = useState<RecoveryStats>({
     total: 0,
@@ -116,6 +130,13 @@ export default function RecoveryCenter() {
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [targetRestoreItem, setTargetRestoreItem] = useState<RecoveryItem | null>(null);
   const [restoring, setRestoring] = useState(false);
+
+  const [permanentDeleteModalOpen, setPermanentDeleteModalOpen] = useState(false);
+  const [targetPermanentDeleteItem, setTargetPermanentDeleteItem] = useState<RecoveryItem | null>(null);
+  const [permanentDeleting, setPermanentDeleting] = useState(false);
+
+  const [bulkPermanentDeleteModalOpen, setBulkPermanentDeleteModalOpen] = useState(false);
+  const [bulkPermanentDeleting, setBulkPermanentDeleting] = useState(false);
 
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -228,6 +249,61 @@ export default function RecoveryCenter() {
       setBulkRestoring(false);
     }
   };
+
+  // Handle single permanent delete
+  const handleOpenPermanentDeleteModal = (item: RecoveryItem) => {
+    setTargetPermanentDeleteItem(item);
+    setPermanentDeleteModalOpen(true);
+  };
+
+  const handleConfirmPermanentDelete = async () => {
+    if (!targetPermanentDeleteItem) return;
+    setPermanentDeleting(true);
+    try {
+      const res = await permanentDeleteRecord(
+        targetPermanentDeleteItem.module,
+        targetPermanentDeleteItem.id,
+      );
+      toast.success(res.message || 'Record permanently deleted.');
+      setPermanentDeleteModalOpen(false);
+      setTargetPermanentDeleteItem(null);
+      setSelectedIds((prev) => prev.filter((id) => id !== targetPermanentDeleteItem.id));
+      fetchStats();
+      fetchItems();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to permanently delete record');
+    } finally {
+      setPermanentDeleting(false);
+    }
+  };
+
+  // Handle bulk permanent delete
+  const handleConfirmBulkPermanentDelete = async () => {
+    if (selectedIds.length === 0) return;
+    const selectedItems = items
+      .filter((i) => selectedIds.includes(i.id))
+      .map((i) => ({ id: i.id, module: i.module }));
+
+    setBulkPermanentDeleting(true);
+    try {
+      const res = await bulkPermanentDeleteRecords(selectedItems);
+      if (res.deletedCount > 0) {
+        toast.success(`Successfully permanently deleted ${res.deletedCount} record(s).`);
+      }
+      if (res.failedCount > 0) {
+        toast.error(`${res.failedCount} record(s) could not be deleted.`);
+      }
+      setSelectedIds([]);
+      setBulkPermanentDeleteModalOpen(false);
+      fetchStats();
+      fetchItems();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Failed to perform bulk permanent deletion');
+    } finally {
+      setBulkPermanentDeleting(false);
+    }
+  };
+
 
   const toggleSelectAll = () => {
     if (selectedIds.length === items.length) {
@@ -343,11 +419,23 @@ export default function RecoveryCenter() {
                 variant="default"
                 size="sm"
                 onClick={handleBulkRestore}
-                disabled={bulkRestoring}
+                disabled={bulkRestoring || bulkPermanentDeleting}
                 className="gap-1.5 text-xs font-semibold h-8 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
               >
                 <RotateCcw className={`w-3.5 h-3.5 ${bulkRestoring ? 'animate-spin' : ''}`} />
                 <span>Restore Selected ({selectedIds.length})</span>
+              </Button>
+            )}
+            {selectedIds.length > 0 && canPermanentDelete && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkPermanentDeleteModalOpen(true)}
+                disabled={bulkRestoring || bulkPermanentDeleting}
+                className="gap-1.5 text-xs font-semibold h-8 shadow-xs"
+              >
+                <Trash2 className={`w-3.5 h-3.5 ${bulkPermanentDeleting ? 'animate-spin' : ''}`} />
+                <span>Delete Permanently ({selectedIds.length})</span>
               </Button>
             )}
           </div>
@@ -736,7 +824,7 @@ export default function RecoveryCenter() {
                             <Eye className="w-3.5 h-3.5" />
                             <span>Details</span>
                           </Button>
-                          {canRestore && (
+                          {canRestoreItem(item) && (
                             <Button
                               variant="outline"
                               size="sm"
@@ -746,6 +834,18 @@ export default function RecoveryCenter() {
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
                               <span>Restore</span>
+                            </Button>
+                          )}
+                          {canPermanentDeleteItem(item) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOpenPermanentDeleteModal(item)}
+                              className="h-7 px-2.5 text-xs font-bold gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-500/30"
+                              title="Permanently delete this record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Delete</span>
                             </Button>
                           )}
                         </div>
@@ -1019,6 +1119,119 @@ export default function RecoveryCenter() {
                 <span>Proceed to Restore</span>
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permanent Delete Confirmation Dialog */}
+      <Dialog open={permanentDeleteModalOpen} onOpenChange={setPermanentDeleteModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-lg bg-red-500/10 text-red-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <DialogTitle className="text-base font-bold text-red-600 dark:text-red-400">
+                Permanently Delete Record
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs pt-1 text-muted-foreground">
+              This action cannot be undone. The record and all associated data/files will be permanently erased.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 space-y-3 text-xs">
+            <div className="p-3 rounded-lg bg-red-500/10 text-red-800 dark:text-red-300 border border-red-500/20 space-y-1">
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                <span>Irreversible Database Purge</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                You are about to permanently purge this record from GaugeMaster. Once purged, this record cannot be recovered or restored from any backup audit trail.
+              </p>
+            </div>
+
+            <div className="bg-muted p-2.5 rounded-lg space-y-1 font-mono text-[11px]">
+              <div><strong>Record:</strong> {targetPermanentDeleteItem?.recordName}</div>
+              <div><strong>Identifier:</strong> {targetPermanentDeleteItem?.identifier}</div>
+              <div><strong>Module:</strong> {targetPermanentDeleteItem?.moduleLabel}</div>
+              <div><strong>Deleted on:</strong> {fmtDate(targetPermanentDeleteItem?.deletedAt)}</div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPermanentDeleteModalOpen(false)}
+              disabled={permanentDeleting}
+              className="text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmPermanentDelete}
+              disabled={permanentDeleting}
+              className="text-xs font-bold gap-1.5"
+            >
+              {permanentDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              <span>Permanently Delete</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Permanent Delete Confirmation Dialog */}
+      <Dialog open={bulkPermanentDeleteModalOpen} onOpenChange={setBulkPermanentDeleteModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="p-2 rounded-lg bg-red-500/10 text-red-600">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <DialogTitle className="text-base font-bold text-red-600 dark:text-red-400">
+                Permanently Delete Selected Records
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs pt-1 text-muted-foreground">
+              Confirm permanent deletion of <strong>{selectedIds.length}</strong> selected records.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 space-y-3 text-xs">
+            <div className="p-3 rounded-lg bg-red-500/10 text-red-800 dark:text-red-300 border border-red-500/20 space-y-1">
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
+                <span>Irreversible Bulk Purge</span>
+              </div>
+              <p className="text-[11px] leading-relaxed">
+                This will permanently delete all {selectedIds.length} selected items and their associated files from the database forever. None of these records will be recoverable.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setBulkPermanentDeleteModalOpen(false)}
+              disabled={bulkPermanentDeleting}
+              className="text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmBulkPermanentDelete}
+              disabled={bulkPermanentDeleting}
+              className="text-xs font-bold gap-1.5"
+            >
+              {bulkPermanentDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              <span>Delete {selectedIds.length} Records Permanently</span>
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

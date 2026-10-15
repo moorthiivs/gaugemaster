@@ -41,3 +41,11 @@ export class BulkRestoreDto {
     module: string;
   }>;
 }
+
+export class BulkPermanentDeleteDto {
+  items: Array<{
+    id: string;
+    module: string;
+  }>;
+}
+

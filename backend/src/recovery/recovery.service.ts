@@ -1089,4 +1089,367 @@ export class RecoveryService {
       errors,
     };
   }
+
+  /**
+   * Permanent Hard Deletion of a soft-deleted record from the Recovery Center
+   */
+  async permanentDelete(
+    module: string,
+    id: string,
+    user: any,
+  ): Promise<{
+    success: boolean;
+    message: string;
+    deletedId: string;
+  }> {
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const companyId = user?.companyId;
+      const userId = user?.id || user?.userId;
+      const userName = user?.name || user?.email || 'User';
+
+      let recordName = id;
+
+      switch (module.toLowerCase()) {
+        case 'instruments': {
+          const inst = await queryRunner.manager.findOne(Instrument, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!inst || !inst.deleted_at) {
+            throw new NotFoundException('Deleted instrument not found in Recovery Center.');
+          }
+          recordName = inst.name || inst.id_code || id;
+
+          // Guard: Cannot permanently delete if active calibrations exist
+          const activeCalCount = await queryRunner.manager.count(Calibration, {
+            where: { instrument_id: id },
+          });
+          if (activeCalCount > 0) {
+            throw new BadRequestException(
+              `Cannot permanently delete instrument: ${activeCalCount} active calibration(s) still exist. Delete them first.`,
+            );
+          }
+
+          // Cascade delete any soft-deleted child calibrations associated with this instrument
+          const childCals = await queryRunner.manager.find(Calibration, {
+            where: { instrument_id: id },
+            withDeleted: true,
+          });
+          for (const c of childCals) {
+            await queryRunner.query(
+              `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
+              [c.id],
+            );
+            await queryRunner.manager.delete(Calibration, c.id);
+          }
+
+          // Hard delete the instrument
+          await queryRunner.manager.delete(Instrument, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: inst.companyId || companyId,
+            action: 'INSTRUMENT_PERMANENT_DELETE',
+            resource: `/api/recovery/instruments/${id}/permanent`,
+            resourceType: 'Instrument',
+            description: `Permanently deleted instrument "${recordName}" (${inst.id_code || inst.id}) and all associated records.`,
+            details: {
+              instrumentId: id,
+              idCode: inst.id_code,
+              purgedBy: userName,
+              purgedChildCalibrationsCount: childCals.length,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Instrument "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'calibrations': {
+          const cal = await queryRunner.manager.findOne(Calibration, {
+            where: { id },
+            withDeleted: true,
+            relations: ['instrument'],
+          });
+          if (!cal || !cal.deleted_at) {
+            throw new NotFoundException('Deleted calibration not found in Recovery Center.');
+          }
+          recordName = cal.certificate_number || id;
+
+          // Delete calibration audit logs
+          await queryRunner.query(
+            `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
+            [id],
+          );
+
+          // Hard delete the calibration
+          await queryRunner.manager.delete(Calibration, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: cal.companyId || companyId,
+            action: 'CALIBRATION_PERMANENT_DELETE',
+            resource: `/api/recovery/calibrations/${id}/permanent`,
+            resourceType: 'Calibration',
+            description: `Permanently deleted calibration certificate "${recordName}" for instrument "${cal.instrument?.id_code || 'Unknown'}".`,
+            details: {
+              calibrationId: id,
+              certificateNumber: cal.certificate_number,
+              instrumentId: cal.instrument_id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Calibration certificate "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'templates': {
+          const tpl = await queryRunner.manager.findOne(CalibrationTemplate, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!tpl || !tpl.deleted_at) {
+            throw new NotFoundException('Deleted template not found in Recovery Center.');
+          }
+          recordName = tpl.name || id;
+
+          await queryRunner.manager.delete(CalibrationTemplate, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: tpl.companyId || companyId,
+            action: 'TEMPLATE_PERMANENT_DELETE',
+            resource: `/api/recovery/templates/${id}/permanent`,
+            resourceType: 'CalibrationTemplate',
+            description: `Permanently deleted calibration template "${recordName}".`,
+            details: {
+              templateId: id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Calibration template "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'calibration_procedures': {
+          const proc = await queryRunner.manager.findOne(CalibrationProcedure, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!proc || !proc.deleted_at) {
+            throw new NotFoundException('Deleted procedure not found in Recovery Center.');
+          }
+          recordName = proc.process || proc.document_name || id;
+
+          try {
+            await queryRunner.query(
+              `DELETE FROM calibration_procedure_history WHERE procedure_id = $1`,
+              [id],
+            );
+          } catch (e) {
+            this.logger.warn(`Could not delete procedure history: ${e}`);
+          }
+
+          if (proc.file_path && fs.existsSync(proc.file_path)) {
+            try {
+              fs.unlinkSync(proc.file_path);
+            } catch (err) {
+              this.logger.warn(`Could not unlink file ${proc.file_path}: ${err}`);
+            }
+          }
+
+          await queryRunner.manager.delete(CalibrationProcedure, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: proc.companyId || companyId,
+            action: 'PROCEDURE_PERMANENT_DELETE',
+            resource: `/api/recovery/calibration_procedures/${id}/permanent`,
+            resourceType: 'CalibrationProcedure',
+            description: `Permanently deleted calibration procedure "${recordName}".`,
+            details: {
+              procedureId: id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Calibration procedure "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'work_instructions': {
+          const wi = await queryRunner.manager.findOne(WorkInstruction, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!wi || !wi.deleted_at) {
+            throw new NotFoundException('Deleted work instruction not found in Recovery Center.');
+          }
+          recordName = wi.title || wi.document_name || id;
+
+          try {
+            await queryRunner.query(
+              `DELETE FROM work_instruction_history WHERE instruction_id = $1`,
+              [id],
+            );
+          } catch (e) {
+            this.logger.warn(`Could not delete work instruction history: ${e}`);
+          }
+
+          if (wi.file_path && fs.existsSync(wi.file_path)) {
+            try {
+              fs.unlinkSync(wi.file_path);
+            } catch (err) {
+              this.logger.warn(`Could not unlink file ${wi.file_path}: ${err}`);
+            }
+          }
+
+          await queryRunner.manager.delete(WorkInstruction, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: wi.companyId || companyId,
+            action: 'WORK_INSTRUCTION_PERMANENT_DELETE',
+            resource: `/api/recovery/work_instructions/${id}/permanent`,
+            resourceType: 'WorkInstruction',
+            description: `Permanently deleted work instruction "${recordName}".`,
+            details: {
+              instructionId: id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Work instruction "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'gauge_diagrams': {
+          const gd = await queryRunner.manager.findOne(GaugeDiagram, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!gd || !gd.deleted_at) {
+            throw new NotFoundException('Deleted gauge diagram not found in Recovery Center.');
+          }
+          recordName = gd.gauge_name || gd.document_name || id;
+
+          try {
+            await queryRunner.query(
+              `DELETE FROM gauge_diagram_history WHERE diagram_id = $1`,
+              [id],
+            );
+          } catch (e) {
+            this.logger.warn(`Could not delete gauge diagram history: ${e}`);
+          }
+
+          if (gd.file_path && fs.existsSync(gd.file_path)) {
+            try {
+              fs.unlinkSync(gd.file_path);
+            } catch (err) {
+              this.logger.warn(`Could not unlink file ${gd.file_path}: ${err}`);
+            }
+          }
+
+          await queryRunner.manager.delete(GaugeDiagram, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: gd.companyId || companyId,
+            action: 'GAUGE_DIAGRAM_PERMANENT_DELETE',
+            resource: `/api/recovery/gauge_diagrams/${id}/permanent`,
+            resourceType: 'GaugeDiagram',
+            description: `Permanently deleted gauge diagram "${recordName}".`,
+            details: {
+              diagramId: id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Gauge diagram "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        default:
+          throw new BadRequestException(`Unsupported module: ${module}`);
+      }
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  /**
+   * Bulk permanent hard deletion of multiple records from the Recovery Center
+   */
+  async bulkPermanentDelete(
+    items: Array<{ id: string; module: string }>,
+    user: any,
+  ): Promise<{
+    deletedCount: number;
+    failedCount: number;
+    errors: Array<{ id: string; module: string; message: string }>;
+  }> {
+    let deletedCount = 0;
+    let failedCount = 0;
+    const errors: Array<{ id: string; module: string; message: string }> = [];
+
+    for (const item of items) {
+      try {
+        await this.permanentDelete(item.module, item.id, user);
+        deletedCount++;
+      } catch (err: any) {
+        failedCount++;
+        errors.push({
+          id: item.id,
+          module: item.module,
+          message: err?.message || 'Failed to permanently delete',
+        });
+      }
+    }
+
+    return {
+      deletedCount,
+      failedCount,
+      errors,
+    };
+  }
 }
+

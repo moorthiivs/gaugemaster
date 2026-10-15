@@ -91,3 +91,25 @@ export async function bulkRestoreRecords(items: Array<{ id: string; module: stri
   const res = await httpClient.post('/recovery/bulk-restore', { items });
   return res.data;
 }
+
+export async function permanentDeleteRecord(
+  module: string,
+  id: string,
+): Promise<{ success: boolean; message: string; deletedId?: string }> {
+  const res = await httpClient.delete<{ success: boolean; message: string; deletedId?: string }>(
+    `/recovery/${module}/${id}/permanent`,
+  );
+  return res.data;
+}
+
+export async function bulkPermanentDeleteRecords(
+  items: Array<{ id: string; module: string }>,
+): Promise<{
+  deletedCount: number;
+  failedCount: number;
+  errors: Array<{ id: string; module: string; message: string }>;
+}> {
+  const res = await httpClient.post('/recovery/bulk-permanent-delete', { items });
+  return res.data;
+}
+
