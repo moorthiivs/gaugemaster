@@ -3395,13 +3395,15 @@ export default function CalibrationWizard() {
       };
 
       let savedId = savedCalibrationId;
-      if (isEditMode && savedCalibrationId) {
-        await updateCalibration(
+      if (savedCalibrationId) {
+        const updated = await updateCalibration(
           savedCalibrationId,
           data as any,
           user?.id,
           user?.name || user?.email || "User",
         );
+        if (updated?.certificate_number) setNextCertNumber(updated.certificate_number);
+        if (updated?.ulr_number) setNextUlrNumber(updated.ulr_number);
         toast.success("Calibration updated & certificate regenerated!");
       } else {
         const saved = await createCalibration(data as any);
@@ -7547,7 +7549,7 @@ export default function CalibrationWizard() {
             className="gap-2"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Save & Generate Certificate
+            {savedCalibrationId ? "Save Changes & Generate Certificate" : "Save & Generate Certificate"}
           </Button>
         ) : (
           <Button
