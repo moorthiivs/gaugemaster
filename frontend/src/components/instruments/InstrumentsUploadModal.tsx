@@ -7,6 +7,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { FileSpreadsheet } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { RefreshCw } from "lucide-react";
 import ExcelUpload from "@/components/ExcelUpload";
 import { normalizeItemStatus } from "@/lib/itemStatus";
 
@@ -17,6 +19,7 @@ export interface InstrumentsUploadModalProps {
   rejectedFile: Blob | null;
   setRejectedFile: (file: Blob | null) => void;
   onRefresh: () => void;
+  onSwitchToUpdate?: () => void;
 }
 
 export function InstrumentsUploadModal({
@@ -26,18 +29,37 @@ export function InstrumentsUploadModal({
   rejectedFile,
   setRejectedFile,
   onRefresh,
+  onSwitchToUpdate,
 }: InstrumentsUploadModalProps) {
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[95vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <FileSpreadsheet size={20} className="text-primary" />
-            Bulk Upload Instruments
-          </DialogTitle>
-          <DialogDescription>
-            Upload an Excel file to add multiple instruments at once.
-          </DialogDescription>
+          <div className="flex items-center justify-between pr-6">
+            <div>
+              <DialogTitle className="flex items-center gap-2">
+                <FileSpreadsheet size={20} className="text-primary" />
+                Bulk Upload Instruments
+              </DialogTitle>
+              <DialogDescription>
+                Upload an Excel file to add multiple new instruments at once.
+              </DialogDescription>
+            </div>
+            {onSwitchToUpdate && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onOpenChange(false);
+                  onSwitchToUpdate();
+                }}
+                className="text-xs gap-1.5 text-blue-700 dark:text-blue-400 border-blue-600/30 hover:bg-blue-50/50"
+              >
+                <RefreshCw size={13} />
+                Switch to Bulk Update
+              </Button>
+            )}
+          </div>
         </DialogHeader>
         <ExcelUpload
           endpoint="/instruments/bulk-upload"

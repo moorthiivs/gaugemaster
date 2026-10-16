@@ -13,6 +13,7 @@ import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, 
 import { Calibration } from '../calibration/calibration.entity';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
+import { BulkUpdatePreviewDto, BulkUpdateExecuteDto } from '../dto/bulk-update.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
 import { User } from 'src/users/user.entity';
@@ -1233,6 +1234,366 @@ export class InstrumentsService implements OnApplicationBootstrap {
             console.log(error);
         }
 
+    }
+
+    async bulkUpdatePreview(dto: BulkUpdatePreviewDto, user: any) {
+        const companyId = user?.isSuperAdmin && dto.options?.companyId ? dto.options.companyId : user?.companyId;
+        if (!companyId) {
+            throw new BadRequestException('User companyId is required');
+        }
+
+        const overwrite = dto.options?.overwrite ?? false;
+
+        const instruments = await this.instrumentRepository.find({
+            where: { companyId },
+        });
+
+        const normalize = (val: any): string => {
+            if (val === null || val === undefined) return '';
+            return String(val)
+                .replace(/\r\n/g, ' ')
+                .replace(/\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+        };
+
+        const tier1Map = new Map<string, Instrument>();
+        const tier2Map = new Map<string, Instrument[]>();
+        const tier3Map = new Map<string, Instrument[]>();
+
+        for (const inst of instruments) {
+            const normName = normalize(inst.name);
+            const normId = normalize(inst.id_code);
+
+            if (inst.sino !== null && inst.sino !== undefined) {
+                tier1Map.set(`${inst.sino}:::${normName}:::${normId}`, inst);
+            }
+
+            const kNameId = `${normName}:::${normId}`;
+            if (!tier2Map.has(kNameId)) tier2Map.set(kNameId, []);
+            tier2Map.get(kNameId)!.push(inst);
+
+            if (!tier3Map.has(normId)) tier3Map.set(normId, []);
+            tier3Map.get(normId)!.push(inst);
+        }
+
+        const allowedFields: Array<{ key: keyof Instrument; label: string }> = [
+            { key: 'module', label: 'Module' },
+            { key: 'location', label: 'Location' },
+            { key: 'range', label: 'Range' },
+            { key: 'serial_no', label: 'Serial No' },
+            { key: 'make', label: 'Make' },
+            { key: 'frequency', label: 'Frequency' },
+            { key: 'least_count', label: 'Least Count' },
+            { key: 'part_name', label: 'Part Name' },
+            { key: 'part_no', label: 'Part No' },
+            { key: 'agency', label: 'Agency' },
+            { key: 'item_status', label: 'Item Status' },
+            { key: 'status', label: 'Status' },
+            { key: 'calibration_source', label: 'Calibration Source' },
+            { key: 'device_type', label: 'Device Type' },
+            { key: 'notes', label: 'Notes' },
+            { key: 'remarks', label: 'Remarks' },
+            { key: 'customer', label: 'Customer' },
+            { key: 'sector', label: 'Sector' },
+            { key: 'criticality_level', label: 'Criticality Level' },
+            { key: 'cert_no', label: 'Cert No' },
+        ];
+
+        const selectedColumnsSet = dto.options?.selectedColumns && dto.options.selectedColumns.length > 0
+            ? new Set(dto.options.selectedColumns.map(c => c.toLowerCase().trim()))
+            : null;
+
+        const activeFields = selectedColumnsSet
+            ? allowedFields.filter(f => selectedColumnsSet.has(String(f.key).toLowerCase()))
+            : allowedFields;
+
+        const previewRows: any[] = [];
+
+        for (const row of dto.rows) {
+            const rawIdCode = row.id_code || row.raw?.['ID CODE'] || row.raw?.['IMTE'] || row.raw?.['id_code'];
+            const rawName = row.name || row.raw?.['NAME OF INSTRUMENT'] || row.raw?.['Name'] || row.raw?.['name'];
+            const rawSino = row.sino ?? (row.raw?.['S.No'] && !isNaN(Number(row.raw?.['S.No'])) ? Number(row.raw?.['S.No']) : undefined);
+            const rawPartName = row.part_name || row.raw?.['Part Name'] || row.raw?.['part_name'];
+            const rawSerialNo = row.serial_no || row.raw?.['SERIAL NO'] || row.raw?.['serial_no'];
+
+            const normId = normalize(rawIdCode);
+            const normName = normalize(rawName);
+            const normPart = normalize(rawPartName);
+            const normSerial = normalize(rawSerialNo);
+
+            if (!normId && !normName) {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'error',
+                    errors: ['Row is missing both ID Code and Name'],
+                    changes: [],
+                    raw: row.raw,
+                });
+                continue;
+            }
+
+            let matched: Instrument | null = null;
+            let matchMethod = '';
+
+            // Tier 1: S.No + Name + ID Code
+            if (rawSino !== undefined && rawSino !== null) {
+                const k1 = `${rawSino}:::${normName}:::${normId}`;
+                if (tier1Map.has(k1)) {
+                    matched = tier1Map.get(k1)!;
+                    matchMethod = 'Exact S.No + Name + ID Code';
+                }
+            }
+
+            // Tier 2: Name + ID Code
+            if (!matched && normName && normId) {
+                const k2 = `${normName}:::${normId}`;
+                const candidates = tier2Map.get(k2) || [];
+                if (candidates.length === 1) {
+                    matched = candidates[0];
+                    matchMethod = 'Exact Name + ID Code';
+                } else if (candidates.length > 1) {
+                    const byPart = normPart ? candidates.filter(c => normalize(c.part_name) && (normalize(c.part_name).includes(normPart) || normPart.includes(normalize(c.part_name)))) : [];
+                    const bySerial = normSerial ? candidates.filter(c => normalize(c.serial_no) === normSerial) : [];
+                    const bySino = rawSino !== undefined ? candidates.filter(c => c.sino === rawSino) : [];
+
+                    if (byPart.length === 1) {
+                        matched = byPart[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Part Name)';
+                    } else if (bySerial.length === 1) {
+                        matched = bySerial[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Serial No)';
+                    } else if (bySino.length === 1) {
+                        matched = bySino[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by S.No)';
+                    } else {
+                        previewRows.push({
+                            rowIndex: row.rowIndex,
+                            status: 'error',
+                            errors: [`Multiple instruments match ID '${rawIdCode || normName}'. Disambiguation needed.`],
+                            changes: [],
+                            raw: row.raw,
+                        });
+                        continue;
+                    }
+                }
+            }
+
+            // Tier 3: ID Code Unique
+            if (!matched && normId) {
+                const candidates = tier3Map.get(normId) || [];
+                if (candidates.length === 1) {
+                    matched = candidates[0];
+                    matchMethod = 'Fallback Unique ID Code';
+                } else if (candidates.length > 1) {
+                    previewRows.push({
+                        rowIndex: row.rowIndex,
+                        status: 'error',
+                        errors: [`Multiple instruments match ID '${rawIdCode}' with different names.`],
+                        changes: [],
+                        raw: row.raw,
+                    });
+                    continue;
+                }
+            }
+
+            if (!matched) {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'error',
+                    errors: [`Instrument not found in database for ID '${rawIdCode || normName}'`],
+                    changes: [],
+                    raw: row.raw,
+                });
+                continue;
+            }
+
+            // Check changes for active selected fields
+            const proposedChanges: Array<{ field: string; label: string; oldValue: any; newValue: any }> = [];
+
+            for (const { key, label } of activeFields) {
+                const newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+                if (newVal === undefined || newVal === null) continue;
+
+                const cleanNew = String(newVal).trim();
+                if (cleanNew === '') continue;
+
+                const currVal = matched[key] !== null && matched[key] !== undefined ? String(matched[key]).trim() : '';
+
+                if (!overwrite) {
+                    if (currVal === '') {
+                        proposedChanges.push({
+                            field: key as string,
+                            label,
+                            oldValue: '<EMPTY>',
+                            newValue: cleanNew,
+                        });
+                    }
+                } else {
+                    if (currVal !== cleanNew) {
+                        proposedChanges.push({
+                            field: key as string,
+                            label,
+                            oldValue: currVal || '<EMPTY>',
+                            newValue: cleanNew,
+                        });
+                    }
+                }
+            }
+
+            if (proposedChanges.length === 0) {
+                const reasons: string[] = [];
+
+                for (const { key, label } of activeFields) {
+                    const newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+                    const cleanNew = (newVal !== undefined && newVal !== null) ? String(newVal).trim() : '';
+                    const currVal = (matched[key] !== null && matched[key] !== undefined) ? String(matched[key]).trim() : '';
+
+                    if (!cleanNew) {
+                        reasons.push(`Excel cell for ${label} is empty`);
+                    } else if (cleanNew === currVal) {
+                        reasons.push(`${label} already matches database ("${currVal}")`);
+                    } else if (!overwrite) {
+                        reasons.push(`${label} exists in DB ("${currVal}") vs Excel ("${cleanNew}") — Overwrite is OFF`);
+                    }
+                }
+
+                const noChangeReason = reasons.length > 0
+                    ? reasons.join('; ')
+                    : 'Values in database already match Excel for selected columns';
+
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'no_change',
+                    errors: [noChangeReason],
+                    instrumentId: matched.id,
+                    sino: matched.sino,
+                    name: matched.name,
+                    id_code: matched.id_code,
+                    changes: [],
+                    matchMethod,
+                    raw: row.raw,
+                });
+            } else {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'ready',
+                    errors: [],
+                    instrumentId: matched.id,
+                    sino: matched.sino,
+                    name: matched.name,
+                    id_code: matched.id_code,
+                    changes: proposedChanges,
+                    matchMethod,
+                    raw: row.raw,
+                });
+            }
+        }
+
+        const columnUpdateCounts: Record<string, number> = {};
+        for (const row of previewRows) {
+            if (row.status === 'ready' && row.changes) {
+                for (const change of row.changes) {
+                    columnUpdateCounts[change.field] = (columnUpdateCounts[change.field] || 0) + 1;
+                }
+            }
+        }
+
+        return {
+            totalRows: dto.rows.length,
+            readyCount: previewRows.filter(r => r.status === 'ready').length,
+            errorCount: previewRows.filter(r => r.status === 'error').length,
+            noChangeCount: previewRows.filter(r => r.status === 'no_change').length,
+            columnUpdateCounts,
+            rows: previewRows,
+        };
+    }
+
+    async bulkUpdateExecute(dto: BulkUpdateExecuteDto, user: any) {
+        const companyId = user?.isSuperAdmin && dto.companyId ? dto.companyId : user?.companyId;
+        if (!companyId) {
+            throw new BadRequestException('User companyId is required');
+        }
+
+        if (!dto.updates || dto.updates.length === 0) {
+            throw new BadRequestException('No updates provided');
+        }
+
+        const allowedKeys = new Set([
+            'module', 'location', 'range', 'serial_no', 'make', 'frequency',
+            'least_count', 'part_name', 'part_no', 'agency', 'item_status',
+            'status', 'calibration_source', 'device_type', 'notes', 'remarks',
+            'customer', 'sector', 'criticality_level', 'cert_no',
+        ]);
+
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
+        try {
+            const updated: string[] = [];
+            const failed: Array<{ id: string; error: string }> = [];
+
+            for (const item of dto.updates) {
+                try {
+                    const inst = await queryRunner.manager.findOne(Instrument, {
+                        where: { id: item.id, companyId },
+                    });
+
+                    if (!inst) {
+                        failed.push({ id: item.id, error: 'Instrument not found or unauthorized' });
+                        continue;
+                    }
+
+                    // Whitelist item.changes to allowed fields only
+                    const safeChanges: Record<string, any> = {};
+                    for (const [k, v] of Object.entries(item.changes || {})) {
+                        if (allowedKeys.has(k)) {
+                            safeChanges[k] = v;
+                        }
+                    }
+
+                    if (Object.keys(safeChanges).length === 0) {
+                        failed.push({ id: item.id, error: 'No valid fields to update' });
+                        continue;
+                    }
+
+                    Object.assign(inst, safeChanges);
+                    inst.updated_at = new Date();
+                    if (user?.id) {
+                        inst.updated_by = { id: user.id } as User;
+                    }
+
+                    await queryRunner.manager.save(inst);
+                    updated.push(inst.id);
+                } catch (err: any) {
+                    failed.push({ id: item.id, error: err?.message || 'Update failed' });
+                }
+            }
+
+            if (failed.length > 0 && updated.length === 0) {
+                await queryRunner.rollbackTransaction();
+                return {
+                    successCount: 0,
+                    failedCount: failed.length,
+                    failedRows: failed,
+                };
+            }
+
+            await queryRunner.commitTransaction();
+
+            return {
+                successCount: updated.length,
+                failedCount: failed.length,
+                failedRows: failed,
+            };
+        } catch (error: any) {
+            await queryRunner.rollbackTransaction();
+            throw new InternalServerErrorException(error?.message || 'Failed to execute bulk update transaction');
+        } finally {
+            await queryRunner.release();
+        }
     }
 
 

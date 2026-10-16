@@ -22,7 +22,9 @@
     "migration:run": "npm run typeorm migration:run -- -d src/ormconfig.ts",
     "migration:revert": "npm run typeorm migration:revert -- -d src/ormconfig.ts",
     "migration:generate": "npm run typeorm migration:generate -- -d src/ormconfig.ts",
-    "seed": "ts-node src/seeders/seed.ts"
+    "seed": "ts-node src/seeders/seed.ts",
+    "update:modules:dry": "ts-node scripts/update-instrument-modules.ts",
+    "update:modules:exec": "ts-node scripts/update-instrument-modules.ts --execute"
   },
   "dependencies": {
     "@loctax/nest-pg-boss": "^5.0.7",

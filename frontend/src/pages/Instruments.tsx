@@ -42,6 +42,7 @@ import { InstrumentsHistoryModal } from "@/components/instruments/InstrumentsHis
 import { InstrumentsDateUpdateModal } from "@/components/instruments/InstrumentsDateUpdateModal";
 import { InstrumentsSendCalibrationModal } from "@/components/instruments/InstrumentsSendCalibrationModal";
 import { InstrumentsUploadModal } from "@/components/instruments/InstrumentsUploadModal";
+import { InstrumentsBulkUpdateModal } from "@/components/instruments/InstrumentsBulkUpdateModal";
 import { PageHeader } from "@/components/common/PageHeader";
 import { StatusBadge } from "@/components/common/StatusBadge";
 
@@ -265,6 +266,7 @@ export default function Instruments() {
   const [DeviceTypeFilter, setDeviceTypeFilter] = useState<string[]>([]);
 
   const [isOpenupload, setisOpenupload] = useState(false);
+  const [isOpenBulkUpdate, setIsOpenBulkUpdate] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
 
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -2011,6 +2013,17 @@ export default function Instruments() {
                     <span>Bulk Upload</span>
                   </Button>
                 )}
+                {canAccess("instruments", "edit") && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs font-semibold gap-1.5 text-blue-700 dark:text-blue-400 border-blue-600/30 hover:bg-blue-50/50"
+                    onClick={() => setIsOpenBulkUpdate(true)}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Bulk Update</span>
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -2129,6 +2142,13 @@ export default function Instruments() {
         validationRules={validationRules}
         rejectedFile={rejectedFile}
         setRejectedFile={setRejectedFile}
+        onRefresh={fetchData}
+        onSwitchToUpdate={() => setIsOpenBulkUpdate(true)}
+      />
+
+      <InstrumentsBulkUpdateModal
+        isOpen={isOpenBulkUpdate}
+        onOpenChange={setIsOpenBulkUpdate}
         onRefresh={fetchData}
       />
 

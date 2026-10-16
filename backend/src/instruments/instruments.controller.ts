@@ -6,6 +6,7 @@ import { extname } from 'path';
 import { InstrumentsService } from './instruments.service';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from '../dto/update-instrument.dto';
+import { BulkUpdatePreviewDto, BulkUpdateExecuteDto } from '../dto/bulk-update.dto';
 import { GoogleDriveService } from '../backup/google-drive.service';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { RequirePermission } from '../auth/require-permission.decorator';
@@ -169,6 +170,24 @@ export class InstrumentsController {
     async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
         const dataArray = Array.isArray(dto) ? dto : [dto];
         return this.instrumentsService.bulkUpload(dataArray);
+    }
+
+    @Post('bulk-update-preview')
+    @RequirePermission('instruments', 'edit')
+    async bulkUpdatePreview(
+        @Body() dto: BulkUpdatePreviewDto,
+        @Req() req: any,
+    ) {
+        return this.instrumentsService.bulkUpdatePreview(dto, req?.user);
+    }
+
+    @Post('bulk-update')
+    @RequirePermission('instruments', 'edit')
+    async bulkUpdate(
+        @Body() dto: BulkUpdateExecuteDto,
+        @Req() req: any,
+    ) {
+        return this.instrumentsService.bulkUpdateExecute(dto, req?.user);
     }
 
 
