@@ -21,7 +21,7 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers, FileText, Download, ExternalLink, FileCheck2 } from "lucide-react";
+import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers, FileText, Download, ExternalLink, FileCheck2, MoreVertical } from "lucide-react";
 import { getSecureFileUrl } from "@/lib/tokenStorage";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
 import { LabelPrintHistoryModal } from "@/components/LabelPrintHistoryModal";
@@ -2013,17 +2013,6 @@ export default function Instruments() {
                     <span>Bulk Upload</span>
                   </Button>
                 )}
-                {canAccess("instruments", "edit") && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 text-xs font-semibold gap-1.5 text-blue-700 dark:text-blue-400 border-blue-600/30 hover:bg-blue-50/50"
-                    onClick={() => setIsOpenBulkUpdate(true)}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    <span>Bulk Update</span>
-                  </Button>
-                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -2052,16 +2041,37 @@ export default function Instruments() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs font-semibold gap-1.5"
-                  onClick={() => setLabelHistoryModalOpen(true)}
-                  title="View Label Print & Download History"
-                >
-                  <History className="h-3.5 w-3.5 text-primary" />
-                  <span>Label History</span>
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title="More options"
+                      aria-label="More options"
+                    >
+                      <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    {canAccess("instruments", "edit") && (
+                      <DropdownMenuItem
+                        onClick={() => setIsOpenBulkUpdate(true)}
+                        className="gap-2 cursor-pointer text-xs"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 text-blue-600" />
+                        <span>Bulk Update</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      onClick={() => setLabelHistoryModalOpen(true)}
+                      className="gap-2 cursor-pointer text-xs"
+                    >
+                      <History className="h-3.5 w-3.5 text-primary" />
+                      <span>Label History</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 {selectedIds.length > 0 && (
                   <>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getRoleName } from "@/lib/utils";
@@ -41,6 +41,7 @@ import {
   Edit,
   RotateCcw,
   LayoutDashboard,
+  Loader2,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
@@ -97,10 +98,22 @@ export default function CalibrationApprovalList() {
 
   // Dialog & Detail states
   const [selectedRecord, setSelectedRecord] = useState<any | null>(null);
+  const [loadingRecordId, setLoadingRecordId] = useState<string | null>(null);
   const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [reviewRecommendationDialogOpen, setReviewRecommendationDialogOpen] = useState(false);
+
+  const certScrollRef = useRef<HTMLDivElement>(null);
+  const readingsScrollRef = useRef<HTMLDivElement>(null);
+
+  // Automatically reset scroll to top whenever review dialog opens
+  useEffect(() => {
+    if (reviewDialogOpen) {
+      if (certScrollRef.current) certScrollRef.current.scrollTop = 0;
+      if (readingsScrollRef.current) readingsScrollRef.current.scrollTop = 0;
+    }
+  }, [reviewDialogOpen, selectedRecord]);
 
   // Review & Approval form states
   const [rejectionReason, setRejectionReason] = useState("");
@@ -480,6 +493,7 @@ export default function CalibrationApprovalList() {
               <Button
                 variant={isHighlighted ? "default" : "outline"}
                 size="sm"
+                disabled={loadingRecordId === cal.id}
                 className={`h-8 text-xs gap-1.5 ${
                   isHighlighted && isReviewedStatus
                     ? "bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
@@ -488,23 +502,33 @@ export default function CalibrationApprovalList() {
                     : ""
                 }`}
                 onClick={async () => {
-                  setSelectedRecord(cal);
-                  setReviewDialogOpen(true);
                   try {
+                    setLoadingRecordId(cal.id);
                     const full = await getCalibration(cal.id);
-                    if (full) setSelectedRecord(full);
-                  } catch (e) {}
+                    setSelectedRecord(full || cal);
+                    setReviewDialogOpen(true);
+                  } catch (e) {
+                    console.error("Failed to load full calibration record:", e);
+                    setSelectedRecord(cal);
+                    setReviewDialogOpen(true);
+                  } finally {
+                    setLoadingRecordId(null);
+                  }
                 }}
               >
-                <Eye className="w-3.5 h-3.5" />
-                <span>{buttonLabel}</span>
+                {loadingRecordId === cal.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Eye className="w-3.5 h-3.5" />
+                )}
+                <span>{loadingRecordId === cal.id ? "Loading..." : buttonLabel}</span>
               </Button>
             </div>
           );
         },
       },
     ],
-    [canAccess, navigate, isReviewer, isApprover]
+    [canAccess, navigate, isReviewer, isApprover, loadingRecordId]
   );
 
   return (
@@ -684,7 +708,15 @@ export default function CalibrationApprovalList() {
 
       {/* Main Review & Approval Modal */}
       {selectedRecord && (
-        <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
+        <Dialog
+          open={reviewDialogOpen}
+          onOpenChange={(open) => {
+            setReviewDialogOpen(open);
+            if (!open) {
+              setSelectedRecord(null);
+            }
+          }}
+        >
           <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col space-y-4">
             <DialogHeader className="border-b pb-3">
               <div className="flex items-center justify-between pr-6">
@@ -786,7 +818,11 @@ export default function CalibrationApprovalList() {
               </TabsList>
 
               {/* Readings & Specs Tab */}
-              <TabsContent value="readings" className="flex-1 overflow-y-auto max-h-[68vh] space-y-4 pr-1 scrollbar-thin">
+              <TabsContent
+                value="readings"
+                ref={readingsScrollRef}
+                className="flex-1 overflow-y-auto max-h-[68vh] space-y-4 pr-1 scrollbar-thin"
+              >
                 {(() => {
                   const layoutBlocks =
                     (selectedRecord as any).layout_blocks ||
@@ -1133,7 +1169,11 @@ export default function CalibrationApprovalList() {
               </TabsContent>
 
               {/* Certificate Preview Tab */}
-              <TabsContent value="certificate" className="flex-1 overflow-y-auto max-h-[68vh] p-3 bg-muted/30 border rounded-xl scrollbar-thin">
+              <TabsContent
+                value="certificate"
+                ref={certScrollRef}
+                className="flex-1 overflow-y-auto max-h-[68vh] p-3 bg-muted/30 border rounded-xl scrollbar-thin"
+              >
                 <CertificatePreview
                   calibration={selectedRecord}
                   instrumentName={selectedRecord.instrument?.name}

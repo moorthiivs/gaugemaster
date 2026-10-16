@@ -972,6 +972,12 @@ interface CertificatePreviewProps {
   isTemplatePreview?: boolean;
 }
 
+// Module-level in-memory cache to prevent re-fetching and flashing across modal opens
+let memoryCertConfigCache: any = null;
+let memorySignatoriesCache: any[] | null = null;
+let isFetchingCertConfig = false;
+let isFetchingSignatories = false;
+
 /**
  * Live HTML preview matching standard NABL calibration certificate layout.
  * Formatted according to calibration-certificate-01-3487339.jpg layout.
@@ -983,8 +989,8 @@ export function CertificatePreview({
   isTemplatePreview = false,
 }: CertificatePreviewProps) {
   const { user } = useAuth();
-  const [certConfig, setCertConfig] = useState<any>(null);
-  const [usersList, setUsersList] = useState<any[]>([]);
+  const [certConfig, setCertConfig] = useState<any>(() => memoryCertConfigCache);
+  const [usersList, setUsersList] = useState<any[]>(() => memorySignatoriesCache || []);
   const [downloadingPng, setDownloadingPng] = useState(false);
   const [logoError, setLogoError] = useState(false);
   const certRef = useRef<HTMLDivElement>(null);
@@ -997,11 +1003,20 @@ export function CertificatePreview({
     (typeof calibration.certificate_number === "string" && calibration.certificate_number.startsWith("PREVIEW-"));
 
   useEffect(() => {
+    if (memorySignatoriesCache && memorySignatoriesCache.length > 0) {
+      setUsersList(memorySignatoriesCache);
+      return;
+    }
+    if (isFetchingSignatories) return;
+    isFetchingSignatories = true;
+
     const fetchSignatories = async () => {
       try {
         const res = await httpClient.get(`/calibrations/signatories${user?.companyId ? `?companyId=${user.companyId}` : ""}`);
         if (Array.isArray(res.data) && res.data.length > 0) {
+          memorySignatoriesCache = res.data;
           setUsersList(res.data);
+          isFetchingSignatories = false;
           return;
         }
       } catch {}
@@ -1010,9 +1025,17 @@ export function CertificatePreview({
         httpClient
           .get(`/users?companyId=${user.companyId}`)
           .then((res) => {
-            if (Array.isArray(res.data)) setUsersList(res.data);
+            if (Array.isArray(res.data)) {
+              memorySignatoriesCache = res.data;
+              setUsersList(res.data);
+            }
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => {
+            isFetchingSignatories = false;
+          });
+      } else {
+        isFetchingSignatories = false;
       }
     };
 
@@ -1020,7 +1043,12 @@ export function CertificatePreview({
   }, [user?.companyId]);
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (memoryCertConfigCache) {
+      setCertConfig(memoryCertConfigCache);
+      return;
+    }
+    if (!user?.id || isFetchingCertConfig) return;
+    isFetchingCertConfig = true;
     const companyId = user.companyId || "";
     httpClient
       .get("/settings/fetchmailconfig", {
@@ -1028,10 +1056,14 @@ export function CertificatePreview({
       })
       .then((res) => {
         if (res.data?.certificateConfig) {
+          memoryCertConfigCache = res.data.certificateConfig;
           setCertConfig(res.data.certificateConfig);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        isFetchingCertConfig = false;
+      });
   }, [user?.id, user?.companyId]);
 
   const fmtDate = (d?: string) => {
