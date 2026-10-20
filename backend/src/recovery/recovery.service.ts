@@ -1338,6 +1338,25 @@ export class RecoveryService {
             await queryRunner.manager.delete(Calibration, c.id);
           }
 
+          // Clean up related history and reminders to avoid FK constraint issues
+          try {
+            await queryRunner.query(
+              `DELETE FROM calibration_history WHERE instrument_id = $1`,
+              [id],
+            );
+          } catch (e) {
+            this.logger.warn(`Could not delete calibration history: ${e}`);
+          }
+
+          try {
+            await queryRunner.query(
+              `DELETE FROM reminders WHERE "instrumentId" = $1`,
+              [id],
+            );
+          } catch (e) {
+            this.logger.warn(`Could not delete reminders for instrument: ${e}`);
+          }
+
           // Hard delete the instrument
           await queryRunner.manager.delete(Instrument, id);
 

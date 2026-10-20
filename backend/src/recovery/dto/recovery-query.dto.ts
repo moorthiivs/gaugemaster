@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsInt, Min, IsArray, ValidateNested, IsNotEmpty } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class RecoveryQueryDto {
@@ -35,17 +35,27 @@ export class RecoveryQueryDto {
   limit?: number = 10;
 }
 
+export class RecoveryBulkItemDto {
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @IsString()
+  @IsNotEmpty()
+  module: string;
+}
+
 export class BulkRestoreDto {
-  items: Array<{
-    id: string;
-    module: string;
-  }>;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RecoveryBulkItemDto)
+  items: RecoveryBulkItemDto[];
 }
 
 export class BulkPermanentDeleteDto {
-  items: Array<{
-    id: string;
-    module: string;
-  }>;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RecoveryBulkItemDto)
+  items: RecoveryBulkItemDto[];
 }
 
