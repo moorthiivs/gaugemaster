@@ -35,12 +35,32 @@ export class CalibrationController {
     return this.calibrationService.create(dto);
   }
 
+  @Get('signatories')
+  @RequirePermission('calibrations', 'view')
+  async getSignatories(@Req() req: any, @Query('companyId') queryCompanyId?: string) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (queryCompanyId || req?.user?.companyId) : req?.user?.companyId;
+    return this.calibrationService.getSignatories(effectiveCompanyId);
+  }
+
   @Get('latest/:instrumentId')
   async getLatest(@Param('instrumentId') instrumentId: string) {
     return this.calibrationService.getLatestByInstrument(instrumentId);
   }
 
   // ── Drafts ──
+  @Get('drafts/instrument/:instrumentId')
+  async getDraftByInstrument(@Req() req: any, @Param('instrumentId') instrumentId: string) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+    return this.calibrationService.getDraftByInstrument(userId, instrumentId);
+  }
+
+  @Delete('drafts/instrument/:instrumentId')
+  async deleteDraftsByInstrument(@Req() req: any, @Param('instrumentId') instrumentId: string) {
+    const userId = req.user?.userId || req.user?.id || req.user?.sub;
+    return this.calibrationService.deleteDraftsByInstrument(userId, instrumentId);
+  }
+
   @Get('drafts/:userId')
   async getAllDrafts(@Param('userId') userId: string) {
     return this.calibrationService.getAllDrafts(userId);
@@ -100,16 +120,60 @@ export class CalibrationController {
     });
   }
 
+  @Post(':id/review')
+  @RequirePermission('calibration_approvals', 'edit')
+  async review(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      reviewerId?: string;
+      reviewerName?: string;
+      reviewerDesignation?: string;
+      signature?: string;
+      remarks?: string;
+    },
+    @Req() req: any,
+  ) {
+    const reviewerId = body.reviewerId || req?.user?.userId || req?.user?.id;
+    const reviewerName = body.reviewerName || req?.user?.name || 'Reviewer';
+    const reviewerDesignation = body.reviewerDesignation || 'Calibration Reviewer';
+
+    return this.calibrationService.review(
+      id,
+      { id: reviewerId, name: reviewerName, designation: reviewerDesignation },
+      body.signature,
+      body.remarks,
+    );
+  }
+
   @Post(':id/approve')
   @RequirePermission('calibration_approvals', 'edit')
   async approve(
     @Param('id') id: string,
-    @Body() body: { reviewerId: string; reviewerName: string; reviewerDesignation?: string; signature?: string },
+    @Body()
+    body: {
+      approverId?: string;
+      reviewerId?: string;
+      approverName?: string;
+      reviewerName?: string;
+      approverDesignation?: string;
+      reviewerDesignation?: string;
+      signature?: string;
+      remarks?: string;
+      approverRemarks?: string;
+    },
+    @Req() req: any,
   ) {
+    const approverId = body.approverId || body.reviewerId || req?.user?.userId || req?.user?.id;
+    const approverName = body.approverName || body.reviewerName || req?.user?.name || 'Approver';
+    const approverDesignation = body.approverDesignation || body.reviewerDesignation || 'Quality Manager / Approver';
+    const remarks = body.approverRemarks || body.remarks;
+
     return this.calibrationService.approve(
       id,
-      { id: body.reviewerId, name: body.reviewerName, designation: body.reviewerDesignation },
+      { id: approverId, name: approverName, designation: approverDesignation },
       body.signature,
+      remarks,
     );
   }
 
@@ -117,13 +181,37 @@ export class CalibrationController {
   @RequirePermission('calibration_approvals', 'edit')
   async reject(
     @Param('id') id: string,
-    @Body() body: { reviewerId: string; reviewerName: string; rejectionReason: string },
+    @Body()
+    body: {
+      reviewerId?: string;
+      userId?: string;
+      reviewerName?: string;
+      userName?: string;
+      rejectionReason: string;
+    },
+    @Req() req: any,
   ) {
+    const userId = body.reviewerId || body.userId || req?.user?.userId || req?.user?.id;
+    const userName = body.reviewerName || body.userName || req?.user?.name || 'Reviewer / Approver';
+
     return this.calibrationService.reject(
       id,
-      { id: body.reviewerId, name: body.reviewerName },
+      { id: userId, name: userName },
       body.rejectionReason,
     );
+  }
+
+  @Get('approval-stats')
+  async getApprovalStats(
+    @Req() req: any,
+    @Query('companyId') companyId?: string,
+    @Query('userId') userId?: string,
+  ) {
+    const isSuperAdmin = !!req?.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req?.user?.companyId) : req?.user?.companyId;
+    const effectiveUserId = isSuperAdmin ? (userId || req?.user?.userId || req?.user?.id) : (req?.user?.userId || req?.user?.id);
+
+    return this.calibrationService.getApprovalStats(effectiveUserId, effectiveCompanyId);
   }
 
   @Get('stats/:userId')
@@ -184,10 +272,14 @@ export class CalibrationController {
   @RequirePermission('calibrations', 'delete')
   async remove(
     @Param('id') id: string,
+    @Req() req: any,
     @Query('resequence') resequence?: string,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
   ) {
     const shouldResequence = resequence === 'true' || resequence === '1';
-    return this.calibrationService.remove(id, shouldResequence);
+    const reason = bodyReason || queryReason;
+    return this.calibrationService.remove(id, shouldResequence, req.user, reason);
   }
 
   /**

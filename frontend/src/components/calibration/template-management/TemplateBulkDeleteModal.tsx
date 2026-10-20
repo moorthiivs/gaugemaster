@@ -18,7 +18,9 @@ import {
   FileSpreadsheet,
   Info,
   FileText,
+  ArchiveRestore,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { bulkDeleteTemplates } from "@/lib/templateActions";
 import { CalibrationTemplate } from "@/types/template";
@@ -47,6 +49,7 @@ export function TemplateBulkDeleteModal({
 }: TemplateBulkDeleteModalProps) {
   const [loading, setLoading] = useState(false);
   const [forceConfirmed, setForceConfirmed] = useState(false);
+  const [reason, setReason] = useState("");
   const [inUseError, setInUseError] = useState<{
     message: string;
     inUseTemplates?: { id: string; name: string; calibrationCount: number }[];
@@ -95,10 +98,10 @@ export function TemplateBulkDeleteModal({
 
     try {
       const idsToDelete = deletableTemplates.map((t) => t.id);
-      const res = await bulkDeleteTemplates(idsToDelete, forceConfirmed);
+      const res = await bulkDeleteTemplates(idsToDelete, forceConfirmed, reason.trim() || undefined);
 
       toast.success(
-        res.message || `${deletableTemplates.length} template(s) deleted successfully!`,
+        res.message || `${deletableTemplates.length} template(s) moved to Trash!`,
       );
       onOpenChange(false);
       onSuccess();
@@ -125,6 +128,7 @@ export function TemplateBulkDeleteModal({
     if (!loading) {
       setInUseError(null);
       setForceConfirmed(false);
+      setReason("");
       onOpenChange(isOpen);
     }
   };
@@ -147,24 +151,24 @@ export function TemplateBulkDeleteModal({
   return (
     <Dialog open={open} onOpenChange={handleModalClose}>
       <DialogContent className="sm:max-w-2xl max-w-[95vw] p-0 overflow-hidden border-border/80 shadow-2xl rounded-2xl">
-        {/* Top Danger Header */}
-        <div className="bg-destructive/[0.04] dark:bg-destructive/[0.08] border-b border-destructive/15 px-6 py-5">
+        {/* Top Header */}
+        <div className="bg-amber-500/[0.05] dark:bg-amber-500/[0.1] border-b border-amber-500/20 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3.5">
-              <div className="p-2.5 rounded-xl bg-destructive/10 text-destructive border border-destructive/20 shrink-0 mt-0.5 shadow-2xs">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 shrink-0 mt-0.5 shadow-2xs">
                 <Trash2 className="h-5 w-5" />
               </div>
               <div className="space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
                   <DialogTitle className="text-base sm:text-lg font-bold text-foreground tracking-tight">
-                    Bulk Delete Templates
+                    Move Templates to Trash
                   </DialogTitle>
-                  <Badge variant="outline" className="text-2xs bg-destructive/10 text-destructive border-destructive/30 font-semibold px-2">
-                    Irreversible Action
+                  <Badge variant="outline" className="text-2xs bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 font-semibold px-2">
+                    Recovery Supported
                   </Badge>
                 </div>
                 <DialogDescription className="text-xs text-muted-foreground leading-relaxed">
-                  Review the selected calibration templates below before permanently removing them from your library.
+                  Review the selected calibration templates below. They will be moved to the Trash (Recovery Center) and can be restored whenever needed.
                 </DialogDescription>
               </div>
             </div>
@@ -337,6 +341,20 @@ export function TemplateBulkDeleteModal({
               Existing calibration certificates created with these templates will preserve all recorded calibration data and historical records.
             </span>
           </div>
+
+          {/* Deletion Reason */}
+          <div className="space-y-1.5 p-3 rounded-lg border bg-muted/20">
+            <label htmlFor="bulk-template-reason" className="text-xs font-medium text-foreground">
+              Reason for deletion (optional)
+            </label>
+            <Input
+              id="bulk-template-reason"
+              placeholder="e.g. Batch retirement of legacy templates"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="text-xs h-8 bg-background"
+            />
+          </div>
         </div>
 
         <DialogFooter className="bg-muted/20 border-t border-border/60 px-6 py-3.5 flex flex-row items-center justify-end gap-2.5">
@@ -359,17 +377,17 @@ export function TemplateBulkDeleteModal({
               deletableTemplates.length === 0 ||
               (!!inUseError && !forceConfirmed)
             }
-            className="gap-1.5 text-xs h-8 px-4 font-semibold shadow-xs"
+            className="gap-1.5 text-xs h-8 px-4 font-semibold shadow-xs bg-amber-600 hover:bg-amber-700 text-white flex items-center"
           >
             {loading ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Deleting...
+                Moving to Trash...
               </>
             ) : (
               <>
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete {deletableTemplates.length} Template(s)
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                Move {deletableTemplates.length} Template(s) to Trash
               </>
             )}
           </Button>

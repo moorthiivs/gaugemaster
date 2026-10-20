@@ -472,7 +472,7 @@ const Index = () => {
   });
   const [activePreset, setActivePreset] = useState<string | null>("This Month");
   const [itemStatus, setItemStatus] = useState<string>("All");
-  const [category, setCategory] = useState<string>("Working"); // Default to "Working" Gauges
+  const [category, setCategory] = useState<string>("All"); // Default to All Inventory (Working + Ref Standards)
   const [calibrationStatus, setCalibrationStatus] = useState<
     string | undefined
   >(undefined);
@@ -488,7 +488,7 @@ const Index = () => {
     if (location && location !== "All") count++;
     if (itemStatus && itemStatus !== "All") count++;
     if (calibrationStatus && calibrationStatus !== "All") count++;
-    if (category && category !== "Working") count++;
+    if (category && category !== "All") count++;
     return count;
   }, [startDate, endDate, location, itemStatus, calibrationStatus, category]);
 
@@ -691,7 +691,7 @@ const Index = () => {
     setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     setActivePreset("This Month");
     setItemStatus("All");
-    setCategory("Working");
+    setCategory("All");
     setCalibrationStatus(undefined);
     setLocation(undefined);
   };
@@ -1221,7 +1221,36 @@ const Index = () => {
         {loading ? (
           <Skeleton className="h-[360px] rounded-xl" />
         ) : (
-          <DashboardChart data={chartData} />
+          <DashboardChart
+            data={chartData}
+            deviceTypeData={data?.workloadByDeviceType}
+            dateRangeLabel={dateRangeLabel}
+            onCategoryClick={(categoryName, type) => {
+              const params = new URLSearchParams();
+              if (location && location !== "All") params.append("location", location);
+              if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+
+              if (categoryName === "GAUGES") {
+                params.append("is_reference_standard", "false");
+                params.append("device_type", "Gauge");
+              } else if (categoryName === "EXTERNAL/REF STANDARDS") {
+                params.append("is_reference_standard", "true");
+              } else if (categoryName === "INSTRUMENTS") {
+                params.append("is_reference_standard", "false");
+                params.append("device_type", "Instrument");
+              }
+
+              if (type === "actual") {
+                if (startDate) params.append("calibrated_in_range_start", format(startDate, "yyyy-MM-dd"));
+                if (endDate) params.append("calibrated_in_range_end", format(endDate, "yyyy-MM-dd"));
+              } else {
+                if (startDate) params.append("due_date_start", format(startDate, "yyyy-MM-dd"));
+                if (endDate) params.append("due_date_end", format(endDate, "yyyy-MM-dd"));
+              }
+
+              navigate(`/instruments?${params.toString()}`);
+            }}
+          />
         )}
         {loading ? (
           <Skeleton className="h-[360px] rounded-xl" />

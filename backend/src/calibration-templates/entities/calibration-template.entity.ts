@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
@@ -144,9 +145,24 @@ export class CalibrationTemplate {
   @Column({ nullable: true })
   companyId?: string;
 
+  @Column({ type: 'int', default: 1 })
+  version?: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
 }

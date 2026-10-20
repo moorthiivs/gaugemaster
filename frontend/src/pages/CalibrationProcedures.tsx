@@ -36,9 +36,12 @@ import {
   Eye,
   Edit2,
   Trash2,
+  ArchiveRestore,
   History,
   FileText,
   Image as ImageIcon,
+  FileSpreadsheet,
+  Download,
   Upload,
   Clock,
   User,
@@ -58,6 +61,7 @@ import {
 } from "@/lib/documentationActions";
 import { DocumentViewerModal } from "@/components/documentation/DocumentViewerModal";
 import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
+import { isExcelFile, downloadFileFromUrl } from "@/lib/tokenStorage";
 
 const COMMON_PROCESSES = [
   "Calibration of Vernier Caliper",
@@ -108,6 +112,7 @@ export default function CalibrationProcedures() {
 
   // Delete State
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Viewer Modal State
   const [viewerDoc, setViewerDoc] = useState<{
@@ -251,9 +256,10 @@ export default function CalibrationProcedures() {
   const handleDeleteConfirm = async () => {
     if (!deletingId) return;
     try {
-      await deleteCalibrationProcedure(deletingId);
-      toast.success("Calibration procedure deleted successfully");
+      await deleteCalibrationProcedure(deletingId, deleteReason.trim() || undefined);
+      toast.success("Calibration procedure moved to Trash");
       setDeletingId(null);
+      setDeleteReason("");
       fetchProcedures();
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to delete procedure");
@@ -265,6 +271,11 @@ export default function CalibrationProcedures() {
     if (!item.file_path) {
       toast.error("No document uploaded for this procedure");
       return;
+    }
+    const isExcel = isExcelFile(item.file_path, item.document_name, item.file_type);
+    if (isExcel) {
+      downloadFileFromUrl(item.file_path, item.document_name);
+      toast.success(`Downloading ${item.document_name || "procedure.xlsx"} to view in Excel`);
     }
     setViewerDoc({
       isOpen: true,
@@ -339,12 +350,17 @@ export default function CalibrationProcedures() {
         header: "Document",
         cell: ({ row }) => {
           const proc = row.original;
+          const isExcel = isExcelFile(proc.file_path, proc.document_name, proc.file_type);
           const isPdf =
-            proc.file_type?.toLowerCase().includes("pdf") ||
-            proc.document_name?.toLowerCase().endsWith(".pdf");
+            !isExcel &&
+            (proc.file_type?.toLowerCase().includes("pdf") ||
+              proc.document_name?.toLowerCase().endsWith(".pdf"));
+
           return proc.document_name ? (
             <div className="flex items-center gap-2">
-              {isPdf ? (
+              {isExcel ? (
+                <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : isPdf ? (
                 <FileText className="h-4 w-4 text-red-500 shrink-0" />
               ) : (
                 <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
@@ -352,6 +368,11 @@ export default function CalibrationProcedures() {
               <span className="text-xs font-medium truncate max-w-[180px]" title={proc.document_name}>
                 {proc.document_name}
               </span>
+              {isExcel && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-mono">
+                  EXCEL
+                </Badge>
+              )}
             </div>
           ) : (
             <span className="text-xs text-muted-foreground italic">No document</span>
@@ -394,18 +415,23 @@ export default function CalibrationProcedures() {
         meta: { align: "right" },
         cell: ({ row }) => {
           const proc = row.original;
+          const isExcel = isExcelFile(proc.file_path, proc.document_name, proc.file_type);
           return (
             <div className="flex items-center justify-end gap-1">
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8 px-2.5 text-xs gap-1 hover:text-primary hover:border-primary/50"
+                className={`h-8 px-2.5 text-xs gap-1 ${
+                  isExcel
+                    ? "text-emerald-600 hover:text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                    : "hover:text-primary hover:border-primary/50"
+                }`}
                 onClick={() => handleView(proc)}
                 disabled={!proc.file_path}
-                title="View Document"
+                title={isExcel ? "Download Excel to view in local system" : "View Document inside application"}
               >
-                <Eye className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">View</span>
+                {isExcel ? <Download className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{isExcel ? "Download" : "View"}</span>
               </Button>
               {canAccess("calibration_procedures", "edit") && (
                 <Button
@@ -566,14 +592,14 @@ export default function CalibrationProcedures() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">
-                Upload Procedure Document (PDF or Image)
+                Upload Procedure Document (PDF, Image, or Excel)
               </Label>
               <div className="border-2 border-dashed rounded-lg p-4 text-center hover:bg-muted/40 transition-colors">
                 <input
                   type="file"
                   id="proc-file-upload"
                   className="hidden"
-                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       setCreateFile(e.target.files[0]);
@@ -595,10 +621,10 @@ export default function CalibrationProcedures() {
                   ) : (
                     <>
                       <span className="text-xs font-medium text-foreground">
-                        Click to select or drop PDF / image
+                        Click to select or drop PDF, image, or Excel spreadsheet
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        Supported: PDF, PNG, JPG, WebP, SVG (Max 25MB)
+                        Supported: PDF, PNG, JPG, WebP, SVG, XLSX, XLS, CSV (Max 25MB)
                       </span>
                     </>
                   )}
@@ -691,14 +717,14 @@ export default function CalibrationProcedures() {
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">
-                Upload New Document Revision (Optional)
+                Upload New Document Revision (Optional - PDF, Image, or Excel)
               </Label>
               <div className="border border-dashed rounded-lg p-3 text-center hover:bg-muted/40 transition-colors">
                 <input
                   type="file"
                   id="edit-proc-file-upload"
                   className="hidden"
-                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
                       setEditFile(e.target.files[0]);
@@ -711,7 +737,7 @@ export default function CalibrationProcedures() {
                     <span className="text-xs font-semibold text-primary">{editFile.name} (Will increment to v{(editingItem?.version || 1) + 1})</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement
+                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement (PDF, Image, or Excel)
                     </span>
                   )}
                 </label>
@@ -746,22 +772,41 @@ export default function CalibrationProcedures() {
       </Dialog>
 
       {/* DELETE CONFIRMATION */}
-      <AlertDialog open={!!deletingId} onOpenChange={(open) => !open && setDeletingId(null)}>
+      <AlertDialog open={!!deletingId} onOpenChange={(open) => { if (!open) { setDeletingId(null); setDeleteReason(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Calibration Procedure?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this calibration procedure and all its revision history?
-              This action cannot be undone.
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <Trash2 className="w-5 h-5" />
+              Move Calibration Procedure to Trash?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-1 text-xs leading-relaxed">
+              <span>
+                Are you sure you want to delete this calibration procedure? It will be moved to the Trash (Recovery Center) and can be restored at any time.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="py-1 space-y-1">
+            <Label htmlFor="proc-delete-reason" className="text-xs text-muted-foreground">
+              Reason for deletion (optional)
+            </Label>
+            <Input
+              id="proc-delete-reason"
+              placeholder="e.g. Superseded by new SOP, duplicate procedure"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
+
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setDeleteReason("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteConfirm}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-1.5"
             >
-              Delete Procedure
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Move Procedure to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

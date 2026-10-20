@@ -108,16 +108,30 @@ STEP 2: IF VALID, GENERATE COMPLETE VISUAL CANVAS TEMPLATE JSON; IF UNRELATED/IN
 CRITICAL RULES:
 
 1. MANDATORY DOCUMENT VALIDITY AUDIT (AUDIT FIRST):
-   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data OR a valid calibration template format / measurement grid skeleton.
-   - GENUINE CALIBRATION DOCUMENTS INCLUDE: Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables, OR blank calibration template formats / Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+   - First, strictly inspect and audit whether the uploaded file is a legitimate calibration document containing actual calibration measurement data, a valid calibration template format / measurement grid skeleton, OR a metrology specification & tolerance reference table.
+   - GENUINE CALIBRATION & METROLOGY DOCUMENTS INCLUDE:
+     a) Official calibration certificates, test reports, inspection data sheets, dimensional inspection reports, engineering drawings with explicit tolerance & measurement tables.
+     b) Blank calibration template formats or Excel measurement sheets with calibration column headers (e.g. SL.NO, SPECIFICATION, Nominal, Actual, Readings, Trials, X-X, Y-Y, Average, Deviation, Judgement).
+     c) SPECIFICATION & TOLERANCE TABLES, MAXIMUM PERMISSIBLE ERROR (MPE) TABLES, ACCURACY LIMITS, REPEATABILITY TABLES, AND CATALOGUE / STANDARD REFERENCE TABLES:
+        - Examples: Maximum Permissible Error (MPE) in Measurement tables (e.g. Mitutoyo Catalogue E2008, Starrett, Fowler, ISO/IS/DIN/JIS standards), error allowable limits, repeatability limits, new vs recalibration tolerance limits.
+        - In metrology and calibration laboratories, specification/tolerance/MPE tables are essential reference tables that define calibration acceptance limits and are frequently added to calibration certificates and templates.
+        - NEVER REJECT THESE AS INVALID! If an uploaded document or image contains a Maximum Permissible Error (MPE) table, tolerance table, error limits table, or specification reference table:
+          * Set "isValidCalibrationDocument": true!
+          * Set "detectedDocumentType": "specification_tolerance_table".
+          * Extract all columns and rows from the table verbatim into a "table_grid" block!
+          * Map the table columns accurately (e.g. Range (mm), Error Parameter / Criteria, New (mm), Recalib (mm), or whatever headers appear).
+          * Assign semantic roles (e.g. "SPECIFICATION", "TOLERANCE", "LOWER_LIMIT", "UPPER_LIMIT", "METADATA").
+          * Populate every row with the real numeric/text values from the table.
+          * Include any notes or catalogue references (e.g. "Mitutoyo Catalogue (E2008) referred") in the block title, description, or notes!
    - SPECIAL RULE FOR BLANK TEMPLATE FORMATS & SKELETONS:
      * If an uploaded sheet or image contains valid calibration column headers (such as Specification, Nominal, Readings/Trials like X-X, Y-Y, Average, Error/Deviation, Judgement) but the rows are empty or only contain pre-calibration/receipt condition headings:
      * DO NOT REJECT THIS DOCUMENT! It is a genuine calibration template format.
      * Recognize it as a valid calibration document ("isValidCalibrationDocument": true).
      * Extract all calibration columns verbatim with their semantic roles and formulas (e.g. Average formula = AVERAGE(x_top, x_bottom, y_top, y_bottom), Deviation formula = average - nominal).
      * Generate 3 to 5 realistic sample gauge calibration rows (e.g. "SL.NO: 1, SPECIFICATION: Gauge Diameter Ø25.000 mm, nominal: 25.000") so the user receives a complete, functional template ready for use.
-   - INVALID DOCUMENTS INCLUDE: Company logos, brand watermarks, avatars, photos of instruments or people with no measurement tables, marketing graphics, invoices, receipts, non-calibration paperwork, or files with zero calibration columns.
-   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION DOCUMENT (has zero calibration tables/columns):
+   - INVALID DOCUMENTS INCLUDE: Only non-technical, non-metrological files with ZERO tables, ZERO tolerances, and ZERO measurement specs — such as company logos, brand watermarks, avatars, photos of people or vehicles, marketing graphics, retail receipts, or shipping invoices.
+   - Any document or image containing a tabular layout of engineering measurements, tolerances, permissible errors, or calibration specifications is a VALID document and MUST NOT be rejected!
+   - IF THE UPLOADED DOCUMENT IS NOT A CALIBRATION OR SPECIFICATION DOCUMENT (completely unrelated file with zero tables/specs):
      * Set "isValidCalibrationDocument": false
      * Provide "validationAudit": {
          "hasCalibrationData": false,
@@ -1347,6 +1361,9 @@ export class AiService {
     parts.push({
       text: 'Special Instruction for Format Sheets & Skeletons: If the uploaded file is a blank or partially filled calibration template format or sheet skeleton with measurement column headers (e.g., SL.NO, SPECIFICATION, X-X, Y-Y, Average, Deviation, Judgement), DO NOT reject it! Mark isValidCalibrationDocument: true, extract all columns and formulas, and generate 3 to 5 realistic sample calibration measurement parameter rows.',
     });
+    parts.push({
+      text: 'Special Instruction for Specification, Tolerance & MPE Tables: If the uploaded file or image contains a Maximum Permissible Error (MPE) table, tolerance reference table, manufacturer catalogue specification (such as Mitutoyo Catalogue E2008, Starrett, Fowler, etc.), standard accuracy limits, or repeatability reference table, DO NOT reject it! Mark isValidCalibrationDocument: true, set detectedDocumentType: "specification_tolerance_table", and extract all headers, columns, and data rows verbatim into a structured table_grid block so the user can add it directly to their calibration template.',
+    });
 
     if (dto.documentType === 'image' || dto.documentType === 'pdf') {
       if (!dto.base64) {
@@ -1393,19 +1410,44 @@ export class AiService {
       else if (cleaned.startsWith('```')) cleaned = cleaned.replace(/^```\s*/, '').replace(/```\s*$/, '');
       const parsed = JSON.parse(cleaned);
 
+      // Check whether AI recognized a specification/tolerance/MPE table
+      const docTypeLower = String(parsed.validationAudit?.detectedDocumentType || '').toLowerCase();
+      const rejectionLower = String(parsed.validationAudit?.rejectionReason || '').toLowerCase();
+      const isSpecOrToleranceTable =
+        docTypeLower.includes('tolerance') ||
+        docTypeLower.includes('specification') ||
+        docTypeLower.includes('mpe') ||
+        docTypeLower.includes('catalogue') ||
+        docTypeLower.includes('standard') ||
+        docTypeLower.includes('repeatability') ||
+        rejectionLower.includes('permissible error') ||
+        rejectionLower.includes('tolerance reference') ||
+        rejectionLower.includes('specification and tolerance') ||
+        rejectionLower.includes('mpe');
+
       // Audit check from AI
       if (parsed.isValidCalibrationDocument === false) {
-        isValidDoc = false;
-        validationAudit = parsed.validationAudit || {
-          hasCalibrationData: false,
-          hasMeasurementTables: false,
-          detectedDocumentType: 'unrelated_document',
-          rejectionReason: 'The uploaded file does not contain any calibration measurement tables, nominals, or test points.',
-          metrologySummary: 'No calibration tables or test points detected.',
-        };
+        if (isSpecOrToleranceTable && Array.isArray(parsed.blocks) && parsed.blocks.length > 0) {
+          isValidDoc = true;
+          parsed.isValidCalibrationDocument = true;
+          validationAudit = null;
+        } else {
+          isValidDoc = false;
+          validationAudit = parsed.validationAudit || {
+            hasCalibrationData: false,
+            hasMeasurementTables: false,
+            detectedDocumentType: isSpecOrToleranceTable ? 'specification_tolerance_table' : 'unrelated_document',
+            rejectionReason: isSpecOrToleranceTable
+              ? 'Specification or tolerance table detected. You can extract this table directly into your template.'
+              : 'The uploaded file does not contain any calibration measurement tables, nominals, or test points.',
+            metrologySummary: isSpecOrToleranceTable
+              ? 'Specification limits and tolerance reference table.'
+              : 'No calibration tables or test points detected.',
+          };
+        }
       } else if (parsed.validationAudit) {
         validationAudit = parsed.validationAudit;
-        if (parsed.validationAudit.hasCalibrationData === false && parsed.validationAudit.hasMeasurementTables === false) {
+        if (parsed.validationAudit.hasCalibrationData === false && parsed.validationAudit.hasMeasurementTables === false && !isSpecOrToleranceTable) {
           isValidDoc = false;
         }
       }

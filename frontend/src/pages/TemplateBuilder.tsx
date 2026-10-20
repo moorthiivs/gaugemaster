@@ -34,6 +34,7 @@ import {
   Search,
   Edit,
   Trash2,
+  ArchiveRestore,
   Copy,
   Layers,
   Ruler,
@@ -51,6 +52,7 @@ import {
   List,
   ArrowUpDown,
   Eye,
+  LayoutDashboard,
 } from "lucide-react";
 import { format } from "date-fns";
 import { CALIBRATION_TYPES } from "@/types/calibration";
@@ -154,13 +156,14 @@ export default function TemplateBuilder() {
 
   // Delete Dialog State
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
 
-  // View Mode: "card" | "table"
+  // View Mode: "card" | "table" (defaults to table for full page table view)
   const [viewMode, setViewMode] = useState<"card" | "table">(() => {
     try {
-      return (localStorage.getItem("gm_template_view_mode") as "card" | "table") || "card";
+      return (localStorage.getItem("gm_template_view_mode") as "card" | "table") || "table";
     } catch {
-      return "card";
+      return "table";
     }
   });
 
@@ -171,6 +174,26 @@ export default function TemplateBuilder() {
     } catch {
       // ignore
     }
+  };
+
+  // Category / Dashboard filter toggle state (persisted, default false for full page view)
+  const [showCategories, setShowCategories] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem("gaugemaster_template_builder_show_categories");
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleCategories = () => {
+    setShowCategories((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("gaugemaster_template_builder_show_categories", String(next));
+      } catch {}
+      return next;
+    });
   };
 
   // Pagination State
@@ -286,8 +309,8 @@ export default function TemplateBuilder() {
   const handleDeleteTemplate = async () => {
     if (!deleteId) return;
     try {
-      await deleteTemplate(deleteId);
-      toast.success("Template deleted successfully");
+      await deleteTemplate(deleteId, deleteReason.trim() || undefined);
+      toast.success("Template moved to Trash");
       setTemplates((prev) => prev.filter((t) => t.id !== deleteId));
       setSelectedIds((prev) => prev.filter((id) => id !== deleteId));
     } catch (err: any) {
@@ -295,6 +318,7 @@ export default function TemplateBuilder() {
       toast.error(msg);
     } finally {
       setDeleteId(null);
+      setDeleteReason("");
     }
   };
 
@@ -618,19 +642,35 @@ export default function TemplateBuilder() {
   );
 
   return (
-    <div className="space-y-6 max-w-[1600px] mx-auto pb-10">
+    <div className="space-y-4 w-full pb-10">
       {/* Page Header */}
       <PageHeader
         title="Calibration Template Builder"
         description="Create, manage, export, and import reusable calibration formats across organizations with automated metrology calculation rules."
         actions={
           <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant={showCategories ? "secondary" : "outline"}
+              size="sm"
+              onClick={handleToggleCategories}
+              className="gap-1.5 text-xs h-8 px-3 font-semibold transition-colors shadow-2xs"
+              title={showCategories ? "Hide category filter bar" : "Show category filter bar"}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>{showCategories ? "Hide Dashboard" : "Show Dashboard"}</span>
+              {!showCategories && (
+                <Badge variant="secondary" className="ml-1 text-[10px] font-mono px-1.5 py-0 h-4 bg-muted text-muted-foreground">
+                  {templates.length}
+                </Badge>
+              )}
+            </Button>
+
             {(canAccess("template_import", "create") || canAccess("template_import", "view")) && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setImportModalOpen(true)}
-                className="gap-1.5 text-xs h-8 px-3 font-semibold"
+                className="gap-1.5 text-xs h-8 px-3 font-semibold shadow-2xs"
               >
                 <Upload className="w-3.5 h-3.5 text-primary" />
                 Import
@@ -642,7 +682,7 @@ export default function TemplateBuilder() {
                 variant="outline"
                 size="sm"
                 onClick={() => setExportModalOpen(true)}
-                className="gap-1.5 text-xs h-8 px-3 font-semibold"
+                className="gap-1.5 text-xs h-8 px-3 font-semibold shadow-2xs"
               >
                 <Download className="w-3.5 h-3.5 text-primary" />
                 Export
@@ -680,61 +720,63 @@ export default function TemplateBuilder() {
         }
       />
 
-      {/* Category Filter Tabs */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">
-        <button
-          onClick={() => setSelectedType("All")}
-          className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 border ${
-            selectedType === "All"
-              ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
-              : "bg-card/80 hover:bg-accent/80 text-muted-foreground hover:text-foreground border-border/70"
-          }`}
-        >
-          <span>All Categories</span>
-          <span
-            className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold transition-colors ${
+      {/* Category Filter Tabs (Collapsible) */}
+      {showCategories && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin animate-in fade-in-50 duration-200">
+          <button
+            onClick={() => setSelectedType("All")}
+            className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 border ${
               selectedType === "All"
-                ? "bg-primary-foreground/20 text-primary-foreground"
-                : "bg-muted text-muted-foreground group-hover:text-foreground"
+                ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                : "bg-card/80 hover:bg-accent/80 text-muted-foreground hover:text-foreground border-border/70"
             }`}
           >
-            {templates.length}
-          </span>
-        </button>
-
-        {CALIBRATION_TYPES.map((ct) => {
-          const IconComp = TYPE_ICONS[ct.type] || Layers;
-          const count = templates.filter((t) => t.calibration_type === ct.type).length;
-          const isSelected = selectedType === ct.type;
-          return (
-            <button
-              key={ct.type}
-              onClick={() => setSelectedType(ct.type)}
-              className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 border ${
-                isSelected
-                  ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
-                  : "bg-card/80 hover:bg-accent/80 text-muted-foreground hover:text-foreground border-border/70"
+            <span>All Categories</span>
+            <span
+              className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold transition-colors ${
+                selectedType === "All"
+                  ? "bg-primary-foreground/20 text-primary-foreground"
+                  : "bg-muted text-muted-foreground group-hover:text-foreground"
               }`}
             >
-              <IconComp
-                className={`w-3.5 h-3.5 ${
-                  isSelected ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary"
-                }`}
-              />
-              <span>{ct.label}</span>
-              <span
-                className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold transition-colors ${
+              {templates.length}
+            </span>
+          </button>
+
+          {CALIBRATION_TYPES.map((ct) => {
+            const IconComp = TYPE_ICONS[ct.type] || Layers;
+            const count = templates.filter((t) => t.calibration_type === ct.type).length;
+            const isSelected = selectedType === ct.type;
+            return (
+              <button
+                key={ct.type}
+                onClick={() => setSelectedType(ct.type)}
+                className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 border ${
                   isSelected
-                    ? "bg-primary-foreground/20 text-primary-foreground"
-                    : "bg-muted text-muted-foreground group-hover:text-foreground"
+                    ? "bg-primary text-primary-foreground border-primary shadow-xs font-semibold"
+                    : "bg-card/80 hover:bg-accent/80 text-muted-foreground hover:text-foreground border-border/70"
                 }`}
               >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                <IconComp
+                  className={`w-3.5 h-3.5 ${
+                    isSelected ? "text-primary-foreground" : "text-muted-foreground group-hover:text-primary"
+                  }`}
+                />
+                <span>{ct.label}</span>
+                <span
+                  className={`px-1.5 py-0.5 text-[10px] rounded-full font-bold transition-colors ${
+                    isSelected
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-muted text-muted-foreground group-hover:text-foreground"
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Toolbar & Search Bar */}
       <div className="bg-card/80 dark:bg-card/40 backdrop-blur-md border border-border/80 rounded-xl p-3 shadow-xs flex items-center justify-between gap-4 flex-wrap">
@@ -780,6 +822,21 @@ export default function TemplateBuilder() {
                   Bulk Delete
                 </Button>
               )}
+            </div>
+          )}
+
+          {!showCategories && selectedType !== "All" && (
+            <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 px-2.5 py-1 rounded-lg text-xs shrink-0 animate-in fade-in">
+              <span className="text-muted-foreground text-[11px]">Category:</span>
+              <span className="font-semibold text-primary capitalize">{selectedType}</span>
+              <button
+                type="button"
+                onClick={() => setSelectedType("All")}
+                className="ml-0.5 text-muted-foreground hover:text-foreground rounded p-0.5 hover:bg-muted"
+                title="Reset to all categories"
+              >
+                <X className="w-3 h-3" />
+              </button>
             </div>
           )}
 
@@ -1249,21 +1306,37 @@ export default function TemplateBuilder() {
       )}
 
       {/* Delete Confirmation Alert */}
-      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => { if (!open) { setDeleteId(null); setDeleteReason(""); } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Calibration Template?</AlertDialogTitle>
-            <AlertDialogDescription className="text-xs leading-relaxed">
-              Are you sure you want to delete this template? Existing calibrations created using this template will not be affected.
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <Trash2 className="w-5 h-5" />
+              Move Template to Trash?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs leading-relaxed space-y-2 pt-1">
+              <span>
+                Are you sure you want to move this template to the Trash (Recovery Center)? It can be restored at any time. Existing calibrations created using this template will not be affected.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="py-1 space-y-1">
+            <label htmlFor="tpl-delete-reason" className="text-xs text-muted-foreground">Reason for deletion (optional)</label>
+            <Input
+              id="tpl-delete-reason"
+              placeholder="e.g. Obsolete layout, replaced by revision B"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
           <AlertDialogFooter>
-            <AlertDialogCancel className="text-xs">Cancel</AlertDialogCancel>
+            <AlertDialogCancel className="text-xs" onClick={() => setDeleteReason("")}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground text-xs"
+              className="bg-red-600 hover:bg-red-700 text-white text-xs font-semibold flex items-center gap-1.5"
               onClick={handleDeleteTemplate}
             >
-              Delete Template
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Move Template to Trash
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

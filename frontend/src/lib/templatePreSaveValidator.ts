@@ -211,9 +211,9 @@ export function validateTemplatePreSave(blocks: CanvasBlock[]): PreSaveAuditResu
     const judgementCol = columns.find(c => c.role === "JUDGEMENT" || c.semanticRole === "JUDGEMENT" || c.type === "status" || /judgement/i.test(c.label));
 
     if (judgementCol && judgementCol.formula) {
-      const sampleNominal = rows[0]?.nominal ?? 35.035;
-      const sampleLower = rows[0]?.customFields?.lowerLimit ?? (sampleNominal - 0.02);
-      const sampleUpper = rows[0]?.customFields?.upperLimit ?? (sampleNominal - 0.01);
+      const sampleNominal = Number(rows[0]?.nominal ?? 35.035);
+      const sampleLower = Number(rows[0]?.customFields?.lowerLimit ?? (sampleNominal - 0.02));
+      const sampleUpper = Number(rows[0]?.customFields?.upperLimit ?? (sampleNominal - 0.01));
       const precision = judgementCol.decimal_places ?? table.decimal_places ?? 3;
 
       const boundaryReport = runMetrologyBoundaryTests({

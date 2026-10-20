@@ -7,6 +7,7 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { join } from 'path';
 import * as express from 'express';
+import compression from 'compression';
 import type { Request, Response, NextFunction } from 'express';
 import { uploadsAuthMiddleware } from './uploads/uploads-auth.middleware';
 
@@ -16,6 +17,13 @@ process.env.TZ = 'UTC';
 
 async function bootstrap() { 
   const app = await NestFactory.create(AppModule);
+
+  // Enable HTTP response compression (gzip / deflate) for payloads >= 1KB
+  app.use(
+    compression({
+      threshold: 1024,
+    }),
+  );
 
   // Increase payload limit for bulk uploads and multimodal certificate processing
   app.use(express.json({ limit: '50mb' }));

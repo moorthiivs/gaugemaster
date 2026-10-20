@@ -170,11 +170,15 @@ export class GaugeDiagramsService {
     return updated;
   }
 
-  async remove(id: string, companyId?: string) {
+  async remove(id: string, companyId?: string, user?: any, reason?: string) {
     const diagram = await this.findOne(id, companyId);
-    await this.historyRepo.delete({ diagram_id: id });
-    await this.diagramRepo.remove(diagram);
-    return { success: true, message: 'Gauge diagram deleted successfully' };
+    await this.diagramRepo.update(id, {
+      deleted_at: new Date(),
+      deleted_by_id: user?.id,
+      deleted_by_name: user?.name || user?.email || 'User',
+      deletion_reason: reason || null,
+    });
+    return { success: true, message: 'Gauge diagram moved to Recovery Center' };
   }
 
   async getHistory(diagramId: string, companyId?: string) {

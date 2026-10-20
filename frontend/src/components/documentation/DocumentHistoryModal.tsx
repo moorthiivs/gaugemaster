@@ -16,7 +16,8 @@ import {
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { History, Eye, FileText, Image as ImageIcon, Calendar, User, Clock } from "lucide-react";
+import { History, Eye, FileText, Image as ImageIcon, FileSpreadsheet, Download, Calendar, User, Clock } from "lucide-react";
+import { isExcelFile, downloadFileFromUrl } from "@/lib/tokenStorage";
 
 interface HistoryItem {
   id: string;
@@ -89,7 +90,7 @@ export function DocumentHistoryModal({
                 <TableHead className="font-semibold">Action / Revision Details</TableHead>
                 <TableHead className="font-semibold">Updated By</TableHead>
                 <TableHead className="font-semibold">Date & Time</TableHead>
-                <TableHead className="text-right font-semibold">Document</TableHead>
+                <TableHead className="text-right font-semibold">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -107,9 +108,11 @@ export function DocumentHistoryModal({
                 </TableRow>
               ) : (
                 historyList.map((entry) => {
+                  const isExcel = isExcelFile(entry.file_path, entry.document_name, entry.file_type);
                   const isPdf =
-                    entry.file_type?.toLowerCase().includes("pdf") ||
-                    entry.document_name?.toLowerCase().endsWith(".pdf");
+                    !isExcel &&
+                    (entry.file_type?.toLowerCase().includes("pdf") ||
+                      entry.document_name?.toLowerCase().endsWith(".pdf"));
 
                   return (
                     <TableRow key={entry.id} className="hover:bg-muted/30">
@@ -120,15 +123,24 @@ export function DocumentHistoryModal({
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          {isPdf ? (
+                          {isExcel ? (
+                            <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          ) : isPdf ? (
                             <FileText className="h-4 w-4 text-red-500 shrink-0" />
                           ) : (
                             <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
                           )}
                           <div className="flex flex-col">
-                            <span className="text-xs font-medium max-w-[220px] truncate" title={entry.document_name}>
-                              {entry.document_name || "No document"}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-medium max-w-[200px] truncate" title={entry.document_name}>
+                                {entry.document_name || "No document"}
+                              </span>
+                              {isExcel && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-mono">
+                                  EXCEL
+                                </Badge>
+                              )}
+                            </div>
                             {entry.file_type && (
                               <span className="text-[10px] text-muted-foreground">
                                 {entry.file_type}
@@ -172,15 +184,29 @@ export function DocumentHistoryModal({
                       </TableCell>
                       <TableCell className="text-right">
                         {entry.file_path ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2.5 text-xs gap-1 hover:text-primary"
-                            onClick={() => onViewDocument(entry)}
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            <span>View</span>
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            {isExcel && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs gap-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                                onClick={() => downloadFileFromUrl(entry.file_path, entry.document_name)}
+                                title="Download Excel"
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                                <span className="hidden sm:inline">Download</span>
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 hover:text-primary"
+                              onClick={() => onViewDocument(entry)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              <span>View</span>
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-xs text-muted-foreground italic">No file</span>
                         )}

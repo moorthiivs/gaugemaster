@@ -81,6 +81,23 @@ export class ReportsService {
         }
     }
 
+    private resolveEffectiveStatus(inst: Instrument): string {
+        const current = (inst.status || '').trim();
+        const lower = current.toLowerCase();
+        if (lower.includes('calibration') || lower === 'rejected' || lower === 'scrapped') {
+            return current;
+        }
+        if (inst.due_date) {
+            const dueDate = new Date(inst.due_date);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (!isNaN(dueDate.getTime()) && dueDate < today) {
+                return 'Overdue';
+            }
+        }
+        return current || 'OK';
+    }
+
     private async generatePdfReport(
         instruments: Instrument[],
         selectedColumns?: string[],
@@ -295,31 +312,41 @@ export class ReportsService {
             });
         };
 
+        // Precompute static header and footer AST once outside the per-page rendering callbacks
+        const precomputedHeader = (() => {
+            const headerResult = htmlToPdfmake(safeHeaderHtml, { window: domHeader.window });
+            const headerParsed = headerResult.content || headerResult;
+            const headerStack = Array.isArray(headerParsed) ? headerParsed : [headerParsed];
+            fixPdfmakeContent(headerStack);
+            return headerStack;
+        })();
+
+        const precomputedFooter = (() => {
+            if (!safeFooterHtml) return [];
+            const footerResult = htmlToPdfmake(safeFooterHtml, { window: domFooter.window });
+            const footerParsed = footerResult.content || footerResult;
+            const footerStack = Array.isArray(footerParsed) ? footerParsed : [footerParsed];
+            fixPdfmakeContent(footerStack);
+            return footerStack;
+        })();
+
         const docDefinition = {
             pageSize: activeColumns.length > 8 ? 'A3' : 'A4',
             pageOrientation: activeColumns.length > 5 ? 'landscape' : 'portrait',
             pageMargins: [20, 100, 20, 80],
             header: function (currentPage: number, pageCount: number, pageSize: any) {
-                const headerResult = htmlToPdfmake(safeHeaderHtml, { window: domHeader.window });
-                const headerParsed = headerResult.content || headerResult;
-                const headerStack = Array.isArray(headerParsed) ? headerParsed : [headerParsed];
-                fixPdfmakeContent(headerStack);
                 return {
                     margin: [20, 20, 20, 0],
-                    stack: headerStack
+                    stack: precomputedHeader,
                 };
             },
             footer: function (currentPage: number, pageCount: number) {
-                const footerResult = safeFooterHtml ? htmlToPdfmake(safeFooterHtml, { window: domFooter.window }) : [];
-                const footerParsed = footerResult.content || footerResult;
-                const footerStack = Array.isArray(footerParsed) ? footerParsed : [footerParsed];
-                fixPdfmakeContent(footerStack);
                 return {
                     margin: [20, 10, 20, 0],
                     stack: [
-                        ...footerStack,
+                        ...precomputedFooter,
                         { text: `Page ${currentPage} of ${pageCount}`, alignment: 'center', margin: [0, 5, 0, 0], fontSize: 8 }
-                    ]
+                    ],
                 };
             },
             content: [
@@ -408,15 +435,32 @@ export class ReportsService {
             where.location = ILike(`%${location}%`);
         }
 
+        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
+        const needsCreatedBy = selectedColumns ? selectedColumns.includes('created_by') : true;
+
+        // Explicitly project all report columns and custom_parameters to minimize V8 heap allocation
+        const exportSelectFields = [
+            'id', 'sino', 'id_code', 'name', 'location', 'frequency', 'last_calibration_date',
+            'due_date', 'agency', 'range', 'serial_no', 'least_count', 'notes', 'status',
+            'item_status', 'make', 'item_type', 'part_no', 'part_name', 'module',
+            'calibration_source', 'customer', 'sector', 'criticality_level', 'cert_no',
+            'remarks', 'gauge_issue_date', 'gauges_received_by', 'gauges_issued_by',
+            'calibration_procedure', 'traceable', 'device_type', 'is_reference_standard',
+            'custom_parameters',
+        ];
+
         const instruments = await this.instrumentRepository.find({
             where,
-            relations: ['created_by'],
+            select: exportSelectFields as any,
+            relations: needsCreatedBy ? ['created_by'] : [],
             order: {
                 due_date: 'ASC',
             },
         });
 
-        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
+        instruments.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
+        });
 
         if (format === 'xlsx') {
             const columnMap: Record<string, string> = {
@@ -845,6 +889,10 @@ export class ReportsService {
             },
             skip: (page - 1) * pageSize,
             take: pageSize,
+        });
+
+        items.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
         });
 
         return { items, total };

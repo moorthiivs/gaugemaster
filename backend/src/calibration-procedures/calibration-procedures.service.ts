@@ -138,12 +138,15 @@ export class CalibrationProceduresService {
     return updated;
   }
 
-  async remove(id: string, companyId?: string) {
+  async remove(id: string, companyId?: string, user?: any, reason?: string) {
     const procedure = await this.findOne(id, companyId);
-    // Delete associated history
-    await this.historyRepo.delete({ procedure_id: id });
-    await this.procedureRepo.remove(procedure);
-    return { success: true, message: 'Calibration procedure deleted successfully' };
+    await this.procedureRepo.update(id, {
+      deleted_at: new Date(),
+      deleted_by_id: user?.id,
+      deleted_by_name: user?.name || user?.email || 'User',
+      deletion_reason: reason || null,
+    });
+    return { success: true, message: 'Calibration procedure moved to Recovery Center' };
   }
 
   async getHistory(procedureId: string, companyId?: string) {

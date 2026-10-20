@@ -6,6 +6,7 @@ import { extname } from 'path';
 import { InstrumentsService } from './instruments.service';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from '../dto/update-instrument.dto';
+import { BulkUpdatePreviewDto, BulkUpdateExecuteDto } from '../dto/bulk-update.dto';
 import { GoogleDriveService } from '../backup/google-drive.service';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { RequirePermission } from '../auth/require-permission.decorator';
@@ -99,6 +100,15 @@ export class InstrumentsController {
         return this.instrumentsService.getHistory(id);
     }
 
+    @Delete(':id/history/:historyId')
+    @RequirePermission('instruments', 'delete')
+    async deleteHistory(
+        @Param('id') id: string,
+        @Param('historyId') historyId: string,
+    ) {
+        return this.instrumentsService.deleteHistoryRecord(id, historyId);
+    }
+
     @Get(':id')
     @RequirePermission('instruments', 'view')
     async findOne(@Param('id') id: string) {
@@ -144,7 +154,6 @@ export class InstrumentsController {
         
         await this.instrumentsService.update(id, { 
             certificate_file: fileUrl,
-            calibration_source: 'External' 
         });
         return { message: "Certificate uploaded successfully", url: fileUrl };
     }
@@ -161,6 +170,24 @@ export class InstrumentsController {
     async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
         const dataArray = Array.isArray(dto) ? dto : [dto];
         return this.instrumentsService.bulkUpload(dataArray);
+    }
+
+    @Post('bulk-update-preview')
+    @RequirePermission('instruments', 'edit')
+    async bulkUpdatePreview(
+        @Body() dto: BulkUpdatePreviewDto,
+        @Req() req: any,
+    ) {
+        return this.instrumentsService.bulkUpdatePreview(dto, req?.user);
+    }
+
+    @Post('bulk-update')
+    @RequirePermission('instruments', 'edit')
+    async bulkUpdate(
+        @Body() dto: BulkUpdateExecuteDto,
+        @Req() req: any,
+    ) {
+        return this.instrumentsService.bulkUpdateExecute(dto, req?.user);
     }
 
 
@@ -196,14 +223,24 @@ export class InstrumentsController {
 
     @Delete(':id')
     @RequirePermission('instruments', 'delete')
-    async remove(@Param('id') id: string) {
-        return this.instrumentsService.remove(id);
+    async remove(
+        @Param('id') id: string,
+        @Req() req: any,
+        @Query('reason') queryReason?: string,
+        @Body('reason') bodyReason?: string,
+    ) {
+        const reason = bodyReason || queryReason;
+        return this.instrumentsService.remove(id, req.user, reason);
     }
 
     @Post('bulk-delete')
     @RequirePermission('instruments', 'delete')
-    async bulkRemove(@Body('ids') ids: string[]) {
-        return this.instrumentsService.bulkRemove(ids);
+    async bulkRemove(
+        @Req() req: any,
+        @Body('ids') ids: string[],
+        @Body('reason') reason?: string,
+    ) {
+        return this.instrumentsService.bulkRemove(ids, req.user, reason);
     }
 
 }

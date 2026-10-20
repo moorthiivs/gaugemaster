@@ -6,6 +6,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   JoinColumn,
   PrimaryColumn,
@@ -144,4 +145,15 @@ export class Instrument {
   @Column({ nullable: true })
   companyId: string;
 
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
 }

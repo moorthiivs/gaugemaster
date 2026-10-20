@@ -19,6 +19,7 @@ import {
   FileText,
   BookOpen,
   Compass,
+  RotateCcw,
 } from "lucide-react";
 import {
   Sidebar,
@@ -73,6 +74,7 @@ const navigationGroups = [
     label: "Administration",
     items: [
       { title: "Reports & Analytics", url: "/reports", icon: LineChart, module: "reports", action: "view" },
+      { title: "Recovery Center", url: "/recovery", icon: RotateCcw, module: "recovery", action: "view" },
       { title: "User Access Control", url: "/users", icon: UserCheck, module: "users", action: "view" },
       { title: "System Configuration", url: "/settings", icon: Sliders, module: "settings", action: "view" },
     ],

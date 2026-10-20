@@ -1,0 +1,51 @@
+import { IsOptional, IsString, IsInt, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class RecoveryQueryDto {
+  @IsOptional()
+  @IsString()
+  module?: string; // 'all' | 'calibrations' | 'instruments' | 'templates' | 'calibration_procedures' | 'work_instructions' | 'gauge_diagrams'
+
+  @IsOptional()
+  @IsString()
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  deletedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  startDate?: string;
+
+  @IsOptional()
+  @IsString()
+  endDate?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  limit?: number = 10;
+}
+
+export class BulkRestoreDto {
+  items: Array<{
+    id: string;
+    module: string;
+  }>;
+}
+
+export class BulkPermanentDeleteDto {
+  items: Array<{
+    id: string;
+    module: string;
+  }>;
+}
+

@@ -239,7 +239,7 @@ export default function ThemeSettings() {
             <div>
               <div className="flex items-center gap-2">
                 <Layers className="h-5 w-5 text-primary" />
-                <CardTitle className="text-lg">shadcn/ui Theme Selector</CardTitle>
+                <CardTitle className="text-lg">Theme Selector</CardTitle>
               </div>
               <CardDescription>
                 Select authentic shadcn base palettes and accent themes with live preview.

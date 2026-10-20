@@ -10,7 +10,30 @@ import {
   CanvasColumnDef,
   CanvasRowData,
   MatrixHeaderCell,
+  MatrixCell,
 } from "@/types/template";
+import {
+  normalizeMatrixCell,
+  computeMatrix2DGrid,
+  computeHeaderGroups,
+  updateMatrixCell,
+  addMatrixColumn,
+  removeMatrixColumn,
+  addMatrixRow,
+  removeMatrixRow,
+  addMatrixHeaderRow,
+  removeMatrixHeaderRow,
+  clearMatrixRows,
+  clearMatrixCell,
+  getMatrixTotalCols,
+  mergeMatrixCellAcrossCols,
+  mergeMatrixCellDownRows,
+  normalizeMatrixTableGeometry,
+  createVernierCaliper7ColPreset,
+  createCaliper5ColPreset,
+  createBlankMatrixPreset,
+  createIS2092DialGaugePreset,
+} from "@/lib/matrixTableUtils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +93,9 @@ import {
   ArrowRightLeft,
   Pencil,
   ArrowDown,
+  Calculator,
+  Hash,
+  Wrench,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -93,12 +119,23 @@ import { PreSaveAuditModal } from "@/components/calibration/template-management/
 import { AddColumnModal } from "@/components/calibration/template-management/AddColumnModal";
 import { MergeTablesModal } from "@/components/calibration/template-management/MergeTablesModal";
 import { PasteValuesModal } from "@/components/calibration/template-management/PasteValuesModal";
+import { CellFormulaModal } from "@/components/calibration/template-management/CellFormulaModal";
+import { ManageHeaderGroupModal } from "@/components/calibration/template-management/ManageHeaderGroupModal";
 import { GaugemasterTemplateAssistant } from "@/components/calibration/template-management/GaugemasterTemplateAssistant";
 import { GeneratedTemplateResult } from "@/lib/geminiService";
+import { JudgementCellControl } from "@/components/calibration/JudgementCellControl";
 import {
   evaluateCanvasRowFormulas,
   buildRowContext,
   testEvaluateFormula,
+  evaluateFormulaExpression,
+  evaluateAllCanvasBlocks,
+  ensureTableKeys,
+  slugifyTableKey,
+  buildGlobalTablesContext,
+  canvasHasCrossTableFormulas,
+  getExcelColumnLetter,
+  parseToleranceValue,
 } from "@/lib/formulaEngine";
 import { parseSpecification } from "@/lib/specificationParser";
 import {
@@ -130,7 +167,7 @@ export interface CanvasTemplateEditorProps {
   blocks: CanvasBlock[];
   onChange: (blocks: CanvasBlock[]) => void;
   onSelectPreset?: (preset: CanvasTemplatePreset) => void;
-  onApplyGeneratedTemplate?: (template: GeneratedTemplateResult) => void;
+  onApplyGeneratedTemplate?: (template: GeneratedTemplateResult, mode?: "append" | "replace") => void;
   onRegisterActions?: (actions: CanvasEditorActions) => void;
   templateName?: string;
   diagramImage?: string | null;
@@ -161,6 +198,34 @@ export interface CanvasTemplateEditorProps {
   onOpenTableConfig?: (tableId: string) => void;
   readOnly?: boolean;
 }
+
+export const formatNominalDisplay = (
+  nominal: number | string | undefined | null,
+  decimalPlaces?: number,
+): string => {
+  if (nominal === undefined || nominal === null || nominal === "") return "";
+  if (typeof nominal === "string") {
+    const trimmed = nominal.trim();
+    if (!trimmed) return "";
+    // If it's already a formatted string with decimals (e.g. "10.00", "10.000"), preserve exactly
+    if (!isNaN(Number(trimmed)) && trimmed.includes(".")) {
+      return trimmed;
+    }
+    // If it's a numeric string without decimals (e.g. "10") and decimalPlaces is specified
+    if (!isNaN(Number(trimmed)) && typeof decimalPlaces === "number" && decimalPlaces > 0) {
+      return Number(trimmed).toFixed(decimalPlaces);
+    }
+    return trimmed;
+  }
+  if (typeof nominal === "number") {
+    if (isNaN(nominal)) return "";
+    if (typeof decimalPlaces === "number" && decimalPlaces >= 0) {
+      return nominal.toFixed(decimalPlaces);
+    }
+    return String(nominal);
+  }
+  return String(nominal);
+};
 
 export function CanvasTemplateEditor({
   blocks,
@@ -233,6 +298,7 @@ export function CanvasTemplateEditor({
   const [isBannerCollapsed, setIsBannerCollapsed] = useState(true);
   const [isToolboxCollapsed, setIsToolboxCollapsed] = useState(false);
   const [isAssistantDocked, setIsAssistantDocked] = useState(true);
+  const [showExcelCoordinates, setShowExcelCoordinates] = useState(true);
 
   // Add Column Modal State
   const [showAddColumnModal, setShowAddColumnModal] = useState(false);
@@ -251,6 +317,16 @@ export function CanvasTemplateEditor({
     colId?: string;
   } | null>(null);
 
+  // Cell-Level Formula Editor State
+  const [cellFormulaModalState, setCellFormulaModalState] = useState<{
+    blockIndex: number;
+    childIndex: number | null;
+    rowIndex: number;
+    colId: string;
+    colLabel: string;
+    initialFormula: string;
+  } | null>(null);
+
   // Floating Cell Context Menu State for Merging / Unmerging
   const [cellContextMenu, setCellContextMenu] = useState<{
     x: number;
@@ -267,6 +343,43 @@ export function CanvasTemplateEditor({
     totalRows: number;
     currentRowSpan: number; // rowSpan
     maxRemainingRows: number;
+  } | null>(null);
+
+  // Floating Context Menu State for Matrix Table Cells
+  const [matrixCellContextMenu, setMatrixCellContextMenu] = useState<{
+    x: number;
+    y: number;
+    blockIndex: number;
+    isHeader: boolean;
+    rowIndex: number;
+    colIndex: number; // 2D grid column
+    cellArrayIdx: number; // array index within the row
+    currentCell: MatrixCell;
+    totalCols: number;
+    totalRows: number;
+  } | null>(null);
+
+  // Floating Context Menu State for Header Grouping in Data Tables
+  const [headerGroupContextMenu, setHeaderGroupContextMenu] = useState<{
+    x: number;
+    y: number;
+    blockIndex: number;
+    childIndex: number | null;
+    colId: string;
+    colLabel: string;
+    colIdx: number;
+    totalCols: number;
+    currentGroupName?: string;
+    isGroupHeader?: boolean;
+    groupSpan?: number;
+  } | null>(null);
+
+  // Modal State for Multi-Column Header Group Management
+  const [manageHeaderGroupModalState, setManageHeaderGroupModalState] = useState<{
+    blockIndex: number;
+    childIndex: number | null;
+    initialGroupName: string;
+    columns: CanvasColumnDef[];
   } | null>(null);
 
   const handleOpenCellMenu = (
@@ -334,11 +447,99 @@ export function CanvasTemplateEditor({
     });
   };
 
+  const handleOpenMatrixCellMenu = (
+    e: React.MouseEvent,
+    blockIndex: number,
+    isHeader: boolean,
+    rowIndex: number,
+    colIndex: number,
+    cellArrayIdx: number,
+    cell: MatrixCell,
+    totalCols: number,
+    totalRows: number,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let menuX = e.clientX;
+    let menuY = e.clientY;
+    const estimatedWidth = 240;
+    const estimatedHeight = 460;
+    if (menuX + estimatedWidth > window.innerWidth) {
+      menuX = window.innerWidth - estimatedWidth - 16;
+    }
+    if (menuY + estimatedHeight > window.innerHeight) {
+      menuY = window.innerHeight - estimatedHeight - 16;
+    }
+
+    setMatrixCellContextMenu({
+      x: Math.max(12, menuX),
+      y: Math.max(12, menuY),
+      blockIndex,
+      isHeader,
+      rowIndex,
+      colIndex,
+      cellArrayIdx,
+      currentCell: cell,
+      totalCols,
+      totalRows,
+    });
+  };
+
+  const handleOpenHeaderGroupMenu = (
+    e: React.MouseEvent,
+    blockIndex: number,
+    childIndex: number | null,
+    colId: string,
+    colLabel: string,
+    colIdx: number,
+    totalCols: number,
+    currentGroupName?: string,
+    isGroupHeader: boolean = false,
+    groupSpan?: number,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let menuX = e.clientX;
+    let menuY = e.clientY;
+    const estimatedWidth = 270;
+    const estimatedHeight = 340;
+    if (menuX + estimatedWidth > window.innerWidth) {
+      menuX = window.innerWidth - estimatedWidth - 16;
+    }
+    if (menuY + estimatedHeight > window.innerHeight) {
+      menuY = window.innerHeight - estimatedHeight - 16;
+    }
+
+    setHeaderGroupContextMenu({
+      x: Math.max(12, menuX),
+      y: Math.max(12, menuY),
+      blockIndex,
+      childIndex,
+      colId,
+      colLabel,
+      colIdx,
+      totalCols,
+      currentGroupName,
+      isGroupHeader,
+      groupSpan,
+    });
+  };
+
   useEffect(() => {
-    if (!cellContextMenu) return;
-    const handleClose = () => setCellContextMenu(null);
+    if (!cellContextMenu && !matrixCellContextMenu && !headerGroupContextMenu) return;
+    const handleClose = () => {
+      setCellContextMenu(null);
+      setMatrixCellContextMenu(null);
+      setHeaderGroupContextMenu(null);
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCellContextMenu(null);
+      if (e.key === "Escape") {
+        setCellContextMenu(null);
+        setMatrixCellContextMenu(null);
+        setHeaderGroupContextMenu(null);
+      }
     };
     window.addEventListener("click", handleClose);
     window.addEventListener("contextmenu", handleClose);
@@ -348,7 +549,7 @@ export function CanvasTemplateEditor({
       window.removeEventListener("contextmenu", handleClose);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [cellContextMenu]);
+  }, [cellContextMenu, matrixCellContextMenu, headerGroupContextMenu]);
 
   // Column Drag-and-Drop Reordering State
   const [draggedCol, setDraggedCol] = useState<{
@@ -424,7 +625,104 @@ export function CanvasTemplateEditor({
 
   const markChanged = (newBlocks: CanvasBlock[]) => {
     if (readOnly) return;
+    ensureTableKeys(newBlocks);
     onChange(newBlocks);
+  };
+
+  // Auto-assign persistent tableKeys to legacy templates without them
+  useEffect(() => {
+    if (!readOnly && Array.isArray(blocks) && blocks.length > 0) {
+      let needsKeys = false;
+      blocks.forEach((b) => {
+        if (b.type === "table_grid" && !(b as TableGridBlock).tableKey) needsKeys = true;
+        if (b.type === "split_row" && Array.isArray((b as SplitRowBlock).children)) {
+          (b as SplitRowBlock).children.forEach((c) => {
+            if (c && c.type === "table_grid" && !c.tableKey) needsKeys = true;
+          });
+        }
+      });
+      if (needsKeys) {
+        const cloned = JSON.parse(JSON.stringify(blocks));
+        ensureTableKeys(cloned);
+        markChanged(cloned);
+      }
+    }
+  }, [blocks, readOnly]);
+
+  const handleApplyCellFormula = (
+    blockIndex: number,
+    childIndex: number | null,
+    rowIndex: number,
+    colId: string,
+    formula: string,
+  ) => {
+    const updated = JSON.parse(JSON.stringify(blocks));
+    let targetTbl: TableGridBlock;
+    if (childIndex !== null) {
+      targetTbl = updated[blockIndex]?.children?.[childIndex];
+    } else {
+      targetTbl = updated[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows || !targetTbl.rows[rowIndex]) return;
+
+    const row = targetTbl.rows[rowIndex];
+    if (!row.cellFormulas) row.cellFormulas = {};
+    row.cellFormulas[colId] = formula;
+
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updated, { forceFull: true });
+    markChanged(evaluatedBlocks);
+  };
+
+  const handleClearCellFormula = (
+    blockIndex: number,
+    childIndex: number | null,
+    rowIndex: number,
+    colId: string,
+  ) => {
+    const updated = JSON.parse(JSON.stringify(blocks));
+    let targetTbl: TableGridBlock;
+    if (childIndex !== null) {
+      targetTbl = updated[blockIndex]?.children?.[childIndex];
+    } else {
+      targetTbl = updated[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows || !targetTbl.rows[rowIndex]) return;
+
+    const row = targetTbl.rows[rowIndex];
+    if (row.cellFormulas) {
+      delete row.cellFormulas[colId];
+      if (Object.keys(row.cellFormulas).length === 0) {
+        delete row.cellFormulas;
+      }
+    }
+
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updated, { forceFull: true });
+    markChanged(evaluatedBlocks);
+  };
+
+  const handleUpdateTableKey = (
+    blockIndex: number,
+    childIndex: number | null,
+    newKey: string,
+  ) => {
+    const cleanKey = slugifyTableKey(newKey);
+    if (!cleanKey) {
+      toast.error("Please enter a valid table key");
+      return;
+    }
+    const updated = JSON.parse(JSON.stringify(blocks));
+    let targetTbl: TableGridBlock;
+    if (childIndex !== null) {
+      targetTbl = updated[blockIndex]?.children?.[childIndex];
+    } else {
+      targetTbl = updated[blockIndex];
+    }
+    if (!targetTbl) return;
+    targetTbl.tableKey = cleanKey;
+    ensureTableKeys(updated);
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updated, { forceFull: true });
+    markChanged(evaluatedBlocks);
+    toast.success(`Table key set to #${cleanKey}`);
   };
 
   const handleOpenTableAudit = (table: TableGridBlock) => {
@@ -523,30 +821,46 @@ export function CanvasTemplateEditor({
     const newBlocks = blocks.map((b) => {
       if (b.type === "table_grid" && b.id === tableId) {
         const updatedCols = [...b.columns, newColumn];
-                const updatedRows = (b.rows || []).map((row) =>
-          evaluateCanvasRowFormulas(
-            row,
+        const isStatusCol =
+          newColumn.type === "status" ||
+          newColumn.role === "JUDGEMENT" ||
+          /judg|status|verdict/i.test(newColumn.id) ||
+          /judg|status|verdict/i.test(newColumn.label || "");
+        const updatedRows = (b.rows || []).map((row) => {
+          const baseRow = isStatusCol
+            ? { ...row, [newColumn.id]: row[newColumn.id] || row.judgement || row.status || "OK" }
+            : row;
+          return evaluateCanvasRowFormulas(
+            baseRow,
             updatedCols,
             b.tolerance ?? defaultTolerance,
             b.decimal_places ?? decimalPlaces,
             b.nominal,
-          ),
-        );
+          );
+        });
         return { ...b, columns: updatedCols, rows: updatedRows };
       }
       if (b.type === "split_row" && b.children) {
         const newChildren = b.children.map((c) => {
           if (c.type === "table_grid" && c.id === tableId) {
             const updatedCols = [...c.columns, newColumn];
-                        const updatedRows = (c.rows || []).map((row) =>
-              evaluateCanvasRowFormulas(
-                row,
+            const isStatusCol =
+              newColumn.type === "status" ||
+              newColumn.role === "JUDGEMENT" ||
+              /judg|status|verdict/i.test(newColumn.id) ||
+              /judg|status|verdict/i.test(newColumn.label || "");
+            const updatedRows = (c.rows || []).map((row) => {
+              const baseRow = isStatusCol
+                ? { ...row, [newColumn.id]: row[newColumn.id] || row.judgement || row.status || "OK" }
+                : row;
+              return evaluateCanvasRowFormulas(
+                baseRow,
                 updatedCols,
                 c.tolerance ?? defaultTolerance,
                 c.decimal_places ?? decimalPlaces,
                 c.nominal,
-              ),
-            );
+              );
+            });
             return { ...c, columns: updatedCols, rows: updatedRows };
           }
           return c;
@@ -567,7 +881,15 @@ export function CanvasTemplateEditor({
     newNominalStr: string,
   ) => {
     const rawVal = newNominalStr.trim();
-    const parsedNom = rawVal !== "" && !isNaN(Number(rawVal)) ? parseFloat(rawVal) : (rawVal || undefined);
+    let parsedNom: string | undefined = undefined;
+    if (rawVal !== "") {
+      const cleanNumMatch = rawVal.match(/^[+-]?\d+(?:\.\d+)?/);
+      if (cleanNumMatch) {
+        parsedNom = cleanNumMatch[0];
+      } else {
+        parsedNom = rawVal;
+      }
+    }
 
     const block = blocks[blockIndex];
     if (!block) return;
@@ -607,6 +929,64 @@ export function CanvasTemplateEditor({
       newBlocks[blockIndex] = { ...block, children: newChildren as any };
       markChanged(newBlocks);
       toast.success(`Updated Section Nominal to ${rawVal || "Not Set"}`);
+    }
+  };
+
+  const handleUpdateTableTolerance = (
+    blockIndex: number,
+    childIndex: number | null,
+    newTolVal: number | string,
+  ) => {
+    const rawVal = String(newTolVal ?? "").trim().replace(/^[±+-]/, "").trim();
+    const parsedTol = parseFloat(rawVal);
+    if (isNaN(parsedTol)) return;
+
+    const block = blocks[blockIndex];
+    if (!block) return;
+
+    if (childIndex === null) {
+      if (block.type !== "table_grid") return;
+      const dec = block.decimal_places ?? decimalPlaces ?? 3;
+      const hasTolCol = block.columns?.some((c) => c && (c.type === "tolerance" || c.id === "tolerance"));
+      const reEvaluatedRows = (block.rows || []).map((row, rIdx) => {
+        const updatedRow = {
+          ...row,
+          ...(!hasTolCol ? { tolerance: parsedTol } : {}),
+        };
+        return evaluateCanvasRowFormulas(updatedRow, block.columns, parsedTol, dec, (block as TableGridBlock).nominal, undefined, block.rows, rIdx);
+      });
+      const updatedBlock = {
+        ...block,
+        tolerance: parsedTol,
+        rows: reEvaluatedRows,
+      };
+      const newBlocks = [...blocks];
+      newBlocks[blockIndex] = updatedBlock;
+      markChanged(newBlocks);
+      toast.success(`Updated Table Tolerance to ±${parsedTol}`);
+    } else {
+      if (block.type !== "split_row" || !block.children) return;
+      const child = block.children[childIndex];
+      if (!child || child.type !== "table_grid") return;
+      const dec = child.decimal_places ?? decimalPlaces ?? 3;
+      const hasTolCol = child.columns?.some((c) => c && (c.type === "tolerance" || c.id === "tolerance"));
+      const reEvaluatedRows = (child.rows || []).map((row, rIdx) => {
+        const updatedRow = {
+          ...row,
+          ...(!hasTolCol ? { tolerance: parsedTol } : {}),
+        };
+        return evaluateCanvasRowFormulas(updatedRow, child.columns, parsedTol, dec, (child as TableGridBlock).nominal, undefined, child.rows, rIdx);
+      });
+      const newChildren = [...block.children];
+      newChildren[childIndex] = {
+        ...child,
+        tolerance: parsedTol,
+        rows: reEvaluatedRows,
+      };
+      const newBlocks = [...blocks];
+      newBlocks[blockIndex] = { ...block, children: newChildren as any };
+      markChanged(newBlocks);
+      toast.success(`Updated Section Tolerance to ±${parsedTol}`);
     }
   };
 
@@ -821,35 +1201,20 @@ export function CanvasTemplateEditor({
   };
 
   const addMatrixBlock = () => {
+    const preset = createVernierCaliper7ColPreset();
     const newBlock: MatrixTableBlock = {
       id: `matrix_${Date.now()}`,
       type: "matrix_table",
-      title: "Acceptance Criteria Reference Matrix",
+      title: preset.title || "Acceptance Criteria Reference Matrix",
       width: "100%",
-      headers: [
-        [
-          { text: "LEAST COUNT", rowSpan: 2 },
-          { text: "0.01mm", colSpan: 2 },
-          { text: "0.02mm", colSpan: 2 },
-        ],
-        [{ text: "Maximum Permissible Error (MPE)", colSpan: 4 }],
-        [
-          { text: "Length (mm)" },
-          { text: "New" },
-          { text: "Recalib" },
-          { text: "New" },
-          { text: "Recalib" },
-        ],
-      ],
-      rows: [
-        ["0 - 100", "±0.010", "±0.020", "±0.020", "±0.030"],
-        ["100 - 300", "±0.020", "±0.030", "±0.030", "±0.040"],
-      ],
+      headers: (preset.headers as any) || [],
+      rows: (preset.rows as any) || [],
+      footerNote: preset.footerNote,
     };
     markChanged([...blocks, newBlock]);
     setSelectedBlockId(newBlock.id);
     setSelectedChildTableId(null);
-    toast.success("Added Acceptance Criteria Matrix table");
+    toast.success("Added Acceptance Criteria Matrix table (7-Col Caliper Standard)");
   };
 
   const addTextBlock = () => {
@@ -918,10 +1283,12 @@ export function CanvasTemplateEditor({
     "fit" | "wide" | "standard"
   >("fit");
 
-  // Interactive column resizer state for header drag-to-resize
+  // Interactive column resizer state for header drag-to-resize (both vertical and horizontal tables)
   const [resizingCol, setResizingCol] = useState<{
     blockIndex: number;
-    columnId: string;
+    childIndex?: number | null;
+    targetType: "vertical_col" | "horizontal_first_col" | "horizontal_data_col";
+    columnId?: string;
     startX: number;
     startWidth: number;
   } | null>(null);
@@ -960,23 +1327,117 @@ export function CanvasTemplateEditor({
     };
   }, [isResizingInspector]);
 
-  // Global mouse listeners for real-time column width dragging
+  // Global mouse listeners for real-time column width dragging (vertical & horizontal)
   useEffect(() => {
     if (!resizingCol) return;
 
     const handleMouseMove = (e: MouseEvent) => {
       const deltaX = e.clientX - resizingCol.startX;
-      const newWidth = Math.max(
-        20,
-        Math.min(500, Math.round(resizingCol.startWidth + deltaX)),
-      );
-
+      const targetType = resizingCol.targetType || "vertical_col";
       const block = blocks[resizingCol.blockIndex];
-      if (block && block.type === "table_grid") {
-        const updatedCols = block.columns.map((c) =>
-          c.id === resizingCol.columnId ? { ...c, width: `${newWidth}px` } : c,
+      if (!block) return;
+
+      if (targetType === "horizontal_first_col") {
+        const newWidth = Math.max(
+          60,
+          Math.min(450, Math.round(resizingCol.startWidth + deltaX)),
         );
-        updateBlock(resizingCol.blockIndex, { ...block, columns: updatedCols });
+        if (
+          resizingCol.childIndex !== null &&
+          resizingCol.childIndex !== undefined &&
+          block.type === "split_row" &&
+          Array.isArray(block.children)
+        ) {
+          const newChildren = block.children.map((child: any, cIdx: number) => {
+            if (cIdx === resizingCol.childIndex && child?.type === "table_grid") {
+              const updatedCols = (child.columns || []).map((c: any, i: number) =>
+                i === 0 ? { ...c, width: `${newWidth}px` } : c,
+              );
+              return {
+                ...child,
+                firstColWidth: newWidth,
+                parameterWidth: newWidth,
+                columns: updatedCols,
+              };
+            }
+            return child;
+          });
+          updateBlock(resizingCol.blockIndex, {
+            ...block,
+            children: newChildren as any,
+          });
+        } else if (block.type === "table_grid") {
+          const updatedCols = (block.columns || []).map((c, i) =>
+            i === 0 ? { ...c, width: `${newWidth}px` } : c,
+          );
+          updateBlock(resizingCol.blockIndex, {
+            ...block,
+            firstColWidth: newWidth,
+            parameterWidth: newWidth,
+            columns: updatedCols,
+          });
+        }
+      } else if (targetType === "horizontal_data_col") {
+        const newWidth = Math.max(
+          35,
+          Math.min(250, Math.round(resizingCol.startWidth + deltaX)),
+        );
+        if (
+          resizingCol.childIndex !== null &&
+          resizingCol.childIndex !== undefined &&
+          block.type === "split_row" &&
+          Array.isArray(block.children)
+        ) {
+          const newChildren = block.children.map((child: any, cIdx: number) => {
+            if (cIdx === resizingCol.childIndex && child?.type === "table_grid") {
+              return {
+                ...child,
+                dataColWidth: newWidth,
+              };
+            }
+            return child;
+          });
+          updateBlock(resizingCol.blockIndex, {
+            ...block,
+            children: newChildren as any,
+          });
+        } else if (block.type === "table_grid") {
+          updateBlock(resizingCol.blockIndex, {
+            ...block,
+            dataColWidth: newWidth,
+          });
+        }
+      } else {
+        // Vertical column width resize
+        const newWidth = Math.max(
+          20,
+          Math.min(500, Math.round(resizingCol.startWidth + deltaX)),
+        );
+        if (
+          resizingCol.childIndex !== null &&
+          resizingCol.childIndex !== undefined &&
+          block.type === "split_row" &&
+          Array.isArray(block.children)
+        ) {
+          const newChildren = block.children.map((child: any, cIdx: number) => {
+            if (cIdx === resizingCol.childIndex && child?.type === "table_grid") {
+              const updatedCols = (child.columns || []).map((c: any) =>
+                c.id === resizingCol.columnId ? { ...c, width: `${newWidth}px` } : c,
+              );
+              return { ...child, columns: updatedCols };
+            }
+            return child;
+          });
+          updateBlock(resizingCol.blockIndex, {
+            ...block,
+            children: newChildren as any,
+          });
+        } else if (block.type === "table_grid") {
+          const updatedCols = (block.columns || []).map((c) =>
+            c.id === resizingCol.columnId ? { ...c, width: `${newWidth}px` } : c,
+          );
+          updateBlock(resizingCol.blockIndex, { ...block, columns: updatedCols });
+        }
       }
     };
 
@@ -995,21 +1456,40 @@ export function CanvasTemplateEditor({
   const handleColResizeStart = (
     e: React.MouseEvent,
     blockIndex: number,
-    columnId: string,
+    columnIdOrTarget: string,
     currentWidth?: string | number,
+    childIndex: number | null = null,
+    explicitTargetType?: "vertical_col" | "horizontal_first_col" | "horizontal_data_col",
   ) => {
     e.preventDefault();
     e.stopPropagation();
     const th = (e.target as HTMLElement).closest("th");
+    const targetType: "vertical_col" | "horizontal_first_col" | "horizontal_data_col" =
+      explicitTargetType ||
+      (columnIdOrTarget === "horizontal_first_col"
+        ? "horizontal_first_col"
+        : columnIdOrTarget === "horizontal_data_col"
+          ? "horizontal_data_col"
+          : "vertical_col");
+
+    const defaultFallback =
+      targetType === "horizontal_data_col"
+        ? 65
+        : targetType === "horizontal_first_col"
+          ? 140
+          : 100;
+
     const initialWidth = th
       ? th.getBoundingClientRect().width
       : typeof currentWidth === "number"
         ? currentWidth
-        : parseInt(currentWidth || "100") || 100;
+        : parseInt(String(currentWidth || defaultFallback)) || defaultFallback;
 
     setResizingCol({
       blockIndex,
-      columnId,
+      childIndex,
+      targetType,
+      columnId: columnIdOrTarget,
       startX: e.clientX,
       startWidth: initialWidth,
     });
@@ -1094,15 +1574,48 @@ export function CanvasTemplateEditor({
     if (!block || !block.rows) return;
     const newRows = [...block.rows];
     const currentRow = newRows[rowIndex] || {};
+    const targetCol = block.columns?.find(
+      (c) => c && (c.id === colId || c.key === colId),
+    );
+    const isReadingCol =
+      colId === "reading" ||
+      targetCol?.type === "reading" ||
+      targetCol?.role === "READING" ||
+      colId === "observed_value" ||
+      /^(actual|observed|reading)/i.test(colId);
+
+    const isNominalCol =
+      colId === "nominal" ||
+      targetCol?.type === "nominal" ||
+      targetCol?.role === "NOMINAL" ||
+      targetCol?.role === "SPECIFICATION" ||
+      colId === "interval";
+
+    const isTolCol =
+      colId === "tolerance" ||
+      targetCol?.type === "tolerance" ||
+      targetCol?.role === "TOLERANCE" ||
+      colId === "tol";
+
+    const isBlank = val === "" || val === null || val === undefined;
     const parsedNum = parseFloat(String(val));
     const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
+
     const updatedRow: CanvasRowData = {
       ...currentRow,
       [colId]: val,
-      ...(colId === "reading" ? { reading: numVal } : {}),
-      ...(colId === "nominal" ? { nominal: numVal } : {}),
-      ...(colId === "tolerance" ? { tolerance: numVal } : {}),
+      ...(isReadingCol ? (isBlank ? { reading: undefined } : { reading: numVal }) : {}),
+      ...(isNominalCol ? { nominal: val } : {}),
+      ...(isTolCol ? { tolerance: parseToleranceValue(val) ?? numVal } : {}),
+      ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
     };
+    if (isReadingCol && isBlank) {
+      delete updatedRow.reading;
+      delete updatedRow.actual;
+      delete updatedRow.actual_dimension;
+      delete updatedRow.observed_value;
+      updatedRow[colId] = "";
+    }
 
     // Synchronize trial aliases across row for live formula evaluation
     const trialMatch = colId.match(
@@ -1129,9 +1642,11 @@ export function CanvasTemplateEditor({
       });
     }
 
+    const parsedRowTol = parseToleranceValue(updatedRow.tolerance);
     const tol =
-      parseFloat(String(updatedRow.tolerance ?? block.tolerance ?? 0.02)) ||
-      0.02;
+      parsedRowTol !== undefined
+        ? parsedRowTol
+        : parseFloat(String(block.tolerance ?? 0.02)) || 0.02;
     const dec = block.decimal_places ?? decimalPlaces ?? 3;
 
     // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
@@ -1154,15 +1669,25 @@ export function CanvasTemplateEditor({
         updatedRow.upper_limit = parsed.upperLimit;
         updatedRow.lowerLimit = parsed.lowerLimit;
         updatedRow.upperLimit = parsed.upperLimit;
+        if (parsed.isMaxLimit) {
+          updatedRow.isMaxLimit = true;
+          updatedRow.tolerance = parsed.upperTolerance;
+        } else if (parsed.isMinLimit) {
+          updatedRow.isMinLimit = true;
+          updatedRow.tolerance = parsed.nominal;
+        }
       }
     }
 
-        const evaluatedRow = evaluateCanvasRowFormulas(
+    const hasCrossTable = canvasHasCrossTableFormulas(blocks);
+    const globalContext = hasCrossTable ? buildGlobalTablesContext(blocks) : undefined;
+    const evaluatedRow = evaluateCanvasRowFormulas(
       updatedRow,
       block.columns,
       tol,
       dec,
       block.nominal,
+      globalContext,
     );
 
     // CRITICAL: Ensure the active cell keeps the exact string the user is typing (e.g. "35.", "0.", "-")
@@ -1189,7 +1714,46 @@ export function CanvasTemplateEditor({
     }
 
     newRows[rowIndex] = evaluatedRow;
-    updateBlock(blockIndex, { ...block, rows: newRows });
+    const updatedBlocks = [...blocks];
+    updatedBlocks[blockIndex] = { ...block, rows: newRows };
+
+    // FAST-PATH: If there are no cross-table formulas anywhere on the canvas,
+    // avoid calling evaluateAllCanvasBlocks completely! (0ms lag, smooth 60fps typing)
+    if (!hasCrossTable) {
+      markChanged(updatedBlocks);
+      return;
+    }
+
+    // TARGETED RE-EVALUATION: Only evaluate dependent tables/rows
+    const fullyEvaluated = evaluateAllCanvasBlocks(updatedBlocks, {
+      changedBlockIndex: blockIndex,
+      changedRowIndex: rowIndex,
+    });
+    const targetBlock = fullyEvaluated[blockIndex] as TableGridBlock;
+    if (targetBlock && targetBlock.rows && targetBlock.rows[rowIndex]) {
+      targetBlock.rows[rowIndex][colId] = val;
+      if (trialMatch) {
+        const idx = trialMatch[1];
+        const aliases = [
+          `t${idx}`,
+          `trial_${idx}`,
+          `trial${idx}`,
+          `reading_${idx}`,
+          `reading${idx}`,
+          `actual_${idx}`,
+          `actual${idx}`,
+          `observed_${idx}`,
+          `observed${idx}`,
+          `r${idx}`,
+          `col_${idx}`,
+          idx,
+        ];
+        aliases.forEach((a) => {
+          targetBlock.rows[rowIndex][a] = val;
+        });
+      }
+    }
+    markChanged(fullyEvaluated);
   };
 
   const handleChildTableCellChange = (
@@ -1205,15 +1769,48 @@ export function CanvasTemplateEditor({
     if (!child || !child.rows) return;
     const newRows = [...child.rows];
     const currentRow = newRows[rowIndex] || {};
+    const targetCol = child.columns?.find(
+      (c) => c && (c.id === colId || c.key === colId),
+    );
+    const isReadingCol =
+      colId === "reading" ||
+      targetCol?.type === "reading" ||
+      targetCol?.role === "READING" ||
+      colId === "observed_value" ||
+      /^(actual|observed|reading)/i.test(colId);
+
+    const isNominalCol =
+      colId === "nominal" ||
+      targetCol?.type === "nominal" ||
+      targetCol?.role === "NOMINAL" ||
+      targetCol?.role === "SPECIFICATION" ||
+      colId === "interval";
+
+    const isTolCol =
+      colId === "tolerance" ||
+      targetCol?.type === "tolerance" ||
+      targetCol?.role === "TOLERANCE" ||
+      colId === "tol";
+
+    const isBlank = val === "" || val === null || val === undefined;
     const parsedNum = parseFloat(String(val));
     const numVal = !isNaN(parsedNum) ? parsedNum : undefined;
+
     const updatedRow: CanvasRowData = {
       ...currentRow,
       [colId]: val,
-      ...(colId === "reading" ? { reading: numVal } : {}),
-      ...(colId === "nominal" ? { nominal: numVal } : {}),
-      ...(colId === "tolerance" ? { tolerance: numVal } : {}),
+      ...(isReadingCol ? (isBlank ? { reading: undefined } : { reading: numVal }) : {}),
+      ...(isNominalCol ? { nominal: val } : {}),
+      ...(isTolCol ? { tolerance: parseToleranceValue(val) ?? numVal } : {}),
+      ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
     };
+    if (isReadingCol && isBlank) {
+      delete updatedRow.reading;
+      delete updatedRow.actual;
+      delete updatedRow.actual_dimension;
+      delete updatedRow.observed_value;
+      updatedRow[colId] = "";
+    }
 
     const trialMatch = colId.match(
       /^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i,
@@ -1239,9 +1836,11 @@ export function CanvasTemplateEditor({
       });
     }
 
+    const parsedRowTol = parseToleranceValue(updatedRow.tolerance);
     const tol =
-      parseFloat(String(updatedRow.tolerance ?? child.tolerance ?? 0.02)) ||
-      0.02;
+      parsedRowTol !== undefined
+        ? parsedRowTol
+        : parseFloat(String(child.tolerance ?? 0.02)) || 0.02;
     const dec = child.decimal_places ?? decimalPlaces ?? 3;
 
     // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
@@ -1264,15 +1863,25 @@ export function CanvasTemplateEditor({
         updatedRow.upper_limit = parsed.upperLimit;
         updatedRow.lowerLimit = parsed.lowerLimit;
         updatedRow.upperLimit = parsed.upperLimit;
+        if (parsed.isMaxLimit) {
+          updatedRow.isMaxLimit = true;
+          updatedRow.tolerance = parsed.upperTolerance;
+        } else if (parsed.isMinLimit) {
+          updatedRow.isMinLimit = true;
+          updatedRow.tolerance = parsed.nominal;
+        }
       }
     }
 
-        const evaluatedRow = evaluateCanvasRowFormulas(
+    const hasCrossTable = canvasHasCrossTableFormulas(blocks);
+    const globalContext = hasCrossTable ? buildGlobalTablesContext(blocks) : undefined;
+    const evaluatedRow = evaluateCanvasRowFormulas(
       updatedRow,
       child.columns,
       tol,
       dec,
       child.nominal,
+      globalContext,
     );
 
     evaluatedRow[colId] = val;
@@ -1301,7 +1910,48 @@ export function CanvasTemplateEditor({
     const updatedChildren = split.children.map((c, i) =>
       i === childIndex ? { ...child, rows: newRows } : c,
     );
-    updateBlock(blockIndex, { ...split, children: updatedChildren });
+    const updatedBlocks = [...blocks];
+    updatedBlocks[blockIndex] = { ...split, children: updatedChildren };
+
+    // FAST-PATH: If there are no cross-table formulas anywhere on the canvas,
+    // avoid calling evaluateAllCanvasBlocks completely! (0ms lag, smooth 60fps typing)
+    if (!hasCrossTable) {
+      markChanged(updatedBlocks);
+      return;
+    }
+
+    // TARGETED RE-EVALUATION: Only evaluate dependent tables/rows
+    const fullyEvaluated = evaluateAllCanvasBlocks(updatedBlocks, {
+      changedBlockIndex: blockIndex,
+      changedChildIndex: childIndex,
+      changedRowIndex: rowIndex,
+    });
+    const targetSplit = fullyEvaluated[blockIndex] as SplitRowBlock;
+    const targetChild = targetSplit?.children?.[childIndex] as TableGridBlock;
+    if (targetChild && targetChild.rows && targetChild.rows[rowIndex]) {
+      targetChild.rows[rowIndex][colId] = val;
+      if (trialMatch) {
+        const idx = trialMatch[1];
+        const aliases = [
+          `t${idx}`,
+          `trial_${idx}`,
+          `trial${idx}`,
+          `reading_${idx}`,
+          `reading${idx}`,
+          `actual_${idx}`,
+          `actual${idx}`,
+          `observed_${idx}`,
+          `observed${idx}`,
+          `r${idx}`,
+          `col_${idx}`,
+          idx,
+        ];
+        aliases.forEach((a) => {
+          targetChild.rows[rowIndex][a] = val;
+        });
+      }
+    }
+    markChanged(fullyEvaluated);
   };
 
   const handleToggleMergeRow = (
@@ -1491,6 +2141,380 @@ export function CanvasTemplateEditor({
     }
 
     toast.success(`Unmerged cell on row ${rowIndex + 1}`);
+  };
+
+  // --- MATRIX TABLE HANDLERS ---
+  const handleMatrixCellTextChange = (
+    blockIndex: number,
+    isHeader: boolean,
+    rIdx: number,
+    cIdx: number,
+    text: string,
+  ) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = updateMatrixCell(block, isHeader, rIdx, cIdx, { text });
+    updateBlock(blockIndex, updated);
+  };
+
+  const handleSetMatrixCellColSpan = (
+    blockIndex: number,
+    isHeader: boolean,
+    rIdx: number,
+    cIdx: number,
+    span: number,
+  ) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = mergeMatrixCellAcrossCols(block, isHeader, rIdx, cIdx, span);
+    updateBlock(blockIndex, updated);
+    toast.success(span > 1 ? `Merged across ${span} columns` : "Reset horizontal column merge");
+  };
+
+  const handleSetMatrixCellRowSpan = (
+    blockIndex: number,
+    isHeader: boolean,
+    rIdx: number,
+    cIdx: number,
+    span: number,
+  ) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = mergeMatrixCellDownRows(block, isHeader, rIdx, cIdx, span);
+    updateBlock(blockIndex, updated);
+    toast.success(span > 1 ? `Merged down ${span} rows` : "Reset vertical row merge");
+  };
+
+  const handleNormalizeMatrixTableBtn = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = normalizeMatrixTableGeometry(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Aligned table geometry across all header tiers and data rows");
+  };
+
+  const handleSetMatrixCellAlign = (
+    blockIndex: number,
+    isHeader: boolean,
+    rIdx: number,
+    cIdx: number,
+    align: "left" | "center" | "right",
+  ) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = updateMatrixCell(block, isHeader, rIdx, cIdx, { align });
+    updateBlock(blockIndex, updated);
+  };
+
+  const handleAddMatrixColumnBtn = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = addMatrixColumn(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Added column to matrix table");
+  };
+
+  const handleRemoveMatrixColumnBtn = (blockIndex: number, colIndex?: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = removeMatrixColumn(block, colIndex);
+    updateBlock(blockIndex, updated);
+    toast.success(
+      colIndex !== undefined
+        ? `Removed column ${colIndex + 1} from matrix table`
+        : "Removed last column from matrix table"
+    );
+  };
+
+  const handleAddMatrixRowBtn = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = addMatrixRow(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Added data row to matrix table");
+  };
+
+  const handleRemoveMatrixRowBtn = (blockIndex: number, rowIndex?: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = removeMatrixRow(block, rowIndex);
+    updateBlock(blockIndex, updated);
+    toast.success(
+      rowIndex !== undefined
+        ? `Removed row ${rowIndex + 1} from matrix table`
+        : "Removed last data row from matrix table"
+    );
+  };
+
+  const handleClearMatrixAllRows = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = clearMatrixRows(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Cleared all data rows from matrix table");
+  };
+
+  const handleClearMatrixSpecificCell = (
+    blockIndex: number,
+    isHeader: boolean,
+    rIdx: number,
+    cIdx: number
+  ) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = clearMatrixCell(block, isHeader, rIdx, cIdx);
+    updateBlock(blockIndex, updated);
+    toast.success("Cleared cell content");
+  };
+
+  const handleAddMatrixHeaderRowBtn = (blockIndex: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = addMatrixHeaderRow(block);
+    updateBlock(blockIndex, updated);
+    toast.success("Added header tier to matrix table");
+  };
+
+  const handleRemoveMatrixHeaderRowBtn = (blockIndex: number, targetHIdx?: number) => {
+    const block = blocks[blockIndex] as MatrixTableBlock;
+    if (!block || block.type !== "matrix_table") return;
+    const updated = removeMatrixHeaderRow(block, targetHIdx);
+    updateBlock(blockIndex, updated);
+    toast.success(
+      targetHIdx !== undefined
+        ? `Removed header tier ${targetHIdx + 1} from matrix table`
+        : "Removed last header tier from matrix table"
+    );
+  };
+
+  // --- TABLE COLUMN & HEADER GROUPING HELPERS ---
+  const updateTableColumns = (
+    blockIndex: number,
+    childIndex: number | null,
+    updater: (cols: CanvasColumnDef[]) => CanvasColumnDef[],
+  ) => {
+    if (childIndex !== null) {
+      const split = blocks[blockIndex] as SplitRowBlock;
+      if (!split || !split.children) return;
+      const child = split.children[childIndex] as TableGridBlock;
+      if (!child || !child.columns) return;
+      const newCols = updater(child.columns);
+      const newChildren = split.children.map((c, i) =>
+        i === childIndex ? { ...child, columns: newCols } : c,
+      );
+      updateBlock(blockIndex, { ...split, children: newChildren as any });
+    } else {
+      const block = blocks[blockIndex] as TableGridBlock;
+      if (!block || !block.columns) return;
+      const newCols = updater(block.columns);
+      updateBlock(blockIndex, { ...block, columns: newCols });
+    }
+  };
+
+  const getTableColumns = (
+    blockIndex: number,
+    childIndex: number | null,
+  ): CanvasColumnDef[] => {
+    if (childIndex !== null) {
+      const split = blocks[blockIndex] as SplitRowBlock;
+      if (!split || !split.children) return [];
+      const child = split.children[childIndex] as TableGridBlock;
+      return child?.columns || [];
+    } else {
+      const block = blocks[blockIndex] as TableGridBlock;
+      return block?.columns || [];
+    }
+  };
+
+  const handleMergeHeaderWithNext = (
+    blockIndex: number,
+    childIndex: number | null,
+    colIdx: number,
+    customGroupName?: string,
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      if (colIdx >= cols.length - 1 && !cols[colIdx]?.groupName) return cols;
+      const cur = cols[colIdx];
+      const group = customGroupName || cur?.groupName;
+
+      if (group) {
+        // Current column or super-header already belongs to a group; extend it to include the next column
+        const groupIndices = cols
+          .map((c, i) => (c.groupName === group ? i : -1))
+          .filter((i) => i !== -1);
+        const maxIdx = Math.max(...groupIndices);
+        if (maxIdx < cols.length - 1) {
+          const newCols = [...cols];
+          newCols[maxIdx + 1] = { ...newCols[maxIdx + 1], groupName: group };
+          return newCols;
+        }
+        return cols;
+      }
+
+      // Neither was grouped yet; merge colIdx and colIdx + 1
+      const next = cols[colIdx + 1];
+      const finalGroup = customGroupName || next?.groupName || "GROUP " + (colIdx + 1);
+      const newCols = [...cols];
+      newCols[colIdx] = { ...cur, groupName: finalGroup };
+      if (colIdx + 1 < cols.length) {
+        newCols[colIdx + 1] = { ...next, groupName: finalGroup };
+      }
+      return newCols;
+    });
+
+    toast.success("Merged column header into group");
+  };
+
+  const handleMergeHeaderWithPrev = (
+    blockIndex: number,
+    childIndex: number | null,
+    colIdx: number,
+  ) => {
+    if (colIdx <= 0) return;
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      if (colIdx <= 0 || colIdx >= cols.length) return cols;
+      const cur = cols[colIdx];
+      const prev = cols[colIdx - 1];
+      const group = cur.groupName || prev.groupName || `GROUP ${colIdx}`;
+      const newCols = [...cols];
+      newCols[colIdx - 1] = { ...prev, groupName: group };
+      newCols[colIdx] = { ...cur, groupName: group };
+      return newCols;
+    });
+
+    toast.success("Merged column header with previous column");
+  };
+
+  const handleJoinAdjacentGroup = (
+    blockIndex: number,
+    childIndex: number | null,
+    colId: string,
+    targetGroupName: string,
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      return cols.map((c) =>
+        c.id === colId ? { ...c, groupName: targetGroupName } : c,
+      );
+    });
+
+    toast.success(`Added column to group "${targetGroupName}"`);
+  };
+
+  const handleExtendGroup = (
+    blockIndex: number,
+    childIndex: number | null,
+    groupName: string,
+    direction: "left" | "right",
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      const groupIndices = cols
+        .map((c, i) => (c.groupName === groupName ? i : -1))
+        .filter((i) => i !== -1);
+      if (groupIndices.length === 0) return cols;
+
+      const newCols = [...cols];
+      if (direction === "right") {
+        const maxIdx = Math.max(...groupIndices);
+        if (maxIdx + 1 < cols.length) {
+          newCols[maxIdx + 1] = { ...newCols[maxIdx + 1], groupName };
+        }
+      } else {
+        const minIdx = Math.min(...groupIndices);
+        if (minIdx - 1 >= 0) {
+          newCols[minIdx - 1] = { ...newCols[minIdx - 1], groupName };
+        }
+      }
+      return newCols;
+    });
+
+    toast.success(`Extended header group "${groupName}"`);
+  };
+
+  const handleRemoveColumnFromGroup = (
+    blockIndex: number,
+    childIndex: number | null,
+    colId: string,
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      return cols.map((c) =>
+        c.id === colId ? { ...c, groupName: undefined } : c,
+      );
+    });
+
+    toast.success("Removed column from header group");
+  };
+
+  const handleSetHeaderGroupName = (
+    blockIndex: number,
+    childIndex: number | null,
+    colId: string,
+    groupName: string,
+  ) => {
+    const trimmed = groupName.trim();
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      const targetCol = cols.find((c) => c.id === colId);
+      const oldGroup = targetCol?.groupName;
+      return cols.map((c) => {
+        if (c.id === colId || (oldGroup && c.groupName === oldGroup)) {
+          return { ...c, groupName: trimmed || undefined };
+        }
+        return c;
+      });
+    });
+
+    toast.success(`Updated header group to "${trimmed}"`);
+  };
+
+  const handleUnmergeHeader = (
+    blockIndex: number,
+    childIndex: number | null,
+    colId: string,
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      return cols.map((c) => (c.id === colId ? { ...c, groupName: undefined } : c));
+    });
+
+    toast.success("Unmerged column header");
+  };
+
+  const handleUnmergeGroup = (
+    blockIndex: number,
+    childIndex: number | null,
+    groupName: string,
+  ) => {
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      return cols.map((c) =>
+        c.groupName === groupName ? { ...c, groupName: undefined } : c,
+      );
+    });
+
+    toast.success(`Unmerged header group "${groupName}"`);
+  };
+
+  const handleApplyGroupColumns = (
+    blockIndex: number,
+    childIndex: number | null,
+    groupName: string,
+    selectedColIds: string[],
+    oldGroupName?: string,
+  ) => {
+    const trimmedGroup = groupName.trim();
+    const idSet = new Set(selectedColIds);
+    updateTableColumns(blockIndex, childIndex, (cols) => {
+      return cols.map((col) => {
+        // If col was in the old group and is not in selected set, clear its group
+        if (oldGroupName && col.groupName === oldGroupName && !idSet.has(col.id)) {
+          return { ...col, groupName: undefined };
+        }
+        // If col is in selected set, assign new groupName
+        if (idSet.has(col.id)) {
+          return { ...col, groupName: trimmedGroup };
+        }
+        return col;
+      });
+    });
+
+    toast.success(`Updated header group "${trimmedGroup}" (${selectedColIds.length} columns)`);
   };
 
   const handleAddMergedStatementRow = (
@@ -1734,6 +2758,11 @@ export function CanvasTemplateEditor({
     row: CanvasRowData,
     col: CanvasColumnDef,
     tableDec: number = 3,
+    tableColumns?: CanvasColumnDef[],
+    tableNominal?: number | string,
+    rowIndex: number = 0,
+    allRows?: CanvasRowData[],
+    tableTolerance?: number,
   ): React.ReactNode => {
     const dec =
       col.decimal_places ??
@@ -1766,6 +2795,25 @@ export function CanvasTemplateEditor({
       return str;
     };
 
+    const evalFormulaWithContext = (fStr: string) => {
+      const hasTolCol = tableColumns?.some((c) => c && (c.type === "tolerance" || c.id === "tolerance" || c.id === "tol"));
+      const tolColObj = tableColumns?.find((c) => c && (c.type === "tolerance" || c.id === "tolerance" || c.id === "tol"));
+      const parsedRowTol = tolColObj ? parseToleranceValue(row[tolColObj.id]) : parseToleranceValue(row.tolerance);
+      const tol = (hasTolCol && parsedRowTol !== undefined)
+        ? parsedRowTol
+        : (typeof tableTolerance === "number" && !isNaN(tableTolerance))
+          ? tableTolerance
+          : (parsedRowTol ?? 0.02);
+      const effectiveCols = tableColumns && tableColumns.length > 0 ? tableColumns : [col];
+      const ctx = buildRowContext(row, effectiveCols, tol, dec, 0, tableNominal, rowIndex, allRows);
+      if (fStr.includes(".") || fStr.includes("!")) {
+        const globalContext = buildGlobalTablesContext(blocks);
+        Object.assign(ctx.valuesMap, globalContext);
+        Object.assign(ctx.rawValuesMap, globalContext);
+      }
+      return evaluateFormulaExpression(fStr, ctx, dec);
+    };
+
     if (col.type === "nominal") {
       return formatNumericVal(cellVal);
     }
@@ -1788,16 +2836,26 @@ export function CanvasTemplateEditor({
       return row.tolerance ? `±${row.tolerance.toFixed(dec)}` : "-";
     }
     if (col.type === "trial" || col.type === "reading") {
+      if (row.cellFormulas?.[col.id]) {
+        const evalRes = evalFormulaWithContext(row.cellFormulas[col.id]);
+        if (evalRes.success && evalRes.formatted) {
+          return evalRes.formatted;
+        }
+      }
       return formatNumericVal(cellVal);
     }
     if (col.type === "formula") {
+      if (row.cellFormulas?.[col.id]) {
+        const evalRes = evalFormulaWithContext(row.cellFormulas[col.id]);
+        if (evalRes.success && evalRes.formatted) {
+          return evalRes.formatted;
+        }
+      }
       if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
         return formatNumericVal(cellVal);
       }
       if (col.formula) {
-        const tol = parseFloat(String(row.tolerance ?? 0.02)) || 0.02;
-        const ctx = buildRowContext(row, [col], tol, dec);
-        const evalRes = testEvaluateFormula(col.formula, ctx.valuesMap, dec);
+        const evalRes = evalFormulaWithContext(col.formula);
         if (evalRes.success && evalRes.formatted) {
           return evalRes.formatted;
         }
@@ -1809,10 +2867,11 @@ export function CanvasTemplateEditor({
       col.role === "JUDGEMENT" ||
       col.label.toLowerCase().includes("judg")
     ) {
-      const statusVal = cellVal || row.status || row.judgement;
-      if (statusVal) {
-        const isPass = String(statusVal).trim().toUpperCase() === "PASS";
-        const isFail = String(statusVal).trim().toUpperCase() === "FAIL";
+      const renderStatusBadge = (val: string) => {
+        const upper = String(val).trim().toUpperCase();
+        const isPass = upper === "PASS" || upper === "OK";
+        const isFail = upper === "FAIL" || upper === "NOT OK" || upper === "REJECT";
+        const isNormal = upper === "NORMAL";
         return (
           <span
             className={`inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-bold ${
@@ -1820,37 +2879,45 @@ export function CanvasTemplateEditor({
                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
                 : isFail
                   ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
-                  : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                  : isNormal
+                    ? "bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300"
+                    : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
             }`}
           >
-            {statusVal}
+            {val}
           </span>
         );
-      }
-      if (col.formula) {
-        const tol = parseFloat(String(row.tolerance ?? 0.02)) || 0.02;
-        const ctx = buildRowContext(row, [col], tol, dec);
-        const evalRes = testEvaluateFormula(col.formula, ctx.valuesMap, dec);
+      };
+
+      // 1. Check custom cell formula on this specific row first! (CellFormulaModal)
+      if (row.cellFormulas?.[col.id]) {
+        const evalRes = evalFormulaWithContext(row.cellFormulas[col.id]);
         if (evalRes.success && evalRes.formatted) {
-          const isPass =
-            String(evalRes.formatted).trim().toUpperCase() === "PASS";
-          const isFail =
-            String(evalRes.formatted).trim().toUpperCase() === "FAIL";
-          return (
-            <span
-              className={`inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-bold ${
-                isPass
-                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                  : isFail
-                    ? "bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300"
-                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-              }`}
-            >
-              {evalRes.formatted}
-            </span>
-          );
+          return evalRes.formatted === "-" ? "-" : renderStatusBadge(evalRes.formatted);
         }
       }
+
+      // 2. Use pre-computed status value from evaluateCanvasRowFormulas (instant 0ms render)
+      const precomputed = cellVal ?? row[col.id];
+      if (precomputed !== undefined && precomputed !== null && precomputed !== "") {
+        if (precomputed === "-") return "-";
+        return renderStatusBadge(precomputed);
+      }
+
+      // 3. Fallback: dynamically evaluate column formula if not yet computed (e.g. initial load)
+      if (col.formula) {
+        const evalRes = evalFormulaWithContext(col.formula);
+        if (evalRes.success && evalRes.formatted) {
+          return evalRes.formatted === "-" ? "-" : renderStatusBadge(evalRes.formatted);
+        }
+      }
+
+      // 4. Fallback for manual Pass/Fail selection (no formula)
+      const manualVal = row.status || row.judgement;
+      if (!col.formula && manualVal && manualVal !== "-") {
+        return renderStatusBadge(manualVal);
+      }
+
       return "-";
     }
     if (cellVal !== undefined && cellVal !== null) {
@@ -1859,17 +2926,45 @@ export function CanvasTemplateEditor({
     return "-";
   };
 
-  const handleApplyAiGenerated = (result: GeneratedTemplateResult) => {
-    if (result.blocks && result.blocks.length > 0) {
-      markChanged(result.blocks);
-      setSelectedBlockId(result.blocks[0]?.id || null);
-    }
+  const handleApplyAiGenerated = (
+    result: GeneratedTemplateResult,
+    mode: "append" | "replace" = "append",
+  ) => {
     if (onApplyGeneratedTemplate) {
-      onApplyGeneratedTemplate(result);
+      onApplyGeneratedTemplate(result, mode);
+      return;
     }
-    toast.success(
-      `Loaded "${result.name}" with ${result.blocks.length} blocks!`,
-    );
+    if (result.blocks && result.blocks.length > 0) {
+      if (mode === "append" && blocks && blocks.length > 0) {
+        const uniqueNewBlocks = result.blocks.map((b, idx) => {
+          const newId = `${b.type || "block"}_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`;
+          if (b.type === "split_row" && Array.isArray((b as any).children)) {
+            return {
+              ...b,
+              id: newId,
+              children: (b as any).children.map((c: any, cIdx: number) => ({
+                ...c,
+                id: `${c.type || "tbl"}_${Date.now()}_${idx}_${cIdx}_${Math.random().toString(36).substring(2, 6)}`,
+              })),
+            };
+          }
+          return { ...b, id: newId };
+        });
+        const combined = ensureTableKeys([...blocks, ...uniqueNewBlocks]);
+        const evaluated = evaluateAllCanvasBlocks(combined, { forceFull: true });
+        markChanged(evaluated);
+        setSelectedBlockId(uniqueNewBlocks[0]?.id || null);
+        toast.success(
+          `Added ${result.blocks.length} block(s) without removing existing tables! Total: ${combined.length} blocks.`,
+        );
+      } else {
+        markChanged(result.blocks);
+        setSelectedBlockId(result.blocks[0]?.id || null);
+        toast.success(
+          `Loaded "${result.name}" with ${result.blocks.length} blocks!`,
+        );
+      }
+    }
   };
 
   return (
@@ -2325,6 +3420,67 @@ export function CanvasTemplateEditor({
                           </div>
 
                           <div className="flex items-center gap-2 flex-wrap">
+                            {/* Table Access Key Badge with Popover Quick-Editor */}
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full border transition-all cursor-pointer bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800 shadow-2xs font-mono"
+                                  title="Table key for cross-table formula access (e.g. tableKey.columnKey)"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <span className="text-purple-500 font-bold">#</span>
+                                  <span>{(block as TableGridBlock).tableKey || slugifyTableKey(block.title || `table_${index + 1}`)}</span>
+                                  <Pencil className="w-2.5 h-2.5 opacity-60 hover:opacity-100 ml-0.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="center" className="w-72 p-3 shadow-lg z-50">
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                      <Hash className="w-3.5 h-3.5 text-purple-600" />
+                                      Cross-Table Key
+                                    </h4>
+                                    <span className="text-[10px] text-muted-foreground font-mono">
+                                      Formula ID
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground leading-tight">
+                                    Unique identifier used in formulas from other tables (e.g. <code className="bg-muted px-1 py-0.2 rounded font-mono text-[10px]">{`=${(block as TableGridBlock).tableKey || slugifyTableKey(block.title || "table")}.error`}</code>).
+                                  </p>
+                                  <div className="flex items-center gap-1.5 pt-1">
+                                    <Input
+                                      type="text"
+                                      placeholder="e.g. clockwise"
+                                      defaultValue={(block as TableGridBlock).tableKey || slugifyTableKey(block.title || `table_${index + 1}`)}
+                                      id={`table-key-input-${block.id}`}
+                                      className="h-8 text-xs font-mono"
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          const val = (e.currentTarget as HTMLInputElement).value;
+                                          handleUpdateTableKey(index, null, val);
+                                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                        }
+                                      }}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      className="h-8 px-2.5 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white"
+                                      onClick={() => {
+                                        const input = document.getElementById(`table-key-input-${block.id}`) as HTMLInputElement;
+                                        if (input) {
+                                          handleUpdateTableKey(index, null, input.value);
+                                        }
+                                        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                      }}
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+
                             <Badge
                               variant="outline"
                               className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
@@ -2343,9 +3499,13 @@ export function CanvasTemplateEditor({
                                 >
                                   <span className="font-medium text-amber-700 dark:text-amber-400">Nominal:</span>
                                   <span className="font-bold">
-                                    {(block as TableGridBlock).nominal !== undefined && (block as TableGridBlock).nominal !== ""
-                                      ? `${(block as TableGridBlock).nominal} ${block.unit || "mm"}`
-                                      : "Not Set"}
+                                    {(() => {
+                                      const formatted = formatNominalDisplay(
+                                        (block as TableGridBlock).nominal,
+                                        (block as TableGridBlock).decimal_places ?? decimalPlaces
+                                      );
+                                      return formatted ? `${formatted} ${block.unit || "mm"}` : "Not Set";
+                                    })()}
                                   </span>
                                   <Pencil className="w-3 h-3 opacity-60 hover:opacity-100 ml-0.5" />
                                 </button>
@@ -2367,7 +3527,10 @@ export function CanvasTemplateEditor({
                                     <Input
                                       type="text"
                                       placeholder="e.g. 10.0000"
-                                      defaultValue={String((block as TableGridBlock).nominal ?? "")}
+                                      defaultValue={formatNominalDisplay(
+                                        (block as TableGridBlock).nominal,
+                                        (block as TableGridBlock).decimal_places ?? decimalPlaces
+                                      )}
                                       id={`nominal-input-${block.id}`}
                                       className="h-8 text-xs font-mono"
                                       onKeyDown={(e) => {
@@ -2396,23 +3559,77 @@ export function CanvasTemplateEditor({
                               </PopoverContent>
                             </Popover>
 
-                            <Badge
-                              variant="outline"
-                              className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                            >
-                              Tolerance:{" "}
-                              {(block as TableGridBlock).toleranceType ===
-                                "mixed" ||
-                              (block as TableGridBlock).toleranceType ===
-                                "row_specific" ||
-                              ((block as TableGridBlock).rows &&
-                                (block as TableGridBlock).rows.some(
-                                  (r, i, arr) =>
-                                    r.tolerance !== arr[0]?.tolerance,
-                                ))
-                                ? "Row-specific"
-                                : `±${block.tolerance ?? "0.010"}`}
-                            </Badge>
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors cursor-pointer"
+                                  title="Click to edit Table Tolerance"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <span>
+                                    Tolerance:{" "}
+                                    {(block as TableGridBlock).toleranceType ===
+                                      "mixed" ||
+                                    (block as TableGridBlock).toleranceType ===
+                                      "row_specific" ||
+                                    ((block as TableGridBlock).rows &&
+                                      (block as TableGridBlock).rows.some(
+                                        (r, i, arr) =>
+                                          r.tolerance !== arr[0]?.tolerance,
+                                      ))
+                                      ? "Row-specific"
+                                      : `±${block.tolerance ?? "0.010"}`}
+                                  </span>
+                                  <Pencil className="w-3 h-3 opacity-60 hover:opacity-100 ml-0.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="center" className="w-64 p-3 shadow-lg z-50">
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                      Table Master Tolerance
+                                    </h4>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold">
+                                      ±{block.unit || "mm"}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-muted-foreground leading-tight">
+                                    Master tolerance applied to rows without individual tolerance specifications.
+                                  </p>
+                                  <div className="flex items-center gap-1.5 pt-1">
+                                    <Input
+                                      type="number"
+                                      step="any"
+                                      placeholder="e.g. 0.003"
+                                      defaultValue={block.tolerance ?? 0.01}
+                                      id={`tolerance-input-${block.id}`}
+                                      className="h-8 text-xs font-mono"
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          const val = (e.currentTarget as HTMLInputElement).value;
+                                          handleUpdateTableTolerance(index, null, val);
+                                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                        }
+                                      }}
+                                    />
+                                    <Button
+                                      size="sm"
+                                      className="h-8 px-2.5 text-xs font-bold"
+                                      onClick={(e) => {
+                                        const input = document.getElementById(`tolerance-input-${block.id}`) as HTMLInputElement;
+                                        if (input) {
+                                          handleUpdateTableTolerance(index, null, input.value);
+                                        }
+                                        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                      }}
+                                    >
+                                      Save
+                                    </Button>
+                                  </div>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
                             <Badge
                               variant="outline"
                               className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
@@ -2438,6 +3655,26 @@ export function CanvasTemplateEditor({
                               </Button>
                             )}
 
+                            {/* Toggle Excel Coordinate Grid */}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowExcelCoordinates(!showExcelCoordinates);
+                              }}
+                              className={`h-7 text-xs font-semibold gap-1.5 transition-all ${
+                                showExcelCoordinates
+                                  ? "bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-800 hover:bg-purple-100"
+                                  : "text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                              }`}
+                              title={showExcelCoordinates ? "Hide Excel Coordinates (A, B, C...)" : "Show Excel Coordinates (A, B, C...)"}
+                            >
+                              <Table className="w-3.5 h-3.5 text-purple-600" />
+                              <span>{showExcelCoordinates ? "Grid: A, B, C" : "Grid: Off"}</span>
+                            </Button>
+
                             {/* Consolidated Table Options Dropdown (Merge Side-by-Side + Values / Copy / Paste) */}
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
@@ -2455,6 +3692,21 @@ export function CanvasTemplateEditor({
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-60 max-h-80 overflow-y-auto">
+                                <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                  Grid View
+                                </DropdownMenuLabel>
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setShowExcelCoordinates(!showExcelCoordinates);
+                                  }}
+                                  className="text-xs cursor-pointer gap-2 font-medium"
+                                >
+                                  <Table className="w-3.5 h-3.5 text-purple-600" />
+                                  <span>{showExcelCoordinates ? "Hide Excel Coordinates (A, B, C...)" : "Show Excel Coordinates (A, B, C...)"}</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+
                                 {blocks.filter((b, i) => i !== index && b.type === "table_grid").length > 0 && (
                                   <>
                                     <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
@@ -2565,7 +3817,28 @@ export function CanvasTemplateEditor({
                         </div>
 
                         {/* HORIZONTAL TRANSPOSED VIEW */}
-                        {effOrient === "horizontal" ? (
+                        {effOrient === "horizontal" ? (() => {
+                          const hFirstColWidth =
+                            typeof block.firstColWidth === "number" && block.firstColWidth > 0
+                              ? block.firstColWidth
+                              : typeof block.firstColWidth === "string" && parseInt(block.firstColWidth) > 0
+                                ? parseInt(block.firstColWidth)
+                                : typeof block.parameterWidth === "number" && block.parameterWidth > 0
+                                  ? block.parameterWidth
+                                  : typeof block.columns?.[0]?.width === "number" && block.columns[0].width > 0
+                                    ? block.columns[0].width
+                                    : typeof block.columns?.[0]?.width === "string" && parseInt(block.columns[0].width) > 0
+                                      ? parseInt(block.columns[0].width)
+                                      : 160;
+
+                          const hDataColWidth =
+                            typeof block.dataColWidth === "number" && block.dataColWidth > 0
+                              ? block.dataColWidth
+                              : typeof block.dataColWidth === "string" && parseInt(block.dataColWidth) > 0
+                                ? parseInt(block.dataColWidth)
+                                : 65;
+
+                          return (
                           <div className="overflow-x-auto relative scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 hover:scrollbar-thumb-slate-500 scrollbar-track-slate-100 dark:scrollbar-track-slate-800">
                             <table
                               className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700"
@@ -2573,15 +3846,59 @@ export function CanvasTemplateEditor({
                             >
                               <thead>
                                 <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
-                                  <th className="py-2.5 px-3 text-left bg-slate-200 dark:bg-slate-750 font-bold w-40 min-w-[140px] text-slate-900 dark:text-white sticky left-0 z-20 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-400 dark:border-slate-600">
-                                    Parameter / Sl no
+                                  <th
+                                    style={{
+                                      width: `${hFirstColWidth}px`,
+                                      minWidth: `${hFirstColWidth}px`,
+                                      maxWidth: `${hFirstColWidth}px`,
+                                    }}
+                                    className={`group/hth py-2.5 px-2 bg-slate-200 dark:bg-slate-750 font-bold text-slate-900 dark:text-white sticky left-0 z-20 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-400 dark:border-slate-600 select-none overflow-hidden ${
+                                      block.columns?.[0]?.align === "left" ? "text-left" : block.columns?.[0]?.align === "right" ? "text-right" : "text-center"
+                                    }`}
+                                  >
+                                    <div className={`flex items-center ${
+                                      block.columns?.[0]?.align === "left" ? "justify-between" : block.columns?.[0]?.align === "right" ? "justify-end" : "justify-center"
+                                    } gap-1`}>
+                                      <span className="whitespace-nowrap truncate">Parameter / Sl no</span>
+                                      <span className="text-[10px] font-mono font-normal opacity-0 group-hover/hth:opacity-100 text-slate-500 dark:text-slate-400">
+                                        {hFirstColWidth}px
+                                      </span>
+                                    </div>
+                                    {/* Draggable Resizer Handle */}
+                                    <div
+                                      onMouseDown={(e) =>
+                                        handleColResizeStart(
+                                          e,
+                                          index,
+                                          "horizontal_first_col",
+                                          hFirstColWidth,
+                                          null,
+                                        )
+                                      }
+                                      className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-40 group-hover/hth:opacity-100 transition-opacity flex items-center justify-center"
+                                      title="Click & drag to resize Parameter column width"
+                                    >
+                                      <div className="w-[1.5px] h-3.5 bg-muted-foreground/50 group-hover/hth:bg-primary group-hover/hth:h-5 transition-all rounded" />
+                                    </div>
                                   </th>
                                   {block.rows.map((r, rIdx) => (
                                     <th
                                       key={rIdx}
-                                      className="py-2.5 px-2 font-bold min-w-[65px] text-slate-900 dark:text-white group/hcol"
+                                      style={{
+                                        width: `${hDataColWidth}px`,
+                                        minWidth: `${hDataColWidth}px`,
+                                      }}
+                                      className="relative group/hcol py-2.5 px-2 font-bold text-slate-900 dark:text-white select-none"
                                     >
                                       <div className="flex items-center justify-center gap-1">
+                                        {showExcelCoordinates && (
+                                          <span
+                                            className="inline-block px-1 py-0.2 rounded text-[9px] font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800"
+                                            title={`Data Row ${rIdx + 1}`}
+                                          >
+                                            {`R${rIdx + 1}`}
+                                          </span>
+                                        )}
                                         <span>
                                           {r.point_number ?? rIdx + 1}
                                         </span>
@@ -2605,27 +3922,76 @@ export function CanvasTemplateEditor({
                                           </button>
                                         )}
                                       </div>
+                                      {/* Draggable Resizer Handle */}
+                                      <div
+                                        onMouseDown={(e) =>
+                                          handleColResizeStart(
+                                            e,
+                                            index,
+                                            "horizontal_data_col",
+                                            hDataColWidth,
+                                            null,
+                                          )
+                                        }
+                                        className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-40 group-hover/hcol:opacity-100 transition-opacity flex items-center justify-center"
+                                        title="Click & drag to resize Point columns width"
+                                      >
+                                        <div className="w-[1.5px] h-3.5 bg-muted-foreground/50 group-hover/hcol:bg-primary group-hover/hcol:h-5 transition-all rounded" />
+                                      </div>
                                     </th>
                                   ))}
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-300 dark:divide-slate-700 font-mono">
-                                {displayCols.map((col) => (
+                                {displayCols.map((col, cIdx) => (
                                   <tr
                                     key={col.id}
                                     className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-indigo-50/20"
                                   >
-                                    <td className="py-2 px-3 text-left font-bold bg-slate-100/90 dark:bg-slate-800/80 text-xs font-sans text-slate-900 dark:text-slate-100 sticky left-0 z-10 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700">
-                                      <div className="flex items-center justify-between">
-                                        <span>{col.label}</span>
+                                    <td
+                                      style={{
+                                        width: `${hFirstColWidth}px`,
+                                        minWidth: `${hFirstColWidth}px`,
+                                        maxWidth: `${hFirstColWidth}px`,
+                                      }}
+                                      className={`py-2 px-2 font-bold bg-slate-100/90 dark:bg-slate-800/80 text-xs font-sans text-slate-900 dark:text-slate-100 sticky left-0 z-10 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700 overflow-hidden ${
+                                        col.align === "left" ? "text-left" : col.align === "right" ? "text-right" : "text-center"
+                                      }`}
+                                    >
+                                      <div className={`flex items-center ${
+                                        col.align === "left" ? "justify-between" : col.align === "right" ? "justify-end" : "justify-center"
+                                      }`}>
+                                        <div className="flex items-center gap-1.5 overflow-hidden">
+                                          {showExcelCoordinates && (
+                                            <span
+                                              className="inline-block px-1.5 py-0.2 rounded text-[10px] font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800 shrink-0 shadow-2xs"
+                                              title={`Excel Column ${getExcelColumnLetter(block.columns.findIndex((c) => c.id === col.id))}`}
+                                            >
+                                              {getExcelColumnLetter(block.columns.findIndex((c) => c.id === col.id))}
+                                            </span>
+                                          )}
+                                          <span className="truncate block" title={col.label}>{col.label}</span>
+                                        </div>
                                         {col.type === "formula" && (
-                                          <span className="text-xxs text-primary bg-primary/10 px-1 rounded font-bold font-mono">
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onOpenTableConfig?.(block.id);
+                                            }}
+                                            className="text-xxs text-primary bg-primary/10 hover:bg-primary/20 px-1 py-0.5 rounded font-bold font-mono ml-1 shrink-0 cursor-pointer border border-primary/30 transition-colors"
+                                            title={col.formula ? `Column Formula: ${col.formula}\nClick to configure in Table Configuration` : "Configure Column Formula"}
+                                          >
                                             (fx)
-                                          </span>
+                                          </button>
                                         )}
                                       </div>
                                     </td>
                                     {block.rows.map((row, rIdx) => {
+                                      const hasCustomCellFormula = Boolean(row.cellFormulas?.[col.id]);
+                                      const actualColIdx = block.columns.findIndex((c) => c.id === col.id);
+                                      const targetColIdx = actualColIdx >= 0 ? actualColIdx : cIdx;
+
                                       if (col.type === "nominal") {
                                         const cellVal =
                                           row[col.id] !== undefined
@@ -2636,60 +4002,104 @@ export function CanvasTemplateEditor({
                                         return (
                                           <td
                                             key={rIdx}
-                                            className="py-1 px-1.5 min-w-[65px]"
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
                                           >
-                                            <Input
-                                              type="text"
-                                              value={cellVal ?? ""}
-                                              onChange={(e) => {
-                                                const v = e.target.value;
-                                                if (
-                                                  v === "" ||
-                                                  /^[+-]?\d*\.?\d*$/.test(v)
-                                                ) {
-                                                  handleTableCellChange(
-                                                    index,
-                                                    rIdx,
-                                                    col.id,
-                                                    v,
-                                                  );
-                                                }
-                                              }}
-                                              onBlur={(e) => {
-                                                const raw =
-                                                  e.target.value.trim();
-                                                if (
-                                                  raw === "" ||
-                                                  raw === "-" ||
-                                                  raw === "+" ||
-                                                  raw === "."
+                                            <div className="relative w-full">
+                                              <Input
+                                                type="text"
+                                                value={cellVal ?? ""}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  if (
+                                                    v === "" ||
+                                                    /^[+-]?\d*\.?\d*$/.test(v)
+                                                  ) {
+                                                    handleTableCellChange(
+                                                      index,
+                                                      rIdx,
+                                                      col.id,
+                                                      v,
+                                                    );
+                                                  }
+                                                }}
+                                                onBlur={(e) => {
+                                                  const raw =
+                                                    e.target.value.trim();
+                                                  if (
+                                                    raw === "" ||
+                                                    raw === "-" ||
+                                                    raw === "+" ||
+                                                    raw === "."
+                                                  )
+                                                    return;
+                                                  const parsed = parseFloat(raw);
+                                                  if (!isNaN(parsed)) {
+                                                    const colDec =
+                                                      col.decimal_places ??
+                                                      col.decimalPrecision ??
+                                                      block.decimal_places ??
+                                                      decimalPlaces ??
+                                                      3;
+                                                    const formatted =
+                                                      colDec === 0
+                                                        ? String(
+                                                            Math.round(parsed),
+                                                          )
+                                                        : parsed.toFixed(colDec);
+                                                    handleTableCellChange(
+                                                      index,
+                                                      rIdx,
+                                                      col.id,
+                                                      formatted,
+                                                    );
+                                                  }
+                                                }}
+                                                className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                                placeholder="0"
+                                              />
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
                                                 )
-                                                  return;
-                                                const parsed = parseFloat(raw);
-                                                if (!isNaN(parsed)) {
-                                                  const colDec =
-                                                    col.decimal_places ??
-                                                    col.decimalPrecision ??
-                                                    block.decimal_places ??
-                                                    decimalPlaces ??
-                                                    3;
-                                                  const formatted =
-                                                    colDec === 0
-                                                      ? String(
-                                                          Math.round(parsed),
-                                                        )
-                                                      : parsed.toFixed(colDec);
-                                                  handleTableCellChange(
-                                                    index,
-                                                    rIdx,
-                                                    col.id,
-                                                    formatted,
-                                                  );
-                                                }
-                                              }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-bold hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
-                                              placeholder="0"
-                                            />
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
@@ -2703,7 +4113,26 @@ export function CanvasTemplateEditor({
                                         return (
                                           <td
                                             key={rIdx}
-                                            className="py-1 px-1.5 min-w-[70px]"
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
                                           >
                                             <Input
                                               value={cellVal}
@@ -2742,6 +4171,29 @@ export function CanvasTemplateEditor({
                                               className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-sans font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder={col.label || "Desc"}
                                             />
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
@@ -2758,59 +4210,122 @@ export function CanvasTemplateEditor({
                                         return (
                                           <td
                                             key={rIdx}
-                                            className="py-1 px-1.5 min-w-[65px]"
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
                                           >
-                                            <Input
-                                              value={cellVal}
-                                              onChange={(e) => {
-                                                const v = e.target.value;
-                                                if (
-                                                  v === "" ||
-                                                  /^[+-]?\d*\.?\d*$/.test(v)
-                                                ) {
-                                                  handleTableCellChange(
-                                                    index,
-                                                    rIdx,
-                                                    col.id,
-                                                    v,
-                                                  );
-                                                }
-                                              }}
-                                              onBlur={(e) => {
-                                                const raw =
-                                                  e.target.value.trim();
-                                                if (
-                                                  raw === "" ||
-                                                  raw === "-" ||
-                                                  raw === "+" ||
-                                                  raw === "."
+                                            <div className="flex items-center justify-center gap-1">
+                                              {hasCustomCellFormula && (
+                                                <span
+                                                  className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                  title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setCellFormulaModalState({
+                                                      blockIndex: index,
+                                                      childIndex: null,
+                                                      rowIndex: rIdx,
+                                                      colId: col.id,
+                                                      colLabel: col.label || col.id,
+                                                      initialFormula: row.cellFormulas[col.id] || "",
+                                                    });
+                                                  }}
+                                                >
+                                                  fx
+                                                </span>
+                                              )}
+                                              <Input
+                                                value={cellVal}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  if (
+                                                    v === "" ||
+                                                    /^[+-]?\d*\.?\d*$/.test(v)
+                                                  ) {
+                                                    handleTableCellChange(
+                                                      index,
+                                                      rIdx,
+                                                      col.id,
+                                                      v,
+                                                    );
+                                                  }
+                                                }}
+                                                onBlur={(e) => {
+                                                  const raw =
+                                                    e.target.value.trim();
+                                                  if (
+                                                    raw === "" ||
+                                                    raw === "-" ||
+                                                    raw === "+" ||
+                                                    raw === "."
+                                                  )
+                                                    return;
+                                                  const parsed = parseFloat(raw);
+                                                  if (!isNaN(parsed)) {
+                                                    const colDec =
+                                                      col.decimal_places ??
+                                                      col.decimalPrecision ??
+                                                      block.decimal_places ??
+                                                      decimalPlaces ??
+                                                      3;
+                                                    const formatted =
+                                                      colDec === 0
+                                                        ? String(
+                                                            Math.round(parsed),
+                                                          )
+                                                        : parsed.toFixed(colDec);
+                                                    handleTableCellChange(
+                                                      index,
+                                                      rIdx,
+                                                      col.id,
+                                                      formatted,
+                                                    );
+                                                  }
+                                                }}
+                                                className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
+                                                placeholder="0.00"
+                                              />
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
                                                 )
-                                                  return;
-                                                const parsed = parseFloat(raw);
-                                                if (!isNaN(parsed)) {
-                                                  const colDec =
-                                                    col.decimal_places ??
-                                                    col.decimalPrecision ??
-                                                    block.decimal_places ??
-                                                    decimalPlaces ??
-                                                    3;
-                                                  const formatted =
-                                                    colDec === 0
-                                                      ? String(
-                                                          Math.round(parsed),
-                                                        )
-                                                      : parsed.toFixed(colDec);
-                                                  handleTableCellChange(
-                                                    index,
-                                                    rIdx,
-                                                    col.id,
-                                                    formatted,
-                                                  );
-                                                }
-                                              }}
-                                              className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
-                                              placeholder="0.00"
-                                            />
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
@@ -2824,7 +4339,26 @@ export function CanvasTemplateEditor({
                                         return (
                                           <td
                                             key={rIdx}
-                                            className="py-1 px-1.5 min-w-[65px]"
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
                                           >
                                             <Input
                                               value={cellVal}
@@ -2877,6 +4411,93 @@ export function CanvasTemplateEditor({
                                               className="h-7.5 text-xs text-center bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-1.5 font-metrology font-medium hover:border-primary/60 focus:border-primary focus:ring-2 focus:ring-primary/30 text-slate-900 dark:text-slate-100 shadow-2xs"
                                               placeholder="±Tol"
                                             />
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
+                                          </td>
+                                        );
+                                      }
+                                      const isManualJudge =
+                                        !hasCustomCellFormula &&
+                                        (Boolean(col.isManualJudgement) ||
+                                          (col as any).judgementMode === "manual" ||
+                                          ((col.type === "status" || col.role === "JUDGEMENT" || col.label?.toLowerCase().includes("judg")) && !col.formula));
+
+                                      if (isManualJudge) {
+                                        const cellVal = row[col.id] ?? row.status ?? row.judgement ?? "OK";
+                                        return (
+                                          <td
+                                            key={rIdx}
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
+                                          >
+                                            <JudgementCellControl
+                                              value={cellVal}
+                                              onChange={(newVal) => {
+                                                handleTableCellChange(index, rIdx, col.id, newVal);
+                                              }}
+                                            />
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
@@ -2884,6 +4505,11 @@ export function CanvasTemplateEditor({
                                         row,
                                         col,
                                         block.decimal_places ?? decimalPlaces,
+                                        block.columns,
+                                        (block as TableGridBlock).nominal,
+                                        rIdx,
+                                        block.rows,
+                                        (block as TableGridBlock).tolerance,
                                       );
                                       const isJudgementCol =
                                         col.type === "status" ||
@@ -2903,32 +4529,167 @@ export function CanvasTemplateEditor({
                                         return (
                                           <td
                                             key={rIdx}
-                                            className="py-1 px-1.5 min-w-[65px]"
+                                            style={{
+                                              width: `${hDataColWidth}px`,
+                                              minWidth: `${hDataColWidth}px`,
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1.5 relative group/cell"
                                           >
-                                            {isPass ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 shadow-2xs">
-                                                PASS
-                                              </span>
-                                            ) : isFail ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700 shadow-2xs">
-                                                FAIL
-                                              </span>
-                                            ) : (
-                                              <span className="font-metrology text-xs text-slate-400">
-                                                {evaluated}
-                                              </span>
-                                            )}
+                                            <div className="flex items-center justify-center gap-1">
+                                              {hasCustomCellFormula && (
+                                                <span
+                                                  className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                  title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setCellFormulaModalState({
+                                                      blockIndex: index,
+                                                      childIndex: null,
+                                                      rowIndex: rIdx,
+                                                      colId: col.id,
+                                                      colLabel: col.label || col.id,
+                                                      initialFormula: row.cellFormulas[col.id] || "",
+                                                    });
+                                                  }}
+                                                >
+                                                  fx
+                                                </span>
+                                              )}
+                                              {typeof evaluated === "object" ? (
+                                                evaluated
+                                              ) : (
+                                                (() => {
+                                                  const strVal = String(evaluated).trim().toUpperCase();
+                                                  const isPassStr = strVal === "PASS" || strVal === "OK";
+                                                  const isFailStr = strVal === "FAIL" || strVal === "NOT OK" || strVal === "REJECT";
+                                                  return isPassStr ? (
+                                                    <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 shadow-2xs">
+                                                      PASS
+                                                    </span>
+                                                  ) : isFailStr ? (
+                                                    <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700 shadow-2xs">
+                                                      FAIL
+                                                    </span>
+                                                  ) : (
+                                                    <span className="font-metrology text-xs text-slate-400">
+                                                      {evaluated}
+                                                    </span>
+                                                  );
+                                                })()
+                                              )}
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  targetColIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
                                       return (
                                         <td
                                           key={rIdx}
-                                          className="py-1.5 px-2 min-w-[65px]"
+                                          style={{
+                                            width: `${hDataColWidth}px`,
+                                            minWidth: `${hDataColWidth}px`,
+                                          }}
+                                          onContextMenu={(e) =>
+                                            handleOpenCellMenu(
+                                              e,
+                                              index,
+                                              null,
+                                              rIdx,
+                                              col.id,
+                                              col.label || col.id,
+                                              targetColIdx,
+                                              block.columns.length,
+                                              1,
+                                              1,
+                                              block.rows.length,
+                                            )
+                                          }
+                                          className="py-1.5 px-2 relative group/cell"
                                         >
-                                          <span className="text-slate-900 dark:text-slate-100 font-metrology text-xs font-bold">
-                                            {evaluated}
-                                          </span>
+                                          <div className="flex items-center justify-center gap-1">
+                                            {hasCustomCellFormula && (
+                                              <span
+                                                className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setCellFormulaModalState({
+                                                    blockIndex: index,
+                                                    childIndex: null,
+                                                    rowIndex: rIdx,
+                                                    colId: col.id,
+                                                    colLabel: col.label || col.id,
+                                                    initialFormula: row.cellFormulas[col.id] || "",
+                                                  });
+                                                }}
+                                              >
+                                                fx
+                                              </span>
+                                            )}
+                                            <span className="text-slate-900 dark:text-slate-100 font-metrology text-xs font-bold">
+                                              {evaluated}
+                                            </span>
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                targetColIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                            title="Formula & Cell options (or right-click)"
+                                          >
+                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                          </button>
                                         </td>
                                       );
                                     })}
@@ -2937,13 +4698,14 @@ export function CanvasTemplateEditor({
                               </tbody>
                             </table>
                           </div>
-                        ) : (
+                          );
+                        })() : (
                           /* VERTICAL STANDARD VIEW */
                           <div className="overflow-x-auto relative scrollbar-thin scrollbar-thumb-slate-400 dark:scrollbar-thumb-slate-600 hover:scrollbar-thumb-slate-500 scrollbar-track-slate-100 dark:scrollbar-track-slate-800">
                             <table className="w-full border-collapse text-xs text-center border-border">
                               <thead>
-                                <tr className="bg-muted/40 font-semibold border-b text-muted-foreground divide-x divide-border">
-                                  {block.columns.map((col, colIdx) => {
+                                {(() => {
+                                  const renderTh = (col: CanvasColumnDef, colIdx: number, rowSpan: number = 1) => {
                                     const isPointNo =
                                       col.id === "point_number" ||
                                       col.id === "sl_no" ||
@@ -2957,6 +4719,7 @@ export function CanvasTemplateEditor({
                                     return (
                                       <th
                                         key={col.id}
+                                        rowSpan={rowSpan > 1 ? rowSpan : undefined}
                                         draggable={!isPointNo}
                                         onDragStart={(e) => {
                                           e.dataTransfer.setData("text/plain", String(colIdx));
@@ -2984,6 +4747,20 @@ export function CanvasTemplateEditor({
                                           setDraggedCol(null);
                                           setDragOverCol(null);
                                         }}
+                                        onContextMenu={(e) => {
+                                          if (!isPointNo) {
+                                            handleOpenHeaderGroupMenu(
+                                              e,
+                                              index,
+                                              null,
+                                              col.id,
+                                              col.label || col.id,
+                                              colIdx,
+                                              block.columns.length,
+                                              col.groupName,
+                                            );
+                                          }
+                                        }}
                                         style={{
                                           width: col.width,
                                           minWidth:
@@ -3005,6 +4782,35 @@ export function CanvasTemplateEditor({
                                             <span className="px-1 py-0.2 rounded text-2xs font-mono font-bold bg-primary/15 text-primary border border-primary/30">
                                               fx
                                             </span>
+                                          )}
+                                          {!isPointNo && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenHeaderGroupMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  colIdx,
+                                                  block.columns.length,
+                                                  col.groupName,
+                                                )
+                                              }
+                                              className={`opacity-0 group-hover/th:opacity-100 p-0.5 rounded text-xxs transition-opacity cursor-pointer ${
+                                                col.groupName
+                                                  ? "text-indigo-600 dark:text-indigo-400 opacity-100 font-bold"
+                                                  : "text-slate-400 hover:text-indigo-600"
+                                              }`}
+                                              title={
+                                                col.groupName
+                                                  ? `Group: ${col.groupName} (Right-click or click to edit/unmerge)`
+                                                  : "Merge header with next column / Create super-header"
+                                              }
+                                            >
+                                              <Columns className="w-2.5 h-2.5" />
+                                            </button>
                                           )}
                                           {!isPointNo && colIdx > (block.columns.some((c) => c.id === "point_number" || c.id === "sl_no") ? 1 : 0) && (
                                             <button
@@ -3032,32 +4838,32 @@ export function CanvasTemplateEditor({
                                               <ChevronRight className="w-2.5 h-2.5" />
                                             </button>
                                           )}
-                                           {!isPointNo && (
-                                             <button
-                                               type="button"
-                                               onClick={(e) => {
-                                                 e.stopPropagation();
-                                                 handleCopyColumn(block as TableGridBlock, col.id, col.label || col.id);
-                                               }}
-                                               className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                                               title={`Copy all values from "${col.label || col.id}"`}
-                                             >
-                                               <ClipboardCopy className="w-2.5 h-2.5" />
-                                             </button>
-                                           )}
-                                           {!isPointNo && col.type !== "formula" && col.type !== "status" && (
-                                             <button
-                                               type="button"
-                                               onClick={(e) => {
-                                                 e.stopPropagation();
-                                                 handleOpenPasteModal(index, null, block as TableGridBlock, col.id);
-                                               }}
-                                               className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
-                                               title={`Paste values into "${col.label || col.id}"`}
-                                             >
-                                               <ClipboardPaste className="w-2.5 h-2.5" />
-                                             </button>
-                                           )}
+                                          {!isPointNo && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleCopyColumn(block as TableGridBlock, col.id, col.label || col.id);
+                                              }}
+                                              className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                                              title={`Copy all values from "${col.label || col.id}"`}
+                                            >
+                                              <ClipboardCopy className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
+                                          {!isPointNo && col.type !== "formula" && col.type !== "status" && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenPasteModal(index, null, block as TableGridBlock, col.id);
+                                              }}
+                                              className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
+                                              title={`Paste values into "${col.label || col.id}"`}
+                                            >
+                                              <ClipboardPaste className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
                                         </div>
                                         {/* Draggable Resizer Handle */}
                                         <div
@@ -3076,8 +4882,117 @@ export function CanvasTemplateEditor({
                                         </div>
                                       </th>
                                     );
-                                  })}
-                                </tr>
+                                  };
+
+                                  const headerGroups = computeHeaderGroups(block.columns || []);
+
+                                  const renderExcelCoordinateRow = () => {
+                                    if (!showExcelCoordinates) return null;
+                                    return (
+                                      <tr className="bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 font-mono text-[11px] font-bold border-b border-border divide-x divide-border select-none">
+                                        {block.columns.map((col, cIdx) => (
+                                          <th
+                                            key={`excel_col_${col.id || cIdx}`}
+                                            style={{
+                                              width: col.width,
+                                              minWidth:
+                                                col.width ||
+                                                (col.id === "point_number" || col.id === "sl_no" || col.id === "sino"
+                                                  ? "60px"
+                                                  : "95px"),
+                                            }}
+                                            className="py-1 px-1 text-center font-mono font-bold tracking-wider bg-slate-150 dark:bg-slate-850 hover:bg-purple-100/60 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 transition-colors"
+                                            title={`Excel Column ${getExcelColumnLetter(cIdx)} (${col.label || col.id})`}
+                                          >
+                                            <span className="inline-block px-1.5 py-0.2 rounded text-[10px] font-bold font-mono text-purple-700 dark:text-purple-300 bg-purple-50/90 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800 shadow-2xs">
+                                              {getExcelColumnLetter(cIdx)}
+                                            </span>
+                                          </th>
+                                        ))}
+                                      </tr>
+                                    );
+                                  };
+
+                                  if (!headerGroups.hasGroups) {
+                                    return (
+                                      <>
+                                        {renderExcelCoordinateRow()}
+                                        <tr className="bg-muted/40 font-semibold border-b text-muted-foreground divide-x divide-border">
+                                          {block.columns.map((col, colIdx) => renderTh(col, colIdx, 1))}
+                                        </tr>
+                                      </>
+                                    );
+                                  }
+
+                                  return (
+                                    <>
+                                      {renderExcelCoordinateRow()}
+                                      <tr className="bg-slate-100 dark:bg-slate-800/90 font-bold border-b border-border text-slate-800 dark:text-slate-200 divide-x divide-border">
+                                        {headerGroups.topRow.map((topItem, topIdx) => {
+                                          if (topItem.type === "group") {
+                                            const firstCol = topItem.columns[0];
+                                            const firstColIdx = block.columns.findIndex((c) => c.id === firstCol.id);
+                                            return (
+                                              <th
+                                                key={`grp_${topIdx}`}
+                                                colSpan={topItem.colSpan}
+                                                onContextMenu={(e) =>
+                                                  handleOpenHeaderGroupMenu(
+                                                    e,
+                                                    index,
+                                                    null,
+                                                    firstCol.id,
+                                                    topItem.groupName || "",
+                                                    firstColIdx,
+                                                    block.columns.length,
+                                                    topItem.groupName,
+                                                    true,
+                                                    topItem.colSpan,
+                                                  )
+                                                }
+                                                className="py-1 px-2 text-center text-xs font-bold uppercase tracking-wider bg-slate-200/80 dark:bg-slate-750 text-slate-800 dark:text-slate-200 border-b border-border relative group/grp"
+                                              >
+                                                <div className="flex items-center justify-center gap-1.5">
+                                                  <span className="truncate max-w-[200px]">{topItem.groupName}</span>
+                                                  <button
+                                                    type="button"
+                                                    onClick={(e) =>
+                                                      handleOpenHeaderGroupMenu(
+                                                        e,
+                                                        index,
+                                                        null,
+                                                        firstCol.id,
+                                                        topItem.groupName || "",
+                                                        firstColIdx,
+                                                        block.columns.length,
+                                                        topItem.groupName,
+                                                        true,
+                                                        topItem.colSpan,
+                                                      )
+                                                    }
+                                                    className="opacity-0 group-hover/grp:opacity-100 p-0.5 hover:text-indigo-600 rounded text-xxs transition-opacity cursor-pointer"
+                                                    title="Group Header Options (Edit / Unmerge)"
+                                                  >
+                                                    <MoreHorizontal className="w-3 h-3" />
+                                                  </button>
+                                                </div>
+                                              </th>
+                                            );
+                                          }
+                                          const col = topItem.columns[0];
+                                          const colIdx = block.columns.findIndex((c) => c.id === col.id);
+                                          return renderTh(col, colIdx, 2);
+                                        })}
+                                      </tr>
+                                      <tr className="bg-muted/40 font-semibold border-b text-muted-foreground divide-x divide-border">
+                                        {headerGroups.subRowColumns.map((col) => {
+                                          const colIdx = block.columns.findIndex((c) => c.id === col.id);
+                                          return renderTh(col, colIdx, 1);
+                                        })}
+                                      </tr>
+                                    </>
+                                  );
+                                })()}
                               </thead>
                               <tbody className="divide-y divide-border">
                                 {(() => {
@@ -3411,6 +5326,14 @@ export function CanvasTemplateEditor({
                                                onContextMenu={(e) => handleOpenCellMenu(e, index, null, rIdx, col.id, col.label || col.id, cIdx, block.columns.length, 1, 1, block.rows.length)}
                                                className="py-1 px-1 relative group/cell"
                                             >
+                                               {row.cellFormulas?.[col.id] && (
+                                                 <span
+                                                   className="absolute top-0.5 left-0.5 px-1 py-0.2 text-[8px] font-mono font-bold bg-purple-100 dark:bg-purple-900/70 text-purple-700 dark:text-purple-300 rounded pointer-events-none z-10"
+                                                   title={`Formula: ${row.cellFormulas[col.id]}`}
+                                                 >
+                                                   fx
+                                                 </span>
+                                               )}
                                                {(cIdx < block.columns.length - 1 || rIdx < block.rows.length - 1) && (
                                                   <button
                                                    type="button"
@@ -3800,10 +5723,79 @@ export function CanvasTemplateEditor({
                                           </td>
                                         );
                                       }
+                                      const hasCustomCellFormula = Boolean(row.cellFormulas?.[col.id]);
+                                      const isManualJudge =
+                                        !hasCustomCellFormula &&
+                                        (Boolean(col.isManualJudgement) ||
+                                        (col as any).judgementMode === "manual" ||
+                                        ((col.type === "status" || col.role === "JUDGEMENT" || col.label?.toLowerCase().includes("judg")) && !col.formula));
+
+                                      if (isManualJudge) {
+                                        const cellVal = row[col.id] ?? row.status ?? row.judgement ?? "OK";
+                                        return (
+                                          <td
+                                            key={col.id}
+                                            style={{
+                                              width: col.width,
+                                              minWidth: col.width || "95px",
+                                            }}
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                cIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1 px-1 relative group/cell"
+                                          >
+                                            <JudgementCellControl
+                                              value={cellVal}
+                                              onChange={(newVal) => {
+                                                handleTableCellChange(index, rIdx, col.id, newVal);
+                                              }}
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  cIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
+                                          </td>
+                                        );
+                                      }
                                       const evaluated = evaluatePreviewCell(
                                         row,
                                         col,
                                         block.decimal_places ?? decimalPlaces,
+                                        block.columns,
+                                        (block as TableGridBlock).nominal,
+                                        rIdx,
+                                        block.rows,
+                                        (block as TableGridBlock).tolerance,
                                       );
                                       const isJudgementCol =
                                         col.type === "status" ||
@@ -3812,14 +5804,6 @@ export function CanvasTemplateEditor({
                                           .toLowerCase()
                                           .includes("judg");
                                       if (isJudgementCol && evaluated) {
-                                        const isPass =
-                                          String(evaluated)
-                                            .trim()
-                                            .toUpperCase() === "PASS";
-                                        const isFail =
-                                          String(evaluated)
-                                            .trim()
-                                            .toUpperCase() === "FAIL";
                                         return (
                                           <td
                                             key={col.id}
@@ -3827,21 +5811,89 @@ export function CanvasTemplateEditor({
                                               width: col.width,
                                               minWidth: col.width || "95px",
                                             }}
-                                            className="py-1.5 px-2"
+                                            onContextMenu={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                cIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="py-1.5 px-2 text-center relative group/cell"
                                           >
-                                            {isPass ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                                                PASS
-                                              </span>
-                                            ) : isFail ? (
-                                              <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
-                                                FAIL
-                                              </span>
-                                            ) : (
-                                              <span className="font-mono text-xs text-slate-400">
-                                                {evaluated}
-                                              </span>
-                                            )}
+                                            <div className="flex items-center justify-center gap-1">
+                                              {hasCustomCellFormula && (
+                                                <span
+                                                  className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                  title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setCellFormulaModalState({
+                                                      blockIndex: index,
+                                                      childIndex: null,
+                                                      rowIndex: rIdx,
+                                                      colId: col.id,
+                                                      colLabel: col.label || col.id,
+                                                      initialFormula: row.cellFormulas[col.id] || "",
+                                                    });
+                                                  }}
+                                                >
+                                                  fx
+                                                </span>
+                                              )}
+                                              {typeof evaluated === "object" ? (
+                                                evaluated
+                                              ) : (
+                                                (() => {
+                                                  const strVal = String(evaluated).trim().toUpperCase();
+                                                  const isPass = strVal === "PASS" || strVal === "OK";
+                                                  const isFail = strVal === "FAIL" || strVal === "NOT OK" || strVal === "REJECT";
+                                                  return isPass ? (
+                                                    <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                                                      PASS
+                                                    </span>
+                                                  ) : isFail ? (
+                                                    <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
+                                                      FAIL
+                                                    </span>
+                                                  ) : (
+                                                    <span className="font-mono text-xs text-slate-400">
+                                                      {evaluated}
+                                                    </span>
+                                                  );
+                                                })()
+                                              )}
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenCellMenu(
+                                                  e,
+                                                  index,
+                                                  null,
+                                                  rIdx,
+                                                  col.id,
+                                                  col.label || col.id,
+                                                  cIdx,
+                                                  block.columns.length,
+                                                  1,
+                                                  1,
+                                                  block.rows.length,
+                                                )
+                                              }
+                                              className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                              title="Formula & Cell options (or right-click)"
+                                            >
+                                              <MoreHorizontal className="w-2.5 h-2.5" />
+                                            </button>
                                           </td>
                                         );
                                       }
@@ -3852,11 +5904,70 @@ export function CanvasTemplateEditor({
                                             width: col.width,
                                             minWidth: col.width || "95px",
                                           }}
-                                          className="py-1.5 px-2"
+                                          onContextMenu={(e) =>
+                                            handleOpenCellMenu(
+                                              e,
+                                              index,
+                                              null,
+                                              rIdx,
+                                              col.id,
+                                              col.label || col.id,
+                                              cIdx,
+                                              block.columns.length,
+                                              1,
+                                              1,
+                                              block.rows.length,
+                                            )
+                                          }
+                                          className="py-1.5 px-2 relative group/cell"
                                         >
-                                          <span className="font-metrology text-xs font-semibold text-slate-800 dark:text-slate-200">
-                                            {evaluated}
-                                          </span>
+                                          <div className="flex items-center gap-1">
+                                            {hasCustomCellFormula && (
+                                              <span
+                                                className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setCellFormulaModalState({
+                                                    blockIndex: index,
+                                                    childIndex: null,
+                                                    rowIndex: rIdx,
+                                                    colId: col.id,
+                                                    colLabel: col.label || col.id,
+                                                    initialFormula: row.cellFormulas[col.id] || "",
+                                                  });
+                                                }}
+                                              >
+                                                fx
+                                              </span>
+                                            )}
+                                            <span className="font-metrology text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                              {evaluated}
+                                            </span>
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            onClick={(e) =>
+                                              handleOpenCellMenu(
+                                                e,
+                                                index,
+                                                null,
+                                                rIdx,
+                                                col.id,
+                                                col.label || col.id,
+                                                cIdx,
+                                                block.columns.length,
+                                                1,
+                                                1,
+                                                block.rows.length,
+                                              )
+                                            }
+                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                            title="Formula & Cell options (or right-click)"
+                                          >
+                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                          </button>
                                         </td>
                                       );
                                     })}
@@ -3908,6 +6019,19 @@ export function CanvasTemplateEditor({
                                     unit: block.unit || "mm",
                                     tolerance: block.tolerance ?? 0.02,
                                   };
+
+                                  block.columns.forEach((col) => {
+                                    if (col.type === "text") {
+                                      if (col.id === "deviation" || /deviation/i.test(col.label || col.id)) {
+                                        newRow[col.id] = "-";
+                                      } else if (col.id === "actual_dimension" || col.id === "actual") {
+                                        newRow[col.id] = "";
+                                      }
+                                    }
+                                    if (col.type === "status" && (Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !col.formula)) {
+                                      newRow[col.id] = "OK";
+                                    }
+                                  });
                                   const tol =
                                     parseFloat(
                                       String(block.tolerance ?? 0.02),
@@ -4040,6 +6164,63 @@ export function CanvasTemplateEditor({
                                       <span className="text-xs font-bold">
                                         {child.title || "Section Table"}
                                       </span>
+                                      {/* Split Child Table Access Key Badge with Popover */}
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border transition-all cursor-pointer bg-purple-50 hover:bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:hover:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800 shadow-2xs font-mono ml-1"
+                                            title="Click to rename table key for cross-table formula access"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span className="text-purple-500 font-bold">#</span>
+                                            <span>{child.tableKey || slugifyTableKey(child.title || `table_${index + 1}_${cIdx + 1}`)}</span>
+                                            <Pencil className="w-2.5 h-2.5 opacity-60 hover:opacity-100 ml-0.5" />
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent align="center" className="w-72 p-3 shadow-lg z-50">
+                                          <div className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                              <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                                <Hash className="w-3.5 h-3.5 text-purple-600" />
+                                                Cross-Table Key
+                                              </h4>
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground leading-tight">
+                                              Identifier used to reference this section in formulas from other tables.
+                                            </p>
+                                            <div className="flex items-center gap-1.5 pt-1">
+                                              <Input
+                                                type="text"
+                                                placeholder="e.g. clockwise"
+                                                defaultValue={child.tableKey || slugifyTableKey(child.title || `table_${index + 1}_${cIdx + 1}`)}
+                                                id={`child-key-input-${child.id}`}
+                                                className="h-8 text-xs font-mono"
+                                                onKeyDown={(e) => {
+                                                  if (e.key === "Enter") {
+                                                    const val = (e.currentTarget as HTMLInputElement).value;
+                                                    handleUpdateTableKey(index, cIdx, val);
+                                                    document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                  }
+                                                }}
+                                              />
+                                              <Button
+                                                size="sm"
+                                                className="h-8 px-2.5 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white"
+                                                onClick={() => {
+                                                  const input = document.getElementById(`child-key-input-${child.id}`) as HTMLInputElement;
+                                                  if (input) {
+                                                    handleUpdateTableKey(index, cIdx, input.value);
+                                                  }
+                                                  document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                }}
+                                              >
+                                                Save
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
                                     </div>
                                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
                                       {block.children.length > 1 && cIdx > 0 && (
@@ -4074,6 +6255,21 @@ export function CanvasTemplateEditor({
                                           </Button>
                                         </DropdownMenuTrigger>
                                          <DropdownMenuContent align="end" className="w-56 max-h-80 overflow-y-auto">
+                                           <DropdownMenuLabel className="text-[10px] uppercase font-bold text-muted-foreground px-2 py-1">
+                                             Grid View
+                                           </DropdownMenuLabel>
+                                           <DropdownMenuItem
+                                             onClick={(e) => {
+                                               e.stopPropagation();
+                                               setShowExcelCoordinates(!showExcelCoordinates);
+                                             }}
+                                             className="text-xs cursor-pointer gap-2 font-medium"
+                                           >
+                                             <Table className="w-3.5 h-3.5 text-purple-600" />
+                                             <span>{showExcelCoordinates ? "Hide Excel Coordinates" : "Show Excel Coordinates"}</span>
+                                           </DropdownMenuItem>
+                                           <DropdownMenuSeparator />
+
                                            <DropdownMenuItem
                                              onClick={() => handleOpenPasteModal(index, cIdx, child, "nominal")}
                                              className="text-xs cursor-pointer gap-2 font-medium text-primary focus:text-primary"
@@ -4143,9 +6339,13 @@ export function CanvasTemplateEditor({
                                           >
                                             <span className="font-medium text-amber-700 dark:text-amber-400">Nom:</span>
                                             <span className="font-bold">
-                                              {child.nominal !== undefined && child.nominal !== ""
-                                                ? `${child.nominal} ${child.unit || defaultUnit || "mm"}`
-                                                : "Not Set"}
+                                              {(() => {
+                                                const formatted = formatNominalDisplay(
+                                                  child.nominal,
+                                                  child.decimal_places ?? decimalPlaces
+                                                );
+                                                return formatted ? `${formatted} ${child.unit || defaultUnit || "mm"}` : "Not Set";
+                                              })()}
                                             </span>
                                             <Pencil className="w-2.5 h-2.5 opacity-60 hover:opacity-100 ml-0.5" />
                                           </button>
@@ -4167,7 +6367,10 @@ export function CanvasTemplateEditor({
                                               <Input
                                                 type="text"
                                                 placeholder="e.g. 10.0000"
-                                                defaultValue={String(child.nominal ?? "")}
+                                                defaultValue={formatNominalDisplay(
+                                                  child.nominal,
+                                                  child.decimal_places ?? decimalPlaces
+                                                )}
                                                 id={`nominal-input-${child.id}`}
                                                 className="h-8 text-xs font-mono"
                                                 onKeyDown={(e) => {
@@ -4195,12 +6398,61 @@ export function CanvasTemplateEditor({
                                           </div>
                                         </PopoverContent>
                                       </Popover>
-                                      <Badge
-                                        variant="outline"
-                                        className="text-2xs py-0 px-1 font-semibold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                                      >
-                                        Tol: ±{child.tolerance ?? defaultTolerance ?? "0.010"}
-                                      </Badge>
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center gap-0.5 text-2xs py-0 px-1 font-semibold rounded bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900 transition-colors cursor-pointer"
+                                            title="Click to edit Section Tolerance"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <span>Tol: ±{child.tolerance ?? defaultTolerance ?? "0.010"}</span>
+                                            <Pencil className="w-2.5 h-2.5 opacity-60 hover:opacity-100" />
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent align="center" className="w-60 p-2.5 shadow-lg z-50">
+                                          <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                              <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                                Section Master Tolerance
+                                              </h4>
+                                              <span className="text-[10px] text-muted-foreground uppercase font-semibold">
+                                                ±{child.unit || "mm"}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-center gap-1.5 pt-1">
+                                              <Input
+                                                type="number"
+                                                step="any"
+                                                placeholder="e.g. 0.003"
+                                                defaultValue={child.tolerance ?? 0.01}
+                                                id={`tolerance-input-${child.id}`}
+                                                className="h-7 text-xs font-mono"
+                                                onKeyDown={(e) => {
+                                                  if (e.key === "Enter") {
+                                                    const val = (e.currentTarget as HTMLInputElement).value;
+                                                    handleUpdateTableTolerance(index, cIdx, val);
+                                                    document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                  }
+                                                }}
+                                              />
+                                              <Button
+                                                size="sm"
+                                                className="h-7 px-2 text-xs font-bold"
+                                                onClick={(e) => {
+                                                  const input = document.getElementById(`tolerance-input-${child.id}`) as HTMLInputElement;
+                                                  if (input) {
+                                                    handleUpdateTableTolerance(index, cIdx, input.value);
+                                                  }
+                                                  document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                                                }}
+                                              >
+                                                Save
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
                                       <Badge
                                         variant="outline"
                                         className="text-2xs py-0 px-1 font-semibold bg-slate-50 dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -4258,210 +6510,737 @@ export function CanvasTemplateEditor({
                                     </div>
                                   </div>
                                   {childEff === "horizontal" ? (
-                                    <div className="overflow-x-auto scrollbar-thin">
-                                      <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
-                                        <thead>
-                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
-                                            <th className="py-1 px-2 text-left bg-slate-200/80 font-bold sticky left-0 z-20">
-                                              Sl no
-                                            </th>
-                                            {child.rows.map((r, rIdx) => (
-                                              <th
-                                                key={rIdx}
-                                                className="py-1 px-2 font-bold"
-                                              >
-                                                {r.point_number ?? rIdx + 1}
-                                              </th>
-                                            ))}
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-300 dark:divide-slate-700 font-mono">
-                                          {childDisplayCols.map((col) => (
-                                            <tr
-                                              key={col.id}
-                                              className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-slate-50/50"
-                                            >
-                                              <td className="py-1 px-2 text-left font-bold bg-slate-50 dark:bg-slate-800 font-sans sticky left-0 z-10 whitespace-nowrap">
-                                                {col.label}
-                                              </td>
-                                              {child.rows.map((row, rIdx) => {
-                                                if (col.type === "nominal") {
-                                                  const cellVal =
-                                                    row[col.id] !== undefined
-                                                      ? row[col.id]
-                                                      : (col.id === "nominal" ? row.nominal : "") ?? "";
-                                                  return (
-                                                    <td key={rIdx} className="py-1 px-1 min-w-[65px]">
-                                                      <Input
-                                                        value={cellVal}
-                                                        onChange={(e) => {
-                                                          const v = e.target.value;
-                                                          if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
-                                                          }
-                                                        }}
-                                                        onBlur={(e) => {
-                                                          const raw = e.target.value.trim();
-                                                          if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
-                                                          const parsed = parseFloat(raw);
-                                                          if (!isNaN(parsed)) {
-                                                            const colDec =
-                                                              col.decimal_places ??
-                                                              col.decimalPrecision ??
-                                                              child.decimal_places ??
-                                                              decimalPlaces ??
-                                                              3;
-                                                            const formatted =
-                                                              colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
-                                                          }
-                                                        }}
-                                                        className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
-                                                        placeholder="0.00"
-                                                      />
-                                                    </td>
-                                                  );
-                                                }
-                                                if (col.type === "text") {
-                                                  const cellVal =
-                                                    row[col.id] !== undefined
-                                                      ? row[col.id]
-                                                      : (col.id === "description" ? row.description : "") ?? "";
-                                                  return (
-                                                    <td key={rIdx} className="py-1 px-1 min-w-[90px]">
-                                                      <Input
-                                                        value={cellVal}
-                                                        onChange={(e) => {
-                                                          handleChildTableCellChange(index, cIdx, rIdx, col.id, e.target.value);
-                                                        }}
-                                                        className="h-7 w-full text-xs text-left bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-sans text-slate-800 dark:text-slate-200 font-medium"
-                                                        placeholder="Text..."
-                                                      />
-                                                    </td>
-                                                  );
-                                                }
-                                                if (col.type === "reading" || col.type === "trial") {
-                                                  const cellVal =
-                                                    row[col.id] !== undefined
-                                                      ? row[col.id]
-                                                      : (col.id === "reading" ? row.reading : "") ?? "";
-                                                  return (
-                                                    <td key={rIdx} className="py-1 px-1 min-w-[65px]">
-                                                      <Input
-                                                        value={cellVal}
-                                                        onChange={(e) => {
-                                                          const v = e.target.value;
-                                                          if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
-                                                          }
-                                                        }}
-                                                        onBlur={(e) => {
-                                                          const raw = e.target.value.trim();
-                                                          if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
-                                                          const parsed = parseFloat(raw);
-                                                          if (!isNaN(parsed)) {
-                                                            const colDec =
-                                                              col.decimal_places ??
-                                                              col.decimalPrecision ??
-                                                              child.decimal_places ??
-                                                              decimalPlaces ??
-                                                              3;
-                                                            const formatted =
-                                                              colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
-                                                          }
-                                                        }}
-                                                        className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
-                                                        placeholder="0.00"
-                                                      />
-                                                    </td>
-                                                  );
-                                                }
-                                                if (col.type === "tolerance") {
-                                                  const cellVal =
-                                                    row[col.id] !== undefined
-                                                      ? row[col.id]
-                                                      : (col.id === "tolerance" ? row.tolerance : "") ?? "";
-                                                  return (
-                                                    <td key={rIdx} className="py-1 px-1 min-w-[65px]">
-                                                      <Input
-                                                        value={cellVal}
-                                                        onChange={(e) => {
-                                                          const v = e.target.value;
-                                                          if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
-                                                          }
-                                                        }}
-                                                        onBlur={(e) => {
-                                                          const raw = e.target.value.trim();
-                                                          if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
-                                                          const parsed = parseFloat(raw);
-                                                          if (!isNaN(parsed)) {
-                                                            const colDec =
-                                                              col.decimal_places ??
-                                                              col.decimalPrecision ??
-                                                              child.decimal_places ??
-                                                              decimalPlaces ??
-                                                              3;
-                                                            const formatted =
-                                                              colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
-                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
-                                                          }
-                                                        }}
-                                                        className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
-                                                        placeholder="±Tol"
-                                                      />
-                                                    </td>
-                                                  );
-                                                }
-                                                const evaluated = evaluatePreviewCell(
-                                                  row,
-                                                  col,
-                                                  child.decimal_places ?? decimalPlaces,
-                                                );
-                                                const isJudgementCol =
-                                                  col.type === "status" ||
-                                                  col.role === "JUDGEMENT" ||
-                                                  col.label.toLowerCase().includes("judg");
+                                    (() => {
+                                      const childFirstColWidth =
+                                        typeof child.firstColWidth === "number"
+                                          ? child.firstColWidth
+                                          : parseInt(String(child.firstColWidth || child.parameterWidth || child.columns?.[0]?.width || "160")) || 160;
 
-                                                if (isJudgementCol && evaluated) {
-                                                  const isPass = String(evaluated).trim().toUpperCase() === "PASS";
-                                                  const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
-                                                  return (
-                                                    <td key={rIdx} className="py-1 px-1.5 min-w-[65px] text-center">
-                                                      {isPass ? (
-                                                        <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700">
-                                                          PASS
-                                                        </span>
-                                                      ) : isFail ? (
-                                                        <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700">
-                                                          FAIL
-                                                        </span>
-                                                      ) : (
-                                                        <span className="font-metrology text-xs text-slate-400">
-                                                          {evaluated}
+                                      const childDataColWidth =
+                                        typeof child.dataColWidth === "number"
+                                          ? child.dataColWidth
+                                          : parseInt(String(child.dataColWidth || "65")) || 65;
+
+                                      return (
+                                        <div className="overflow-x-auto scrollbar-thin">
+                                          <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
+                                            <thead>
+                                              <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                                <th
+                                                  style={{
+                                                    width: `${childFirstColWidth}px`,
+                                                    minWidth: `${childFirstColWidth}px`,
+                                                    maxWidth: `${childFirstColWidth}px`,
+                                                  }}
+                                                  className={`group/chth py-1.5 px-2 bg-slate-200/90 dark:bg-slate-750 font-bold sticky left-0 z-20 shadow-[3px_0_6px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-300 dark:border-slate-700 select-none overflow-hidden ${
+                                                    child.columns?.[0]?.align === "left" ? "text-left" : child.columns?.[0]?.align === "right" ? "text-right" : "text-center"
+                                                  }`}
+                                                >
+                                                  <div className={`flex items-center ${
+                                                    child.columns?.[0]?.align === "left" ? "justify-between" : child.columns?.[0]?.align === "right" ? "justify-end" : "justify-center"
+                                                  } gap-1`}>
+                                                    <span className="whitespace-nowrap truncate">Parameter / Sl no</span>
+                                                    <span className="text-[9px] font-mono font-normal opacity-0 group-hover/chth:opacity-100 text-slate-500 dark:text-slate-400">
+                                                      {childFirstColWidth}px
+                                                    </span>
+                                                  </div>
+                                                  {/* Draggable Resizer Handle */}
+                                                  <div
+                                                    onMouseDown={(e) =>
+                                                      handleColResizeStart(
+                                                        e,
+                                                        index,
+                                                        "horizontal_first_col",
+                                                        childFirstColWidth,
+                                                        cIdx,
+                                                      )
+                                                    }
+                                                    className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-40 group-hover/chth:opacity-100 transition-opacity flex items-center justify-center"
+                                                    title="Click & drag to resize Parameter column width"
+                                                  >
+                                                    <div className="w-[1.5px] h-3 bg-muted-foreground/50 group-hover/chth:bg-primary group-hover/chth:h-4.5 transition-all rounded" />
+                                                  </div>
+                                                </th>
+                                                {child.rows.map((r, rIdx) => (
+                                                  <th
+                                                    key={rIdx}
+                                                    style={{
+                                                      width: `${childDataColWidth}px`,
+                                                      minWidth: `${childDataColWidth}px`,
+                                                    }}
+                                                    className="relative group/chcol py-1.5 px-1 font-bold text-slate-900 dark:text-white select-none"
+                                                  >
+                                                    <div className="flex items-center justify-center gap-1">
+                                                      {showExcelCoordinates && (
+                                                        <span
+                                                          className="inline-block px-1 py-0.2 rounded text-[9px] font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800"
+                                                          title={`Data Row ${rIdx + 1}`}
+                                                        >
+                                                          {`R${rIdx + 1}`}
                                                         </span>
                                                       )}
-                                                    </td>
-                                                  );
-                                                }
-                                                return (
-                                                  <td key={rIdx} className="py-1 px-1.5 font-bold text-slate-900 dark:text-slate-100 text-center text-xs">
-                                                    {evaluated}
+                                                      <span>{r.point_number ?? rIdx + 1}</span>
+                                                    </div>
+                                                    {/* Draggable Resizer Handle */}
+                                                    <div
+                                                      onMouseDown={(e) =>
+                                                        handleColResizeStart(
+                                                          e,
+                                                          index,
+                                                          "horizontal_data_col",
+                                                          childDataColWidth,
+                                                          cIdx,
+                                                        )
+                                                      }
+                                                      className="absolute right-0 top-0 bottom-0 w-3 cursor-col-resize hover:bg-primary/20 active:bg-primary/40 z-30 opacity-40 group-hover/chcol:opacity-100 transition-opacity flex items-center justify-center"
+                                                      title="Click & drag to resize Point columns width"
+                                                    >
+                                                      <div className="w-[1.5px] h-3 bg-muted-foreground/50 group-hover/chcol:bg-primary group-hover/chcol:h-4.5 transition-all rounded" />
+                                                    </div>
+                                                  </th>
+                                                ))}
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-300 dark:divide-slate-700 font-mono">
+                                              {childDisplayCols.map((col, colDefIdx) => (
+                                                <tr
+                                                  key={col.id}
+                                                  className="divide-x divide-slate-300 dark:divide-slate-700 hover:bg-slate-50/50"
+                                                >
+                                                  <td
+                                                    style={{
+                                                      width: `${childFirstColWidth}px`,
+                                                      minWidth: `${childFirstColWidth}px`,
+                                                      maxWidth: `${childFirstColWidth}px`,
+                                                    }}
+                                                    className={`py-1 px-2 font-bold bg-slate-50 dark:bg-slate-800 font-sans sticky left-0 z-10 whitespace-nowrap shadow-[3px_0_6px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-300 dark:border-slate-700 overflow-hidden ${
+                                                      col.align === "left" ? "text-left" : col.align === "right" ? "text-right" : "text-center"
+                                                    }`}
+                                                  >
+                                                    <div className={`flex items-center ${
+                                                      col.align === "left" ? "justify-between" : col.align === "right" ? "justify-end" : "justify-center"
+                                                    } gap-1`}>
+                                                      <div className="flex items-center gap-1.5 overflow-hidden">
+                                                        {showExcelCoordinates && (
+                                                          <span
+                                                            className="inline-block px-1.5 py-0.2 rounded text-[10px] font-mono font-bold text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800 shrink-0 shadow-2xs"
+                                                            title={`Excel Column ${getExcelColumnLetter(child.columns.findIndex((c) => c.id === col.id))}`}
+                                                          >
+                                                            {getExcelColumnLetter(child.columns.findIndex((c) => c.id === col.id))}
+                                                          </span>
+                                                        )}
+                                                        <span className="truncate block" title={col.label}>{col.label}</span>
+                                                      </div>
+                                                      {col.type === "formula" && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onOpenTableConfig?.(child.id);
+                                                          }}
+                                                          className="text-xxs text-primary bg-primary/10 hover:bg-primary/20 px-1 py-0.5 rounded font-bold font-mono ml-1 shrink-0 cursor-pointer border border-primary/30 transition-colors"
+                                                          title={col.formula ? `Column Formula: ${col.formula}\nClick to configure in Table Configuration` : "Configure Column Formula"}
+                                                        >
+                                                          (fx)
+                                                        </button>
+                                                      )}
+                                                    </div>
                                                   </td>
-                                                );
-                                              })}
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
+                                                  {child.rows.map((row, rIdx) => {
+                                                    const hasCustomCellFormula = Boolean(row.cellFormulas?.[col.id]);
+                                                    const actualColIdx = child.columns.findIndex((c) => c.id === col.id);
+                                                    const targetColIdx = actualColIdx >= 0 ? actualColIdx : colDefIdx;
+
+                                                    if (col.type === "nominal") {
+                                                      const cellVal =
+                                                        row[col.id] !== undefined
+                                                          ? row[col.id]
+                                                          : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1 relative group/cell"
+                                                        >
+                                                          <Input
+                                                            value={cellVal}
+                                                            onChange={(e) => {
+                                                              const v = e.target.value;
+                                                              if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                                handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
+                                                              }
+                                                            }}
+                                                            onBlur={(e) => {
+                                                              const raw = e.target.value.trim();
+                                                              if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                              const parsed = parseFloat(raw);
+                                                              if (!isNaN(parsed)) {
+                                                                const colDec =
+                                                                  col.decimal_places ??
+                                                                  col.decimalPrecision ??
+                                                                  child.decimal_places ??
+                                                                  decimalPlaces ??
+                                                                  3;
+                                                                const formatted =
+                                                                  colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                                handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
+                                                              }
+                                                            }}
+                                                            className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
+                                                            placeholder="0.00"
+                                                          />
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    if (col.type === "text") {
+                                                      const cellVal =
+                                                        row[col.id] !== undefined
+                                                          ? row[col.id]
+                                                          : (col.id === "description" ? row.description : "") ?? "";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1 relative group/cell"
+                                                        >
+                                                          <Input
+                                                            value={cellVal}
+                                                            onChange={(e) => {
+                                                              handleChildTableCellChange(index, cIdx, rIdx, col.id, e.target.value);
+                                                            }}
+                                                            className="h-7 w-full text-xs text-left bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-sans text-slate-800 dark:text-slate-200 font-medium"
+                                                            placeholder="Text..."
+                                                          />
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    if (col.type === "reading" || col.type === "trial") {
+                                                      const cellVal =
+                                                        row[col.id] !== undefined
+                                                          ? row[col.id]
+                                                          : (col.id === "reading" ? row.reading : "") ?? "";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1 relative group/cell"
+                                                        >
+                                                          <div className="flex items-center justify-center gap-1">
+                                                            {hasCustomCellFormula && (
+                                                              <span
+                                                                className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                                title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  setCellFormulaModalState({
+                                                                    blockIndex: index,
+                                                                    childIndex: cIdx,
+                                                                    rowIndex: rIdx,
+                                                                    colId: col.id,
+                                                                    colLabel: col.label || col.id,
+                                                                    initialFormula: row.cellFormulas[col.id] || "",
+                                                                  });
+                                                                }}
+                                                              >
+                                                                fx
+                                                              </span>
+                                                            )}
+                                                            <Input
+                                                              value={cellVal}
+                                                              onChange={(e) => {
+                                                                const v = e.target.value;
+                                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                                  handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
+                                                                }
+                                                              }}
+                                                              onBlur={(e) => {
+                                                                const raw = e.target.value.trim();
+                                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                                const parsed = parseFloat(raw);
+                                                                if (!isNaN(parsed)) {
+                                                                  const colDec =
+                                                                    col.decimal_places ??
+                                                                    col.decimalPrecision ??
+                                                                    child.decimal_places ??
+                                                                    decimalPlaces ??
+                                                                    3;
+                                                                  const formatted =
+                                                                    colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                                  handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
+                                                                }
+                                                              }}
+                                                              className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
+                                                              placeholder="0.00"
+                                                            />
+                                                          </div>
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    if (col.type === "tolerance") {
+                                                      const cellVal =
+                                                        row[col.id] !== undefined
+                                                          ? row[col.id]
+                                                          : (col.id === "tolerance" ? row.tolerance : "") ?? "";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1 relative group/cell"
+                                                        >
+                                                          <Input
+                                                            value={cellVal}
+                                                            onChange={(e) => {
+                                                              const v = e.target.value;
+                                                              if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                                handleChildTableCellChange(index, cIdx, rIdx, col.id, v);
+                                                              }
+                                                            }}
+                                                            onBlur={(e) => {
+                                                              const raw = e.target.value.trim();
+                                                              if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                              const parsed = parseFloat(raw);
+                                                              if (!isNaN(parsed)) {
+                                                                const colDec =
+                                                                  col.decimal_places ??
+                                                                  col.decimalPrecision ??
+                                                                  child.decimal_places ??
+                                                                  decimalPlaces ??
+                                                                  3;
+                                                                const formatted =
+                                                                  colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                                                handleChildTableCellChange(index, cIdx, rIdx, col.id, formatted);
+                                                              }
+                                                            }}
+                                                            className="h-7 w-full text-xs text-center bg-transparent border-0 hover:bg-slate-100/70 dark:hover:bg-slate-800/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 font-metrology text-slate-800 dark:text-slate-200 font-semibold"
+                                                            placeholder="±Tol"
+                                                          />
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    const isManualJudge =
+                                                      !hasCustomCellFormula &&
+                                                      (Boolean(col.isManualJudgement) ||
+                                                        (col as any).judgementMode === "manual" ||
+                                                        ((col.type === "status" || col.role === "JUDGEMENT" || col.label?.toLowerCase().includes("judg")) && !col.formula));
+
+                                                    if (isManualJudge) {
+                                                      const cellVal = row[col.id] ?? row.status ?? row.judgement ?? "OK";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1.5 text-center relative group/cell"
+                                                        >
+                                                          <JudgementCellControl
+                                                            value={cellVal}
+                                                            onChange={(newVal) => {
+                                                              handleChildTableCellChange(index, cIdx, rIdx, col.id, newVal);
+                                                            }}
+                                                          />
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    const evaluated = evaluatePreviewCell(
+                                                      row,
+                                                      col,
+                                                      child.decimal_places ?? decimalPlaces,
+                                                      child.columns,
+                                                      (child as TableGridBlock).nominal,
+                                                      rIdx,
+                                                      child.rows,
+                                                      (child as TableGridBlock).tolerance,
+                                                    );
+                                                    const isJudgementCol =
+                                                      col.type === "status" ||
+                                                      col.role === "JUDGEMENT" ||
+                                                      col.label.toLowerCase().includes("judg");
+
+                                                    if (isJudgementCol && evaluated) {
+                                                      const isPass = String(evaluated).trim().toUpperCase() === "PASS";
+                                                      const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
+                                                      return (
+                                                        <td
+                                                          key={rIdx}
+                                                          style={{
+                                                            width: `${childDataColWidth}px`,
+                                                            minWidth: `${childDataColWidth}px`,
+                                                          }}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="py-1 px-1.5 text-center relative group/cell"
+                                                        >
+                                                          <div className="flex items-center justify-center gap-1">
+                                                            {hasCustomCellFormula && (
+                                                              <span
+                                                                className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                                title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                                onClick={(e) => {
+                                                                  e.stopPropagation();
+                                                                  setCellFormulaModalState({
+                                                                    blockIndex: index,
+                                                                    childIndex: cIdx,
+                                                                    rowIndex: rIdx,
+                                                                    colId: col.id,
+                                                                    colLabel: col.label || col.id,
+                                                                    initialFormula: row.cellFormulas[col.id] || "",
+                                                                  });
+                                                                }}
+                                                              >
+                                                                fx
+                                                              </span>
+                                                            )}
+                                                            {typeof evaluated === "object" ? (
+                                                              evaluated
+                                                            ) : (
+                                                              (() => {
+                                                                const strVal = String(evaluated).trim().toUpperCase();
+                                                                const isPassStr = strVal === "PASS" || strVal === "OK";
+                                                                const isFailStr = strVal === "FAIL" || strVal === "NOT OK" || strVal === "REJECT";
+                                                                return isPassStr ? (
+                                                                  <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700">
+                                                                    PASS
+                                                                  </span>
+                                                                ) : isFailStr ? (
+                                                                  <span className="inline-block px-2.5 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-900 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-400 dark:border-rose-700">
+                                                                    FAIL
+                                                                  </span>
+                                                                ) : (
+                                                                  <span className="font-metrology text-xs text-slate-400">
+                                                                    {evaluated}
+                                                                  </span>
+                                                                );
+                                                              })()
+                                                            )}
+                                                          </div>
+
+                                                          <button
+                                                            type="button"
+                                                            onClick={(e) =>
+                                                              handleOpenCellMenu(
+                                                                e,
+                                                                index,
+                                                                cIdx,
+                                                                rIdx,
+                                                                col.id,
+                                                                col.label || col.id,
+                                                                targetColIdx,
+                                                                child.columns.length,
+                                                                1,
+                                                                1,
+                                                                child.rows.length,
+                                                              )
+                                                            }
+                                                            className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                            title="Formula & Cell options (or right-click)"
+                                                          >
+                                                            <MoreHorizontal className="w-2.5 h-2.5" />
+                                                          </button>
+                                                        </td>
+                                                      );
+                                                    }
+                                                    return (
+                                                      <td
+                                                        key={rIdx}
+                                                        style={{
+                                                          width: `${childDataColWidth}px`,
+                                                          minWidth: `${childDataColWidth}px`,
+                                                        }}
+                                                        onContextMenu={(e) =>
+                                                          handleOpenCellMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            targetColIdx,
+                                                            child.columns.length,
+                                                            1,
+                                                            1,
+                                                            child.rows.length,
+                                                          )
+                                                        }
+                                                        className="py-1 px-1.5 font-bold text-slate-900 dark:text-slate-100 text-center text-xs relative group/cell"
+                                                      >
+                                                        <div className="flex items-center justify-center gap-1">
+                                                          {hasCustomCellFormula && (
+                                                            <span
+                                                              className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                              title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setCellFormulaModalState({
+                                                                  blockIndex: index,
+                                                                  childIndex: cIdx,
+                                                                  rowIndex: rIdx,
+                                                                  colId: col.id,
+                                                                  colLabel: col.label || col.id,
+                                                                  initialFormula: row.cellFormulas[col.id] || "",
+                                                                });
+                                                              }}
+                                                            >
+                                                              fx
+                                                            </span>
+                                                          )}
+                                                          <span>{evaluated}</span>
+                                                        </div>
+
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              targetColIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                          title="Formula & Cell options (or right-click)"
+                                                        >
+                                                          <MoreHorizontal className="w-2.5 h-2.5" />
+                                                        </button>
+                                                      </td>
+                                                    );
+                                                  })}
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    })()
                                   ) : (
                                     <div className="overflow-x-auto scrollbar-thin">
                                       <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
                                         <thead>
-                                          <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
-                                            {child.columns.map((col, colIdx) => {
+                                          {(() => {
+                                            const renderChildTh = (col: CanvasColumnDef, colIdx: number, rowSpan: number = 1) => {
                                               const isPointNo =
                                                 col.id === "point_number" ||
                                                 col.id === "sl_no" ||
@@ -4475,6 +7254,7 @@ export function CanvasTemplateEditor({
                                               return (
                                                 <th
                                                   key={col.id}
+                                                  rowSpan={rowSpan > 1 ? rowSpan : undefined}
                                                   draggable={!isPointNo}
                                                   onDragStart={() => {
                                                     if (!isPointNo) {
@@ -4520,6 +7300,20 @@ export function CanvasTemplateEditor({
                                                     setDraggedCol(null);
                                                     setDragOverCol(null);
                                                   }}
+                                                  onContextMenu={(e) => {
+                                                    if (!isPointNo) {
+                                                      handleOpenHeaderGroupMenu(
+                                                        e,
+                                                        index,
+                                                        cIdx,
+                                                        col.id,
+                                                        col.label || col.id,
+                                                        colIdx,
+                                                        child.columns.length,
+                                                        col.groupName,
+                                                      );
+                                                    }
+                                                  }}
                                                   style={{
                                                     width: col.width,
                                                     minWidth:
@@ -4541,6 +7335,35 @@ export function CanvasTemplateEditor({
                                                       <span className="px-1 py-0.2 rounded text-2xs font-mono font-bold bg-primary/15 text-primary border border-primary/30">
                                                         fx
                                                       </span>
+                                                    )}
+                                                    {!isPointNo && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) =>
+                                                          handleOpenHeaderGroupMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            colIdx,
+                                                            child.columns.length,
+                                                            col.groupName,
+                                                          )
+                                                        }
+                                                        className={`opacity-0 group-hover/th:opacity-100 p-0.5 rounded text-xxs transition-opacity cursor-pointer ${
+                                                          col.groupName
+                                                            ? "text-indigo-600 dark:text-indigo-400 opacity-100 font-bold"
+                                                            : "text-slate-400 hover:text-indigo-600"
+                                                        }`}
+                                                        title={
+                                                          col.groupName
+                                                            ? `Group: ${col.groupName} (Right-click or click to edit/unmerge)`
+                                                            : "Merge header with next column / Create super-header"
+                                                        }
+                                                      >
+                                                        <Columns className="w-2.5 h-2.5" />
+                                                      </button>
                                                     )}
                                                     {!isPointNo &&
                                                       colIdx >
@@ -4589,37 +7412,146 @@ export function CanvasTemplateEditor({
                                                           <ChevronRight className="w-2.5 h-2.5" />
                                                         </button>
                                                       )}
-                                                     {!isPointNo && (
-                                                       <button
-                                                         type="button"
-                                                         onClick={(e) => {
-                                                           e.stopPropagation();
-                                                           handleCopyColumn(child, col.id, col.label || col.id);
-                                                         }}
-                                                         className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-                                                         title={`Copy all values from "${col.label || col.id}"`}
-                                                       >
-                                                         <ClipboardCopy className="w-2.5 h-2.5" />
-                                                       </button>
-                                                     )}
-                                                     {!isPointNo && col.type !== "formula" && col.type !== "status" && (
-                                                       <button
-                                                         type="button"
-                                                         onClick={(e) => {
-                                                           e.stopPropagation();
-                                                           handleOpenPasteModal(index, cIdx, child, col.id);
-                                                         }}
-                                                         className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
-                                                         title={`Paste values into "${col.label || col.id}"`}
-                                                       >
-                                                         <ClipboardPaste className="w-2.5 h-2.5" />
-                                                       </button>
-                                                     )}
+                                                    {!isPointNo && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          handleCopyColumn(child, col.id, col.label || col.id);
+                                                        }}
+                                                        className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                                                        title={`Copy all values from "${col.label || col.id}"`}
+                                                      >
+                                                        <ClipboardCopy className="w-2.5 h-2.5" />
+                                                      </button>
+                                                    )}
+                                                    {!isPointNo && col.type !== "formula" && col.type !== "status" && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          handleOpenPasteModal(index, cIdx, child, col.id);
+                                                        }}
+                                                        className="opacity-0 group-hover/th:opacity-100 p-0.5 hover:text-primary rounded text-xxs transition-opacity text-primary"
+                                                        title={`Paste values into "${col.label || col.id}"`}
+                                                      >
+                                                        <ClipboardPaste className="w-2.5 h-2.5" />
+                                                      </button>
+                                                    )}
                                                   </div>
                                                 </th>
                                               );
-                                            })}
-                                          </tr>
+                                            };
+
+                                            const headerGroups = computeHeaderGroups(child.columns || []);
+
+                                            const renderChildExcelCoordinateRow = () => {
+                                              if (!showExcelCoordinates) return null;
+                                              return (
+                                                <tr className="bg-slate-100/90 dark:bg-slate-900/90 text-slate-500 dark:text-slate-400 font-mono text-[11px] font-bold border-b border-border divide-x divide-border select-none">
+                                                  {child.columns.map((col, colIdx) => (
+                                                    <th
+                                                      key={`child_excel_col_${col.id || colIdx}`}
+                                                      style={{
+                                                        width: col.width,
+                                                        minWidth:
+                                                          col.width ||
+                                                          (col.id === "point_number" || col.id === "sl_no" || col.id === "sino"
+                                                            ? "60px"
+                                                            : "95px"),
+                                                      }}
+                                                      className="py-1 px-1 text-center font-mono font-bold tracking-wider bg-slate-150 dark:bg-slate-850 hover:bg-purple-100/60 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 transition-colors"
+                                                      title={`Excel Column ${getExcelColumnLetter(colIdx)} (${col.label || col.id})`}
+                                                    >
+                                                      <span className="inline-block px-1.5 py-0.2 rounded text-[10px] font-bold font-mono text-purple-700 dark:text-purple-300 bg-purple-50/90 dark:bg-purple-950/70 border border-purple-200 dark:border-purple-800 shadow-2xs">
+                                                        {getExcelColumnLetter(colIdx)}
+                                                      </span>
+                                                    </th>
+                                                  ))}
+                                                </tr>
+                                              );
+                                            };
+
+                                            if (!headerGroups.hasGroups) {
+                                              return (
+                                                <>
+                                                  {renderChildExcelCoordinateRow()}
+                                                  <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                                    {child.columns.map((col, colIdx) => renderChildTh(col, colIdx, 1))}
+                                                  </tr>
+                                                </>
+                                              );
+                                            }
+
+                                            return (
+                                              <>
+                                                {renderChildExcelCoordinateRow()}
+                                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b border-slate-300 dark:border-slate-700 divide-x divide-slate-300 dark:divide-slate-700">
+                                                  {headerGroups.topRow.map((topItem, topIdx) => {
+                                                    if (topItem.type === "group") {
+                                                      const firstCol = topItem.columns[0];
+                                                      const firstColIdx = child.columns.findIndex((c) => c.id === firstCol.id);
+                                                      return (
+                                                        <th
+                                                          key={`child_grp_${topIdx}`}
+                                                          colSpan={topItem.colSpan}
+                                                          onContextMenu={(e) =>
+                                                            handleOpenHeaderGroupMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              firstCol.id,
+                                                              topItem.groupName || "",
+                                                              firstColIdx,
+                                                              child.columns.length,
+                                                              topItem.groupName,
+                                                              true,
+                                                              topItem.colSpan,
+                                                            )
+                                                          }
+                                                          className="py-1 px-2 text-center text-xs font-bold uppercase tracking-wider bg-slate-200/80 dark:bg-slate-700 text-slate-800 dark:text-slate-200 border-b border-slate-300 dark:border-slate-600 relative group/grp"
+                                                        >
+                                                          <div className="flex items-center justify-center gap-1.5">
+                                                            <span className="truncate max-w-[150px]">{topItem.groupName}</span>
+                                                            <button
+                                                              type="button"
+                                                              onClick={(e) =>
+                                                                handleOpenHeaderGroupMenu(
+                                                                  e,
+                                                                  index,
+                                                                  cIdx,
+                                                                  firstCol.id,
+                                                                  topItem.groupName || "",
+                                                                  firstColIdx,
+                                                                  child.columns.length,
+                                                                  topItem.groupName,
+                                                                  true,
+                                                                  topItem.colSpan,
+                                                                )
+                                                              }
+                                                              className="opacity-0 group-hover/grp:opacity-100 p-0.5 hover:text-indigo-600 rounded text-xxs transition-opacity cursor-pointer"
+                                                              title="Group Header Options (Edit / Unmerge)"
+                                                            >
+                                                              <MoreHorizontal className="w-3 h-3" />
+                                                            </button>
+                                                          </div>
+                                                        </th>
+                                                      );
+                                                    }
+                                                    const col = topItem.columns[0];
+                                                    const colIdx = child.columns.findIndex((c) => c.id === col.id);
+                                                    return renderChildTh(col, colIdx, 2);
+                                                  })}
+                                                </tr>
+                                                <tr className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-400 dark:border-slate-600 divide-x divide-slate-300 dark:divide-slate-700">
+                                                  {headerGroups.subRowColumns.map((col) => {
+                                                    const colIdx = child.columns.findIndex((c) => c.id === col.id);
+                                                    return renderChildTh(col, colIdx, 1);
+                                                  })}
+                                                </tr>
+                                              </>
+                                            );
+                                          })()}
                                         </thead>
                                         <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
                                           {(() => {
@@ -4991,6 +7923,14 @@ export function CanvasTemplateEditor({
                                                        onContextMenu={(e) => handleOpenCellMenu(e, index, cIdx, rIdx, col.id, col.label || col.id, colIdx, child.columns.length, 1, 1, child.rows.length)}
                                                        className="py-1 px-1 relative group/cell"
                                                       >
+                                                         {row.cellFormulas?.[col.id] && (
+                                                           <span
+                                                             className="absolute top-0.5 left-0.5 px-1 py-0.2 text-[8px] font-mono font-bold bg-purple-100 dark:bg-purple-900/70 text-purple-700 dark:text-purple-300 rounded pointer-events-none z-10"
+                                                             title={`Formula: ${row.cellFormulas[col.id]}`}
+                                                           >
+                                                             fx
+                                                           </span>
+                                                         )}
                                                          {(colIdx < child.columns.length - 1 || rIdx < child.rows.length - 1) && (
                                                            <button
                                                              type="button"
@@ -5264,51 +8204,243 @@ export function CanvasTemplateEditor({
                                                   );
                                                 }
 
-                                                const evaluated = evaluatePreviewCell(
-                                                  row,
-                                                  col,
-                                                  child.decimal_places ?? decimalPlaces,
-                                                );
-                                                const isJudgementCol =
-                                                  col.type === "status" ||
-                                                  col.role === "JUDGEMENT" ||
-                                                  col.label.toLowerCase().includes("judg");
+                                                  const hasCustomCellFormula = Boolean(row.cellFormulas?.[col.id]);
+                                                  const isManualJudge =
+                                                    !hasCustomCellFormula &&
+                                                    (Boolean(col.isManualJudgement) ||
+                                                    (col as any).judgementMode === "manual" ||
+                                                    ((col.type === "status" || col.role === "JUDGEMENT" || col.label?.toLowerCase().includes("judg")) && !col.formula));
 
-                                                if (isJudgementCol && evaluated) {
-                                                  const isPass = String(evaluated).trim().toUpperCase() === "PASS";
-                                                  const isFail = String(evaluated).trim().toUpperCase() === "FAIL";
+                                                  if (isManualJudge) {
+                                                    const cellVal = row[col.id] ?? row.status ?? row.judgement ?? "OK";
+                                                    return (
+                                                      <td
+                                                        key={col.id}
+                                                        style={{ width: col.width, minWidth: col.width || "75px" }}
+                                                        onContextMenu={(e) =>
+                                                          handleOpenCellMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            colIdx,
+                                                            child.columns.length,
+                                                            1,
+                                                            1,
+                                                            child.rows.length,
+                                                          )
+                                                        }
+                                                        className="py-1 px-1 text-center relative group/cell"
+                                                      >
+                                                        <JudgementCellControl
+                                                          value={cellVal}
+                                                          onChange={(newVal) => {
+                                                            handleChildTableCellChange(index, cIdx, rIdx, col.id, newVal);
+                                                          }}
+                                                        />
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              colIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                          title="Formula & Cell options (or right-click)"
+                                                        >
+                                                          <MoreHorizontal className="w-2.5 h-2.5" />
+                                                        </button>
+                                                      </td>
+                                                    );
+                                                  }
+
+                                                  const evaluated = evaluatePreviewCell(
+                                                    row,
+                                                    col,
+                                                    child.decimal_places ?? decimalPlaces,
+                                                    child.columns,
+                                                    (child as TableGridBlock).nominal,
+                                                    rIdx,
+                                                    child.rows,
+                                                    (child as TableGridBlock).tolerance,
+                                                  );
+                                                  const isJudgementCol =
+                                                    col.type === "status" ||
+                                                    col.role === "JUDGEMENT" ||
+                                                    col.label.toLowerCase().includes("judg");
+
+                                                  if (isJudgementCol && evaluated) {
+                                                    return (
+                                                      <td
+                                                        key={col.id}
+                                                        style={{ width: col.width, minWidth: col.width || "75px" }}
+                                                        onContextMenu={(e) =>
+                                                          handleOpenCellMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            colIdx,
+                                                            child.columns.length,
+                                                            1,
+                                                            1,
+                                                            child.rows.length,
+                                                          )
+                                                        }
+                                                        className="py-1.5 px-2 text-center relative group/cell"
+                                                      >
+                                                        <div className="flex items-center justify-center gap-1">
+                                                          {hasCustomCellFormula && (
+                                                            <span
+                                                              className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                              title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                              onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setCellFormulaModalState({
+                                                                  blockIndex: index,
+                                                                  childIndex: cIdx,
+                                                                  rowIndex: rIdx,
+                                                                  colId: col.id,
+                                                                  colLabel: col.label || col.id,
+                                                                  initialFormula: row.cellFormulas[col.id] || "",
+                                                                });
+                                                              }}
+                                                            >
+                                                              fx
+                                                            </span>
+                                                          )}
+                                                          {typeof evaluated === "object" ? (
+                                                            evaluated
+                                                          ) : (
+                                                            (() => {
+                                                              const strVal = String(evaluated).trim().toUpperCase();
+                                                              const isPass = strVal === "PASS" || strVal === "OK";
+                                                              const isFail = strVal === "FAIL" || strVal === "NOT OK" || strVal === "REJECT";
+                                                              return isPass ? (
+                                                                <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                                                                  PASS
+                                                                </span>
+                                                              ) : isFail ? (
+                                                                <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
+                                                                  FAIL
+                                                                </span>
+                                                              ) : (
+                                                                <span className="font-mono text-xs text-slate-400">
+                                                                  {evaluated}
+                                                                </span>
+                                                              );
+                                                            })()
+                                                          )}
+                                                        </div>
+
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) =>
+                                                            handleOpenCellMenu(
+                                                              e,
+                                                              index,
+                                                              cIdx,
+                                                              rIdx,
+                                                              col.id,
+                                                              col.label || col.id,
+                                                              colIdx,
+                                                              child.columns.length,
+                                                              1,
+                                                              1,
+                                                              child.rows.length,
+                                                            )
+                                                          }
+                                                          className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                          title="Formula & Cell options (or right-click)"
+                                                        >
+                                                          <MoreHorizontal className="w-2.5 h-2.5" />
+                                                        </button>
+                                                      </td>
+                                                    );
+                                                  }
+
                                                   return (
                                                     <td
                                                       key={col.id}
-                                                      style={{ width: col.width, minWidth: col.width || "75px" }}
-                                                      className="py-1.5 px-2 text-center"
+                                                      style={{ width: col.width, minWidth: col.width || "70px" }}
+                                                      onContextMenu={(e) =>
+                                                        handleOpenCellMenu(
+                                                          e,
+                                                          index,
+                                                          cIdx,
+                                                          rIdx,
+                                                          col.id,
+                                                          col.label || col.id,
+                                                          colIdx,
+                                                          child.columns.length,
+                                                          1,
+                                                          1,
+                                                          child.rows.length,
+                                                        )
+                                                      }
+                                                      className="py-1 px-2 font-mono font-bold text-slate-900 dark:text-slate-100 text-center text-xs relative group/cell"
                                                     >
-                                                      {isPass ? (
-                                                        <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                                                          PASS
-                                                        </span>
-                                                      ) : isFail ? (
-                                                        <span className="inline-block px-2.5 py-0.5 rounded text-tiny font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-700">
-                                                          FAIL
-                                                        </span>
-                                                      ) : (
-                                                        <span className="font-mono text-xs text-slate-400">
-                                                          {evaluated}
-                                                        </span>
-                                                      )}
+                                                      <div className="flex items-center justify-center gap-1">
+                                                        {hasCustomCellFormula && (
+                                                          <span
+                                                            className="text-[9px] px-1 py-0.2 bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 font-mono rounded font-bold cursor-pointer hover:bg-purple-200"
+                                                            title={`Custom formula: ${row.cellFormulas[col.id]}`}
+                                                            onClick={(e) => {
+                                                              e.stopPropagation();
+                                                              setCellFormulaModalState({
+                                                                blockIndex: index,
+                                                                childIndex: cIdx,
+                                                                rowIndex: rIdx,
+                                                                colId: col.id,
+                                                                colLabel: col.label || col.id,
+                                                                initialFormula: row.cellFormulas[col.id] || "",
+                                                              });
+                                                            }}
+                                                          >
+                                                            fx
+                                                          </span>
+                                                        )}
+                                                        <span>{evaluated}</span>
+                                                      </div>
+
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) =>
+                                                          handleOpenCellMenu(
+                                                            e,
+                                                            index,
+                                                            cIdx,
+                                                            rIdx,
+                                                            col.id,
+                                                            col.label || col.id,
+                                                            colIdx,
+                                                            child.columns.length,
+                                                            1,
+                                                            1,
+                                                            child.rows.length,
+                                                          )
+                                                        }
+                                                        className="opacity-0 group-hover/cell:opacity-40 hover:!opacity-100 absolute top-0.5 right-0.5 w-3.5 h-3.5 flex items-center justify-center p-0 text-slate-400 hover:text-purple-700 hover:bg-purple-100 dark:hover:bg-purple-900/60 dark:hover:text-purple-300 rounded-[3px] transition-all z-10"
+                                                        title="Formula & Cell options (or right-click)"
+                                                      >
+                                                        <MoreHorizontal className="w-2.5 h-2.5" />
+                                                      </button>
                                                     </td>
                                                   );
-                                                }
-
-                                                return (
-                                                  <td
-                                                    key={col.id}
-                                                    style={{ width: col.width, minWidth: col.width || "70px" }}
-                                                    className="py-1 px-2 font-mono font-bold text-slate-900 dark:text-slate-100 text-center text-xs"
-                                                  >
-                                                    {evaluated}
-                                                  </td>
-                                                );
                                               })}
                                             </tr>
                                           );
@@ -5436,94 +8568,517 @@ export function CanvasTemplateEditor({
                 )}
 
                 {/* 3. MATRIX TABLE */}
-                {block.type === "matrix_table" && (
-                  <div className="border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
-                    <div className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 dark:from-slate-850 dark:to-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700">
-                      <Input
-                        value={block.title}
-                        onChange={(e) => {
-                          const updated = { ...block, title: e.target.value };
-                          updateBlock(index, updated);
-                        }}
-                        className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs max-w-[320px]"
-                        placeholder="Matrix Table Title"
-                      />
-                      <Badge
-                        variant="outline"
-                        className="text-xxs uppercase font-mono font-bold"
-                      >
-                        Matrix Table
-                      </Badge>
-                    </div>
-                    <div className="overflow-x-auto scrollbar-thin">
-                      <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
-                        <thead>
-                          {(block.headers || []).map((hRow, hIdx) => {
-                            const cells: any[] = Array.isArray(hRow)
-                              ? hRow
-                              : hRow && typeof hRow === "object"
-                                ? [hRow]
-                                : [{ text: String(hRow || "") }];
-                            return (
-                              <tr
-                                key={hIdx}
-                                className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-300 dark:border-slate-700"
+                {block.type === "matrix_table" && (() => {
+                  const matrix = block as MatrixTableBlock;
+                  const totalCols = getMatrixTotalCols(matrix);
+                  const { coveredCells: coveredHeaders } = computeMatrix2DGrid(matrix.headers || [], totalCols);
+                  const { coveredCells: coveredRows } = computeMatrix2DGrid(matrix.rows || [], totalCols);
+
+                  return (
+                    <div className="border-2 border-slate-300 dark:border-slate-700 rounded-lg overflow-hidden bg-white dark:bg-slate-900 shadow-2xs">
+                      {/* Top Bar: Title, Badge, Controls */}
+                      <div className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 dark:from-slate-850 dark:to-slate-800 text-slate-900 dark:text-slate-100 px-3 py-2 flex items-center justify-between border-b-2 border-slate-300 dark:border-slate-700 flex-wrap gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Input
+                            value={matrix.title}
+                            onChange={(e) => {
+                              const updated = { ...matrix, title: e.target.value };
+                              updateBlock(index, updated);
+                            }}
+                            className="h-8 text-xs font-bold bg-white dark:bg-slate-950 border-2 border-slate-300 dark:border-slate-700 rounded-md px-2.5 focus-visible:ring-2 focus-visible:ring-primary text-slate-900 dark:text-slate-100 shadow-2xs w-64 max-w-full"
+                            placeholder="Matrix Table Title"
+                          />
+                          <Badge
+                            variant="outline"
+                            className="text-xxs uppercase font-mono font-bold bg-purple-50 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300 border-purple-300 dark:border-purple-800"
+                          >
+                            Matrix Table ({totalCols} Cols)
+                          </Badge>
+                        </div>
+
+                        {/* Matrix Table Toolbar: Add/Remove Column, Row, Header Tier, Width */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {/* Column Controls */}
+                          <div className="flex items-center bg-white dark:bg-slate-950 rounded-md border border-slate-300 dark:border-slate-700 p-0.5 shadow-2xs">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddMatrixColumnBtn(index);
+                              }}
+                              className="h-6 px-2 text-2xs font-semibold text-primary gap-1"
+                              title="Add column to matrix table"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Col</span>
+                            </Button>
+                            {totalCols > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveMatrixColumnBtn(index);
+                                }}
+                                className="h-6 px-1 text-2xs text-muted-foreground hover:text-destructive"
+                                title="Remove last column"
                               >
-                                {cells.map((cell: any, cIdx: number) => {
-                                  const cellText =
-                                    typeof cell === "object" && cell !== null
-                                      ? (cell.text ?? "")
-                                      : String(cell ?? "");
-                                  const colSpan =
-                                    typeof cell === "object" && cell !== null
-                                      ? cell.colSpan
-                                      : undefined;
-                                  const rowSpan =
-                                    typeof cell === "object" && cell !== null
-                                      ? cell.rowSpan
-                                      : undefined;
-                                  return (
-                                    <th
-                                      key={cIdx}
-                                      colSpan={colSpan}
-                                      rowSpan={rowSpan}
-                                      className="py-2 px-2.5 font-bold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* Data Row Controls */}
+                          <div className="flex items-center bg-white dark:bg-slate-950 rounded-md border border-slate-300 dark:border-slate-700 p-0.5 shadow-2xs">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddMatrixRowBtn(index);
+                              }}
+                              className="h-6 px-2 text-2xs font-semibold text-emerald-600 dark:text-emerald-400 gap-1"
+                              title="Add data row to matrix table"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Row</span>
+                            </Button>
+                            {(matrix.rows || []).length > 0 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveMatrixRowBtn(index);
+                                }}
+                                className="h-6 px-1 text-2xs text-muted-foreground hover:text-destructive"
+                                title="Remove last row"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* Header Tier Controls */}
+                          <div className="flex items-center bg-white dark:bg-slate-950 rounded-md border border-slate-300 dark:border-slate-700 p-0.5 shadow-2xs">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAddMatrixHeaderRowBtn(index);
+                              }}
+                              className="h-6 px-2 text-2xs font-semibold text-indigo-600 dark:text-indigo-400 gap-1"
+                              title="Add header tier to matrix table"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Tier</span>
+                            </Button>
+                            {(matrix.headers || []).length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveMatrixHeaderRowBtn(index);
+                                }}
+                                className="h-6 px-1 text-2xs text-muted-foreground hover:text-destructive"
+                                title="Remove last header tier"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+
+                          {/* Clear All Rows */}
+                          {(matrix.rows || []).length > 0 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (confirm("Clear all data rows from this matrix table?")) {
+                                  handleClearMatrixAllRows(index);
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-950/40 rounded gap-1"
+                              title="Clear all data rows"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              <span>Clear Rows</span>
+                            </Button>
+                          )}
+
+                          {/* Width Toggle: 100% vs 50% */}
+                          <div className="flex items-center bg-white dark:bg-slate-950 p-0.5 rounded-md border border-slate-300 dark:border-slate-700 text-2xs shadow-2xs">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updateBlock(index, { ...matrix, width: "100%" });
+                              }}
+                              className={`px-2 py-0.5 rounded text-2xs font-semibold transition-all ${
+                                !matrix.width || matrix.width === "100%"
+                                  ? "bg-primary text-white shadow-2xs"
+                                  : "text-muted-foreground hover:text-foreground"
+                              }`}
+                              title="Full width (100%)"
+                            >
+                              100%
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updateBlock(index, { ...matrix, width: "50%" });
+                              }}
+                              className={`px-2 py-0.5 rounded text-2xs font-semibold transition-all ${
+                                matrix.width === "50%"
+                                  ? "bg-primary text-white shadow-2xs"
+                                  : "text-muted-foreground hover:text-foreground"
+                              }`}
+                              title="Half width (50%)"
+                            >
+                              50%
+                            </button>
+                          </div>
+
+                          {/* Preset Buttons & Geometry Healing */}
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-950 p-0.5 rounded-md border border-slate-300 dark:border-slate-700 shadow-2xs">
+                            {/* IS 3651 (7-Col Caliper) Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load standard 7-Column Vernier Caliper Acceptance Criteria Matrix (0.01mm, 0.02mm, 0.05mm least counts)? This will configure standard grouped MPE headers and length rows."
+                                  )
+                                ) {
+                                  const preset = createVernierCaliper7ColPreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded 7-Column Caliper Acceptance Criteria Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 gap-1"
+                              title="Load 7-Column Vernier Caliper Matrix (0.01, 0.02, 0.05 mm MPE)"
+                            >
+                              <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              <span>7-Col Caliper</span>
+                            </Button>
+
+                            {/* 5-Col Caliper Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load standard 5-Column Acceptance Criteria Matrix (0.01mm & 0.02mm least counts)?"
+                                  )
+                                ) {
+                                  const preset = createCaliper5ColPreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded 5-Column Caliper Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/40 gap-1"
+                              title="Load 5-Column Caliper Matrix (0.01, 0.02 mm MPE)"
+                            >
+                              <Sparkles className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                              <span>5-Col</span>
+                            </Button>
+
+                            {/* Load IS 2092 Dial Gauge Reference Preset */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (
+                                  confirm(
+                                    "Load IS 2092:1983 Dial Gauge Limits of Error preset? This will populate the exact 3-column reference matrix with grouped headers and 6 standard test rows."
+                                  )
+                                ) {
+                                  const preset = createIS2092DialGaugePreset();
+                                  updateBlock(index, { ...matrix, ...preset });
+                                  toast.success("Loaded IS 2092 Dial Gauge Reference Matrix");
+                                }
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/40 gap-1"
+                              title="Load IS 2092:1983 Dial Gauge Reference Matrix (Grouped Headers + 6 Standard Test Rows)"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                              <span>IS 2092</span>
+                            </Button>
+
+                            {/* Align & Heal Table Geometry */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNormalizeMatrixTableBtn(index);
+                              }}
+                              className="h-6 px-1.5 text-2xs font-semibold text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 gap-1"
+                              title="Fix & Align Columns: removes empty phantom columns and synchronizes all header tiers and rows"
+                            >
+                              <Wrench className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                              <span>Align Table</span>
+                            </Button>
+                          </div>
+
+                          {/* Direct Delete Table Button */}
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (confirm("Are you sure you want to delete this Matrix Table block completely?")) {
+                                deleteBlock(index);
+                              }
+                            }}
+                            className="h-6 px-2 text-2xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded gap-1"
+                            title="Delete entire matrix table block"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Delete Table</span>
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Interactive WYSIWYG Matrix Table */}
+                      <div className="overflow-x-auto scrollbar-thin">
+                        <table className="w-full border-collapse text-xs text-center border-slate-300 dark:border-slate-700">
+                          <thead>
+                            {(matrix.headers || []).map((hRow, hIdx) => {
+                              const cells: any[] = Array.isArray(hRow) ? hRow : [hRow];
+                              let colPointer = 0;
+                              return (
+                                <tr
+                                  key={hIdx}
+                                  className="bg-slate-100 dark:bg-slate-800 font-bold border-b-2 border-slate-300 dark:border-slate-700"
+                                >
+                                  {cells.map((rawCell: any, cIdx: number) => {
+                                    while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
+                                      colPointer++;
+                                    }
+                                    const actualCol = colPointer;
+                                    const cell = normalizeMatrixCell(rawCell);
+                                    colPointer += (cell.colSpan || 1);
+
+                                    if (actualCol >= totalCols || coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                                      return null;
+                                    }
+
+                                    const isMerged = (cell.colSpan || 1) > 1 || (cell.rowSpan || 1) > 1;
+
+                                    return (
+                                      <th
+                                        key={cIdx}
+                                        colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                        rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                        onContextMenu={(e) =>
+                                          handleOpenMatrixCellMenu(e, index, true, hIdx, actualCol, cIdx, cell, totalCols, matrix.headers.length)
+                                        }
+                                        className="py-1 px-1 font-bold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 relative group/mth align-middle"
+                                      >
+                                        <div className="flex items-center gap-1">
+                                          <Input
+                                            value={cell.text}
+                                            onChange={(e) =>
+                                              handleMatrixCellTextChange(index, true, hIdx, cIdx, e.target.value)
+                                            }
+                                            className="h-7 text-xs font-bold text-center bg-transparent border-0 hover:bg-slate-200/60 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 min-w-[50px] w-full"
+                                            placeholder="Header"
+                                          />
+                                          <div className="opacity-0 group-hover/mth:opacity-100 absolute top-0.5 right-0.5 flex items-center gap-0.5 bg-white/90 dark:bg-slate-900/90 rounded px-0.5 shadow-2xs z-10">
+                                            <button
+                                              type="button"
+                                              onClick={(e) =>
+                                                handleOpenMatrixCellMenu(e, index, true, hIdx, actualCol, cIdx, cell, totalCols, matrix.headers.length)
+                                              }
+                                              className="p-0.5 text-slate-500 hover:text-amber-700 hover:bg-amber-100 rounded"
+                                              title="Cell merge / alignment options (or right click)"
+                                            >
+                                              <MoreHorizontal className="w-3 h-3" />
+                                            </button>
+                                            {isMerged && (
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  handleSetMatrixCellColSpan(index, true, hIdx, cIdx, 1);
+                                                  handleSetMatrixCellRowSpan(index, true, hIdx, cIdx, 1);
+                                                }}
+                                                className="p-0.5 text-slate-400 hover:text-rose-600 rounded"
+                                                title="Unmerge cell"
+                                              >
+                                                <X className="w-3 h-3" />
+                                              </button>
+                                            )}
+                                            {totalCols > 1 && (
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleRemoveMatrixColumnBtn(index, actualCol);
+                                                }}
+                                                className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded"
+                                                title={`Delete column ${actualCol + 1}`}
+                                              >
+                                                <Trash2 className="w-3 h-3" />
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </th>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </thead>
+                          <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
+                            {(matrix.rows || []).length === 0 ? (
+                              <tr>
+                                <td
+                                  colSpan={totalCols}
+                                  className="py-6 px-4 text-center text-xs text-muted-foreground bg-slate-50/50 dark:bg-slate-900/50 border border-dashed border-slate-300 dark:border-slate-700"
+                                >
+                                  <div className="flex flex-col items-center justify-center gap-2">
+                                    <span className="font-medium text-slate-600 dark:text-slate-400">
+                                      No data rows in this matrix table
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleAddMatrixRowBtn(index)}
+                                      className="h-6 px-2.5 text-2xs font-semibold text-emerald-600 border-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1"
                                     >
-                                      {cellText}
-                                    </th>
-                                  );
-                                })}
+                                      <Plus className="w-3 h-3" />
+                                      Add First Row
+                                    </Button>
+                                  </div>
+                                </td>
                               </tr>
-                            );
-                          })}
-                        </thead>
-                        <tbody className="divide-y divide-slate-300 dark:divide-slate-700">
-                          {(block.rows || []).map((r: any, rIdx: number) => {
-                            const cells: any[] = Array.isArray(r)
-                              ? r
-                              : r && typeof r === "object"
-                                ? Object.values(r)
-                                : [r];
-                            return (
-                              <tr key={rIdx} className="hover:bg-slate-50/50">
-                                {cells.map((val: any, cIdx: number) => (
-                                  <td
-                                    key={cIdx}
-                                    className="py-1.5 px-2 font-mono text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100"
-                                  >
-                                    {typeof val === "object" && val !== null
-                                      ? (val.text ?? JSON.stringify(val))
-                                      : String(val ?? "")}
-                                  </td>
-                                ))}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                            ) : (
+                              (matrix.rows || []).map((r: any, rIdx: number) => {
+                                const cells: any[] = Array.isArray(r) ? r : [r];
+                                let colPointer = 0;
+                                return (
+                                  <tr key={rIdx} className="hover:bg-slate-50/50">
+                                    {cells.map((rawVal: any, cIdx: number) => {
+                                      while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
+                                        colPointer++;
+                                      }
+                                      const actualCol = colPointer;
+                                      const cell = normalizeMatrixCell(rawVal);
+                                      colPointer += (cell.colSpan || 1);
+
+                                      if (actualCol >= totalCols || coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                        return null;
+                                      }
+
+                                      const isMerged = (cell.colSpan || 1) > 1 || (cell.rowSpan || 1) > 1;
+
+                                      return (
+                                        <td
+                                          key={cIdx}
+                                          colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                          rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                          style={{ textAlign: cell.align || "center" }}
+                                          onContextMenu={(e) =>
+                                            handleOpenMatrixCellMenu(e, index, false, rIdx, actualCol, cIdx, cell, totalCols, matrix.rows.length)
+                                          }
+                                          className="py-1 px-1 font-mono text-xs font-semibold border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 relative group/mtd align-middle"
+                                        >
+                                          <div className="flex items-center gap-1">
+                                            <Input
+                                              value={cell.text}
+                                              onChange={(e) =>
+                                                handleMatrixCellTextChange(index, false, rIdx, cIdx, e.target.value)
+                                              }
+                                              className={`h-7 text-xs font-mono font-semibold bg-transparent border-0 hover:bg-slate-100 dark:hover:bg-slate-800 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-1 min-w-[50px] w-full text-${cell.align || "center"}`}
+                                              placeholder="-"
+                                            />
+                                            <div className="opacity-0 group-hover/mtd:opacity-100 absolute top-0.5 right-0.5 flex items-center gap-0.5 bg-white/90 dark:bg-slate-900/90 rounded px-0.5 shadow-2xs z-10">
+                                              <button
+                                                type="button"
+                                                onClick={(e) =>
+                                                  handleOpenMatrixCellMenu(e, index, false, rIdx, actualCol, cIdx, cell, totalCols, matrix.rows.length)
+                                                }
+                                                className="p-0.5 text-slate-500 hover:text-amber-700 hover:bg-amber-100 rounded"
+                                                title="Cell merge / alignment options (or right click)"
+                                              >
+                                                <MoreHorizontal className="w-3 h-3" />
+                                              </button>
+                                              {isMerged && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    handleSetMatrixCellColSpan(index, false, rIdx, cIdx, 1);
+                                                    handleSetMatrixCellRowSpan(index, false, rIdx, cIdx, 1);
+                                                  }}
+                                                  className="p-0.5 text-slate-400 hover:text-rose-600 rounded"
+                                                  title="Unmerge cell"
+                                                >
+                                                  <X className="w-3 h-3" />
+                                                </button>
+                                              )}
+                                              <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleRemoveMatrixRowBtn(index, rIdx);
+                                                }}
+                                                className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded"
+                                                title={`Delete row ${rIdx + 1}`}
+                                              >
+                                                <Trash2 className="w-3 h-3" />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </td>
+                                      );
+                                    })}
+                                  </tr>
+                                );
+                              })
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Footer Note Input */}
+                      <div className="p-2 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-850">
+                        <Input
+                          value={matrix.footerNote || ""}
+                          onChange={(e) =>
+                            updateBlock(index, { ...matrix, footerNote: e.target.value })
+                          }
+                          className="h-7 text-xs bg-transparent border-0 hover:bg-white dark:hover:bg-slate-900 focus:bg-white dark:focus:bg-slate-900 focus:ring-1 focus:ring-primary rounded px-2 text-muted-foreground italic placeholder:text-muted-foreground/60"
+                          placeholder="Optional Footer Note / Standard Reference for Matrix Table (e.g. As Per ISO 17025 / AE/CAL-SOP/01)"
+                        />
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* 4. NOTE / CALLOUT */}
                 {block.type === "text_block" && (
@@ -5728,6 +9283,7 @@ export function CanvasTemplateEditor({
         open={showAiModal}
         onOpenChange={setShowAiModal}
         onApplyTemplate={handleApplyAiGenerated}
+        existingBlocksCount={blocks.length}
       />
 
       {/* MODAL: Trial Run & Certificate Live Verification */}
@@ -6127,6 +9683,77 @@ export function CanvasTemplateEditor({
             )}
           </div>
 
+          {/* SECTION: FORMULA & CALCULATIONS */}
+          {(() => {
+            const targetBlock = blocks[cellContextMenu.blockIndex];
+            let targetTbl: TableGridBlock | null = null;
+            if (cellContextMenu.childIndex !== null && targetBlock?.type === "split_row") {
+              targetTbl = (targetBlock as SplitRowBlock).children?.[cellContextMenu.childIndex] as TableGridBlock;
+            } else if (targetBlock?.type === "table_grid") {
+              targetTbl = targetBlock as TableGridBlock;
+            }
+            const currentCellFormula = targetTbl?.rows?.[cellContextMenu.rowIndex]?.cellFormulas?.[cellContextMenu.colId];
+
+            return (
+              <>
+                <div className="border-t border-slate-100 dark:border-slate-800/80 my-1" />
+                <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Calculator className="w-3 h-3" />
+                    Formula & Calculations
+                  </span>
+                  {currentCellFormula && (
+                    <span className="text-[10px] font-mono px-1 py-0.2 bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 rounded font-bold">
+                      fx Active
+                    </span>
+                  )}
+                </div>
+                <div className="py-0.5 px-1 flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCellFormulaModalState({
+                        blockIndex: cellContextMenu.blockIndex,
+                        childIndex: cellContextMenu.childIndex,
+                        rowIndex: cellContextMenu.rowIndex,
+                        colId: cellContextMenu.colId,
+                        colLabel: cellContextMenu.colLabel,
+                        initialFormula: currentCellFormula || "",
+                      });
+                      setCellContextMenu(null);
+                    }}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-purple-50 hover:text-purple-900 dark:hover:bg-purple-950/60 dark:hover:text-purple-200 transition-colors font-medium group cursor-pointer"
+                  >
+                    <Calculator className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform shrink-0" />
+                    <span className="flex-1">{currentCellFormula ? "Edit Cell Formula" : "Set Cell Formula / Cross-Table..."}</span>
+                    <span className="text-[10px] font-mono px-1 py-0.5 bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 rounded font-bold">
+                      fx
+                    </span>
+                  </button>
+
+                  {currentCellFormula && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleClearCellFormula(
+                          cellContextMenu.blockIndex,
+                          cellContextMenu.childIndex,
+                          cellContextMenu.rowIndex,
+                          cellContextMenu.colId,
+                        );
+                        setCellContextMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left text-rose-600 dark:text-rose-400 rounded-md hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors font-medium cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                      <span className="flex-1">Clear Formula (Allow Manual Input)</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+
           {/* SECTION 3: UNMERGE ALL */}
           {(cellContextMenu.currentSpan > 1 || cellContextMenu.currentRowSpan > 1) && (
             <>
@@ -6155,6 +9782,603 @@ export function CanvasTemplateEditor({
             </>
           )}
         </div>
+      )}
+
+      {/* Floating Context Menu for Matrix Table Cells */}
+      {matrixCellContextMenu && (
+        <div
+          className="fixed z-50 min-w-[220px] rounded-lg border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 p-1 text-slate-900 dark:text-slate-100 shadow-xl shadow-slate-900/10 dark:shadow-black/40 backdrop-blur-md animate-in fade-in-50 zoom-in-95 font-sans select-none"
+          style={{
+            top: `${matrixCellContextMenu.y}px`,
+            left: `${matrixCellContextMenu.x}px`,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+            <span className="truncate max-w-[130px] font-semibold text-slate-800 dark:text-slate-100">
+              {matrixCellContextMenu.isHeader ? "Header Cell" : "Data Cell"}
+            </span>
+            <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 shrink-0">
+              R{matrixCellContextMenu.rowIndex + 1} : C{matrixCellContextMenu.colIndex + 1}
+            </span>
+          </div>
+
+          {/* HORIZONTAL MERGE */}
+          <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center justify-between">
+            <span>Horizontal Merge (Cols)</span>
+            {(matrixCellContextMenu.currentCell.colSpan || 1) > 1 && (
+              <span className="text-[10px] font-mono px-1 py-0.2 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded font-bold">
+                {matrixCellContextMenu.currentCell.colSpan} Cols Active
+              </span>
+            )}
+          </div>
+          <div className="py-0.5 px-1 flex flex-col gap-0.5">
+            {Array.from(
+              {
+                length: Math.max(
+                  0,
+                  matrixCellContextMenu.totalCols - matrixCellContextMenu.colIndex - 1
+                ),
+              },
+              (_, i) => i + 2
+            ).map((span) => (
+                <button
+                  key={span}
+                  type="button"
+                  onClick={() => {
+                    handleSetMatrixCellColSpan(
+                      matrixCellContextMenu.blockIndex,
+                      matrixCellContextMenu.isHeader,
+                      matrixCellContextMenu.rowIndex,
+                      matrixCellContextMenu.cellArrayIdx,
+                      span,
+                    );
+                    setMatrixCellContextMenu(null);
+                  }}
+                  className="w-full flex items-center justify-between px-2 py-1 text-xs rounded hover:bg-amber-50 dark:hover:bg-amber-950/60 transition-colors font-medium text-left"
+                >
+                  <span>Merge across {span} columns</span>
+                  <span className="text-[10px] font-mono px-1 bg-amber-100 dark:bg-amber-900/60 rounded font-bold text-amber-800 dark:text-amber-200">
+                    {span} Cols
+                  </span>
+                </button>
+              ))}
+            {(matrixCellContextMenu.currentCell.colSpan || 1) > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleSetMatrixCellColSpan(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.isHeader,
+                    matrixCellContextMenu.rowIndex,
+                    matrixCellContextMenu.cellArrayIdx,
+                    1,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors font-medium text-left"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset Horizontal Merge</span>
+              </button>
+            )}
+          </div>
+
+          {/* VERTICAL MERGE */}
+          <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400 flex items-center justify-between border-t border-slate-100 dark:border-slate-800 mt-1">
+            <span>Vertical Merge (Rows)</span>
+            {(matrixCellContextMenu.currentCell.rowSpan || 1) > 1 && (
+              <span className="text-[10px] font-mono px-1 py-0.2 bg-indigo-100 dark:bg-indigo-900/60 text-indigo-800 dark:text-indigo-200 rounded font-bold">
+                {matrixCellContextMenu.currentCell.rowSpan} Rows Active
+              </span>
+            )}
+          </div>
+          <div className="py-0.5 px-1 flex flex-col gap-0.5">
+            {Array.from(
+              {
+                length: Math.max(
+                  0,
+                  matrixCellContextMenu.totalRows - matrixCellContextMenu.rowIndex - 1
+                ),
+              },
+              (_, i) => i + 2
+            ).map((span) => (
+                <button
+                  key={span}
+                  type="button"
+                  onClick={() => {
+                    handleSetMatrixCellRowSpan(
+                      matrixCellContextMenu.blockIndex,
+                      matrixCellContextMenu.isHeader,
+                      matrixCellContextMenu.rowIndex,
+                      matrixCellContextMenu.cellArrayIdx,
+                      span,
+                    );
+                    setMatrixCellContextMenu(null);
+                  }}
+                  className="w-full flex items-center justify-between px-2 py-1 text-xs rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/60 transition-colors font-medium text-left"
+                >
+                  <span>Merge down {span} rows</span>
+                  <span className="text-[10px] font-mono px-1 bg-indigo-100 dark:bg-indigo-900/60 rounded font-bold text-indigo-800 dark:text-indigo-200">
+                    {span} Rows
+                  </span>
+                </button>
+              ))}
+            {(matrixCellContextMenu.currentCell.rowSpan || 1) > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleSetMatrixCellRowSpan(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.isHeader,
+                    matrixCellContextMenu.rowIndex,
+                    matrixCellContextMenu.cellArrayIdx,
+                    1,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors font-medium text-left"
+              >
+                <X className="w-3 h-3" />
+                <span>Reset Vertical Merge</span>
+              </button>
+            )}
+          </div>
+
+          {/* ALIGNMENT */}
+          <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-t border-slate-100 dark:border-slate-800 mt-1">
+            Text Alignment
+          </div>
+          <div className="p-1 flex items-center gap-1">
+            {(["left", "center", "right"] as const).map((align) => (
+              <button
+                key={align}
+                type="button"
+                onClick={() => {
+                  handleSetMatrixCellAlign(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.isHeader,
+                    matrixCellContextMenu.rowIndex,
+                    matrixCellContextMenu.cellArrayIdx,
+                    align,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className={`flex-1 py-1 text-xs capitalize rounded border font-medium transition-colors ${
+                  (matrixCellContextMenu.currentCell.align || "center") === align
+                    ? "bg-primary text-white border-primary"
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {align}
+              </button>
+            ))}
+          </div>
+
+          {/* CELL & STRUCTURE ACTIONS */}
+          <div className="px-2.5 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 border-t border-slate-100 dark:border-slate-800 mt-1">
+            Cell & Structure Actions
+          </div>
+          <div className="py-0.5 px-1 flex flex-col gap-0.5">
+            {/* Clear Cell Content */}
+            <button
+              type="button"
+              onClick={() => {
+                handleClearMatrixSpecificCell(
+                  matrixCellContextMenu.blockIndex,
+                  matrixCellContextMenu.isHeader,
+                  matrixCellContextMenu.rowIndex,
+                  matrixCellContextMenu.cellArrayIdx,
+                );
+                setMatrixCellContextMenu(null);
+              }}
+              className="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded transition-colors font-medium text-left"
+            >
+              <RotateCcw className="w-3 h-3 text-slate-400" />
+              <span>Clear Cell Content</span>
+            </button>
+
+            {/* If Header Cell & >1 tiers: Delete Header Tier */}
+            {matrixCellContextMenu.isHeader && matrixCellContextMenu.totalRows > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleRemoveMatrixHeaderRowBtn(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.rowIndex,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center justify-between px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors font-medium text-left"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Trash2 className="w-3 h-3" />
+                  <span>Delete Header Tier {matrixCellContextMenu.rowIndex + 1}</span>
+                </div>
+                <span className="text-[10px] font-mono px-1 bg-rose-100 dark:bg-rose-900/60 rounded font-bold text-rose-800 dark:text-rose-200">
+                  Tier {matrixCellContextMenu.rowIndex + 1}
+                </span>
+              </button>
+            )}
+
+            {/* If Data Cell: Delete This Row */}
+            {!matrixCellContextMenu.isHeader && (
+              <button
+                type="button"
+                onClick={() => {
+                  handleRemoveMatrixRowBtn(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.rowIndex,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center justify-between px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors font-medium text-left"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Trash2 className="w-3 h-3" />
+                  <span>Delete Row {matrixCellContextMenu.rowIndex + 1}</span>
+                </div>
+                <span className="text-[10px] font-mono px-1 bg-rose-100 dark:bg-rose-900/60 rounded font-bold text-rose-800 dark:text-rose-200">
+                  R{matrixCellContextMenu.rowIndex + 1}
+                </span>
+              </button>
+            )}
+
+            {/* Delete This Column (if totalCols > 1) */}
+            {matrixCellContextMenu.totalCols > 1 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  handleRemoveMatrixColumnBtn(
+                    matrixCellContextMenu.blockIndex,
+                    matrixCellContextMenu.colIndex,
+                  );
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center justify-between px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded transition-colors font-medium text-left"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Trash2 className="w-3 h-3" />
+                  <span>Delete Column {matrixCellContextMenu.colIndex + 1}</span>
+                </div>
+                <span className="text-[10px] font-mono px-1 bg-rose-100 dark:bg-rose-900/60 rounded font-bold text-rose-800 dark:text-rose-200">
+                  C{matrixCellContextMenu.colIndex + 1}
+                </span>
+              </button>
+            ) : (
+              <div className="px-2 py-1 text-[11px] text-muted-foreground italic">
+                (Min 1 column preserved)
+              </div>
+            )}
+
+            {/* Clear All Rows if data rows exist */}
+            {!matrixCellContextMenu.isHeader && matrixCellContextMenu.totalRows > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm("Are you sure you want to clear all data rows from this matrix table?")) {
+                    handleClearMatrixAllRows(matrixCellContextMenu.blockIndex);
+                  }
+                  setMatrixCellContextMenu(null);
+                }}
+                className="w-full flex items-center gap-1.5 px-2 py-1 text-xs text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded transition-colors font-medium text-left"
+              >
+                <RotateCcw className="w-3 h-3 text-amber-600" />
+                <span>Clear All Data Rows ({matrixCellContextMenu.totalRows})</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Floating Context Menu for Header Grouping in Data Tables */}
+      {headerGroupContextMenu && (() => {
+        const currentCols = getTableColumns(
+          headerGroupContextMenu.blockIndex,
+          headerGroupContextMenu.childIndex
+        );
+        const colIdx = headerGroupContextMenu.colIdx;
+        const curCol = currentCols[colIdx];
+        const prevCol = colIdx > 0 ? currentCols[colIdx - 1] : null;
+        const nextCol = colIdx < currentCols.length - 1 ? currentCols[colIdx + 1] : null;
+        const isGroupHeader = Boolean(headerGroupContextMenu.isGroupHeader);
+        const currentGroupName = headerGroupContextMenu.currentGroupName;
+
+        // Group columns calculation
+        const groupCols = currentGroupName
+          ? currentCols.filter((c) => c.groupName === currentGroupName)
+          : [];
+        const groupIndices = currentGroupName
+          ? currentCols
+              .map((c, i) => (c.groupName === currentGroupName ? i : -1))
+              .filter((i) => i !== -1)
+          : [];
+        const minGroupIdx = groupIndices.length > 0 ? Math.min(...groupIndices) : colIdx;
+        const maxGroupIdx = groupIndices.length > 0 ? Math.max(...groupIndices) : colIdx;
+        const canExtendRight = maxGroupIdx < currentCols.length - 1;
+        const canExtendLeft = minGroupIdx > 0;
+        const rightExtendCol = canExtendRight ? currentCols[maxGroupIdx + 1] : null;
+        const leftExtendCol = canExtendLeft ? currentCols[minGroupIdx - 1] : null;
+
+        return (
+          <div
+            className="fixed z-50 min-w-[250px] rounded-lg border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 p-1 text-slate-900 dark:text-slate-100 shadow-xl shadow-slate-900/10 dark:shadow-black/40 backdrop-blur-md animate-in fade-in-50 zoom-in-95 font-sans select-none text-xs"
+            style={{
+              top: `${headerGroupContextMenu.y}px`,
+              left: `${headerGroupContextMenu.x}px`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.stopPropagation()}
+          >
+            <div className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-500 dark:text-slate-400 border-b border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
+              <span className="truncate max-w-[160px] font-semibold text-slate-800 dark:text-slate-100">
+                {isGroupHeader ? `Group: ${currentGroupName}` : `Header: ${headerGroupContextMenu.colLabel}`}
+              </span>
+              {currentGroupName && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full font-mono bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold">
+                  {groupCols.length} cols
+                </span>
+              )}
+            </div>
+
+            <div className="p-1 flex flex-col gap-0.5">
+              {/* Option: Join Left Group (e.g. JUDGEMENT joining OBSERVATIONS) */}
+              {!currentGroupName && prevCol?.groupName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleJoinAdjacentGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      headerGroupContextMenu.colId,
+                      prevCol.groupName!
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md bg-indigo-50/80 hover:bg-indigo-100 text-indigo-900 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/80 dark:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <Combine className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Join Left Group ({prevCol.groupName})</span>
+                </button>
+              )}
+
+              {/* Option: Join Right Group */}
+              {!currentGroupName && nextCol?.groupName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleJoinAdjacentGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      headerGroupContextMenu.colId,
+                      nextCol.groupName!
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md bg-indigo-50/80 hover:bg-indigo-100 text-indigo-900 dark:bg-indigo-950/50 dark:hover:bg-indigo-950/80 dark:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <Combine className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Join Right Group ({nextCol.groupName})</span>
+                </button>
+              )}
+
+              {/* Extend Group Right (when group exists) */}
+              {currentGroupName && canExtendRight && rightExtendCol && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExtendGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      currentGroupName,
+                      "right"
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <ChevronRight className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Extend Right (+ {rightExtendCol.label || rightExtendCol.id})</span>
+                </button>
+              )}
+
+              {/* Extend Group Left (when group exists) */}
+              {currentGroupName && canExtendLeft && leftExtendCol && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExtendGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      currentGroupName,
+                      "left"
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Extend Left (+ {leftExtendCol.label || leftExtendCol.id})</span>
+                </button>
+              )}
+
+              {/* Merge with Next Column */}
+              {!currentGroupName && colIdx < headerGroupContextMenu.totalCols - 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleMergeHeaderWithNext(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      colIdx,
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <Columns className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Merge with Next ({nextCol?.label || "Next"})</span>
+                </button>
+              )}
+
+              {/* Merge with Previous Column */}
+              {!currentGroupName && colIdx > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleMergeHeaderWithPrev(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      colIdx,
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-indigo-50 hover:text-indigo-900 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-200 transition-colors font-medium cursor-pointer"
+                >
+                  <Columns className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="truncate">Merge with Prev ({prevCol?.label || "Prev"})</span>
+                </button>
+              )}
+
+              <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
+
+              {/* Open Multi-Column Group Manager Modal */}
+              <button
+                type="button"
+                onClick={() => {
+                  setManageHeaderGroupModalState({
+                    blockIndex: headerGroupContextMenu.blockIndex,
+                    childIndex: headerGroupContextMenu.childIndex,
+                    initialGroupName: currentGroupName || "OBSERVATIONS",
+                    columns: currentCols,
+                  });
+                  setHeaderGroupContextMenu(null);
+                }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-primary/10 text-primary transition-colors font-semibold cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>Manage Group Columns (3+ cols)...</span>
+              </button>
+
+              {/* Rename Header Group */}
+              {currentGroupName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const title = prompt(
+                      "Enter Super-Header / Group Name (e.g. OBSERVATIONS, TOLERANCE):",
+                      currentGroupName
+                    );
+                    if (title !== null && title.trim()) {
+                      handleSetHeaderGroupName(
+                        headerGroupContextMenu.blockIndex,
+                        headerGroupContextMenu.childIndex,
+                        headerGroupContextMenu.colId,
+                        title.trim(),
+                      );
+                    }
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors font-medium cursor-pointer"
+                >
+                  <Pencil className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <span>Rename Group Name</span>
+                </button>
+              )}
+
+              {/* Remove single column from group (if not clicking super-header) */}
+              {currentGroupName && !isGroupHeader && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleRemoveColumnFromGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      headerGroupContextMenu.colId,
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-md transition-colors font-medium cursor-pointer"
+                >
+                  <Minus className="w-3.5 h-3.5 shrink-0" />
+                  <span>Remove Column from Group</span>
+                </button>
+              )}
+
+              {/* Unmerge Entire Group */}
+              {currentGroupName && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleUnmergeGroup(
+                      headerGroupContextMenu.blockIndex,
+                      headerGroupContextMenu.childIndex,
+                      currentGroupName,
+                    );
+                    setHeaderGroupContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-md transition-colors font-medium cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5 shrink-0" />
+                  <span>Unmerge Entire Group</span>
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* MODAL: Multi-Column Header Group Manager */}
+      {manageHeaderGroupModalState && (
+        <ManageHeaderGroupModal
+          open={Boolean(manageHeaderGroupModalState)}
+          onOpenChange={(open) => {
+            if (!open) setManageHeaderGroupModalState(null);
+          }}
+          initialGroupName={manageHeaderGroupModalState.initialGroupName}
+          columns={manageHeaderGroupModalState.columns}
+          onApply={(groupName, selectedColIds) => {
+            handleApplyGroupColumns(
+              manageHeaderGroupModalState.blockIndex,
+              manageHeaderGroupModalState.childIndex,
+              groupName,
+              selectedColIds,
+              manageHeaderGroupModalState.initialGroupName,
+            );
+            setManageHeaderGroupModalState(null);
+          }}
+          onUnmerge={() => {
+            if (manageHeaderGroupModalState.initialGroupName) {
+              handleUnmergeGroup(
+                manageHeaderGroupModalState.blockIndex,
+                manageHeaderGroupModalState.childIndex,
+                manageHeaderGroupModalState.initialGroupName,
+              );
+            }
+            setManageHeaderGroupModalState(null);
+          }}
+        />
+      )}
+
+      {/* MODAL: Cell Formula Modal */}
+      {cellFormulaModalState && (
+        <CellFormulaModal
+          open={Boolean(cellFormulaModalState)}
+          onOpenChange={(open) => {
+            if (!open) setCellFormulaModalState(null);
+          }}
+          blockIndex={cellFormulaModalState.blockIndex}
+          childIndex={cellFormulaModalState.childIndex}
+          rowIndex={cellFormulaModalState.rowIndex}
+          colId={cellFormulaModalState.colId}
+          colLabel={cellFormulaModalState.colLabel}
+          initialFormula={cellFormulaModalState.initialFormula}
+          blocks={blocks}
+          decimalPlaces={decimalPlaces}
+          onApplyFormula={handleApplyCellFormula}
+          onClearFormula={handleClearCellFormula}
+        />
       )}
     </div>
   );

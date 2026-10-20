@@ -141,3 +141,95 @@ export const clearStoredTokens = (): void => {
     // Fallback in environments with blocked storage
   }
 };
+
+/**
+ * Resolves an uploaded or static asset file path to an authenticated URL.
+ * Automatically appends the JWT access token for protected routes (/uploads/)
+ * so that opening in new tabs, iframes, and downloads are authenticated.
+ */
+export const getSecureFileUrl = (filePath?: string | null): string => {
+  if (!filePath) return "";
+  const token = getStoredAccessToken();
+  let fullUrl = filePath;
+  if (!fullUrl.startsWith("http://") && !fullUrl.startsWith("https://")) {
+    const rawBase = (typeof import.meta !== "undefined" && import.meta.env?.BASE_URL) || "/";
+    const normalizedBase = rawBase.endsWith("/") ? rawBase.slice(0, -1) : rawBase;
+    fullUrl = `${normalizedBase}${filePath.startsWith("/") ? "" : "/"}${filePath}`;
+  }
+
+  if (fullUrl.includes("/uploads/") && token) {
+    try {
+      const hasProtocol = fullUrl.startsWith("http://") || fullUrl.startsWith("https://");
+      const urlObj = new URL(fullUrl, "http://localhost");
+      urlObj.searchParams.set("token", token);
+      if (hasProtocol) {
+        fullUrl = urlObj.toString();
+      } else {
+        fullUrl = `${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+      }
+    } catch {
+      if (!fullUrl.includes("token=")) {
+        fullUrl = `${fullUrl}${fullUrl.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+      }
+    }
+  }
+  return fullUrl;
+};
+
+/**
+ * Detects whether a document is an Excel / spreadsheet file (.xlsx, .xls, .csv).
+ */
+export const isExcelFile = (
+  filePath?: string | null,
+  documentName?: string | null,
+  fileType?: string | null
+): boolean => {
+  const type = (fileType || "").toLowerCase();
+  const path = (filePath || "").toLowerCase();
+  const name = (documentName || "").toLowerCase();
+  return (
+    type.includes("excel") ||
+    type.includes("spreadsheet") ||
+    type.includes("csv") ||
+    /\.(xlsx|xls|csv)$/i.test(path) ||
+    /\.(xlsx|xls|csv)$/i.test(name)
+  );
+};
+
+/**
+ * Downloads a file to the user's local system for local viewing / editing.
+ */
+export const downloadFileFromUrl = async (url?: string | null, filename?: string): Promise<boolean> => {
+  if (!url) return false;
+  const secureUrl = getSecureFileUrl(url);
+  const cleanFilename =
+    filename ||
+    url.split("/").pop()?.split("?")[0] ||
+    "document.xlsx";
+
+  try {
+    const res = await fetch(secureUrl);
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = blobUrl;
+    link.download = cleanFilename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+    return true;
+  } catch (err) {
+    console.warn("Direct blob download failed, falling back to window anchor", err);
+    const link = document.createElement("a");
+    link.href = secureUrl;
+    link.download = cleanFilename;
+    link.target = "_blank";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return true;
+  }
+};
+

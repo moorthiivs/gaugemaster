@@ -5,6 +5,7 @@ import { Calibration } from './calibration.entity';
 import { CalibrationDraft } from './calibration-draft.entity';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
 import { User } from '../users/user.entity';
+import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
 import { SettingsService } from '../settings/settings.service';
 import { InstrumentsService } from '../instruments/instruments.service';
 import { DataSource } from 'typeorm';
@@ -35,6 +36,7 @@ describe('CalibrationService', () => {
         { provide: getRepositoryToken(CalibrationDraft), useValue: createMockRepository() },
         { provide: getRepositoryToken(CalibrationAuditLog), useValue: createMockRepository() },
         { provide: getRepositoryToken(User), useValue: createMockRepository() },
+        { provide: getRepositoryToken(CalibrationTemplate), useValue: createMockRepository() },
         {
           provide: SettingsService,
           useValue: {
@@ -85,5 +87,68 @@ describe('CalibrationService', () => {
     expect(result).toBeDefined();
     expect(result.id).toBe('cal-uuid-123');
     expect(result.certificate_number).toContain('CERT/');
+  });
+
+  it('should recalculate layout blocks and enforce FAIL verdict when measurements are out of tolerance', async () => {
+    const dto: any = {
+      instrument_id: 'inst-1',
+      calibration_date: '2026-10-01',
+      created_by: 'user-1',
+      companyId: 'comp-1',
+      verdict: 'PASS', // Client claims PASS falsely
+      layout_blocks: [
+        {
+          type: 'table_grid',
+          tolerance: 0.01,
+          columns: [
+            { id: 'nominal', label: 'Nominal', type: 'nominal' },
+            { id: 'actual', label: 'Actual', type: 'reading' },
+            { id: 'deviation', label: 'Deviation', type: 'formula', formula: 'actual - nominal' },
+            { id: 'status', label: 'Status', type: 'status' },
+          ],
+          rows: [
+            { nominal: 10.0, actual: 10.05 }, // Out of tolerance (0.05 > 0.01)
+          ],
+        },
+      ],
+    };
+
+    const result = await service.create(dto);
+    expect(result.calculated_verdict).toBe('FAIL');
+    expect(result.verdict).toBe('FAIL'); // Overruled client claim
+    expect(result.is_verdict_overridden).toBe(false);
+    expect(result.layout_blocks![0].rows[0].deviation).toBe('+0.050');
+  });
+
+  it('should preserve manual verdict override when is_verdict_overridden is true with reason', async () => {
+    const dto: any = {
+      instrument_id: 'inst-1',
+      calibration_date: '2026-10-01',
+      created_by: 'user-1',
+      companyId: 'comp-1',
+      verdict: 'PASS', // Technician overrode to PASS under concession
+      is_verdict_overridden: true,
+      verdict_override_reason: 'Accepted under customer concession MRB-101',
+      layout_blocks: [
+        {
+          type: 'table_grid',
+          tolerance: 0.01,
+          columns: [
+            { id: 'nominal', label: 'Nominal', type: 'nominal' },
+            { id: 'actual', label: 'Actual', type: 'reading' },
+            { id: 'status', label: 'Status', type: 'status' },
+          ],
+          rows: [
+            { nominal: 10.0, actual: 10.05 },
+          ],
+        },
+      ],
+    };
+
+    const result = await service.create(dto);
+    expect(result.calculated_verdict).toBe('FAIL'); // Raw math is FAIL
+    expect(result.verdict).toBe('PASS'); // Preserved manual override
+    expect(result.is_verdict_overridden).toBe(true);
+    expect(result.verdict_override_reason).toBe('Accepted under customer concession MRB-101');
   });
 });

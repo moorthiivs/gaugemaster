@@ -64,6 +64,7 @@ export interface CalibrationRecord {
 
   // Data
   is_canvas_template?: boolean;
+  is_template_preview?: boolean;
   layout_blocks?: CanvasBlock[] | Record<string, unknown>[];
   calibration_points: CalibrationPoint[];
   custom_columns?: Record<string, unknown>[];
@@ -90,14 +91,28 @@ export interface CalibrationRecord {
 
   // Signatories
   calibrated_by: string;
+  calibrated_by_id?: string;
   calibrated_by_designation?: string;
   calibrated_by_signature?: string;
   reviewed_by: string;
+  reviewed_by_id?: string;
   reviewed_by_designation?: string;
   reviewed_by_signature?: string;
   approved_by: string;
+  approved_by_id?: string;
   approved_by_designation?: string;
   approved_by_signature?: string;
+
+  // Approval Workflow
+  approval_status?: string;
+  reviewed_at?: string;
+  reviewer_remarks?: string;
+  approved_at?: string;
+  approver_remarks?: string;
+  rejected_by?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+  recalibration_of_id?: string;
 
   // Certificate & ULR
   certificate_number: string;

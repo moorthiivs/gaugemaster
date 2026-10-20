@@ -135,4 +135,8 @@ export class CreateSettingDto {
         defaultModel?: string;
         enabled?: boolean;
     };
+
+    @ApiProperty({ description: 'Custom instrument status names for company', required: false, type: [String] })
+    @IsOptional()
+    customInstrumentStatuses?: string[];
 }

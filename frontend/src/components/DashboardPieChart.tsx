@@ -48,6 +48,8 @@ const STATUS_COLORS: Record<string, string> = {
     'Due Soon': '#f59e0b',        // Amber Yellow
     'DUE SOON': '#f59e0b',
     'Sent for Calibration': '#6366f1', // Royal Indigo
+    'Under Calibration': '#0284c7',   // Vibrant Ocean Blue
+    'In Calibration': '#0284c7',
 };
 
 // Fallback high-contrast palette

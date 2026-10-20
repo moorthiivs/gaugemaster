@@ -89,6 +89,8 @@ export interface CanvasColumnDef {
   width?: string | number;
   align?: "left" | "center" | "right";
   isPassFail?: boolean;
+  isManualJudgement?: boolean;
+  judgementMode?: "formula" | "manual";
   readOnly?: boolean;
   editable?: boolean;
   unit?: string;
@@ -107,7 +109,7 @@ export interface CellSpan {
 
 export interface CanvasRowData {
   point_number?: number;
-  nominal?: number;
+  nominal?: number | string;
   description?: string;
   specification?: string;
   tolerance?: number;
@@ -127,11 +129,13 @@ export interface CanvasRowData {
   merged_text?: string;
   statement?: string;
   cellSpans?: Record<string, CellSpan>;
+  cellFormulas?: Record<string, string>; // Row-specific cell formulas: { [columnId]: formulaString }
   [key: string]: any;
 }
 
 export interface TableGridBlock {
   id: string;
+  tableKey?: string; // Semantic identifier for cross-table formula references (e.g. "clockwise", "counter_clockwise", "summary")
   type: "table_grid";
   title: string;
   width?: "100%" | "50%" | "33%" | "66%";
@@ -144,6 +148,7 @@ export interface TableGridBlock {
   toleranceType?: "symmetric" | "asymmetric" | "mixed" | "row_specific";
   calculationModel?: CalibrationCalculationModel;
   tableSemanticSummary?: string;
+  headerRows?: MatrixHeaderCell[][];
   columns: CanvasColumnDef[];
   rows: CanvasRowData[];
   aiAuditHistory?: Array<{
@@ -158,6 +163,9 @@ export interface TableGridBlock {
   footerNote?: string;
   marginTop?: number;
   marginBottom?: number;
+  firstColWidth?: number | string;
+  parameterWidth?: number | string;
+  dataColWidth?: number | string;
 }
 
 export interface SplitRowBlock {
@@ -170,11 +178,15 @@ export interface SplitRowBlock {
   marginBottom?: number;
 }
 
-export interface MatrixHeaderCell {
+export interface MatrixCell {
   text: string;
   colSpan?: number;
   rowSpan?: number;
+  align?: "left" | "center" | "right";
+  isHeader?: boolean;
 }
+
+export type MatrixHeaderCell = MatrixCell;
 
 export interface MatrixTableBlock {
   id: string;
@@ -182,7 +194,7 @@ export interface MatrixTableBlock {
   title: string;
   width?: "100%" | "50%";
   headers: MatrixHeaderCell[][];
-  rows: (string | number)[][];
+  rows: (string | number | MatrixCell)[][];
   footerNote?: string;
   marginTop?: number;
   marginBottom?: number;

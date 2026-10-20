@@ -31,14 +31,14 @@ export async function updateInstrument(id: string, data: Partial<Instrument>) {
 }
 
 /** Delete an instrument record */
-export async function deleteInstrument(id: string) {
-  const res = await httpClient.delete(`/instruments/${id}`);
+export async function deleteInstrument(id: string, reason?: string) {
+  const res = await httpClient.delete(`/instruments/${id}`, { params: { reason } });
   return res.data;
 }
 
 /** Bulk delete multiple instrument records */
-export async function deleteInstrumentsBulk(ids: string[]) {
-  const res = await httpClient.post('/instruments/bulk-delete', { ids });
+export async function deleteInstrumentsBulk(ids: string[], reason?: string) {
+  const res = await httpClient.post('/instruments/bulk-delete', { ids, reason });
   return res.data;
 }
 
@@ -75,13 +75,74 @@ export async function getFilterParams(userId: string, companyId?: string) {
   return res.data;
 }
 
-/** Parse frequency string (e.g., "12 Months", "1 Year") into total number of months */
+/** Fetch custom instrument statuses for a company */
+export async function getCustomInstrumentStatuses(companyId?: string): Promise<string[]> {
+  const res = await httpClient.get("/settings/instrument-statuses", {
+    params: { companyId },
+  });
+  return res.data || [];
+}
+
+/** Add a new custom instrument status for a company */
+export async function addCustomInstrumentStatus(companyId: string, status: string): Promise<{ success: boolean; status: string; statuses: string[] }> {
+  const res = await httpClient.post("/settings/instrument-statuses", {
+    companyId,
+    status,
+  });
+  return res.data;
+}
+
+
+/** Parse frequency string (e.g., "12 Months", "1 Year", "Once in year", "Once in 6 months", "Quarterly") into total number of months */
 export function parseFrequencyMonths(freq: string | undefined | null): number {
   if (!freq) return 0;
-  const match = freq.match(/(\d+)/);
-  if (!match) return 0;
-  let val = parseInt(match[1], 10);
-  if (freq.toLowerCase().includes("year")) val *= 12;
-  return val;
+  const clean = freq.trim().toLowerCase();
+  if (!clean) return 0;
+
+  // 1. Exact or keyword-based text phrases
+  if (
+    clean.includes("once in year") ||
+    clean.includes("once in a year") ||
+    clean === "yearly" ||
+    clean === "annual" ||
+    clean === "annually" ||
+    clean === "1 year"
+  ) {
+    return 12;
+  }
+  if (
+    clean.includes("half yearly") ||
+    clean.includes("half-yearly") ||
+    clean.includes("semi-annual") ||
+    clean.includes("semi annual")
+  ) {
+    return 6;
+  }
+  if (clean.includes("quarterly") || clean.includes("once in a quarter") || clean.includes("once in quarter")) {
+    return 3;
+  }
+  if (clean === "monthly" || clean === "once a month" || clean === "once in month" || clean === "1 month") {
+    return 1;
+  }
+
+  // 2. Numerical extraction (e.g. "once in 6 months", "6 month", "once in 2years", "once in 3 years", "24 months")
+  const match = clean.match(/(\d+)/);
+  if (match) {
+    let val = parseInt(match[1], 10);
+    if (clean.includes("year")) {
+      val *= 12;
+    }
+    return val;
+  }
+
+  // 3. Fallback semantic checks
+  if (clean.includes("year")) {
+    return 12;
+  }
+  if (clean.includes("month")) {
+    return 1;
+  }
+
+  return 0;
 }
 

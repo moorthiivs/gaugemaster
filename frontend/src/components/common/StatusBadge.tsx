@@ -12,7 +12,15 @@ import {
   Archive,
   Layers,
   FileCheck,
+  Tag,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CalibrationWorkflowHoverCard } from "./CalibrationWorkflowHoverCard";
 
 export type StatusCategory =
   | "verdict"
@@ -23,6 +31,7 @@ export type StatusCategory =
 
 export interface StatusBadgeProps {
   status: string | null | undefined;
+  subStatus?: string | null;
   category?: StatusCategory;
   size?: "xs" | "sm" | "md";
   className?: string;
@@ -31,6 +40,7 @@ export interface StatusBadgeProps {
 
 export function StatusBadge({
   status,
+  subStatus,
   category = "auto",
   size = "sm",
   className,
@@ -121,7 +131,33 @@ export function StatusBadge({
     );
   }
 
-  if (lower.includes("sent for calibration") || lower.includes("in calibration")) {
+  // Under Calibration with animated Stepper HoverCard (Calibration -> Review -> Approval)
+  if (lower.includes("under calibration") || lower === "under_calibration" || lower.includes("in calibration")) {
+    const badgeElement = (
+      <Badge
+        variant="outline"
+        className={cn(
+          "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/30 whitespace-nowrap inline-flex items-center font-semibold cursor-pointer transition-all hover:bg-blue-500/15 shadow-2xs hover:shadow-xs",
+          sizeClasses[size],
+          className
+        )}
+      >
+        {showIcon && <Clock className={iconSizes[size]} />}
+        <span>Under Calibration</span>
+      </Badge>
+    );
+
+    return (
+      <CalibrationWorkflowHoverCard
+        status="Under Calibration"
+        subStatus={subStatus || "Review Pending"}
+      >
+        {badgeElement}
+      </CalibrationWorkflowHoverCard>
+    );
+  }
+
+  if (lower.includes("sent for calibration")) {
     return (
       <Badge
         variant="info"
@@ -231,12 +267,17 @@ export function StatusBadge({
     );
   }
 
-  // Fallback neutral
+  // Fallback for custom statuses
   return (
     <Badge
       variant="outline"
-      className={cn("whitespace-nowrap inline-flex items-center capitalize", sizeClasses[size], className)}
+      className={cn(
+        "bg-primary/5 text-foreground border-primary/20 hover:border-primary/40 whitespace-nowrap inline-flex items-center font-medium shadow-2xs",
+        sizeClasses[size],
+        className
+      )}
     >
+      {showIcon && <Tag className={iconSizes[size]} />}
       <span>{raw}</span>
     </Badge>
   );

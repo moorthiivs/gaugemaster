@@ -319,7 +319,7 @@ export function DataTable<TData, TValue>({
       <div className="glass-card rounded-xl border border-border/60 overflow-hidden transition-all duration-300">
         <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">
           <Table>
-            <TableHeader className="bg-muted/40 backdrop-blur-md">
+            <TableHeader className="bg-muted/70 backdrop-blur-md sticky top-0 z-10 border-b">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent border-b border-muted/20">
                   {headerGroup.headers.map((header, index) => {

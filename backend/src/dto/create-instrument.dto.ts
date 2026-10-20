@@ -5,6 +5,7 @@ import {
     IsDateString,
     IsIn,
     IsBoolean,
+    ValidateIf,
 } from 'class-validator';
 
 export class CreateInstrumentDto {
@@ -19,36 +20,39 @@ export class CreateInstrumentDto {
     @IsNotEmpty()
     name: string;
 
-
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    location: string;
+    location?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    frequency: string;
+    frequency?: string;
 
+    @IsOptional()
+    @ValidateIf((o, v) => v != null && v !== '')
     @IsDateString()
-    last_calibration_date: string;
+    last_calibration_date?: string;
 
+    @IsOptional()
+    @ValidateIf((o, v) => v != null && v !== '')
     @IsDateString()
-    due_date: string;
+    due_date?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    agency: string;
+    agency?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    range: string;
+    range?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    serial_no: string;
+    serial_no?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    least_count: string;
+    least_count?: string;
 
     @IsOptional()
     @IsString()
@@ -58,9 +62,9 @@ export class CreateInstrumentDto {
     @IsString()
     remarks?: string;
 
+    @IsOptional()
     @IsString()
-    @IsNotEmpty()
-    status: string;
+    status?: string;
 
     @IsOptional()
     @IsString()
@@ -95,6 +99,7 @@ export class CreateInstrumentDto {
     calibration_source?: string;
 
     @IsOptional()
+    @ValidateIf((o, v) => v != null && v !== '')
     @IsDateString()
     gauge_issue_date?: string;
 

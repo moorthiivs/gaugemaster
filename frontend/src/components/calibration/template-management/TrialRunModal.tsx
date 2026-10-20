@@ -28,6 +28,7 @@ import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { evaluateCanvasRowFormulas, buildRowContext } from "@/lib/formulaEngine";
 import { toast } from "sonner";
+import { getStatusVerdict } from "@/lib/statusVerdict";
 
 interface TrialRunModalProps {
   open: boolean;
@@ -175,7 +176,7 @@ export function TrialRunModal({
         const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
 
         tbl.rows = tbl.rows.map((r: any) => {
-          const ctx = buildRowContext(r, tbl.columns, tol, dec);
+          const ctx = buildRowContext(r, tbl.columns, tol, dec, 0, tbl.nominal);
           let readVal: number;
           if (type === "pass") {
             // Midpoint of tolerance limits guarantees PASS across symmetric, asymmetric, and negative-only tolerances
@@ -509,22 +510,40 @@ export function TrialRunModal({
                                         );
                                       }
                                       if (col.type === "formula") {
+                                        const val = row[col.id] ?? "-";
+                                        const verdict = getStatusVerdict(val);
+                                        if (verdict !== null) {
+                                          return (
+                                            <td key={rIdx} className="py-1 px-1 text-center">
+                                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                verdict === "pass"
+                                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                  : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                              }`}>
+                                                {val}
+                                              </span>
+                                            </td>
+                                          );
+                                        }
                                         return (
                                           <td key={rIdx} className="py-1 px-1.5 font-mono font-bold text-primary">
-                                            {row[col.id] ?? "-"}
+                                            {val}
                                           </td>
                                         );
                                       }
                                       if (col.type === "status") {
-                                        const isPass = row[col.id] === "PASS";
+                                        const val = row[col.id] || "-";
+                                        const verdict = getStatusVerdict(val);
                                         return (
-                                          <td key={rIdx} className="py-1 px-1">
+                                          <td key={rIdx} className="py-1 px-1 text-center">
                                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                              isPass
+                                              verdict === "pass"
                                                 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                : verdict === "fail"
+                                                  ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                  : "bg-muted text-muted-foreground"
                                             }`}>
-                                              {row[col.id] || "-"}
+                                              {val}
                                             </span>
                                           </td>
                                         );
@@ -683,22 +702,40 @@ export function TrialRunModal({
                                             );
                                           }
                                           if (col.type === "formula") {
+                                            const val = row[col.id] ?? "-";
+                                            const verdict = getStatusVerdict(val);
+                                            if (verdict !== null) {
+                                              return (
+                                                <td key={col.id} className="py-1 px-2 text-center">
+                                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                    verdict === "pass"
+                                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                      : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                  }`}>
+                                                    {val}
+                                                  </span>
+                                                </td>
+                                              );
+                                            }
                                             return (
                                               <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
-                                                {row[col.id] ?? "-"}
+                                                {val}
                                               </td>
                                             );
                                           }
                                           if (col.type === "status") {
-                                            const isPass = row[col.id] === "PASS";
+                                            const val = row[col.id] || "-";
+                                            const verdict = getStatusVerdict(val);
                                             return (
-                                              <td key={col.id} className="py-1 px-2">
+                                              <td key={col.id} className="py-1 px-2 text-center">
                                                 <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                                  isPass
+                                                  verdict === "pass"
                                                     ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                    : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                    : verdict === "fail"
+                                                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                      : "bg-muted text-muted-foreground"
                                                 }`}>
-                                                  {row[col.id] || "-"}
+                                                  {val}
                                                 </span>
                                               </td>
                                             );
@@ -735,8 +772,10 @@ export function TrialRunModal({
                         <tbody className="divide-y divide-black">
                           {(block as MatrixTableBlock).rows.map((r, rIdx) => (
                             <tr key={rIdx} className="divide-x divide-black">
-                              {r.map((val, cIdx) => (
-                                <td key={cIdx} className="py-1 px-2 font-mono">{val}</td>
+                              {r.map((val: any, cIdx) => (
+                                <td key={cIdx} className="py-1 px-2 font-mono">
+                                  {typeof val === "object" && val !== null ? (val.text ?? "-") : String(val ?? "-")}
+                                </td>
                               ))}
                             </tr>
                           ))}
@@ -764,6 +803,7 @@ export function TrialRunModal({
                   calibration={mockCalibrationRecord}
                   instrumentName={templateName}
                   showDownloadPng={true}
+                  isTemplatePreview={true}
                 />
               </div>
             </div>

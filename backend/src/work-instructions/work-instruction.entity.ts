@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   Index,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
@@ -61,4 +62,16 @@ export class WorkInstruction {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
 }

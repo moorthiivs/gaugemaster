@@ -104,6 +104,12 @@ export const MODULE_NAMES: ModuleDefinition[] = [
     category: 'Administration',
   },
   {
+    key: 'recovery',
+    label: 'Recovery Center',
+    description: 'Inspect soft-deleted records across all modules and restore accidentally deleted items',
+    category: 'Administration',
+  },
+  {
     key: 'users',
     label: 'User & Role Management',
     description: 'Manage user accounts, assign custom roles, and draw digital signatures',

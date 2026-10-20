@@ -140,6 +140,22 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calculated_verdict?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_verdict_overridden?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verdict_override_reason?: string;
+
+  @IsOptional()
+  @IsString()
+  template_version_id?: string;
+
+  @IsOptional()
+  @IsString()
   remarks?: string;
 
   @IsOptional()
@@ -223,6 +239,10 @@ export class CreateCalibrationDto {
   @IsString()
   rejection_reason?: string;
 
+  @IsOptional()
+  @IsString()
+  recalibration_of_id?: string;
+
   // Signatories
   @IsOptional()
   @IsString()
@@ -238,7 +258,15 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calibrated_by_id?: string;
+
+  @IsOptional()
+  @IsString()
   reviewed_by?: string;
+
+  @IsOptional()
+  @IsString()
+  reviewed_by_id?: string;
 
   @IsOptional()
   @IsString()
@@ -251,6 +279,10 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   approved_by?: string;
+
+  @IsOptional()
+  @IsString()
+  approved_by_id?: string;
 
   @IsOptional()
   @IsString()

@@ -7,6 +7,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   OneToMany,
   JoinColumn,
@@ -129,6 +130,18 @@ export class Calibration {
   @Column({ nullable: true })
   verdict: string; // "PASS" | "FAIL" | "CONDITIONAL"
 
+  @Column({ nullable: true })
+  calculated_verdict?: string;
+
+  @Column({ type: 'boolean', default: false })
+  is_verdict_overridden?: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  verdict_override_reason?: string;
+
+  @Column({ nullable: true })
+  template_version_id?: string;
+
   @Column({ type: 'text', nullable: true })
   remarks: string;
 
@@ -179,10 +192,25 @@ export class Calibration {
 
   // ── Approval Workflow ────────────────────────────────────────
   @Column({ default: 'Calibration Completed' })
-  approval_status: string; // 'Calibration Completed' | 'Approved' | 'Rejected'
+  approval_status: string; // 'Pending Review' | 'Calibration Completed' | 'Reviewed' | 'Pending Approval' | 'Approved' | 'Rejected'
+
+  @Column({ type: 'timestamp', nullable: true })
+  reviewed_at?: Date;
+
+  @Column({ nullable: true })
+  reviewed_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  reviewer_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   approved_at?: Date;
+
+  @Column({ nullable: true })
+  approved_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  approver_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   rejected_at?: Date;
@@ -192,6 +220,9 @@ export class Calibration {
 
   @Column({ type: 'text', nullable: true })
   rejection_reason?: string;
+
+  @Column({ nullable: true })
+  recalibration_of_id?: string;
 
   // ── Signatories ──────────────────────────────────────────────
   @Column({ nullable: true })
@@ -260,6 +291,21 @@ export class Calibration {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
+
+  @Column({ nullable: true })
+  deleted_with_parent_id?: string;
 
   @OneToMany(() => CalibrationAuditLog, (log) => log.calibration, {
     cascade: true,

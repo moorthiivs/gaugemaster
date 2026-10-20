@@ -27,6 +27,7 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
 import { CalibrationProceduresModule } from './calibration-procedures/calibration-procedures.module';
 import { GaugeDiagramsModule } from './gauge-diagrams/gauge-diagrams.module';
 import { WorkInstructionsModule } from './work-instructions/work-instructions.module';
+import { RecoveryModule } from './recovery/recovery.module';
 
 @Module({
   imports: [
@@ -50,6 +51,10 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       uuidExtension: 'pgcrypto',
       extra: {
+        max: parseInt(process.env.DB_POOL_MAX || '30', 10),
+        min: parseInt(process.env.DB_POOL_MIN || '5', 10),
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
         options: '-c timezone=UTC',
       },
     }),
@@ -76,6 +81,7 @@ import { WorkInstructionsModule } from './work-instructions/work-instructions.mo
     CalibrationProceduresModule,
     GaugeDiagramsModule,
     WorkInstructionsModule,
+    RecoveryModule,
 
     // ⭐ PgBoss correct async config (NO ERRORS)
     PGBossModule.forRootAsync({

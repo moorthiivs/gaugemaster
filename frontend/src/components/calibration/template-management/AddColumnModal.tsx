@@ -14,7 +14,9 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -31,7 +33,13 @@ import {
   Lock,
   Info,
 } from "lucide-react";
-import { CanvasColumnDef, TableGridBlock } from "@/types/template";
+import {
+  CanvasColumnDef,
+  TableGridBlock,
+  ColumnRole,
+  ColumnSemanticRole,
+  ColumnDataType,
+} from "@/types/template";
 import { testEvaluateFormula } from "@/lib/formulaEngine";
 import { toast } from "sonner";
 
@@ -75,79 +83,146 @@ export function generateColumnKey(
   return `${base}_${counter}`;
 }
 
-const COLUMN_TYPES: {
+export interface ColumnTypeItem {
   value: CanvasColumnDef["type"];
   label: string;
   badge: string;
   description: string;
   defaultAlign: "left" | "center" | "right";
   defaultWidth: number;
-}[] = [
+  role: ColumnRole;
+  semanticRole: ColumnSemanticRole;
+  dataType: ColumnDataType;
+}
+
+export interface ColumnCategoryDef {
+  id: string;
+  categoryLabel: string;
+  types: ColumnTypeItem[];
+}
+
+export const COLUMN_CATEGORIES: ColumnCategoryDef[] = [
   {
-    value: "reading",
-    label: "Reading / Observed",
-    badge: "Direct Input",
-    description: "Direct measurement reading entered by technician during calibration.",
-    defaultAlign: "right",
-    defaultWidth: 120,
+    id: "observations",
+    categoryLabel: "1. Measurement Observation (Input)",
+    types: [
+      {
+        value: "reading",
+        label: "Reading / Observed",
+        badge: "Direct Input",
+        description: "Direct measurement reading entered by technician during calibration.",
+        defaultAlign: "right",
+        defaultWidth: 120,
+        role: "READING",
+        semanticRole: "INPUT",
+        dataType: "NUMBER",
+      },
+      {
+        value: "trial",
+        label: "Trial (t1, t2, t3...)",
+        badge: "Multi-Trial",
+        description: "Repeated trial observation for multi-run calibration points.",
+        defaultAlign: "right",
+        defaultWidth: 100,
+        role: "INPUT",
+        semanticRole: "TRIAL",
+        dataType: "NUMBER",
+      },
+    ],
   },
   {
-    value: "nominal",
-    label: "Nominal / Specification",
-    badge: "Baseline Spec",
-    description: "Target baseline standard or drawing specification value.",
-    defaultAlign: "right",
-    defaultWidth: 130,
+    id: "specifications",
+    categoryLabel: "2. Specification & Baseline (Engineering Standard)",
+    types: [
+      {
+        value: "nominal",
+        label: "Nominal / Master Standard",
+        badge: "Target Baseline",
+        description: "Target baseline standard or drawing specification value.",
+        defaultAlign: "right",
+        defaultWidth: 130,
+        role: "NOMINAL",
+        semanticRole: "SPECIFICATION",
+        dataType: "NUMBER",
+      },
+      {
+        value: "tolerance",
+        label: "Tolerance Limit (± / Asym)",
+        badge: "Allowable Limit",
+        description: "Allowable tolerance limit for this calibration point or row.",
+        defaultAlign: "right",
+        defaultWidth: 110,
+        role: "TOLERANCE",
+        semanticRole: "SPECIFICATION",
+        dataType: "NUMBER",
+      },
+    ],
   },
   {
-    value: "trial",
-    label: "Trial (t1, t2, t3...)",
-    badge: "Multi-Trial",
-    description: "Repeated trial observation for multi-run calibration points.",
-    defaultAlign: "right",
-    defaultWidth: 100,
+    id: "calculations",
+    categoryLabel: "3. Calculations & Derived Logic (Formulas)",
+    types: [
+      {
+        value: "formula",
+        label: "Formula Calculation",
+        badge: "Auto Computed",
+        description: "Calculated expression automatically derived from other columns (e.g. error, deviation, average).",
+        defaultAlign: "right",
+        defaultWidth: 120,
+        role: "CALCULATED",
+        semanticRole: "CALCULATED",
+        dataType: "FORMULA",
+      },
+    ],
   },
   {
-    value: "formula",
-    label: "Formula Calculation",
-    badge: "Auto Computed",
-    description: "Calculated expression automatically derived from other columns (e.g. error, deviation).",
-    defaultAlign: "right",
-    defaultWidth: 120,
+    id: "judgements",
+    categoryLabel: "4. Metrological Judgement & Compliance (ISO 17025)",
+    types: [
+      {
+        value: "status",
+        label: "Judgement / Pass-Fail",
+        badge: "Verdict",
+        description: "Tolerance compliance evaluation returning PASS, FAIL, or manual evaluation.",
+        defaultAlign: "center",
+        defaultWidth: 120,
+        role: "JUDGEMENT",
+        semanticRole: "JUDGEMENT",
+        dataType: "STATUS",
+      },
+    ],
   },
   {
-    value: "status",
-    label: "Judgement / Pass-Fail",
-    badge: "Metrology Verdict",
-    description: "Tolerance compliance evaluation returning PASS, FAIL, or review status.",
-    defaultAlign: "center",
-    defaultWidth: 120,
-  },
-  {
-    value: "tolerance",
-    label: "Tolerance (±)",
-    badge: "Allowable Limits",
-    description: "Allowable tolerance limit for this calibration point or row.",
-    defaultAlign: "right",
-    defaultWidth: 110,
-  },
-  {
-    value: "number",
-    label: "Numeric Value",
-    badge: "General Number",
-    description: "Standard numeric field without metrology calculation binding.",
-    defaultAlign: "right",
-    defaultWidth: 110,
-  },
-  {
-    value: "text",
-    label: "Text / Note",
-    badge: "String / Notes",
-    description: "General text, test conditions, or descriptive parameters.",
-    defaultAlign: "left",
-    defaultWidth: 140,
+    id: "general",
+    categoryLabel: "5. General Data & Annotations",
+    types: [
+      {
+        value: "text",
+        label: "Text / Note / Description",
+        badge: "Text Note",
+        description: "General text, test conditions, parameter description, or remarks.",
+        defaultAlign: "left",
+        defaultWidth: 140,
+        role: "METADATA",
+        semanticRole: "METADATA",
+        dataType: "TEXT",
+      },
+      {
+        value: "number",
+        label: "Numeric Value",
+        badge: "General Number",
+        description: "Standard numeric field without metrology calculation binding.",
+        defaultAlign: "right",
+        defaultWidth: 110,
+        role: "INPUT",
+        semanticRole: "INPUT",
+        dataType: "NUMBER",
+      },
+    ],
   },
 ];
+
+const COLUMN_TYPES: ColumnTypeItem[] = COLUMN_CATEGORIES.flatMap((c) => c.types);
 
 export function AddColumnModal({
   open,
@@ -159,11 +234,13 @@ export function AddColumnModal({
   const [columnName, setColumnName] = useState("");
   const [columnKey, setColumnKey] = useState("");
   const [columnType, setColumnType] = useState<CanvasColumnDef["type"]>("reading");
+  const [judgementMode, setJudgementMode] = useState<"formula" | "manual">("formula");
   const [isTypeManual, setIsTypeManual] = useState(false);
   const [columnDecimals, setColumnDecimals] = useState<string>("inherit");
   const [columnFormula, setColumnFormula] = useState("");
   const [columnAlign, setColumnAlign] = useState<"left" | "center" | "right">("right");
   const [columnWidth, setColumnWidth] = useState<number>(120);
+  const [columnGroupName, setColumnGroupName] = useState<string>("");
 
   const formulaInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -176,17 +253,31 @@ export function AddColumnModal({
     return COLUMN_TYPES.find((c) => c.value === columnType) || COLUMN_TYPES[0];
   }, [columnType]);
 
+  // Existing header groups in this table
+  const existingGroups = useMemo(() => {
+    if (!targetTable?.columns) return [];
+    const groups = new Set<string>();
+    targetTable.columns.forEach((c) => {
+      if (c.groupName?.trim()) {
+        groups.add(c.groupName.trim());
+      }
+    });
+    return Array.from(groups);
+  }, [targetTable]);
+
   // Reset form when modal opens
   useEffect(() => {
     if (open) {
       setColumnName("");
       setColumnKey("");
       setColumnType("reading");
+      setJudgementMode("formula");
       setIsTypeManual(false);
       setColumnDecimals("inherit");
       setColumnFormula("");
-      setColumnAlign("right");
+      setColumnAlign("center");
       setColumnWidth(120);
+      setColumnGroupName("");
     }
   }, [open]);
 
@@ -212,7 +303,15 @@ export function AddColumnModal({
         setColumnType("status");
         setColumnAlign("center");
         setColumnWidth(120);
-        if (!columnFormula) {
+        if (
+          lower.includes("manual") ||
+          lower.includes("visual") ||
+          lower.includes("wear") ||
+          lower.includes("ring") ||
+          lower.includes("check")
+        ) {
+          setJudgementMode("manual");
+        } else if (!columnFormula) {
           setColumnFormula("IF(ABS(error) <= tolerance, 'PASS', 'FAIL')");
         }
       } else if (
@@ -349,10 +448,10 @@ export function AddColumnModal({
 
   // Live test evaluation
   const liveTestResult = useMemo(() => {
-    if (columnType !== "formula" && columnType !== "status") return null;
+    if (columnType !== "formula" && (columnType !== "status" || judgementMode === "manual")) return null;
     if (!columnFormula.trim()) return null;
     return testEvaluateFormula(columnFormula.trim(), sampleContext);
-  }, [columnType, columnFormula, sampleContext]);
+  }, [columnType, judgementMode, columnFormula, sampleContext]);
 
   // Submit Handler
   const handleSaveColumn = () => {
@@ -381,8 +480,10 @@ export function AddColumnModal({
       return;
     }
 
+    const isManualJudgement = columnType === "status" && judgementMode === "manual";
+
     // Check formula requirement
-    if ((columnType === "formula" || columnType === "status") && !columnFormula.trim()) {
+    if (!isManualJudgement && (columnType === "formula" || columnType === "status") && !columnFormula.trim()) {
       toast.error("Please enter a formula expression for this column");
       return;
     }
@@ -390,20 +491,29 @@ export function AddColumnModal({
     const dedicatedDec =
       columnDecimals === "inherit" ? undefined : parseInt(columnDecimals, 10);
 
+    const typeDef = COLUMN_TYPES.find((c) => c.value === columnType);
+
     const newCol: CanvasColumnDef = {
       id: trimmedKey,
       key: trimmedKey,
       label: trimmedName,
       type: columnType,
+      role: typeDef?.role || (columnType === "status" ? "JUDGEMENT" : "INPUT"),
+      semanticRole: typeDef?.semanticRole || "INPUT",
+      dataType: typeDef?.dataType || (columnType === "text" ? "TEXT" : "NUMBER"),
+      isPassFail: columnType === "status",
+      isManualJudgement: isManualJudgement,
+      judgementMode: columnType === "status" ? judgementMode : undefined,
       formula:
-        columnType === "formula" || columnType === "status"
+        !isManualJudgement && (columnType === "formula" || columnType === "status")
           ? columnFormula.trim()
           : undefined,
       decimal_places: dedicatedDec,
       decimalPrecision: dedicatedDec,
       align: columnAlign,
       width: columnWidth,
-      editable: columnType !== "formula" && columnType !== "status",
+      groupName: columnGroupName.trim() || undefined,
+      editable: isManualJudgement || (columnType !== "formula" && columnType !== "status"),
     };
 
     onAddColumn(targetTable.id, newCol);
@@ -413,9 +523,9 @@ export function AddColumnModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl max-h-[92vh] overflow-y-auto p-0 gap-0 border border-slate-200 dark:border-slate-800 bg-background shadow-2xl rounded-xl">
-        {/* Header */}
-        <DialogHeader className="p-6 pb-4 border-b border-slate-200 dark:border-slate-800">
+      <DialogContent className="sm:max-w-xl h-[88vh] max-h-[760px] flex flex-col p-0 gap-0 border border-slate-200 dark:border-slate-800 bg-background shadow-2xl rounded-xl overflow-hidden">
+        {/* Header - Fixed */}
+        <DialogHeader className="p-6 pb-4 border-b border-slate-200 dark:border-slate-800 shrink-0 bg-background">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/20 text-primary shrink-0">
               <Columns className="w-5 h-5" />
@@ -441,8 +551,8 @@ export function AddColumnModal({
           </div>
         </DialogHeader>
 
-        {/* Form Body */}
-        <div className="p-6 space-y-4">
+        {/* Form Body - Scrollable only */}
+        <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
           {/* Section 1: Column Name & Disabled Key Identifier */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
             <div className="space-y-1.5">
@@ -505,22 +615,33 @@ export function AddColumnModal({
               </div>
               <Select value={columnType} onValueChange={(val: any) => handleTypeSelect(val)}>
                 <SelectTrigger className="h-10 text-sm border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus:border-primary focus:ring-2 focus:ring-primary/20">
-                  <SelectValue placeholder="Select column type" />
+                  <SelectValue placeholder="Select column type">
+                    {selectedTypeConfig ? (
+                      <span className="font-medium truncate text-foreground">{selectedTypeConfig.label}</span>
+                    ) : undefined}
+                  </SelectValue>
                 </SelectTrigger>
-                <SelectContent className="max-h-64 border-slate-200 dark:border-slate-800 shadow-lg">
-                  {COLUMN_TYPES.map((typeItem) => (
-                    <SelectItem
-                      key={typeItem.value}
-                      value={typeItem.value}
-                      className="py-2.5 cursor-pointer text-sm"
-                    >
-                      <div className="flex items-center justify-between w-full gap-3">
-                        <span className="font-medium">{typeItem.label}</span>
-                        <span className="text-xs opacity-75 font-normal">
-                          ({typeItem.badge})
-                        </span>
-                      </div>
-                    </SelectItem>
+                <SelectContent className="max-h-72 border-slate-200 dark:border-slate-800 shadow-xl">
+                  {COLUMN_CATEGORIES.map((category) => (
+                    <SelectGroup key={category.id}>
+                      <SelectLabel className="text-[11px] font-semibold text-primary uppercase tracking-wider py-1.5 pl-8 pr-2 bg-slate-100/70 dark:bg-slate-800/70">
+                        {category.categoryLabel}
+                      </SelectLabel>
+                      {category.types.map((typeItem) => (
+                        <SelectItem
+                          key={typeItem.value}
+                          value={typeItem.value}
+                          className="py-2 cursor-pointer text-sm"
+                        >
+                          <div className="flex items-center justify-between w-full gap-2">
+                            <span className="font-medium text-foreground">{typeItem.label}</span>
+                            <span className="text-[11px] text-muted-foreground font-normal shrink-0">
+                              ({typeItem.badge})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
@@ -594,30 +715,89 @@ export function AddColumnModal({
           {/* Section 3: Formula Input Section (Visible when Column Type is Formula or Judgement) */}
           {(columnType === "formula" || columnType === "status") && (
             <div className="space-y-3 p-4 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
-              <div className="h-6 flex items-center justify-between">
-                <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  <Calculator className="w-4 h-4 text-primary" />
-                  <span>Formula Expression <span className="text-destructive">*</span></span>
-                </Label>
-                <Badge
-                  variant="outline"
-                  className="text-xs font-mono border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
-                >
-                  {columnType === "status" ? "Pass/Fail Verdict" : "Math Expression"}
-                </Badge>
-              </div>
+              {columnType === "status" && (
+                <div className="space-y-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold text-foreground">
+                      Judgement Evaluation Mode:
+                    </Label>
+                    <Badge variant="outline" className="text-[10px] uppercase font-bold text-slate-500">
+                      {judgementMode === "manual" ? "Visual / Functional Check" : "Calculated Tolerance"}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJudgementMode("formula");
+                        if (!columnFormula.trim()) {
+                          setColumnFormula("IF(ABS(error) <= tolerance, 'PASS', 'FAIL')");
+                        }
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-lg border transition-all text-center ${
+                        judgementMode === "formula"
+                          ? "bg-primary text-primary-foreground border-primary shadow-xs"
+                          : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Formula (Auto PASS / FAIL)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setJudgementMode("manual");
+                      }}
+                      className={`py-1.5 px-3 text-xs font-semibold rounded-lg border transition-all text-center ${
+                        judgementMode === "manual"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      Manual Check (OK / NOT OK)
+                    </button>
+                  </div>
+                </div>
+              )}
 
-              <Textarea
-                ref={formulaInputRef}
-                value={columnFormula}
-                onChange={(e) => setColumnFormula(e.target.value)}
-                placeholder={
-                  columnType === "status"
-                    ? "e.g. IF(ABS(error) <= tolerance, 'PASS', 'FAIL')"
-                    : "e.g. reading - nominal"
-                }
-                className="font-mono text-sm h-20 resize-none border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
-              />
+              {columnType === "status" && judgementMode === "manual" ? (
+                <div className="space-y-2 py-1 text-xs">
+                  <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 space-y-1.5">
+                    <div className="font-semibold flex items-center gap-1.5 text-xs">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Manual Visual & Functional Inspection Mode Active</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-emerald-700 dark:text-emerald-400">
+                      Perfect for <strong>Thread Plug Gauges</strong>, <strong>Thread Rings</strong>, and limit gauges (e.g. checked by GO/NOGO wear check rings).
+                      The technician can directly type or 1-click toggle <strong>OK</strong> / <strong>NOT OK</strong> during calibration without requiring numeric readings or tolerance calculation formulas.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="h-6 flex items-center justify-between">
+                    <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                      <Calculator className="w-4 h-4 text-primary" />
+                      <span>Formula Expression <span className="text-destructive">*</span></span>
+                    </Label>
+                    <Badge
+                      variant="outline"
+                      className="text-xs font-mono border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800"
+                    >
+                      {columnType === "status" ? "Pass/Fail Verdict" : "Math Expression"}
+                    </Badge>
+                  </div>
+
+                  <Textarea
+                    ref={formulaInputRef}
+                    value={columnFormula}
+                    onChange={(e) => setColumnFormula(e.target.value)}
+                    placeholder={
+                      columnType === "status"
+                        ? "e.g. IF(ABS(error) <= tolerance, 'PASS', 'FAIL')"
+                        : "e.g. reading - nominal"
+                    }
+                    className="font-mono text-sm h-20 resize-none border-slate-300 dark:border-slate-600 bg-background shadow-xs hover:border-slate-400 dark:hover:border-slate-500 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20"
+                  />
 
               {/* Variable Tokens */}
               <div className="space-y-1.5">
@@ -750,6 +930,8 @@ export function AddColumnModal({
                   )}
                 </div>
               )}
+                </>
+              )}
             </div>
           )}
 
@@ -869,10 +1051,54 @@ export function AddColumnModal({
               </div>
             </div>
           </div>
+
+          {/* Section 5: Header Grouping / Super-Header (Optional) */}
+          <div className="space-y-2 p-3.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <Columns className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                <span>Header Group / Super-Header</span>
+                <span className="text-xs font-normal text-muted-foreground">(Optional)</span>
+              </Label>
+              {columnGroupName && (
+                <button
+                  type="button"
+                  onClick={() => setColumnGroupName("")}
+                  className="text-xs text-rose-500 hover:text-rose-600 font-medium cursor-pointer"
+                >
+                  Clear Group
+                </button>
+              )}
+            </div>
+            <Input
+              value={columnGroupName}
+              onChange={(e) => setColumnGroupName(e.target.value)}
+              placeholder="e.g. OBSERVATIONS, TOLERANCE (leave blank for single header)"
+              className="h-9 text-sm border-slate-300 dark:border-slate-600 bg-background"
+            />
+            {existingGroups.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                <span className="text-[11px] text-muted-foreground font-medium">Existing groups in table:</span>
+                {existingGroups.map((grp) => (
+                  <Badge
+                    key={grp}
+                    variant={columnGroupName === grp ? "default" : "outline"}
+                    className="text-[11px] cursor-pointer hover:bg-primary/20 transition-colors"
+                    onClick={() => setColumnGroupName(grp)}
+                  >
+                    {grp}
+                  </Badge>
+                ))}
+              </div>
+            )}
+            <span className="text-xs text-muted-foreground block">
+              Merges this column under a shared super-header across 2, 3, or more adjacent columns.
+            </span>
+          </div>
         </div>
 
-        {/* Footer */}
-        <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-900/30 flex items-center justify-between sm:justify-between">
+        {/* Footer - Fixed */}
+        <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-slate-800 bg-slate-50/90 dark:bg-slate-900/60 shrink-0 flex items-center justify-between sm:justify-between">
           <Button
             type="button"
             variant="outline"

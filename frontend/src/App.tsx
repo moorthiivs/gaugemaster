@@ -38,6 +38,7 @@ const Settings = lazy(() => import("./pages/Settings"));
 const CustomerCompanies = lazy(() => import("./pages/admin/CustomerCompanies"));
 const CompanyDetail = lazy(() => import("./pages/admin/CompanyDetail"));
 const GlobalAuditLogs = lazy(() => import("./pages/admin/GlobalAuditLogs"));
+const RecoveryCenter = lazy(() => import("./pages/RecoveryCenter"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 export const queryClient = new QueryClient();
@@ -112,6 +113,7 @@ const App = () => (
                       <Route path="/calendar" element={<ProtectedRoute module="calibration_schedule" action="view"><CalendarPage /></ProtectedRoute>} />
                       <Route path="/users" element={<ProtectedRoute module="users" action="view"><UserManagement /></ProtectedRoute>} />
                       <Route path="/profile" element={<Profile />} />
+                      <Route path="/recovery" element={<ProtectedRoute module="recovery" action="view"><RecoveryCenter /></ProtectedRoute>} />
                       <Route path="/settings" element={<ProtectedRoute module="settings" action="view"><Settings /></ProtectedRoute>} />
 
                       {/* Super Admin Management Routes */}

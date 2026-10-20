@@ -74,11 +74,24 @@ export const GlobalCopilotMiniBot: React.FC = () => {
   const [showHistory, setShowHistory] = useState(false);
 
   const [configuredModel, setConfiguredModel] = useState<string>('');
-
-  // Requirement 2: Enable/Disable setting listener from Settings Page
-  const [isEnabled, setIsEnabled] = useState(() => {
+  const [isEnabled, setIsEnabled] = useState<boolean>(() => {
     return localStorage.getItem('gm_floating_copilot_enabled') !== 'false';
   });
+
+  // Complete Dismiss / Close State
+  const [isDismissed, setIsDismissed] = useState<boolean>(() => {
+    return localStorage.getItem('gm_copilot_dismissed') === 'true';
+  });
+
+  const handleCompleteClose = useCallback(() => {
+    setIsOpen(false);
+    setIsMinimized(false);
+    setIsDismissed(true);
+    localStorage.setItem('gm_copilot_dismissed', 'true');
+    toast.info("Metrology Copilot closed", {
+      description: "You can reopen it anytime from your profile menu in the header.",
+    });
+  }, []);
 
   useEffect(() => {
     const checkServerStatus = async () => {
@@ -103,8 +116,19 @@ export const GlobalCopilotMiniBot: React.FC = () => {
       }
     };
 
+    const handleOpenCopilot = () => {
+      setIsDismissed(false);
+      localStorage.setItem('gm_copilot_dismissed', 'false');
+      setIsOpen(true);
+      setIsMinimized(false);
+    };
+
+    window.addEventListener('copilot:open', handleOpenCopilot);
     window.addEventListener('copilot:toggle-floating-bot', handleToggleEvent);
-    return () => window.removeEventListener('copilot:toggle-floating-bot', handleToggleEvent);
+    return () => {
+      window.removeEventListener('copilot:open', handleOpenCopilot);
+      window.removeEventListener('copilot:toggle-floating-bot', handleToggleEvent);
+    };
   }, []);
 
   // Requirement 1: Manual Width & Height Resize State
@@ -1087,7 +1111,7 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
     }
   };
 
-  if (!isEnabled) {
+  if (isDismissed || !isEnabled) {
     return null;
   }
 
@@ -1213,6 +1237,20 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
                 {quota.remaining} left
               </span>
             )}
+
+            {/* Quick Dismiss X Button on Pill */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCompleteClose();
+              }}
+              className="text-white/60 hover:text-rose-300 hover:bg-black/20 rounded-full p-1 -mr-1 transition-colors cursor-pointer"
+              title="Close Copilot (Reopen anytime from Profile Menu)"
+              aria-label="Close Copilot"
+            >
+              <X className="w-3 h-3" />
+            </button>
           </div>
         </div>
       )}
@@ -1287,10 +1325,10 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
               onClick={(e) => {
                 e.stopPropagation();
                 if (justDraggedRef.current || isTriggerDragging) return;
-                setIsOpen(false);
+                handleCompleteClose();
               }}
               className="h-7 w-7 text-slate-300 hover:text-rose-400 hover:bg-rose-500/10 rounded-full flex items-center justify-center cursor-pointer transition-colors"
-              title="Close Copilot"
+              title="Close Copilot (Reopen from Profile Menu)"
               aria-label="Close Copilot"
             >
               <X className="w-3.5 h-3.5" />
@@ -1453,9 +1491,9 @@ You are currently on the **${screenContextInfo.screenTitle}** module.
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => setIsOpen(false)}
+                onClick={handleCompleteClose}
                 className="h-7 w-7 text-slate-300 hover:text-rose-400 hover:bg-rose-500/10 cursor-pointer rounded-lg"
-                title="Close"
+                title="Close Copilot (Reopen anytime from Profile Menu)"
               >
                 <X className="w-3.5 h-3.5" />
               </Button>

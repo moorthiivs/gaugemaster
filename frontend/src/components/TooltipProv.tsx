@@ -1,25 +1,26 @@
-import { Tooltip, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
-import { TooltipArrow, TooltipPortal, TooltipTrigger } from "@radix-ui/react-tooltip";
+import React from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-function TooltipProv({ children, content }: { children: React.ReactNode; content: React.ReactNode }) {
-    return (
-
-        <TooltipProvider>
-            <Tooltip>
-                <TooltipTrigger>
-                    {children}
-                    <TooltipPortal>
-                        <TooltipContent className="TooltipContent" sideOffset={-1}>
-                            {content}
-                            <TooltipArrow className="TooltipArrow"  />
-                        </TooltipContent>
-                    </TooltipPortal>
-                </TooltipTrigger>
-            </Tooltip>
-
-        </TooltipProvider>
-
-    )
+export interface TooltipProvProps {
+  children: React.ReactNode;
+  content: React.ReactNode;
+  side?: "top" | "bottom" | "left" | "right";
+  className?: string;
 }
 
-export default TooltipProv
+function TooltipProv({ children, content, side = "top", className }: TooltipProvProps) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent side={side} className={className}>
+          {content}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+export default TooltipProv;

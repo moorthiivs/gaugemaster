@@ -170,9 +170,15 @@ export class CalibrationTemplatesController {
 
   @Delete(':id')
   @RequirePermission('templates', 'delete')
-  async remove(@Param('id') id: string, @Req() req: any) {
-    await this.templatesService.remove(id, req.user);
-    return { message: 'Template deleted successfully' };
+  async remove(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
+  ) {
+    const reason = bodyReason || queryReason;
+    await this.templatesService.remove(id, req.user, reason);
+    return { message: 'Template moved to Recovery Center successfully' };
   }
 }
 
