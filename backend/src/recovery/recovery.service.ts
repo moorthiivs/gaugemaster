@@ -1331,31 +1331,22 @@ export class RecoveryService {
             withDeleted: true,
           });
           for (const c of childCals) {
-            await queryRunner.query(
-              `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
-              [c.id],
-            );
+            await queryRunner.manager
+              .createQueryBuilder()
+              .delete()
+              .from('calibration_audit_logs')
+              .where('calibration_id = :calId', { calId: c.id })
+              .execute();
             await queryRunner.manager.delete(Calibration, c.id);
           }
 
-          // Clean up related history and reminders to avoid FK constraint issues
-          try {
-            await queryRunner.query(
-              `DELETE FROM calibration_history WHERE instrument_id = $1`,
-              [id],
-            );
-          } catch (e) {
-            this.logger.warn(`Could not delete calibration history: ${e}`);
-          }
-
-          try {
-            await queryRunner.query(
-              `DELETE FROM reminders WHERE "instrumentId" = $1`,
-              [id],
-            );
-          } catch (e) {
-            this.logger.warn(`Could not delete reminders for instrument: ${e}`);
-          }
+          // Clean up related calibration history to avoid FK constraint issues
+          await queryRunner.manager
+            .createQueryBuilder()
+            .delete()
+            .from('calibration_history')
+            .where('instrument_id = :id', { id })
+            .execute();
 
           // Hard delete the instrument
           await queryRunner.manager.delete(Instrument, id);
@@ -1396,10 +1387,12 @@ export class RecoveryService {
           recordName = cal.certificate_number || id;
 
           // Delete calibration audit logs
-          await queryRunner.query(
-            `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
-            [id],
-          );
+          await queryRunner.manager
+            .createQueryBuilder()
+            .delete()
+            .from('calibration_audit_logs')
+            .where('calibration_id = :calId', { calId: id })
+            .execute();
 
           // Hard delete the calibration
           await queryRunner.manager.delete(Calibration, id);
@@ -1523,14 +1516,12 @@ export class RecoveryService {
           }
           recordName = wi.title || wi.document_name || id;
 
-          try {
-            await queryRunner.query(
-              `DELETE FROM work_instruction_history WHERE instruction_id = $1`,
-              [id],
-            );
-          } catch (e) {
-            this.logger.warn(`Could not delete work instruction history: ${e}`);
-          }
+          await queryRunner.manager
+            .createQueryBuilder()
+            .delete()
+            .from('work_instruction_history')
+            .where('instruction_id = :id', { id })
+            .execute();
 
           if (wi.file_path && fs.existsSync(wi.file_path)) {
             try {
@@ -1574,14 +1565,12 @@ export class RecoveryService {
           }
           recordName = gd.gauge_name || gd.document_name || id;
 
-          try {
-            await queryRunner.query(
-              `DELETE FROM gauge_diagram_history WHERE diagram_id = $1`,
-              [id],
-            );
-          } catch (e) {
-            this.logger.warn(`Could not delete gauge diagram history: ${e}`);
-          }
+          await queryRunner.manager
+            .createQueryBuilder()
+            .delete()
+            .from('gauge_diagram_history')
+            .where('diagram_id = :id', { id })
+            .execute();
 
           if (gd.file_path && fs.existsSync(gd.file_path)) {
             try {
