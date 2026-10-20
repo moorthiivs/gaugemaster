@@ -9,6 +9,7 @@ import { ValidationService } from '../validation/validation.service';
 import { StatusNotificationService } from '../reminder/status-notification.service';
 import { createMockRepository } from '../../test/utils/repository.mock';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 
 describe('InstrumentsService', () => {
   let service: InstrumentsService;
@@ -28,6 +29,7 @@ describe('InstrumentsService', () => {
         { provide: MailerService, useValue: { sendMail: jest.fn() } },
         { provide: ValidationService, useValue: { validateData: jest.fn(), getRules: jest.fn().mockResolvedValue([]) } },
         { provide: StatusNotificationService, useValue: { sendDueReminders: jest.fn() } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
     }).compile();
 
