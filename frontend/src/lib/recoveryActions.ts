@@ -73,6 +73,13 @@ export async function getRecoveryItems(params: RecoveryQueryParams): Promise<Rec
   return res.data;
 }
 
+export async function getRecoveryItemIds(
+  params: RecoveryQueryParams,
+): Promise<Array<{ id: string; module: string }>> {
+  const res = await httpClient.get<Array<{ id: string; module: string }>>('/recovery/ids', { params });
+  return res.data;
+}
+
 export async function getRecoveryItemDetail(module: string, id: string): Promise<RecoveryDetailResponse> {
   const res = await httpClient.get<RecoveryDetailResponse>(`/recovery/${module}/${id}`);
   return res.data;

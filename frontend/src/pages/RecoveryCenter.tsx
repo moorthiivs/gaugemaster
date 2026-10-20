@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSEO } from '@/hooks/useSEO';
 import { usePermissions } from '@/hooks/usePermissions';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -53,12 +54,15 @@ import {
   Archive,
   ArrowRight,
   Trash2,
+  XCircle,
+  Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import {
   getRecoveryStats,
   getRecoveryItems,
+  getRecoveryItemIds,
   getRecoveryItemDetail,
   restoreRecord,
   bulkRestoreRecords,
@@ -122,11 +126,35 @@ export default function RecoveryCenter() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  // Selection
+  // Selection & Bulk Processing
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [bulkRestoring, setBulkRestoring] = useState(false);
+  const [isAllAcrossFilterSelected, setIsAllAcrossFilterSelected] = useState(false);
+  const [allFilterItems, setAllFilterItems] = useState<Array<{ id: string; module: string }>>([]);
+  const [loadingAllIds, setLoadingAllIds] = useState(false);
 
-  // Modals
+  // Bulk Permanent Delete Confirmation & Safety
+  const [bulkPermanentDeleteModalOpen, setBulkPermanentDeleteModalOpen] = useState(false);
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('');
+
+  // Bulk Restore Confirmation
+  const [bulkRestoreModalOpen, setBulkRestoreModalOpen] = useState(false);
+
+  // Live Batch Execution Progress Modal
+  const [progressModalOpen, setProgressModalOpen] = useState(false);
+  const [progressType, setProgressType] = useState<'delete' | 'restore'>('delete');
+  const [progressTitle, setProgressTitle] = useState('');
+  const [progressCurrent, setProgressCurrent] = useState(0);
+  const [progressTotal, setProgressTotal] = useState(0);
+  const [progressPercent, setProgressPercent] = useState(0);
+  const [progressStatusText, setProgressStatusText] = useState('');
+  const [progressSuccessCount, setProgressSuccessCount] = useState(0);
+  const [progressFailedCount, setProgressFailedCount] = useState(0);
+  const [progressErrors, setProgressErrors] = useState<Array<{ id: string; module: string; message: string }>>([]);
+  const [isProgressRunning, setIsProgressRunning] = useState(false);
+  const [isProgressCancelled, setIsProgressCancelled] = useState(false);
+  const cancelRequestedRef = useRef(false);
+
+  // Modals for single actions
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [targetRestoreItem, setTargetRestoreItem] = useState<RecoveryItem | null>(null);
   const [restoring, setRestoring] = useState(false);
@@ -135,9 +163,6 @@ export default function RecoveryCenter() {
   const [targetPermanentDeleteItem, setTargetPermanentDeleteItem] = useState<RecoveryItem | null>(null);
   const [permanentDeleting, setPermanentDeleting] = useState(false);
 
-  const [bulkPermanentDeleteModalOpen, setBulkPermanentDeleteModalOpen] = useState(false);
-  const [bulkPermanentDeleting, setBulkPermanentDeleting] = useState(false);
-
   const [detailModalOpen, setDetailModalOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailData, setDetailData] = useState<{
@@ -145,6 +170,19 @@ export default function RecoveryCenter() {
     conflicts: string[];
     canRestore: boolean;
   } | null>(null);
+
+  const selectedModuleOption = MODULE_OPTIONS.find((m) => m.value === selectedModule);
+  const selectedModuleLabel = selectedModuleOption?.label || 'All Trash';
+
+  const effectiveCount = isAllAcrossFilterSelected
+    ? (allFilterItems.length || total)
+    : selectedIds.length;
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedIds([]);
+    setIsAllAcrossFilterSelected(false);
+    setAllFilterItems([]);
+  }, []);
 
   // Fetch stats
   const fetchStats = useCallback(async () => {
@@ -172,7 +210,9 @@ export default function RecoveryCenter() {
       setItems(res.items || []);
       setTotal(res.total || 0);
       setTotalPages(res.totalPages || 1);
-      setSelectedIds([]);
+      if (!isAllAcrossFilterSelected) {
+        setSelectedIds([]);
+      }
     } catch {
       toast.error('Failed to load items from Recovery Center');
       setItems([]);
@@ -180,12 +220,142 @@ export default function RecoveryCenter() {
     } finally {
       setLoading(false);
     }
-  }, [selectedModule, searchQuery, deletedByFilter, startDate, endDate, page, limit]);
+  }, [selectedModule, searchQuery, deletedByFilter, startDate, endDate, page, limit, isAllAcrossFilterSelected]);
 
   useEffect(() => {
     fetchStats();
     fetchItems();
   }, [fetchStats, fetchItems]);
+
+  // Handle Select All across entire active view/filter
+  const handleSelectAllAcrossFilter = async () => {
+    try {
+      setLoadingAllIds(true);
+      const allIds = await getRecoveryItemIds({
+        module: selectedModule,
+        search: searchQuery || undefined,
+        deletedBy: deletedByFilter || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      });
+      setAllFilterItems(allIds);
+      setSelectedIds(allIds.map((i) => i.id));
+      setIsAllAcrossFilterSelected(true);
+      toast.info(`Selected all ${allIds.length.toLocaleString()} records across ${selectedModuleLabel}.`);
+    } catch {
+      toast.error('Failed to select all records across view.');
+    } finally {
+      setLoadingAllIds(false);
+    }
+  };
+
+  const getSelectedItemsWithModule = useCallback((): Array<{ id: string; module: string }> => {
+    if (isAllAcrossFilterSelected && allFilterItems.length > 0) {
+      return allFilterItems;
+    }
+    const map = new Map<string, string>();
+    allFilterItems.forEach((i) => map.set(i.id, i.module));
+    items.forEach((i) => map.set(i.id, i.module));
+
+    return selectedIds.map((id) => ({
+      id,
+      module: map.get(id) || (selectedModule !== 'all' ? selectedModule : 'instruments'),
+    }));
+  }, [isAllAcrossFilterSelected, allFilterItems, items, selectedIds, selectedModule]);
+
+  // Robust Chunked Batch Execution with Live Progress
+  const executeBatchOperation = async (
+    targetItems: Array<{ id: string; module: string }>,
+    type: 'delete' | 'restore',
+  ) => {
+    if (targetItems.length === 0) return;
+
+    cancelRequestedRef.current = false;
+    setProgressModalOpen(true);
+    setProgressType(type);
+    setProgressTitle(type === 'delete' ? 'Permanently Deleting Records' : 'Restoring Records');
+    setProgressCurrent(0);
+    setProgressTotal(targetItems.length);
+    setProgressPercent(0);
+    setProgressSuccessCount(0);
+    setProgressFailedCount(0);
+    setProgressErrors([]);
+    setIsProgressRunning(true);
+    setIsProgressCancelled(false);
+
+    const BATCH_SIZE = 50;
+    let success = 0;
+    let failed = 0;
+    const allErrors: Array<{ id: string; module: string; message: string }> = [];
+
+    for (let i = 0; i < targetItems.length; i += BATCH_SIZE) {
+      if (cancelRequestedRef.current) {
+        setIsProgressCancelled(true);
+        break;
+      }
+
+      const chunk = targetItems.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(targetItems.length / BATCH_SIZE);
+
+      setProgressStatusText(
+        `Processing batch ${batchNumber} of ${totalBatches} (${chunk.length} records)...`,
+      );
+
+      try {
+        if (type === 'delete') {
+          const res = await bulkPermanentDeleteRecords(chunk);
+          success += res.deletedCount;
+          failed += res.failedCount;
+          if (res.errors?.length) allErrors.push(...res.errors);
+        } else {
+          const res = await bulkRestoreRecords(chunk);
+          success += res.restoredCount;
+          failed += res.failedCount;
+          if (res.errors?.length) allErrors.push(...res.errors);
+        }
+      } catch (err: any) {
+        failed += chunk.length;
+        allErrors.push({
+          id: chunk[0]?.id || 'batch',
+          module: chunk[0]?.module || 'all',
+          message: err?.response?.data?.message || err?.message || 'Network request failed for batch',
+        });
+      }
+
+      const processedCount = Math.min(i + BATCH_SIZE, targetItems.length);
+      setProgressCurrent(processedCount);
+      setProgressSuccessCount(success);
+      setProgressFailedCount(failed);
+      setProgressErrors([...allErrors]);
+      setProgressPercent(Math.round((processedCount / targetItems.length) * 100));
+
+      // Small pause for UI repaint
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+
+    setIsProgressRunning(false);
+    setProgressStatusText(
+      cancelRequestedRef.current
+        ? `Operation stopped. Processed ${success + failed} of ${targetItems.length} records.`
+        : `Completed! ${success.toLocaleString()} record(s) processed successfully.`,
+    );
+
+    if (success > 0) {
+      toast.success(
+        type === 'delete'
+          ? `Successfully permanently deleted ${success.toLocaleString()} record(s).`
+          : `Successfully restored ${success.toLocaleString()} record(s).`,
+      );
+    }
+    if (failed > 0) {
+      toast.error(`${failed} record(s) could not be processed.`);
+    }
+
+    fetchStats();
+    fetchItems();
+    handleClearSelection();
+  };
 
   // Handle single restore confirm
   const handleOpenRestoreModal = async (item: RecoveryItem) => {
@@ -217,36 +387,11 @@ export default function RecoveryCenter() {
     try {
       const data = await getRecoveryItemDetail(item.module, item.id);
       setDetailData(data);
-    } catch (err: any) {
+    } catch {
       toast.error('Failed to load record details');
       setDetailModalOpen(false);
     } finally {
       setDetailLoading(false);
-    }
-  };
-
-  // Handle bulk restore
-  const handleBulkRestore = async () => {
-    if (selectedIds.length === 0) return;
-    const selectedItems = items
-      .filter((i) => selectedIds.includes(i.id))
-      .map((i) => ({ id: i.id, module: i.module }));
-
-    setBulkRestoring(true);
-    try {
-      const res = await bulkRestoreRecords(selectedItems);
-      if (res.restoredCount > 0) {
-        toast.success(`Successfully restored ${res.restoredCount} record(s).`);
-      }
-      if (res.failedCount > 0) {
-        toast.error(`${res.failedCount} record(s) could not be restored due to conflicts.`);
-      }
-      fetchStats();
-      fetchItems();
-    } catch {
-      toast.error('Failed to perform bulk restoration');
-    } finally {
-      setBulkRestoring(false);
     }
   };
 
@@ -277,46 +422,34 @@ export default function RecoveryCenter() {
     }
   };
 
-  // Handle bulk permanent delete
-  const handleConfirmBulkPermanentDelete = async () => {
-    if (selectedIds.length === 0) return;
-    const selectedItems = items
-      .filter((i) => selectedIds.includes(i.id))
-      .map((i) => ({ id: i.id, module: i.module }));
+  const isPageAllSelected =
+    items.length > 0 &&
+    items.every((i) => isAllAcrossFilterSelected || selectedIds.includes(i.id));
 
-    setBulkPermanentDeleting(true);
-    try {
-      const res = await bulkPermanentDeleteRecords(selectedItems);
-      if (res.deletedCount > 0) {
-        toast.success(`Successfully permanently deleted ${res.deletedCount} record(s).`);
-      }
-      if (res.failedCount > 0) {
-        toast.error(`${res.failedCount} record(s) could not be deleted.`);
-      }
-      setSelectedIds([]);
-      setBulkPermanentDeleteModalOpen(false);
-      fetchStats();
-      fetchItems();
-    } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Failed to perform bulk permanent deletion');
-    } finally {
-      setBulkPermanentDeleting(false);
-    }
-  };
-
+  const isPagePartiallySelected =
+    !isPageAllSelected &&
+    items.some((i) => isAllAcrossFilterSelected || selectedIds.includes(i.id));
 
   const toggleSelectAll = () => {
-    if (selectedIds.length === items.length) {
-      setSelectedIds([]);
+    if (isAllAcrossFilterSelected || isPageAllSelected) {
+      handleClearSelection();
     } else {
       setSelectedIds(items.map((i) => i.id));
+      setIsAllAcrossFilterSelected(false);
+      setAllFilterItems([]);
     }
   };
 
-  const toggleSelectItem = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-    );
+  const toggleSelectItem = (item: RecoveryItem) => {
+    if (isAllAcrossFilterSelected) {
+      const base = allFilterItems.length > 0 ? allFilterItems.map((i) => i.id) : items.map((i) => i.id);
+      setSelectedIds(base.filter((id) => id !== item.id));
+      setIsAllAcrossFilterSelected(false);
+    } else {
+      setSelectedIds((prev) =>
+        prev.includes(item.id) ? prev.filter((id) => id !== item.id) : [...prev, item.id],
+      );
+    }
   };
 
   const getModuleBadge = (mod: string) => {
@@ -414,28 +547,34 @@ export default function RecoveryCenter() {
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               <span>Refresh</span>
             </Button>
-            {selectedIds.length > 0 && canRestore && (
+            {effectiveCount > 0 && canRestore && (
               <Button
                 variant="default"
                 size="sm"
-                onClick={handleBulkRestore}
-                disabled={bulkRestoring || bulkPermanentDeleting}
-                className="gap-1.5 text-xs font-semibold h-8 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                onClick={() => {
+                  if (effectiveCount > 50) {
+                    setBulkRestoreModalOpen(true);
+                  } else {
+                    executeBatchOperation(getSelectedItemsWithModule(), 'restore');
+                  }
+                }}
+                disabled={isProgressRunning}
+                className="gap-1.5 text-xs font-semibold h-8 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all"
               >
-                <RotateCcw className={`w-3.5 h-3.5 ${bulkRestoring ? 'animate-spin' : ''}`} />
-                <span>Restore Selected ({selectedIds.length})</span>
+                <RotateCcw className={`w-3.5 h-3.5 ${isProgressRunning && progressType === 'restore' ? 'animate-spin' : ''}`} />
+                <span>Restore Selected ({effectiveCount.toLocaleString()})</span>
               </Button>
             )}
-            {selectedIds.length > 0 && canPermanentDelete && (
+            {effectiveCount > 0 && canPermanentDelete && (
               <Button
                 variant="destructive"
                 size="sm"
                 onClick={() => setBulkPermanentDeleteModalOpen(true)}
-                disabled={bulkRestoring || bulkPermanentDeleting}
-                className="gap-1.5 text-xs font-semibold h-8 shadow-xs"
+                disabled={isProgressRunning}
+                className="gap-1.5 text-xs font-semibold h-8 shadow-xs transition-all"
               >
-                <Trash2 className={`w-3.5 h-3.5 ${bulkPermanentDeleting ? 'animate-spin' : ''}`} />
-                <span>Delete Permanently ({selectedIds.length})</span>
+                <Trash2 className={`w-3.5 h-3.5 ${isProgressRunning && progressType === 'delete' ? 'animate-spin' : ''}`} />
+                <span>Delete Permanently ({effectiveCount.toLocaleString()})</span>
               </Button>
             )}
           </div>
@@ -448,6 +587,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('all');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'all'
@@ -470,6 +610,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('instruments');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'instruments'
@@ -492,6 +633,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('calibrations');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'calibrations'
@@ -514,6 +656,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('templates');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'templates'
@@ -536,6 +679,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('calibration_procedures');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'calibration_procedures'
@@ -558,6 +702,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('work_instructions');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'work_instructions'
@@ -580,6 +725,7 @@ export default function RecoveryCenter() {
           onClick={() => {
             setSelectedModule('gauge_diagrams');
             setPage(1);
+            handleClearSelection();
           }}
           className={`cursor-pointer transition-all hover:shadow-md ${
             selectedModule === 'gauge_diagrams'
@@ -612,6 +758,7 @@ export default function RecoveryCenter() {
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
                   setPage(1);
+                  handleClearSelection();
                 }}
                 className="pl-9 text-xs h-9"
               />
@@ -624,6 +771,7 @@ export default function RecoveryCenter() {
                 onValueChange={(val) => {
                   setSelectedModule(val);
                   setPage(1);
+                  handleClearSelection();
                 }}
               >
                 <SelectTrigger className="h-9 text-xs font-medium">
@@ -647,6 +795,7 @@ export default function RecoveryCenter() {
                 onChange={(e) => {
                   setDeletedByFilter(e.target.value);
                   setPage(1);
+                  handleClearSelection();
                 }}
                 className="text-xs h-9"
               />
@@ -664,6 +813,7 @@ export default function RecoveryCenter() {
                   setStartDate('');
                   setEndDate('');
                   setPage(1);
+                  handleClearSelection();
                 }}
                 className="h-9 w-full text-xs font-medium"
               >
@@ -674,6 +824,56 @@ export default function RecoveryCenter() {
         </CardContent>
       </Card>
 
+      {/* Bulk Selection Notification Banner */}
+      {selectedIds.length > 0 && (
+        <div className="bg-primary/10 border border-primary/20 text-primary-950 dark:text-primary-100 px-4 py-2.5 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs font-medium animate-in fade-in slide-in-from-top-1 duration-200">
+          <div className="flex flex-wrap items-center gap-2">
+            {isAllAcrossFilterSelected ? (
+              <div className="flex items-center gap-2 font-semibold text-primary">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>
+                  All <strong className="font-bold underline">{effectiveCount.toLocaleString()}</strong> records across {selectedModuleLabel} are selected.
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Info className="w-4 h-4 text-primary shrink-0" />
+                <span>
+                  All <strong>{selectedIds.length}</strong> records on this page are selected.
+                </span>
+                {total > items.length && (
+                  <Button
+                    variant="link"
+                    size="sm"
+                    disabled={loadingAllIds}
+                    onClick={handleSelectAllAcrossFilter}
+                    className="h-auto p-0 font-bold text-primary underline hover:text-primary/80 gap-1.5 text-xs inline-flex items-center"
+                  >
+                    {loadingAllIds ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Layers className="w-3.5 h-3.5" />
+                    )}
+                    <span>Select all {total.toLocaleString()} records in {selectedModuleLabel}</span>
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearSelection}
+              className="h-7 px-2.5 text-xs font-semibold text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            >
+              Clear selection
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Main Recovery Table */}
       <Card className="shadow-xs border-border overflow-hidden">
         <div className="overflow-x-auto">
@@ -682,7 +882,13 @@ export default function RecoveryCenter() {
               <TableRow>
                 <TableHead className="w-10 text-center">
                   <Checkbox
-                    checked={items.length > 0 && selectedIds.length === items.length}
+                    checked={
+                      isAllAcrossFilterSelected || isPageAllSelected
+                        ? true
+                        : isPagePartiallySelected
+                        ? 'indeterminate'
+                        : false
+                    }
                     onCheckedChange={toggleSelectAll}
                     aria-label="Select all"
                   />
@@ -728,7 +934,7 @@ export default function RecoveryCenter() {
                 </TableRow>
               ) : (
                 items.map((item) => {
-                  const isSelected = selectedIds.includes(item.id);
+                  const isSelected = isAllAcrossFilterSelected || selectedIds.includes(item.id);
                   return (
                     <TableRow
                       key={`${item.module}-${item.id}`}
@@ -739,7 +945,7 @@ export default function RecoveryCenter() {
                       <TableCell className="text-center">
                         <Checkbox
                           checked={isSelected}
-                          onCheckedChange={() => toggleSelectItem(item.id)}
+                          onCheckedChange={() => toggleSelectItem(item)}
                           aria-label={`Select ${item.recordName}`}
                         />
                       </TableCell>
@@ -1184,40 +1390,86 @@ export default function RecoveryCenter() {
       </Dialog>
 
       {/* Bulk Permanent Delete Confirmation Dialog */}
-      <Dialog open={bulkPermanentDeleteModalOpen} onOpenChange={setBulkPermanentDeleteModalOpen}>
-        <DialogContent className="max-w-md">
+      <Dialog
+        open={bulkPermanentDeleteModalOpen}
+        onOpenChange={(open) => {
+          if (!open) setBulkDeleteConfirmText('');
+          setBulkPermanentDeleteModalOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-lg bg-red-500/10 text-red-600">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-destructive/10 text-destructive">
                 <Trash2 className="w-5 h-5" />
               </div>
-              <DialogTitle className="text-base font-bold text-red-600 dark:text-red-400">
-                Permanently Delete Selected Records
-              </DialogTitle>
+              <div>
+                <DialogTitle className="text-base font-bold text-destructive">
+                  Permanently Delete {effectiveCount.toLocaleString()} Records
+                </DialogTitle>
+                <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
+                  Irreversible action: selected records will be permanently purged from the database.
+                </DialogDescription>
+              </div>
             </div>
-            <DialogDescription className="text-xs pt-1 text-muted-foreground">
-              Confirm permanent deletion of <strong>{selectedIds.length}</strong> selected records.
-            </DialogDescription>
           </DialogHeader>
 
           <div className="py-2 space-y-3 text-xs">
-            <div className="p-3 rounded-lg bg-red-500/10 text-red-800 dark:text-red-300 border border-red-500/20 space-y-1">
-              <div className="font-semibold flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-red-600" />
-                <span>Irreversible Bulk Purge</span>
+            <div className="p-3.5 rounded-xl bg-destructive/10 text-destructive-foreground border border-destructive/20 space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-destructive">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Permanent Database Purge Warning</span>
               </div>
-              <p className="text-[11px] leading-relaxed">
-                This will permanently delete all {selectedIds.length} selected items and their associated files from the database forever. None of these records will be recoverable.
+              <p className="text-[11px] leading-relaxed text-muted-foreground">
+                You are about to permanently erase{' '}
+                <strong className="text-foreground font-semibold">
+                  {effectiveCount.toLocaleString()} record(s)
+                </strong>{' '}
+                from <strong>{selectedModuleLabel}</strong>. All associated calibration files, histories, and audit records will be irreversibly removed.
               </p>
             </div>
+
+            <div className="bg-muted/70 p-3 rounded-xl space-y-1.5 font-mono text-[11px]">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Target Scope:</span>
+                <span className="font-bold text-foreground">
+                  {isAllAcrossFilterSelected ? `All matching ${selectedModuleLabel}` : 'Selected on current page'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total to purge:</span>
+                <span className="font-bold text-destructive">{effectiveCount.toLocaleString()} records</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Execution strategy:</span>
+                <span className="text-foreground">Managed batch execution (safe 50/batch)</span>
+              </div>
+            </div>
+
+            {effectiveCount >= 50 && (
+              <div className="space-y-1.5 pt-1">
+                <label className="text-xs font-semibold text-foreground flex items-center gap-1">
+                  Type <span className="font-mono font-bold text-destructive bg-destructive/10 px-1.5 py-0.5 rounded">DELETE</span> to confirm purge:
+                </label>
+                <Input
+                  value={bulkDeleteConfirmText}
+                  onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+                  placeholder="Type DELETE"
+                  className="h-9 text-xs font-mono"
+                  autoFocus
+                />
+              </div>
+            )}
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 pt-2 border-t">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setBulkPermanentDeleteModalOpen(false)}
-              disabled={bulkPermanentDeleting}
+              onClick={() => {
+                setBulkPermanentDeleteModalOpen(false);
+                setBulkDeleteConfirmText('');
+              }}
               className="text-xs font-semibold"
             >
               Cancel
@@ -1225,13 +1477,176 @@ export default function RecoveryCenter() {
             <Button
               variant="destructive"
               size="sm"
-              onClick={handleConfirmBulkPermanentDelete}
-              disabled={bulkPermanentDeleting}
-              className="text-xs font-bold gap-1.5"
+              disabled={effectiveCount >= 50 && bulkDeleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+              onClick={async () => {
+                const targetItems = getSelectedItemsWithModule();
+                setBulkPermanentDeleteModalOpen(false);
+                setBulkDeleteConfirmText('');
+                await executeBatchOperation(targetItems, 'delete');
+              }}
+              className="text-xs font-bold gap-1.5 shadow-sm"
             >
-              {bulkPermanentDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              <span>Delete {selectedIds.length} Records Permanently</span>
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Permanently Delete ({effectiveCount.toLocaleString()})</span>
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Restore Confirmation Dialog */}
+      <Dialog open={bulkRestoreModalOpen} onOpenChange={setBulkRestoreModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-foreground">
+                  Restore {effectiveCount.toLocaleString()} Records
+                </DialogTitle>
+                <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
+                  Records will be restored back to their active modules.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="py-2 space-y-3 text-xs">
+            <p className="text-muted-foreground leading-relaxed">
+              Are you sure you want to restore{' '}
+              <strong className="text-foreground">{effectiveCount.toLocaleString()}</strong> record(s) back into active operations?
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setBulkRestoreModalOpen(false)}
+              className="text-xs font-semibold"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={async () => {
+                const targetItems = getSelectedItemsWithModule();
+                setBulkRestoreModalOpen(false);
+                await executeBatchOperation(targetItems, 'restore');
+              }}
+              className="text-xs font-bold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Restore ({effectiveCount.toLocaleString()})</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Live Batch Execution Progress Modal */}
+      <Dialog
+        open={progressModalOpen}
+        onOpenChange={(open) => {
+          if (!open && !isProgressRunning) {
+            setProgressModalOpen(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md" onPointerDownOutside={(e) => { if (isProgressRunning) e.preventDefault(); }}>
+          <DialogHeader>
+            <div className="flex items-center gap-2.5">
+              <div className={`p-2.5 rounded-xl ${progressType === 'delete' ? 'bg-destructive/10 text-destructive' : 'bg-emerald-500/10 text-emerald-600'}`}>
+                {isProgressRunning ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : progressErrors.length > 0 ? (
+                  <AlertTriangle className="w-5 h-5" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5" />
+                )}
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-foreground">
+                  {progressTitle}
+                </DialogTitle>
+                <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
+                  {progressStatusText}
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="py-3 space-y-4 text-xs">
+            {/* Progress Bar & Percentage */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs font-semibold">
+                <span className="text-muted-foreground font-mono">
+                  {progressCurrent.toLocaleString()} / {progressTotal.toLocaleString()} records
+                </span>
+                <span className="font-bold text-foreground font-mono">{progressPercent}%</span>
+              </div>
+              <Progress value={progressPercent} className="h-2.5 rounded-full" />
+            </div>
+
+            {/* Live Stats counters */}
+            <div className="grid grid-cols-2 gap-2.5 text-center">
+              <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
+                <div className="text-lg font-bold font-mono">{progressSuccessCount.toLocaleString()}</div>
+                <div className="text-[11px] font-medium">Successful</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+                <div className="text-lg font-bold font-mono">{progressFailedCount.toLocaleString()}</div>
+                <div className="text-[11px] font-medium">Skipped / Failed</div>
+              </div>
+            </div>
+
+            {/* Error log if any failed */}
+            {progressErrors.length > 0 && (
+              <div className="space-y-1">
+                <span className="font-semibold text-destructive text-[11px] flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Skipped Records ({progressErrors.length}):
+                </span>
+                <div className="max-h-28 overflow-y-auto rounded-lg border bg-muted/50 p-2 space-y-1 font-mono text-[10px]">
+                  {progressErrors.slice(0, 10).map((err, idx) => (
+                    <div key={idx} className="text-destructive/90 truncate">
+                      • {err.message}
+                    </div>
+                  ))}
+                  {progressErrors.length > 10 && (
+                    <div className="text-muted-foreground italic">
+                      + {progressErrors.length - 10} more records skipped
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 pt-2 border-t">
+            {isProgressRunning ? (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  cancelRequestedRef.current = true;
+                  toast.info('Stopping remaining batches...');
+                }}
+                className="text-xs font-semibold gap-1.5"
+              >
+                <span>Stop Remaining</span>
+              </Button>
+            ) : (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => setProgressModalOpen(false)}
+                className="text-xs font-bold"
+              >
+                Close
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

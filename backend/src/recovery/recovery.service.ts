@@ -460,6 +460,197 @@ export class RecoveryService {
   }
 
   /**
+   * Fast retrieval of all item IDs and modules matching active recovery filters for select-all operations
+   */
+  async getDeletedItemIds(
+    companyId: string | undefined,
+    query: RecoveryQueryDto,
+  ): Promise<Array<{ id: string; module: string }>> {
+    const { module: moduleFilter = 'all', search, deletedBy, startDate, endDate } = query;
+    const allItems: Array<{ id: string; module: string }> = [];
+
+    // 1. Instruments
+    if (moduleFilter === 'all' || moduleFilter === 'instruments') {
+      const qb = this.instrumentRepo
+        .createQueryBuilder('inst')
+        .withDeleted()
+        .select(['inst.id'])
+        .where('inst.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(inst."companyId" = :companyId OR inst."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('inst.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('inst.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(inst.deleted_by_name) LIKE :dBy OR inst.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere('(LOWER(inst.name) LIKE :s OR LOWER(inst.id_code) LIKE :s OR LOWER(inst.make) LIKE :s)', {
+          s: `%${search.toLowerCase()}%`,
+        });
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'instruments' });
+      }
+    }
+
+    // 2. Calibrations
+    if (moduleFilter === 'all' || moduleFilter === 'calibrations') {
+      const qb = this.calibrationRepo
+        .createQueryBuilder('cal')
+        .withDeleted()
+        .select(['cal.id'])
+        .leftJoin('cal.instrument', 'inst')
+        .where('cal.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(cal."companyId" = :companyId OR cal."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('cal.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('cal.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(cal.deleted_by_name) LIKE :dBy OR cal.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere(
+          '(LOWER(cal.certificate_number) LIKE :s OR LOWER(cal.ulr_number) LIKE :s OR LOWER(inst.name) LIKE :s OR LOWER(inst.id_code) LIKE :s)',
+          { s: `%${search.toLowerCase()}%` },
+        );
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'calibrations' });
+      }
+    }
+
+    // 3. Templates
+    if (moduleFilter === 'all' || moduleFilter === 'templates') {
+      const qb = this.templateRepo
+        .createQueryBuilder('tpl')
+        .withDeleted()
+        .select(['tpl.id'])
+        .where('tpl.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(tpl."companyId" = :companyId OR tpl."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('tpl.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('tpl.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(tpl.deleted_by_name) LIKE :dBy OR tpl.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere('(LOWER(tpl.name) LIKE :s OR LOWER(tpl.id_code) LIKE :s)', {
+          s: `%${search.toLowerCase()}%`,
+        });
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'templates' });
+      }
+    }
+
+    // 4. Procedures
+    if (moduleFilter === 'all' || moduleFilter === 'calibration_procedures') {
+      const qb = this.procedureRepo
+        .createQueryBuilder('proc')
+        .withDeleted()
+        .select(['proc.id'])
+        .where('proc.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(proc."companyId" = :companyId OR proc."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('proc.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('proc.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(proc.deleted_by_name) LIKE :dBy OR proc.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere('(LOWER(proc.process) LIKE :s OR LOWER(proc.document_name) LIKE :s)', {
+          s: `%${search.toLowerCase()}%`,
+        });
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'calibration_procedures' });
+      }
+    }
+
+    // 5. Work Instructions
+    if (moduleFilter === 'all' || moduleFilter === 'work_instructions') {
+      const qb = this.instructionRepo
+        .createQueryBuilder('wi')
+        .withDeleted()
+        .select(['wi.id'])
+        .where('wi.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(wi."companyId" = :companyId OR wi."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('wi.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('wi.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(wi.deleted_by_name) LIKE :dBy OR wi.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere(
+          '(LOWER(wi.title) LIKE :s OR LOWER(wi.document_name) LIKE :s OR LOWER(wi.id_code) LIKE :s)',
+          { s: `%${search.toLowerCase()}%` },
+        );
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'work_instructions' });
+      }
+    }
+
+    // 6. Gauge Diagrams
+    if (moduleFilter === 'all' || moduleFilter === 'gauge_diagrams') {
+      const qb = this.diagramRepo
+        .createQueryBuilder('gd')
+        .withDeleted()
+        .select(['gd.id'])
+        .where('gd.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(gd."companyId" = :companyId OR gd."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('gd.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('gd.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(gd.deleted_by_name) LIKE :dBy OR gd.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere(
+          '(LOWER(gd.gauge_name) LIKE :s OR LOWER(gd.document_name) LIKE :s OR LOWER(gd.id_code) LIKE :s)',
+          { s: `%${search.toLowerCase()}%` },
+        );
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'gauge_diagrams' });
+      }
+    }
+
+    return allItems;
+  }
+
+  /**
    * Retrieves single soft-deleted record details and runs conflict analysis
    */
   async getDeletedItemDetail(

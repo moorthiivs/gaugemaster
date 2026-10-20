@@ -79,6 +79,13 @@ export class RecoveryController {
     return this.recoveryService.getStats(companyId);
   }
 
+  @Get('ids')
+  async getDeletedItemIds(@Req() req: any, @Query() query: RecoveryQueryDto) {
+    this.checkModuleAccess(req, query.module, 'view');
+    const companyId = req.user?.companyId;
+    return this.recoveryService.getDeletedItemIds(companyId, query);
+  }
+
   @Get()
   async getDeletedItems(@Req() req: any, @Query() query: RecoveryQueryDto) {
     this.checkModuleAccess(req, query.module, 'view');
