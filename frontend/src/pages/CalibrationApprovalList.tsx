@@ -3,7 +3,16 @@ import { useAuth } from "@/lib/auth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getRoleName } from "@/lib/utils";
 import httpClient from "@/lib/httpClient";
-import { listCalibrations, getCalibration, getApprovalStats, ApprovalStats } from "@/lib/calibrationActions";
+import {
+  listCalibrations,
+  getCalibration,
+  getApprovalStats,
+  ApprovalStats,
+  deleteCalibration,
+  getResequencePreview,
+  ResequencePreviewData,
+  revertCalibrationStage,
+} from "@/lib/calibrationActions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +51,8 @@ import {
   RotateCcw,
   LayoutDashboard,
   Loader2,
+  Trash2,
+  Undo2,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
@@ -103,6 +114,21 @@ export default function CalibrationApprovalList() {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [reviewRecommendationDialogOpen, setReviewRecommendationDialogOpen] = useState(false);
+
+  // Deletion modal state for rejected records
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [calibrationToDelete, setCalibrationToDelete] = useState<any | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [resequenceChoice, setResequenceChoice] = useState<"resequence" | "keep">("resequence");
+  const [resequencePreview, setResequencePreview] = useState<ResequencePreviewData | null>(null);
+  const [loadingDeletePreview, setLoadingDeletePreview] = useState(false);
+
+  // Revert stage modal state for rejected records
+  const [revertModalOpen, setRevertModalOpen] = useState(false);
+  const [calibrationToRevert, setCalibrationToRevert] = useState<any | null>(null);
+  const [revertNote, setRevertNote] = useState("");
+  const [revertingStage, setRevertingStage] = useState(false);
 
   const certScrollRef = useRef<HTMLDivElement>(null);
   const readingsScrollRef = useRef<HTMLDivElement>(null);
@@ -308,6 +334,112 @@ export default function CalibrationApprovalList() {
     }
   };
 
+  // Open Delete Modal with sequence preview
+  const handleOpenDeleteModal = async (cal: any) => {
+    setCalibrationToDelete(cal);
+    setResequenceChoice("resequence");
+    setResequencePreview(null);
+    setDeleteReason("");
+    setDeleteModalOpen(true);
+    setLoadingDeletePreview(true);
+    try {
+      const data = await getResequencePreview(cal.id);
+      setResequencePreview(data);
+    } catch (err) {
+      console.warn("Could not fetch resequence preview:", err);
+      setResequencePreview(null);
+    } finally {
+      setLoadingDeletePreview(false);
+    }
+  };
+
+  // Confirm soft-delete & instrument rollback with mandatory note
+  const handleConfirmDelete = async () => {
+    if (!calibrationToDelete) return;
+    if (!deleteReason.trim()) {
+      toast({
+        title: "Reason Required",
+        description: "Please enter a note / reason for deleting this rejected calibration.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setDeleting(true);
+    try {
+      const shouldResequence = resequenceChoice === "resequence";
+      await deleteCalibration(calibrationToDelete.id, shouldResequence, deleteReason.trim());
+      const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
+      toast({
+        title: "Calibration Deleted & Rolled Back",
+        description:
+          shouldResequence && affectedCount > 0
+            ? `Calibration ${calibrationToDelete.certificate_number || ""} moved to Trash & ${affectedCount} certificates renumbered. Instrument restored to previous stage.`
+            : `Calibration ${calibrationToDelete.certificate_number || ""} moved to Trash. Instrument restored to previous stage.`,
+        variant: "success",
+      });
+      setDeleteModalOpen(false);
+      if (reviewDialogOpen) setReviewDialogOpen(false);
+      setCalibrationToDelete(null);
+      setDeleteReason("");
+      setResequencePreview(null);
+      fetchCalibrations();
+      fetchStats();
+    } catch (err: any) {
+      console.error("Failed to delete calibration:", err);
+      toast({
+        title: "Deletion Failed",
+        description: err.response?.data?.message || "Could not delete calibration record.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Open Return to Before Stage Modal
+  const handleOpenRevertModal = (cal: any) => {
+    setCalibrationToRevert(cal);
+    setRevertNote("");
+    setRevertModalOpen(true);
+  };
+
+  // Confirm Return to Before Stage with mandatory note
+  const handleConfirmRevertStage = async () => {
+    if (!calibrationToRevert) return;
+    if (!revertNote.trim()) {
+      toast({
+        title: "Note Required",
+        description: "Please enter a note explaining why this calibration is being returned to the previous stage.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setRevertingStage(true);
+    try {
+      await revertCalibrationStage(calibrationToRevert.id, revertNote.trim(), "Pending Review");
+      toast({
+        title: "Returned to Before Stage",
+        description: `Calibration ${calibrationToRevert.certificate_number || ""} returned to Pending Review stage.`,
+        variant: "success",
+      });
+      setRevertModalOpen(false);
+      if (reviewDialogOpen) setReviewDialogOpen(false);
+      setCalibrationToRevert(null);
+      setRevertNote("");
+      fetchCalibrations();
+      fetchStats();
+    } catch (err: any) {
+      console.error("Failed to revert stage:", err);
+      toast({
+        title: "Action Failed",
+        description: err.response?.data?.message || "Could not return calibration to previous stage.",
+        variant: "destructive",
+      });
+    } finally {
+      setRevertingStage(false);
+    }
+  };
+
   const renderStatusBadge = (status: string) => {
     if (status === "Approved") {
       return (
@@ -468,6 +600,32 @@ export default function CalibrationApprovalList() {
 
           return (
             <div className="flex items-center justify-end gap-2">
+              {cal.approval_status === "Rejected" && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 text-xs gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200 font-medium"
+                    onClick={() => handleOpenRevertModal(cal)}
+                    title="Return certificate to previous stage (Pending Review) with note"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    <span>Return Stage</span>
+                  </Button>
+                  {(canAccess("calibrations", "delete") || canAccess("calibration_approvals", "delete") || isAdmin || isApprover) && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 font-medium"
+                      onClick={() => handleOpenDeleteModal(cal)}
+                      title="Delete rejected certificate and restore instrument to before stage"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
+                    </Button>
+                  )}
+                </>
+              )}
               {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
                 <Button
                   size="sm"
@@ -528,7 +686,7 @@ export default function CalibrationApprovalList() {
         },
       },
     ],
-    [canAccess, navigate, isReviewer, isApprover, loadingRecordId]
+    [canAccess, navigate, isReviewer, isApprover, isAdmin, loadingRecordId]
   );
 
   return (
@@ -1291,11 +1449,33 @@ export default function CalibrationApprovalList() {
 
                 {/* Stage: Rejected / Rework */}
                 {selectedRecord.approval_status === "Rejected" && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="destructive" className="gap-1.5 py-1.5 px-3">
                       <X className="w-4 h-4" />
                       <span>Returned for Rework</span>
                     </Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 border-blue-200 font-semibold"
+                      onClick={() => handleOpenRevertModal(selectedRecord)}
+                      title="Return certificate to previous stage (Pending Review) with note"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                      <span>Return to Previous Stage</span>
+                    </Button>
+                    {(canAccess("calibrations", "delete") || canAccess("calibration_approvals", "delete") || isAdmin || isApprover) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 font-semibold"
+                        onClick={() => handleOpenDeleteModal(selectedRecord)}
+                        title="Delete rejected certificate and restore instrument to before stage"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Certificate</span>
+                      </Button>
+                    )}
                     {canAccess("calibrations", "create") && (
                       <Button
                         size="sm"
@@ -1510,6 +1690,207 @@ export default function CalibrationApprovalList() {
                 <X className="w-4 h-4" />
               )}
               <span>Reject & Send Rework</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Rejected Certificate Dialog */}
+      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+        <DialogContent className="max-w-lg space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600 font-bold">
+              <Trash2 className="w-5 h-5 text-red-600" />
+              <span>Delete Rejected Calibration</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Delete calibration record{" "}
+              <strong className="font-mono text-foreground font-bold">
+                {calibrationToDelete?.certificate_number || calibrationToDelete?.id}
+              </strong>{" "}
+              and restore the instrument to its before stage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {/* Info Notice */}
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-900 dark:text-amber-200 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Moved to Trash & Recovery Center</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                This rejected calibration will be moved to the <strong>Recovery Center</strong> and can be restored if needed.
+              </p>
+            </div>
+
+            {/* Instrument Master Rollback Notice */}
+            <div className="p-3 rounded-lg border border-blue-500/25 bg-blue-500/10 text-xs text-blue-900 dark:text-blue-200 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <RotateCcw className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>Automatic Instrument Stage Rollback</span>
+              </p>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                The instrument ({calibrationToDelete?.instrument?.name || "Instrument"} - {calibrationToDelete?.instrument?.id_code}) will be moved back to its previous operational stage before this calibration attempt, clearing the REJECTED block and restoring prior calibration/due dates.
+              </p>
+            </div>
+
+            {/* Resequence Notice if sequence affects others */}
+            {loadingDeletePreview ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                <span>Checking certificate sequence impact...</span>
+              </div>
+            ) : resequencePreview && resequencePreview.affectedCalibrations.length > 0 ? (
+              <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 text-xs space-y-2">
+                <p className="font-semibold text-amber-900 dark:text-amber-200">
+                  Subsequent Certificate Renumbering Available
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  Deleting this certificate leaves a sequence gap affecting{" "}
+                  <strong>{resequencePreview.affectedCalibrations.length}</strong> subsequent certificate(s).
+                </p>
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input
+                      type="radio"
+                      name="cal-app-reseq"
+                      checked={resequenceChoice === "resequence"}
+                      onChange={() => setResequenceChoice("resequence")}
+                    />
+                    <span>Resequence subsequent certificates (shift down by 1)</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-xs">
+                    <input
+                      type="radio"
+                      name="cal-app-reseq"
+                      checked={resequenceChoice === "keep"}
+                      onChange={() => setResequenceChoice("keep")}
+                    />
+                    <span>Keep existing certificate numbers</span>
+                  </label>
+                </div>
+              </div>
+            ) : null}
+
+            {/* Mandatory Reason Note */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                <span>Note / Reason for Deletion & Rollback</span>
+                <span className="text-[11px] text-red-500 font-medium">Required</span>
+              </label>
+              <Textarea
+                placeholder="e.g. Invalid test run, readings entered in error, returning instrument to previous operational state."
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                className="h-20 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteModalOpen(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={deleting || !deleteReason.trim()}
+              className="gap-1.5 font-semibold"
+            >
+              {deleting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Trash2 className="w-4 h-4" />
+              )}
+              <span>Delete & Roll Back</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Return to Before Stage Dialog */}
+      <Dialog open={revertModalOpen} onOpenChange={setRevertModalOpen}>
+        <DialogContent className="max-w-md space-y-4">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-600 font-bold">
+              <Undo2 className="w-5 h-5 text-blue-600" />
+              <span>Return to Before Stage</span>
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Return rejected certificate{" "}
+              <strong className="font-mono text-foreground font-bold">
+                {calibrationToRevert?.certificate_number || calibrationToRevert?.id}
+              </strong>{" "}
+              to the <strong>Pending Review</strong> stage.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center pb-1.5 border-b border-blue-500/20">
+                <span className="text-muted-foreground font-medium">Instrument:</span>
+                <span className="font-semibold text-foreground">
+                  {calibrationToRevert?.instrument?.name || "Instrument"} ({calibrationToRevert?.instrument?.id_code})
+                </span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-blue-500/20">
+                <span className="text-muted-foreground font-medium">Current Status:</span>
+                <Badge variant="destructive" className="text-[10px] py-0 px-2">Rejected / Rework</Badge>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground font-medium">Target Stage:</span>
+                <Badge variant="outline" className="text-[10px] py-0 px-2 bg-amber-500/10 text-amber-700 border-amber-500/30">
+                  Pending Review (Stage 1)
+                </Badge>
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 text-[11px] text-amber-900 dark:text-amber-200">
+              Returning this record resets the rejection flag and updates the instrument status back to <strong>Under Calibration (Review Pending)</strong> so it can be re-evaluated.
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                <span>Note / Remarks for Returning Stage</span>
+                <span className="text-[11px] text-red-500 font-medium">Required</span>
+              </label>
+              <Textarea
+                placeholder="e.g. Rejection reconsidered after supplementary test documents provided. Returning to reviewer for verification."
+                value={revertNote}
+                onChange={(e) => setRevertNote(e.target.value)}
+                className="h-20 text-xs"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRevertModalOpen(false)}
+              disabled={revertingStage}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleConfirmRevertStage}
+              disabled={revertingStage || !revertNote.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5 font-semibold"
+            >
+              {revertingStage ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Undo2 className="w-4 h-4" />
+              )}
+              <span>Return to Review Stage</span>
             </Button>
           </DialogFooter>
         </DialogContent>

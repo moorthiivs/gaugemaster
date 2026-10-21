@@ -1182,6 +1182,64 @@ export class CalibrationService implements OnModuleInit {
     return saved;
   }
 
+  async revertStage(
+    id: string,
+    note: string,
+    targetStage: string = 'Pending Review',
+    user?: any,
+  ): Promise<Calibration> {
+    const calibration = await this.findOne(id);
+    if (!calibration) throw new NotFoundException('Calibration record not found');
+
+    const oldStatus = calibration.approval_status;
+    const resolvedStage = targetStage || 'Pending Review';
+
+    calibration.approval_status = resolvedStage;
+    const oldReason = calibration.rejection_reason;
+    calibration.rejection_reason = undefined;
+    calibration.rejected_by = undefined;
+    calibration.rejected_at = undefined;
+
+    const saved = await this.calibrationRepository.save(calibration);
+
+    // Update instrument status back to 'Under Calibration' with appropriate sub-status
+    if (saved.instrument_id) {
+      try {
+        const inst = await this.instrumentsService.findOne(saved.instrument_id);
+        if (inst) {
+          const cp = { ...((inst as any)?.custom_parameters || {}) };
+          cp.calibration_sub_status =
+            resolvedStage === 'Reviewed' || resolvedStage === 'Pending Approval'
+              ? 'Approve Pending'
+              : 'Review Pending';
+
+          await this.instrumentsService.update(inst.id, {
+            status: 'Under Calibration',
+            custom_parameters: cp,
+          } as any);
+        }
+      } catch (err: any) {
+        this.logger.error(`Failed to update instrument status on stage revert: ${err?.message || err}`);
+      }
+    }
+
+    // Record audit log entry
+    const auditLog = this.auditLogRepository.create({
+      calibration_id: saved.id,
+      edited_by_id: user?.userId || user?.id,
+      edited_by_name: user?.name || user?.email || 'User',
+      changes_summary: [
+        { field: 'approval_status', oldValue: oldStatus, newValue: resolvedStage },
+        ...(oldReason ? [{ field: 'rejection_reason', oldValue: oldReason, newValue: null }] : []),
+      ],
+      remarks: `Calibration returned to before stage (${resolvedStage}). Note: ${note}`,
+    });
+    await this.auditLogRepository.save(auditLog);
+
+    return saved;
+  }
+
+
   async findAll(filters: {
     userId?: string;
     companyId?: string;
@@ -2244,30 +2302,62 @@ export class CalibrationService implements OnModuleInit {
       // Revert/sync instrument master dates outside the lock
       if (instrumentId) {
         try {
-          const latestRemainingCal = await this.calibrationRepository.findOne({
+          const otherCals = await this.calibrationRepository.find({
             where: { instrument_id: instrumentId },
             order: { calibration_date: 'DESC' },
           });
 
-          if (latestRemainingCal) {
+          const approvedRemainingCals = otherCals.filter(
+            (c) => c.id !== id && c.approval_status === 'Approved',
+          );
+
+          if (approvedRemainingCals.length > 0) {
+            const latestApproved = approvedRemainingCals[0];
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const isOverdue = latestRemainingCal.next_calibration_date
-              ? new Date(latestRemainingCal.next_calibration_date) <= today
+            const isOverdue = latestApproved.next_calibration_date
+              ? new Date(latestApproved.next_calibration_date) <= today
               : false;
 
+            const inst = await this.instrumentsService.findOne(instrumentId);
+            const cp = { ...((inst as any)?.custom_parameters || {}) };
+            delete cp.calibration_sub_status;
+
             await this.instrumentsService.update(instrumentId, {
-              last_calibration_date: latestRemainingCal.calibration_date ? new Date(latestRemainingCal.calibration_date).toISOString() : undefined,
-              due_date: latestRemainingCal.next_calibration_date ? new Date(latestRemainingCal.next_calibration_date).toISOString() : undefined,
-              status: latestRemainingCal.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
+              last_calibration_date: latestApproved.calibration_date ? new Date(latestApproved.calibration_date).toISOString() : undefined,
+              due_date: latestApproved.next_calibration_date ? new Date(latestApproved.next_calibration_date).toISOString() : undefined,
+              status: latestApproved.verdict === 'FAIL' ? 'REJECTED' : (isOverdue ? 'Overdue' : 'OK'),
+              cert_no: latestApproved.certificate_number || undefined,
               calibration_source: 'In-House',
+              custom_parameters: cp,
             } as any);
           } else {
-            await this.instrumentsService.syncInstrumentAfterCalibrationDeleted(
-              instrumentId,
-              calDate,
-              nextDate,
+            const pendingRemainingCals = otherCals.filter(
+              (c) => c.id !== id && (c.approval_status === 'Pending Review' || c.approval_status === 'Reviewed'),
             );
+
+            if (pendingRemainingCals.length > 0) {
+              const latestPending = pendingRemainingCals[0];
+              const inst = await this.instrumentsService.findOne(instrumentId);
+              const cp = { ...((inst as any)?.custom_parameters || {}) };
+              cp.calibration_sub_status = latestPending.approval_status === 'Reviewed' ? 'Approve Pending' : 'Review Pending';
+              await this.instrumentsService.update(instrumentId, {
+                status: 'Under Calibration',
+                custom_parameters: cp,
+              } as any);
+            } else {
+              const inst = await this.instrumentsService.findOne(instrumentId);
+              if (inst) {
+                const cp = { ...((inst as any)?.custom_parameters || {}) };
+                delete cp.calibration_sub_status;
+                await this.instrumentsService.update(instrumentId, { custom_parameters: cp } as any);
+              }
+              await this.instrumentsService.syncInstrumentAfterCalibrationDeleted(
+                instrumentId,
+                calDate,
+                nextDate,
+              );
+            }
           }
         } catch (err) {
           console.warn('Failed to update instrument status on calibration remove:', err);

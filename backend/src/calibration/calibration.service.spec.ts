@@ -151,4 +151,41 @@ describe('CalibrationService', () => {
     expect(result.is_verdict_overridden).toBe(true);
     expect(result.verdict_override_reason).toBe('Accepted under customer concession MRB-101');
   });
+
+  describe('revertStage', () => {
+    it('should revert a rejected calibration back to Pending Review and restore instrument stage with audit log', async () => {
+      const mockRecord: any = {
+        id: 'cal-rejected-1',
+        instrument_id: 'inst-1',
+        approval_status: 'Rejected',
+        rejection_reason: 'Measurement drift exceeds tolerance limits',
+        rejected_by: 'Reviewer Shivakumar',
+        rejected_at: new Date(),
+      };
+
+      jest.spyOn(service, 'findOne').mockResolvedValue(mockRecord);
+      mockCalibrationRepo.save.mockImplementation((rec: any) => Promise.resolve({ ...rec }));
+
+      const result = await service.revertStage(
+        'cal-rejected-1',
+        'Customer clarified tolerance spec via addendum',
+        'Pending Review',
+        { userId: 'user-1', name: 'Approver Quality' },
+      );
+
+      expect(result.approval_status).toBe('Pending Review');
+      expect(result.rejection_reason).toBeUndefined();
+      expect(result.rejected_by).toBeUndefined();
+      expect(mockCalibrationRepo.save).toHaveBeenCalled();
+    });
+
+    it('should throw NotFoundException if calibration is not found', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(null as any);
+
+      await expect(
+        service.revertStage('non-existent', 'Note text', 'Pending Review'),
+      ).rejects.toThrow();
+    });
+  });
 });
+

@@ -206,3 +206,17 @@ export async function deleteCalibration(id: string, resequence: boolean = false,
     params: { resequence: resequence ? 'true' : 'false', reason },
   });
 }
+
+/** Revert a rejected calibration back to previous stage (e.g. Pending Review) with mandatory note */
+export async function revertCalibrationStage(
+  id: string,
+  note: string,
+  targetStage: string = 'Pending Review',
+): Promise<any> {
+  const res = await httpClient.post(`/calibrations/${id}/revert-stage`, {
+    note,
+    targetStage,
+  });
+  return res.data;
+}
+

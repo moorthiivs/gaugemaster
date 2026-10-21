@@ -10,6 +10,7 @@ import {
   Delete,
   UseGuards,
   Req,
+  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
@@ -200,6 +201,25 @@ export class CalibrationController {
       body.rejectionReason,
     );
   }
+
+  @Post(':id/revert-stage')
+  @RequirePermission('calibration_approvals', 'edit')
+  async revertStage(
+    @Param('id') id: string,
+    @Body() body: { note: string; targetStage?: string },
+    @Req() req: any,
+  ) {
+    if (!body?.note || !body.note.trim()) {
+      throw new BadRequestException('Note is required to move certificate back to previous stage');
+    }
+    return this.calibrationService.revertStage(
+      id,
+      body.note.trim(),
+      body.targetStage || 'Pending Review',
+      req?.user,
+    );
+  }
+
 
   @Get('approval-stats')
   async getApprovalStats(
