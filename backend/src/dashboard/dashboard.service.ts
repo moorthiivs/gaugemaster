@@ -655,24 +655,12 @@ export class DashboardService {
             }))
             .sort((a, b) => b.value - a.value);
 
-        let rawModuleDistribution = moduleGroups.map(g => ({
-            name: g.module_name || 'Others',
-            value: Number(g.count),
-        }));
-
-        rawModuleDistribution.sort((a, b) => b.value - a.value);
-
-        let moduleDistribution: { name: string; value: number }[] = [];
-        if (rawModuleDistribution.length > 10) {
-            const top10 = rawModuleDistribution.slice(0, 10);
-            const othersCount = rawModuleDistribution.slice(10).reduce((sum, item) => sum + item.value, 0);
-            if (othersCount > 0) {
-                top10.push({ name: 'Others', value: othersCount });
-            }
-            moduleDistribution = top10;
-        } else {
-            moduleDistribution = rawModuleDistribution;
-        }
+        const moduleDistribution = moduleGroups
+            .map(g => ({
+                name: g.module_name || 'Unassigned',
+                value: Number(g.count),
+            }))
+            .sort((a, b) => b.value - a.value || a.name.localeCompare(b.name));
 
         // Format weekly and daily completed
         const weeklyCompleted: { week: string; completed: number }[] = [];
