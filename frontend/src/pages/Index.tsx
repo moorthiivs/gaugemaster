@@ -616,7 +616,7 @@ const Index = () => {
     const todayStr = format(new Date(), "yyyy-MM-dd");
 
     if (location && location !== "All") params.append("location", location);
-    if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+    params.set("item_status", itemStatus || "All");
     if (calibrationStatus && calibrationStatus !== "All") params.append("status", calibrationStatus);
     if (category === "Working") params.append("is_reference_standard", "false");
     if (category === "Reference")
@@ -1230,7 +1230,7 @@ const Index = () => {
             onCategoryClick={(categoryName, type) => {
               const params = new URLSearchParams();
               if (location && location !== "All") params.append("location", location);
-              if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+              params.set("item_status", itemStatus || "All");
 
               if (categoryName === "GAUGES") {
                 params.append("is_reference_standard", "false");
@@ -1264,7 +1264,7 @@ const Index = () => {
               const params = new URLSearchParams();
               if (category === "Working") params.append("is_reference_standard", "false");
               if (category === "Reference") params.append("is_reference_standard", "true");
-              if (itemStatus && itemStatus !== "All") params.append("item_status", itemStatus);
+              params.set("item_status", itemStatus || "All");
               if (location && location !== "All") params.append("location", location);
 
               if (moduleName === "Others") {

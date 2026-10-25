@@ -12,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import httpClient, { API_URL } from "@/lib/httpClient";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
@@ -90,6 +90,7 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
 
 const SESSION_KEY_SELECTED = "gaugemaster_selected_instrument_ids";
 const SESSION_KEY_OBJECTS = "gaugemaster_selected_instrument_objects";
+const SESSION_KEY_LAST_FILTER = "gaugemaster_instruments_last_query";
 
 const getInitialSelected = (): Record<string, boolean> => {
   try {
@@ -117,6 +118,7 @@ export default function Instruments() {
   const { toast } = useToast();
   const { user } = useAuth()
   const navigate = useNavigate();
+  const location = useLocation();
   const { canAccess } = usePermissions();
   const [searchParams] = useSearchParams();
   
@@ -130,7 +132,14 @@ export default function Instruments() {
   const initialCalibratedInRangeStart = searchParams.get("calibrated_in_range_start") || "";
   const initialCalibratedInRangeEnd = searchParams.get("calibrated_in_range_end") || "";
   const initialCalibrationSource = searchParams.get("calibration_source") || "All";
-  const initialItemStatus = searchParams.get("item_status") || (searchParams.get("status") ? "All" : "Active");
+  const initialItemStatus =
+    searchParams.get("item_status") ||
+    (searchParams.get("status") ||
+    searchParams.get("due_date_start") ||
+    searchParams.get("due_date") ||
+    searchParams.get("calibrated_in_range_start")
+      ? "All"
+      : "Active");
   const initialLocation = searchParams.get("location") || "All";
   const initialModule = searchParams.get("module") || "All";
   const initialExcludeModules = searchParams.get("exclude_modules") || "";
@@ -511,10 +520,112 @@ export default function Instruments() {
     }
   };
 
+  // Session restore on mount if user arrived directly at /instruments without query params
   useEffect(() => {
-    setFilters(f => ({
+    if (!location.search && !location.hash) {
+      try {
+        const saved = sessionStorage.getItem(SESSION_KEY_LAST_FILTER);
+        if (saved) {
+          navigate(`/instruments?${saved}`, { replace: true });
+        }
+      } catch {}
+    }
+  }, []);
+
+  const updateFilter = useCallback((updatedFilters: Partial<InstrumentQuery>) => {
+    setFilters((prev) => {
+      const next = { ...prev, ...updatedFilters };
+      const queryParams = new URLSearchParams();
+      if (next.search) queryParams.set("search", next.search);
+      if (next.status && next.status !== "All") queryParams.set("status", next.status);
+      if (next.item_status && next.item_status !== "All") queryParams.set("item_status", next.item_status);
+      if (next.location && next.location !== "All") queryParams.set("location", next.location);
+      if (next.frequency && next.frequency !== "All") queryParams.set("frequency", next.frequency);
+      if (next.calibration_source && next.calibration_source !== "All") queryParams.set("calibration_source", next.calibration_source);
+      if (next.module && next.module !== "All") queryParams.set("module", next.module);
+      if (next.exclude_modules) queryParams.set("exclude_modules", next.exclude_modules);
+      if (next.due_date) queryParams.set("due_date", next.due_date);
+      if (next.due_date_start) queryParams.set("due_date_start", next.due_date_start);
+      if (next.due_date_end) queryParams.set("due_date_end", next.due_date_end);
+      if (next.last_cal_start) queryParams.set("last_cal_start", next.last_cal_start);
+      if (next.last_cal_end) queryParams.set("last_cal_end", next.last_cal_end);
+      if (next.calibrated_in_range_start) queryParams.set("calibrated_in_range_start", next.calibrated_in_range_start);
+      if (next.calibrated_in_range_end) queryParams.set("calibrated_in_range_end", next.calibrated_in_range_end);
+      if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.set("is_reference_standard", next.is_reference_standard);
+      if (next.device_type && next.device_type !== "All") queryParams.set("device_type", next.device_type);
+      if (next.page && next.page > 1) queryParams.set("page", String(next.page));
+      if (next.pageSize && next.pageSize !== 10) queryParams.set("pageSize", String(next.pageSize));
+      if (next.sortBy && next.sortBy !== "sino") queryParams.set("sortBy", next.sortBy);
+      if (next.sortOrder && next.sortOrder !== "ASC") queryParams.set("sortOrder", next.sortOrder);
+
+      const qs = queryParams.toString();
+      try {
+        if (qs) {
+          sessionStorage.setItem(SESSION_KEY_LAST_FILTER, qs);
+        } else {
+          sessionStorage.removeItem(SESSION_KEY_LAST_FILTER);
+        }
+      } catch {}
+
+      navigate(qs ? `/instruments?${qs}` : "/instruments", { replace: true });
+      return next;
+    });
+  }, [navigate]);
+
+  const handleApplyDateFilter = useCallback((updatedFilters: Partial<InstrumentQuery>) => {
+    updateFilter({ ...updatedFilters, page: 1 });
+  }, [updateFilter]);
+
+  const handleClearDateFilter = useCallback(() => {
+    updateFilter({
+      due_date: "",
+      due_date_start: "",
+      due_date_end: "",
+      last_cal_start: "",
+      last_cal_end: "",
+      page: 1,
+    });
+  }, [updateFilter]);
+
+  const handleResetFilters = useCallback(() => {
+    try {
+      sessionStorage.removeItem(SESSION_KEY_LAST_FILTER);
+    } catch {}
+    setLocalSearch("");
+    setFilters({
+      status: "All",
+      item_status: "Active",
+      location: "All",
+      frequency: "All",
+      calibration_source: "All",
+      module: "All",
+      exclude_modules: "",
+      search: "",
+      due_date: "",
+      due_date_start: "",
+      due_date_end: "",
+      last_cal_start: "",
+      last_cal_end: "",
+      calibrated_in_range_start: "",
+      calibrated_in_range_end: "",
+      is_reference_standard: "All",
+      device_type: "All",
+      page: 1,
+      pageSize: filters.pageSize,
+      limit: 10,
+      sortBy: "sino",
+      sortOrder: "ASC",
+    });
+    navigate("/instruments", { replace: true });
+  }, [navigate, filters.pageSize]);
+
+  useEffect(() => {
+    const urlSearch = searchParams.get("search") || "";
+    setLocalSearch((prev) => (prev !== urlSearch ? urlSearch : prev));
+
+    setFilters((f) => ({
       ...f,
-      search: searchParams.get("search") || "",
+      search: urlSearch,
       due_date: searchParams.get("due_date") || "",
       status: (searchParams.get("status") || "All") as any,
       due_date_start: searchParams.get("due_date_start") || "",
@@ -523,52 +634,26 @@ export default function Instruments() {
       last_cal_end: searchParams.get("last_cal_end") || "",
       calibrated_in_range_start: searchParams.get("calibrated_in_range_start") || "",
       calibrated_in_range_end: searchParams.get("calibrated_in_range_end") || "",
-      item_status: (searchParams.get("item_status") || (searchParams.get("status") ? "All" : "Active")) as any,
+      item_status: (searchParams.get("item_status") ||
+        (searchParams.get("status") ||
+        searchParams.get("due_date_start") ||
+        searchParams.get("due_date") ||
+        searchParams.get("calibrated_in_range_start")
+          ? "All"
+          : "Active")) as any,
       location: searchParams.get("location") || "All",
       calibration_source: searchParams.get("calibration_source") || "All",
+      frequency: searchParams.get("frequency") || "All",
       module: searchParams.get("module") || "All",
       exclude_modules: searchParams.get("exclude_modules") || "",
       is_reference_standard: searchParams.get("is_reference_standard") || "All",
       device_type: searchParams.get("device_type") || "All",
       sortBy: (searchParams.get("sortBy") as any) || f.sortBy || "sino",
       sortOrder: (searchParams.get("sortOrder") as any) || f.sortOrder || "ASC",
-      page: 1
+      page: searchParams.get("page") ? Number(searchParams.get("page")) : f.page || 1,
+      pageSize: searchParams.get("pageSize") ? Number(searchParams.get("pageSize")) : f.pageSize || pageSize,
     }));
   }, [searchParams]);
-
-  const handleApplyDateFilter = (updatedFilters: Partial<InstrumentQuery>) => {
-    setFilters((prev) => {
-      const next = { ...prev, ...updatedFilters, page: 1 };
-      const queryParams = new URLSearchParams();
-      if (next.search) queryParams.append("search", next.search);
-      if (next.status && next.status !== "All") queryParams.append("status", next.status);
-      if (next.item_status && next.item_status !== "All") queryParams.append("item_status", next.item_status);
-      if (next.location && next.location !== "All") queryParams.append("location", next.location);
-      if (next.frequency && next.frequency !== "All") queryParams.append("frequency", next.frequency);
-      if (next.calibration_source && next.calibration_source !== "All") queryParams.append("calibration_source", next.calibration_source);
-      if (next.module && next.module !== "All") queryParams.append("module", next.module);
-      if (next.due_date) queryParams.append("due_date", next.due_date);
-      if (next.due_date_start) queryParams.append("due_date_start", next.due_date_start);
-      if (next.due_date_end) queryParams.append("due_date_end", next.due_date_end);
-      if (next.last_cal_start) queryParams.append("last_cal_start", next.last_cal_start);
-      if (next.last_cal_end) queryParams.append("last_cal_end", next.last_cal_end);
-      if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.append("is_reference_standard", next.is_reference_standard);
-      if (next.device_type && next.device_type !== "All") queryParams.append("device_type", next.device_type);
-
-      navigate(`/instruments?${queryParams.toString()}`, { replace: true });
-      return next;
-    });
-  };
-
-  const handleClearDateFilter = () => {
-    handleApplyDateFilter({
-      due_date: "",
-      due_date_start: "",
-      due_date_end: "",
-      last_cal_start: "",
-      last_cal_end: "",
-    });
-  };
 
   useEffect(() => {
     fetchData();
@@ -586,13 +671,12 @@ export default function Instruments() {
 
   useEffect(() => {
     const handler = setTimeout(() => {
-      setFilters((f) => {
-        if (f.search === localSearch) return f;
-        return { ...f, search: localSearch, page: 1 };
-      });
-    }, 500);
+      if ((filters.search || "") !== localSearch) {
+        updateFilter({ search: localSearch, page: 1 });
+      }
+    }, 400);
     return () => clearTimeout(handler);
-  }, [localSearch]);
+  }, [localSearch, filters.search, updateFilter]);
 
   useEffect(() => {
     if (localSearch.trim().length > 0) {
@@ -1100,10 +1184,8 @@ export default function Instruments() {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setFilters(f => {
-                const nextOrder = f.sortOrder === 'ASC' ? 'DESC' : 'ASC';
-                return { ...f, sortBy: 'sino', sortOrder: nextOrder, page: 1 };
-              });
+              const nextOrder = (filters.sortOrder || 'ASC') === 'ASC' ? 'DESC' : 'ASC';
+              updateFilter({ sortBy: 'sino', sortOrder: nextOrder, page: 1 });
             }}
           >
             S.No
@@ -1655,7 +1737,7 @@ export default function Instruments() {
               <Button 
                 size="sm" 
                 className="h-8 px-3.5 text-xs font-semibold gap-2" 
-                onClick={() => navigate("/instruments/new")}
+                onClick={() => navigate("/instruments/new", { state: { returnUrl: location.pathname + location.search } })}
               >
                 <PlusCircle className="h-4 w-4" /> Add Instrument
               </Button>
@@ -1674,11 +1756,7 @@ export default function Instruments() {
                   variant="ghost" 
                   size="sm"
                   className="h-7 px-2 text-xs font-semibold text-muted-foreground hover:text-red-600 hover:bg-red-50/50 gap-1 transition-colors"
-                  onClick={() => {
-                    setLocalSearch("");
-                    setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", device_type: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
-                    navigate("/instruments", { replace: true });
-                  }}
+                  onClick={handleResetFilters}
                 >
                   <RotateCcw className="h-3 w-3" /> Reset
                 </Button>
@@ -1688,7 +1766,7 @@ export default function Instruments() {
             <div className="bg-muted p-1 rounded-lg inline-flex flex-wrap items-center gap-1 self-stretch sm:self-auto justify-center">
               <button 
                 type="button"
-                onClick={() => setFilters(f => ({ ...f, device_type: "All", is_reference_standard: "All", page: 1 }))}
+                onClick={() => updateFilter({ device_type: "All", is_reference_standard: "All", page: 1 })}
                 className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${((!filters.device_type || filters.device_type === "All") && (!filters.is_reference_standard || filters.is_reference_standard === "All")) ? 'bg-background shadow-xs text-foreground font-bold' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 All
@@ -1707,12 +1785,11 @@ export default function Instruments() {
                   <button 
                     key={dt}
                     type="button"
-                    onClick={() => setFilters(f => ({
-                      ...f,
+                    onClick={() => updateFilter({
                       device_type: isRefTab ? "Reference Standard" : isGaugeTab ? "Gauge" : "Instrument",
                       is_reference_standard: isRefTab ? "true" : "false",
                       page: 1
-                    }))}
+                    })}
                     className={`px-3 py-1 text-xs font-semibold rounded-md transition-all capitalize ${isSelected ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
                   >
                     {dt}
@@ -1752,7 +1829,7 @@ export default function Instruments() {
                           e.preventDefault();
                           e.stopPropagation();
                           setLocalSearch("");
-                          setFilters(f => ({ ...f, search: "", page: 1 }));
+                          updateFilter({ search: "", page: 1 });
                           setShowSuggestions(false);
                         }}
                         className="absolute right-2.5 top-2.5 h-4 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors focus:outline-none"
@@ -1774,6 +1851,7 @@ export default function Instruments() {
                         className="px-3 py-2 hover:bg-primary/10 cursor-pointer text-xs transition-colors"
                         onClick={() => {
                           setLocalSearch(code);
+                          updateFilter({ search: code, page: 1 });
                           setShowSuggestions(false);
                         }}
                       >
@@ -1792,7 +1870,7 @@ export default function Instruments() {
               </Label>
               <Select
                 value={filters.status as any}
-                onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}
+                onValueChange={(v) => updateFilter({ status: v as any, page: 1 })}
               >
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Status" />
@@ -1816,7 +1894,7 @@ export default function Instruments() {
                     (opt) => opt.toLowerCase() === (filters.item_status || "").toLowerCase()
                   ) || (filters.item_status as any)
                 }
-                onValueChange={(v) => setFilters((f) => ({ ...f, item_status: v as any, page: 1 }))}
+                onValueChange={(v) => updateFilter({ item_status: v as any, page: 1 })}
               >
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Item Status" />
@@ -1834,7 +1912,7 @@ export default function Instruments() {
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <CalendarDays className="h-3.5 w-3.5 text-primary" /> Frequency
               </Label>
-              <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
+              <Select value={filters.frequency as any} onValueChange={(v) => updateFilter({ frequency: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Frequencies" />
                 </SelectTrigger>
@@ -1851,7 +1929,7 @@ export default function Instruments() {
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <Activity className="h-3.5 w-3.5 text-primary" /> Location
               </Label>
-              <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
+              <Select value={filters.location as any} onValueChange={(v) => updateFilter({ location: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Locations" />
                 </SelectTrigger>
@@ -1868,7 +1946,7 @@ export default function Instruments() {
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">C</Badge> Source
               </Label>
-              <Select value={filters.calibration_source as any} onValueChange={(v) => setFilters((f) => ({ ...f, calibration_source: v as any, page: 1 }))}>
+              <Select value={filters.calibration_source as any} onValueChange={(v) => updateFilter({ calibration_source: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Sources" />
                 </SelectTrigger>
@@ -1895,11 +1973,7 @@ export default function Instruments() {
                 title="Reset all filters"
                 aria-label="Reset all filters"
                 className="h-9 w-9 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50/50 border-border/70 rounded-lg transition-all"
-                onClick={() => {
-                  setLocalSearch("");
-                  setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
-                  navigate("/instruments", { replace: true });
-                }}
+                onClick={handleResetFilters}
               >
                 <RotateCcw className="h-4 w-4" />
               </Button>
@@ -1949,10 +2023,7 @@ export default function Instruments() {
               <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
                 <CalendarDays className="h-3.5 w-3.5" />
                 Showing instruments calibrated in range: {filters.calibrated_in_range_start ? new Date(filters.calibrated_in_range_start).toLocaleDateString() : 'Any'} to {filters.calibrated_in_range_end ? new Date(filters.calibrated_in_range_end).toLocaleDateString() : 'Any'}
-                <button onClick={() => {
-                  setFilters(f => ({ ...f, calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 }));
-                  navigate("/instruments", { replace: true });
-                }} className="ml-1 hover:text-emerald-800 focus:outline-none font-bold">×</button>
+                <button onClick={() => updateFilter({ calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 })} className="ml-1 hover:text-emerald-800 focus:outline-none font-bold">×</button>
               </Badge>
             </div>
           )}
@@ -2005,9 +2076,9 @@ export default function Instruments() {
           pageIndex={filters.page || 1}
           pageSize={filters.pageSize}
           totalItems={data.total}
-          onPageChange={(page) => setFilters((f) => ({ ...f, page }))}
-          onPageSizeChange={(pageSize) => setFilters((f) => ({ ...f, pageSize, page: 1 }))}
-          onRowClick={(row) => canAccess("instruments", "edit") ? navigate(`/instruments/${row.id}/edit`) : undefined}
+          onPageChange={(page) => updateFilter({ page })}
+          onPageSizeChange={(pageSize) => updateFilter({ pageSize, page: 1 })}
+          onRowClick={(row) => canAccess("instruments", "edit") ? navigate(`/instruments/${row.id}/edit`, { state: { returnUrl: location.pathname + location.search } }) : undefined}
           rowSelection={selected}
           onRowSelectionChange={handleRowSelectionChange}
           hideSearch={true}

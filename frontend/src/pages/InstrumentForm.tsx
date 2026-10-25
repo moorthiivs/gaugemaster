@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useMemo } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -111,6 +111,22 @@ export default function InstrumentForm() {
   useSEO({ title: isEdit ? "Edit Instrument — Calibration Alerts" : "Add Instrument — Calibration Alerts" });
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleReturn = () => {
+    if (location.state?.returnUrl) {
+      navigate(location.state.returnUrl);
+      return;
+    }
+    try {
+      const saved = sessionStorage.getItem("gaugemaster_instruments_last_query");
+      if (saved) {
+        navigate(`/instruments?${saved}`);
+        return;
+      }
+    } catch {}
+    navigate("/instruments");
+  };
   
   const [isSaving, setIsSaving] = useState(false);
   const [validationRules, setValidationRules] = useState<any[]>([]);
@@ -354,7 +370,7 @@ export default function InstrumentForm() {
         toast({ title: "Created", description: "Instrument added successfully." });
       }
 
-      navigate("/instruments");
+      handleReturn();
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
@@ -437,7 +453,7 @@ export default function InstrumentForm() {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => navigate("/instruments")}
+              onClick={handleReturn}
               className="rounded-full hover:bg-primary/10"
             >
               <ArrowLeft className="h-5 w-5" />
@@ -468,7 +484,7 @@ export default function InstrumentForm() {
               validationRules={validationRules}
               defaultValues={instrumentData}
               onSubmit={onSubmit}
-              onCancel={() => navigate("/instruments")}
+              onCancel={handleReturn}
               isSubmitting={isSaving}
               onChangeEffects={onChangeEffects}
               setFormValueRef={formSetValueRef}
