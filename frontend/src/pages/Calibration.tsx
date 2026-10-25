@@ -242,7 +242,7 @@ export default function Calibration() {
     }).length;
   }, [overdueInstruments]);
 
-  const activeOverdueCount = overdueScope === "current_month" ? currentMonthOverdueCount : overdueInstruments.length;
+  const activeOverdueCount = overdueScope === "current_month" ? currentMonthOverdueCount : (overdueCount || overdueInstruments.length);
 
   // Pending Certificates state
   const [certStatusFilter, setCertStatusFilter] = useState<"all" | "pending" | "generated">("all");
@@ -354,17 +354,17 @@ export default function Calibration() {
     try {
       const overdueData = await listInstruments({
         status: "Overdue",
-        item_status: "Active",
-        pageSize: 100,
+        item_status: "All",
+        pageSize: 1000,
         companyId: user.companyId,
-      }).catch(() => ({ data: [] }));
+      }).catch(() => ({ data: [], total: 0 }));
 
       const rawList = overdueData?.data || (Array.isArray(overdueData) ? overdueData : []);
       const overdueList = rawList.filter(
         (inst: any) => inst && inst.status !== "Under Calibration" && inst.status !== "UNDER_CALIBRATION"
       );
       setOverdueInstruments(overdueList);
-      setOverdueCount(overdueList.length);
+      setOverdueCount(overdueData?.total ?? overdueList.length);
     } catch (e) {
       console.warn("Could not load overdue instruments:", e);
     }

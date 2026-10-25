@@ -149,17 +149,26 @@ export class DashboardService {
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL THEN 1 ELSE 0 END)`, 'workingTotal')
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceTotal')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) THEN 1 ELSE 0 END)`, 'overdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
-            .addSelect(`SUM(CASE WHEN instrument.due_date < :todayStart AND (instrument.status IS NULL OR instrument.status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'REJECTED')) AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
+            .addSelect(`SUM(CASE WHEN (
+                (instrument.due_date < :todayStart AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'overdue'))
+                OR LOWER(TRIM(COALESCE(instrument.status, ''))) = 'overdue'
+            ) AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'overdue')
+            .addSelect(`SUM(CASE WHEN (
+                (instrument.due_date < :todayStart AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'overdue'))
+                OR LOWER(TRIM(COALESCE(instrument.status, ''))) = 'overdue'
+            ) AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingOverdue')
+            .addSelect(`SUM(CASE WHEN (
+                (instrument.due_date < :todayStart AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'overdue'))
+                OR LOWER(TRIM(COALESCE(instrument.status, ''))) = 'overdue'
+            ) AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceOverdue')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd THEN 1 ELSE 0 END)`, 'dueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'dueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueSoon')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :dueSoonEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueSoon')
 
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd THEN 1 ELSE 0 END)`, 'dueToday')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueToday')
-            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueToday');
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'dueToday')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) THEN 1 ELSE 0 END)`, 'workingDueToday')
+            .addSelect(`SUM(CASE WHEN instrument.due_date BETWEEN :todayStart AND :todayEnd AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )') AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') AND instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceDueToday');
 
         if (targetCompanyId) {
             kpiQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });

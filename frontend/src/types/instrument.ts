@@ -150,6 +150,7 @@ export interface CalendarInstrument {
   due_date: string;
   last_calibration_date?: string | null;
   status: string;
+  item_status?: string;
   location: string;
   agency: string;
   eventType?: 'completed' | 'due';

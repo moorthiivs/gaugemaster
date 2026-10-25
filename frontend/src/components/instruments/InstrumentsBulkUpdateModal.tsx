@@ -54,6 +54,8 @@ export interface UpdatableFieldDef {
 }
 
 export const ALL_UPDATABLE_FIELDS: UpdatableFieldDef[] = [
+  { key: "id_code", label: "ID Code", aliases: ["change id code as below", "change id code", "new id code", "new id", "id code (new)", "id_code", "new id_code"] },
+  { key: "part_no", label: "Part No", aliases: ["part no", "partno", "part number", "current part number", "change part number", "change part no", "new part no", "new part number", "change id code as below_1", "part no_1"] },
   { key: "module", label: "Module", aliases: ["module", "model", "moudle"] },
   { key: "serial_no", label: "Serial No", aliases: ["serial no", "items sl.no / model", "serialno", "serial number", "sl no"] },
   { key: "location", label: "Location", aliases: ["location", "item location", "loc"] },
@@ -244,9 +246,10 @@ export function InstrumentsBulkUpdateModal({
       const buffer = await file.arrayBuffer();
       const wb = XLSX.read(buffer, { type: "array" });
       const firstSheet = wb.Sheets[wb.SheetNames[0]];
-      const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+      // Read sheet as 2D array to support multi-row headers properly
+      const sheetData: any[][] = XLSX.utils.sheet_to_json(firstSheet, { header: 1 });
 
-      if (rawRows.length === 0) {
+      if (!sheetData || sheetData.length === 0) {
         toast({
           title: "Empty Spreadsheet",
           description: "The uploaded file contains no data rows.",
@@ -256,8 +259,59 @@ export function InstrumentsBulkUpdateModal({
         return;
       }
 
+      let headers: string[] = [];
+      let dataStartRow = 1;
+
+      const row0 = (sheetData[0] || []).map((c: any) => String(c ?? "").trim());
+      const row1 = (sheetData[1] || []).map((c: any) => String(c ?? "").trim());
+
+      // Check if Row 1 is a sub-header row (e.g. contains S.No, NAME OF INSTRUMENT, RANGE, LOCATION, PART NO, etc.)
+      const isSubHeaderRow = row1.some((c: string) => {
+        const norm = c.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return ["sno", "slno", "nameofinstrument", "instrumentname", "range", "location", "partno", "partname"].includes(norm);
+      });
+
+      if (isSubHeaderRow && sheetData.length > 2) {
+        dataStartRow = 2;
+        const maxCols = Math.max(row0.length, row1.length);
+        for (let i = 0; i < maxCols; i++) {
+          const h0 = row0[i] || "";
+          const h1 = row1[i] || "";
+          let finalHeader = "";
+
+          if (h0.toLowerCase().includes("change") && (h1.toLowerCase().includes("part") || (i > 5 && h0.toLowerCase().includes("code")))) {
+            finalHeader = "Change Part Number";
+          } else if (h0.toLowerCase().includes("change") && (h1.toLowerCase().includes("id") || i <= 5)) {
+            finalHeader = "Change ID Code as Below";
+          } else if (h0) {
+            finalHeader = h0;
+          } else if (h1) {
+            finalHeader = h1;
+          } else {
+            finalHeader = `Column_${i}`;
+          }
+          headers.push(finalHeader);
+        }
+      } else {
+        headers = row0;
+      }
+
+      // Build structured rows using synthesized headers
+      const rawRows: Record<string, any>[] = [];
+      for (let r = dataStartRow; r < sheetData.length; r++) {
+        const rowArr = sheetData[r];
+        if (!rowArr || rowArr.length === 0 || rowArr.every((v) => v === undefined || v === null || String(v).trim() === "")) {
+          continue;
+        }
+        const obj: Record<string, any> = {};
+        for (let c = 0; c < headers.length; c++) {
+          obj[headers[c]] = rowArr[c] !== undefined && rowArr[c] !== null ? rowArr[c] : "";
+        }
+        rawRows.push(obj);
+      }
+
       // Discover sheet headers
-      const sheetHeaders = Object.keys(rawRows[0] || {}).map((h) => h.trim());
+      const sheetHeaders = headers.map((h) => h.trim());
       const normalizeHeader = (h: string) => h.toLowerCase().replace(/[^a-z0-9]/g, "");
 
       // Detect which updatable columns are present in the Excel
@@ -272,8 +326,10 @@ export function InstrumentsBulkUpdateModal({
       setDetectedColumns(detected);
       setSelectedColumns(defaultSelected);
 
+      const cleanRawRows = rawRows;
+
       // Map rows for backend processing
-      const mappedRows = rawRows.map((raw, idx) => {
+      const mappedRows = cleanRawRows.map((raw, idx) => {
         const getVal = (aliases: string[]) => {
           const normAliases = aliases.map((a) => normalizeHeader(a));
           const key = Object.keys(raw || {}).find((k) => normAliases.includes(normalizeHeader(k)));
@@ -284,7 +340,11 @@ export function InstrumentsBulkUpdateModal({
           rowIndex: idx + 2, // Excel 1-based, row 1 is header
           raw,
           name: getVal(["NAME OF INSTRUMENT", "Name", "Description", "Instrument Name"]),
-          id_code: getVal(["ID CODE", "IMTE", "ID Code", "Instrument ID", "Id"]),
+          id_code: getVal(["Current ID Code", "Old ID Code", "Current ID", "ID CODE", "IMTE", "Instrument ID", "Id"]),
+          new_id_code: getVal(["Change ID Code as Below", "Change ID Code", "New ID Code", "New ID", "ID Code (New)", "ID CODE_1"]),
+          current_part_no: getVal(["Current Part Number", "Current Part No", "Old Part Number", "Old Part No", "PART NO", "Part No"]),
+          new_part_no: getVal(["Change Part Number", "New Part Number", "New Part No", "Change Part No", "Change ID Code as Below_1", "PART NO_1"]),
+          part_no: getVal(["Change Part Number", "New Part Number", "New Part No", "Change Part No", "Change ID Code as Below_1", "PART NO_1", "PART NO", "Part No", "Part Number"]),
           sino: (() => {
             const s = getVal(["S.No", "sino", "Sl.No", "P.Sl.No"]);
             return s && !isNaN(Number(s)) ? Number(s) : undefined;

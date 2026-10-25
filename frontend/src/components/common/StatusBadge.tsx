@@ -38,6 +38,92 @@ export interface StatusBadgeProps {
   showIcon?: boolean;
 }
 
+// Deterministic hash to map any custom status string to a harmonious, distinctive color theme
+const DYNAMIC_CUSTOM_PALETTES = [
+  {
+    bg: "bg-purple-500/10 dark:bg-purple-500/20",
+    text: "text-purple-700 dark:text-purple-300",
+    border: "border-purple-500/30 hover:border-purple-500/50",
+    dot: "bg-purple-500",
+  },
+  {
+    bg: "bg-cyan-500/10 dark:bg-cyan-500/20",
+    text: "text-cyan-700 dark:text-cyan-300",
+    border: "border-cyan-500/30 hover:border-cyan-500/50",
+    dot: "bg-cyan-500",
+  },
+  {
+    bg: "bg-indigo-500/10 dark:bg-indigo-500/20",
+    text: "text-indigo-700 dark:text-indigo-300",
+    border: "border-indigo-500/30 hover:border-indigo-500/50",
+    dot: "bg-indigo-500",
+  },
+  {
+    bg: "bg-teal-500/10 dark:bg-teal-500/20",
+    text: "text-teal-700 dark:text-teal-300",
+    border: "border-teal-500/30 hover:border-teal-500/50",
+    dot: "bg-teal-500",
+  },
+  {
+    bg: "bg-amber-500/10 dark:bg-amber-500/20",
+    text: "text-amber-700 dark:text-amber-300",
+    border: "border-amber-500/30 hover:border-amber-500/50",
+    dot: "bg-amber-500",
+  },
+  {
+    bg: "bg-rose-500/10 dark:bg-rose-500/20",
+    text: "text-rose-700 dark:text-rose-300",
+    border: "border-rose-500/30 hover:border-rose-500/50",
+    dot: "bg-rose-500",
+  },
+  {
+    bg: "bg-orange-500/10 dark:bg-orange-500/20",
+    text: "text-orange-700 dark:text-orange-300",
+    border: "border-orange-500/30 hover:border-orange-500/50",
+    dot: "bg-orange-500",
+  },
+  {
+    bg: "bg-sky-500/10 dark:bg-sky-500/20",
+    text: "text-sky-700 dark:text-sky-300",
+    border: "border-sky-500/30 hover:border-sky-500/50",
+    dot: "bg-sky-500",
+  },
+  {
+    bg: "bg-violet-500/10 dark:bg-violet-500/20",
+    text: "text-violet-700 dark:text-violet-300",
+    border: "border-violet-500/30 hover:border-violet-500/50",
+    dot: "bg-violet-500",
+  },
+  {
+    bg: "bg-emerald-500/10 dark:bg-emerald-500/20",
+    text: "text-emerald-700 dark:text-emerald-300",
+    border: "border-emerald-500/30 hover:border-emerald-500/50",
+    dot: "bg-emerald-500",
+  },
+  {
+    bg: "bg-slate-500/10 dark:bg-slate-500/20",
+    text: "text-slate-700 dark:text-slate-300",
+    border: "border-slate-500/30 hover:border-slate-500/50",
+    dot: "bg-slate-500",
+  },
+];
+
+function getDynamicPalette(text: string) {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = text.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return DYNAMIC_CUSTOM_PALETTES[Math.abs(hash) % DYNAMIC_CUSTOM_PALETTES.length];
+}
+
+function formatTitleCase(str: string): string {
+  if (!str) return str;
+  return str
+    .split(/\s+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
 export function StatusBadge({
   status,
   subStatus,
@@ -267,18 +353,35 @@ export function StatusBadge({
     );
   }
 
-  // Fallback for custom statuses
+  // Dynamic Badge for any custom status entered by the user
+  const palette = getDynamicPalette(lower);
+  const formattedLabel = formatTitleCase(raw);
+
   return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "bg-primary/5 text-foreground border-primary/20 hover:border-primary/40 whitespace-nowrap inline-flex items-center font-medium shadow-2xs",
-        sizeClasses[size],
-        className
-      )}
-    >
-      {showIcon && <Tag className={iconSizes[size]} />}
-      <span>{raw}</span>
-    </Badge>
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Badge
+            variant="outline"
+            className={cn(
+              "whitespace-nowrap inline-flex items-center font-medium shadow-2xs transition-all duration-150 select-none",
+              palette.bg,
+              palette.text,
+              palette.border,
+              sizeClasses[size],
+              className
+            )}
+          >
+            {showIcon && (
+              <span className={cn("w-1.5 h-1.5 rounded-full shrink-0 animate-pulse", palette.dot)} />
+            )}
+            <span>{formattedLabel}</span>
+          </Badge>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          Custom Status: {raw}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

@@ -18,22 +18,54 @@ import { cn } from "@/lib/utils";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/common/PageHeader";
+import { StatusBadge } from "@/components/common/StatusBadge";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAYS_OF_WEEK = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+
+function isCalendarInstrumentOverdue(inst: CalendarInstrument, cellOrInstTime: number, referenceTime: number): boolean {
+  if (inst.eventType === "completed") return false;
+
+  const rawItemStatus = (inst.item_status || "").trim().toLowerCase();
+  const retiredStatuses = ["scrapped", "inactive", "lost", "under repair", "rejected"];
+  if (retiredStatuses.includes(rawItemStatus)) {
+    return false;
+  }
+
+  const rawStatus = (inst.status || "").trim().toLowerCase();
+  if (rawStatus.includes("over") || rawStatus === "over due") {
+    return true;
+  }
+
+  const standardStatuses = [
+    "ok",
+    "calibrated",
+    "upcoming calibration (10 days before )",
+    "upcoming calibration",
+    "due soon",
+    "overdue",
+    "over due",
+    "",
+  ];
+  const isStandard = standardStatuses.includes(rawStatus);
+
+  if (!isStandard) {
+    // Custom status (e.g. "not in use") is respected and not treated as overdue
+    return false;
+  }
+
+  return cellOrInstTime <= referenceTime;
+}
 
 function getLoadLevel(cellDate: Date, today: Date, dayInstruments?: CalendarInstrument[]): "low" | "medium" | "high" {
   if (!dayInstruments || dayInstruments.length === 0) return "low";
 
   const cellTime = new Date(cellDate.getFullYear(), cellDate.getMonth(), cellDate.getDate()).getTime();
   const todayTime = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const diffDays = (cellTime - todayTime) / (1000 * 60 * 60 * 24);
 
-  const hasOverdueStatus = dayInstruments.some(
-    (inst) => inst.status?.toLowerCase().includes("over") || inst.status === "OVER DUE"
-  );
+  const hasOverdue = dayInstruments.some((inst) => isCalendarInstrumentOverdue(inst, cellTime, todayTime));
 
-  if (hasOverdueStatus || diffDays < 0) {
+  if (hasOverdue) {
     return "high"; // Overdue -> Red
   }
 
@@ -314,11 +346,9 @@ export default function CalendarPage() {
                       (inst) => inst.eventType === "completed"
                     ).length;
 
-                    const overdueCount = dayInstruments.filter((inst) => {
-                      if (inst.eventType === "completed") return false;
-                      const isOverdueStatus = inst.status?.toLowerCase().includes("over") || inst.status === "OVER DUE";
-                      return isOverdueStatus || cellTime <= todayTime;
-                    }).length;
+                    const overdueCount = dayInstruments.filter((inst) =>
+                      isCalendarInstrumentOverdue(inst, cellTime, todayTime)
+                    ).length;
 
                     const dueSoonCount = Math.max(0, dayInstruments.length - okCount - overdueCount);
 
@@ -410,10 +440,8 @@ export default function CalendarPage() {
                 (inst) => inst.eventType === "completed"
               ).length;
               const overdueModalCount = selectedInstruments.filter((inst) => {
-                if (inst.eventType === "completed") return false;
-                const isOverdueStatus = inst.status?.toLowerCase().includes("over") || inst.status === "OVER DUE";
                 const instTime = new Date(inst.due_date).getTime();
-                return isOverdueStatus || instTime <= now.getTime();
+                return isCalendarInstrumentOverdue(inst, instTime, now.getTime());
               }).length;
               const dueSoonModalCount = Math.max(0, totalModalCount - overdueModalCount - okModalCount);
 
@@ -477,7 +505,8 @@ export default function CalendarPage() {
             {(() => {
               const displayedModalInstruments = selectedInstruments.filter((inst) => {
                 const isCalibrated = inst.eventType === "completed";
-                const isOverdue = !isCalibrated && (inst.status?.toLowerCase().includes("over") || inst.status === "OVER DUE" || new Date(inst.due_date).getTime() <= now.getTime());
+                const instTime = new Date(inst.due_date).getTime();
+                const isOverdue = isCalendarInstrumentOverdue(inst, instTime, now.getTime());
 
                 if (modalFilter === "OVERDUE") return isOverdue;
                 if (modalFilter === "OK") return isCalibrated;
@@ -517,7 +546,8 @@ export default function CalendarPage() {
                   <TableBody>
                     {displayedModalInstruments.map((inst) => {
                       const isCalibrated = inst.eventType === "completed";
-                      const isOverdue = !isCalibrated && (inst.status?.toLowerCase().includes("over") || inst.status === "OVER DUE" || new Date(inst.due_date).getTime() <= now.getTime());
+                      const instTime = new Date(inst.due_date).getTime();
+                      const isOverdue = isCalendarInstrumentOverdue(inst, instTime, now.getTime());
                       
                       const rowClass = isOverdue
                         ? "bg-rose-500/10 hover:bg-rose-500/20 border-l-4 border-l-rose-500"
@@ -534,18 +564,20 @@ export default function CalendarPage() {
                           <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{formatDateVal(inst.last_calibration_date)}</TableCell>
                           <TableCell className="whitespace-nowrap font-mono text-xs font-bold">{formatDateVal(inst.due_date)}</TableCell>
                           <TableCell>
-                            <Badge
-                              variant={
-                                isOverdue
-                                  ? "destructive"
-                                  : isCalibrated
-                                  ? "success"
-                                  : "warning"
-                              }
-                              className="whitespace-nowrap uppercase text-[10px] font-bold"
-                            >
-                              {isCalibrated ? "COMPLETED" : isOverdue ? "OVERDUE" : "DUE SOON"}
-                            </Badge>
+                            {isCalibrated ? (
+                              <Badge variant="success" className="whitespace-nowrap uppercase text-[10px] font-bold">
+                                COMPLETED
+                              </Badge>
+                            ) : inst.status ? (
+                              <StatusBadge status={inst.status} />
+                            ) : (
+                              <Badge
+                                variant={isOverdue ? "destructive" : "warning"}
+                                className="whitespace-nowrap uppercase text-[10px] font-bold"
+                              >
+                                {isOverdue ? "OVERDUE" : "DUE SOON"}
+                              </Badge>
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
                             <Button

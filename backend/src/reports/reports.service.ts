@@ -84,9 +84,27 @@ export class ReportsService {
     private resolveEffectiveStatus(inst: Instrument): string {
         const current = (inst.status || '').trim();
         const lower = current.toLowerCase();
-        if (lower.includes('calibration') || lower === 'rejected' || lower === 'scrapped') {
+
+        const standardStatuses = [
+            'ok',
+            'calibrated',
+            'upcoming calibration (10 days before )',
+            'upcoming calibration',
+            'overdue',
+            'over due',
+            '',
+        ];
+
+        // Preserve custom status or non-standard status
+        if (!standardStatuses.includes(lower)) {
             return current;
         }
+
+        const itemLower = (inst.item_status || '').toLowerCase().trim();
+        if (['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(itemLower)) {
+            return current || 'OK';
+        }
+
         if (inst.due_date) {
             const dueDate = new Date(inst.due_date);
             const today = new Date();

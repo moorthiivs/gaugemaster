@@ -27,26 +27,22 @@ const computeStatusOptions = (
     "Overdue",
   ];
 
-  // 1. Overdue condition
+  const optionsSet = new Set<string>();
+
+  // If overdue, place Overdue near top
   if (dueDate && isDatePast(dueDate)) {
-    if (customList.some((s) => s.toLowerCase() === currentStatus.toLowerCase())) {
-      return ["Overdue", currentStatus, ...customList.filter((s) => s.toLowerCase() !== currentStatus.toLowerCase())];
-    }
-    return ["Overdue", ...customList];
+    optionsSet.add("Overdue");
   }
 
-  // 2. Upcoming Calibration condition
-  if (currentStatus === "Upcoming Calibration (10 days before )") {
-    return ["Upcoming Calibration (10 days before )", "Sent for Calibration", ...customList];
+  standardList.forEach((s) => optionsSet.add(s));
+  if (currentStatus && currentStatus.trim()) {
+    optionsSet.add(currentStatus.trim());
   }
+  customList.forEach((s) => {
+    if (s && s.trim()) optionsSet.add(s.trim());
+  });
 
-  // 3. Sent for Calibration condition
-  if (currentStatus === "Sent for Calibration") {
-    return ["Sent for Calibration", "Overdue", ...customList];
-  }
-
-  // 4. Default: OK
-  return [...standardList, ...customList];
+  return Array.from(optionsSet);
 };
 
 const INSTRUMENT_FIELDS: FormFieldConfig[] = [
@@ -383,9 +379,10 @@ export default function InstrumentForm() {
     getValues: any
   ) => {
     const currentStatus = getValues("status") || "OK";
-    const isCustomStatus = customStatuses.some(
-      (s) => s.toLowerCase() === currentStatus.toLowerCase()
-    );
+    const standardStatuses = ["ok", "calibrated", "upcoming calibration (10 days before )", "upcoming calibration", "overdue"];
+    const isCustomStatus =
+      !standardStatuses.includes(currentStatus.toLowerCase().trim()) ||
+      customStatuses.some((s) => s.toLowerCase() === currentStatus.toLowerCase().trim());
 
     if (name === "last_calibration_date") {
       const frequency = getValues("frequency") || "12 MONTH";

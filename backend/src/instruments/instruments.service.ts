@@ -80,18 +80,32 @@ export class InstrumentsService implements OnApplicationBootstrap {
         const current = (inst.status || '').trim();
         const lower = current.toLowerCase();
 
-        // 1. Preserve active calibration or rejection/scrap state
-        if (
-            lower.includes('calibration') ||
-            lower === 'rejected' ||
-            lower === 'scrapped'
-        ) {
+        // Standard statuses that are subject to automated overdue/OK expiration logic
+        const standardStatuses = [
+            'ok',
+            'calibrated',
+            'upcoming calibration (10 days before )',
+            'upcoming calibration',
+            'overdue',
+            'over due',
+            '',
+        ];
+
+        // 1. If status is a custom status or special preserved status, ALWAYS preserve it!
+        if (!standardStatuses.includes(lower)) {
             return current;
+        }
+
+        // 2. If the physical item status is retired (Scrapped, Inactive, Lost, Under Repair, Rejected),
+        // it must not be converted into 'Overdue'
+        const itemLower = (inst.item_status || '').toLowerCase().trim();
+        if (['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(itemLower)) {
+            return current || 'OK';
         }
 
         const effectiveToday = todayStart || this.getTodayStart();
 
-        // 2. Overdue if due_date has passed
+        // 3. Overdue if due_date has passed for standard active items
         if (inst.due_date) {
             const dueDate = new Date(inst.due_date);
             if (!isNaN(dueDate.getTime()) && dueDate < effectiveToday) {
@@ -99,7 +113,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
             }
         }
 
-        // 3. Reset Overdue to OK if due date is in the future
+        // 4. Reset Overdue to OK if due date is in the future
         if (lower.includes('overdue') || lower === 'over due') {
             if (inst.due_date) {
                 const dueDate = new Date(inst.due_date);
@@ -315,7 +329,12 @@ export class InstrumentsService implements OnApplicationBootstrap {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
                 baseWhere.due_date = LessThan(todayStart);
-                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped']));
+                baseWhere.status = Raw(
+                    alias => `(${alias} ILIKE '%overdue%' OR LOWER(TRIM(COALESCE(${alias}, 'ok'))) IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'upcoming calibration'))`
+                );
+                baseWhere.item_status = Raw(
+                    alias => `LOWER(TRIM(COALESCE(${alias}, 'active'))) NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`
+                );
             } else if (normalizedStatus === 'duesoon') {
                 const dueSoonEnd = new Date(todayEnd);
                 dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
@@ -324,9 +343,11 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 baseWhere.due_date = Between(todayStart, todayEnd);
             } else if (normalizedStatus === 'ok' || normalizedStatus === 'calibrated') {
                 baseWhere.due_date = Raw(alias => `(${alias} >= :todayStart OR ${alias} IS NULL)`, { todayStart });
-                baseWhere.status = Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped', 'Overdue']));
+                baseWhere.status = Raw(
+                    alias => `LOWER(TRIM(COALESCE(${alias}, 'ok'))) IN ('ok', 'calibrated')`
+                );
             } else {
-                baseWhere.status = ILike(status);
+                baseWhere.status = ILike(status.trim());
             }
         }
         if (item_status && item_status !== 'All') baseWhere.item_status = ILike(item_status);
@@ -636,16 +657,29 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 parsedDueDate = this.calculateDueDateFromFrequency(parsedLastCal, instrumentDto.frequency);
             }
 
-            if (parsedDueDate) {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
-                if (parsedDueDate <= today) {
-                    autoStatus = 'Overdue';
+            const standardStatuses = [
+                'ok',
+                'calibrated',
+                'upcoming calibration (10 days before )',
+                'upcoming calibration',
+                'overdue',
+                '',
+            ];
+            const lowerAuto = (autoStatus || '').trim().toLowerCase();
+            const isStandard = standardStatuses.includes(lowerAuto);
+
+            if (isStandard) {
+                if (parsedDueDate) {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
+                    if (parsedDueDate <= today) {
+                        autoStatus = 'Overdue';
+                    } else if (!autoStatus) {
+                        autoStatus = 'OK';
+                    }
                 } else if (!autoStatus) {
                     autoStatus = 'OK';
                 }
-            } else if (!autoStatus) {
-                autoStatus = 'OK';
             }
 
             // Enforce unified device_type / is_reference_standard consistency
@@ -760,27 +794,44 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 }
             }
 
-            // Automatically update status based on new due_date if not REJECTED or Under Calibration
-            const isUnderCalibration =
-                payload.status === 'Under Calibration' ||
-                (!payload.status && instrument.status === 'Under Calibration');
+            // Determine effective status handling
+            const targetStatus = payload.status !== undefined ? (payload.status || '').trim() : (instrument.status || '').trim();
+            const lowerTarget = targetStatus.toLowerCase();
+            const standardStatuses = [
+                'ok',
+                'calibrated',
+                'upcoming calibration (10 days before )',
+                'upcoming calibration',
+                'overdue',
+                '',
+            ];
+            const isStandard = standardStatuses.includes(lowerTarget);
 
-            if (isUnderCalibration) {
-                payload.status = 'Under Calibration';
+            if (lowerTarget.includes('under calibration') || lowerTarget.includes('sent for calibration')) {
+                payload.status = targetStatus;
+            } else if (!isStandard) {
+                // Explicit custom status (e.g. "not in use", "Spare", "Under Maintenance") or REJECTED / Scrapped
+                // PRESERVE user's explicit status! Never force it to Overdue!
+                payload.status = targetStatus;
             } else {
+                // Standard status: dynamically adjust based on due date
                 const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
-                if (finalDueDate && payload.status !== 'REJECTED') {
+                if (finalDueDate) {
                     const parsedDueDate = this.parseDateSafe(finalDueDate);
                     if (parsedDueDate) {
                         const today = new Date();
                         today.setHours(0, 0, 0, 0);
                         if (parsedDueDate <= today) {
                             payload.status = 'Overdue';
-                        } else if ((instrument.status === 'Overdue' || instrument.status === 'REJECTED') && (!payload.status || payload.status === 'Overdue' || payload.status === 'REJECTED')) {
-                            // If it was overdue/rejected but now date is extended into the future and verdict passed, reset to OK
+                        } else if (lowerTarget === 'overdue') {
+                            // If it was overdue but now date is in the future, reset to OK
                             payload.status = 'OK';
+                        } else {
+                            payload.status = targetStatus || 'OK';
                         }
                     }
+                } else if (!targetStatus) {
+                    payload.status = 'OK';
                 }
             }
 
@@ -1279,6 +1330,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
         }
 
         const allowedFields: Array<{ key: keyof Instrument; label: string }> = [
+            { key: 'id_code', label: 'ID Code' },
             { key: 'module', label: 'Module' },
             { key: 'location', label: 'Location' },
             { key: 'range', label: 'Range' },
@@ -1310,6 +1362,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
             : allowedFields;
 
         const previewRows: any[] = [];
+        const matchedIdsInBatch = new Set<string>();
 
         for (const row of dto.rows) {
             const rawIdCode = row.id_code || row.raw?.['ID CODE'] || row.raw?.['IMTE'] || row.raw?.['id_code'];
@@ -1317,11 +1370,28 @@ export class InstrumentsService implements OnApplicationBootstrap {
             const rawSino = row.sino ?? (row.raw?.['S.No'] && !isNaN(Number(row.raw?.['S.No'])) ? Number(row.raw?.['S.No']) : undefined);
             const rawPartName = row.part_name || row.raw?.['Part Name'] || row.raw?.['part_name'];
             const rawSerialNo = row.serial_no || row.raw?.['SERIAL NO'] || row.raw?.['serial_no'];
+            const rawLocation = row.location || row.raw?.['LOCATION'] || row.raw?.['Location'] || row.raw?.['location'] || row.raw?.['Line'];
+            const rawRange = row.range || row.raw?.['RANGE'] || row.raw?.['Range'] || row.raw?.['range'];
+            const rawPartNo = row.current_part_no || row.raw?.['Current Part Number'] || row.raw?.['PART NO'] || row.raw?.['part_no'] || row.raw?.['Part No'];
 
             const normId = normalize(rawIdCode);
             const normName = normalize(rawName);
             const normPart = normalize(rawPartName);
             const normSerial = normalize(rawSerialNo);
+            const normLocation = normalize(rawLocation);
+            const normRange = normalize(rawRange);
+            const normPartNo = normalize(rawPartNo);
+
+            // Skip secondary header rows if present in multi-row header sheets
+            if (
+                normId === 'id code' ||
+                normId === 'current id code' ||
+                normId === 'old id code' ||
+                normId === 'idcode' ||
+                normId === 'imte'
+            ) {
+                continue;
+            }
 
             if (!normId && !normName) {
                 previewRows.push({
@@ -1354,11 +1424,27 @@ export class InstrumentsService implements OnApplicationBootstrap {
                     matched = candidates[0];
                     matchMethod = 'Exact Name + ID Code';
                 } else if (candidates.length > 1) {
-                    const byPart = normPart ? candidates.filter(c => normalize(c.part_name) && (normalize(c.part_name).includes(normPart) || normPart.includes(normalize(c.part_name)))) : [];
-                    const bySerial = normSerial ? candidates.filter(c => normalize(c.serial_no) === normSerial) : [];
-                    const bySino = rawSino !== undefined ? candidates.filter(c => c.sino === rawSino) : [];
+                    let filtered = candidates;
+                    if (normLocation && normRange) {
+                        const byBoth = filtered.filter(c => normalize(c.location) === normLocation && normalize(c.range) === normRange);
+                        if (byBoth.length > 0) filtered = byBoth;
+                    }
+                    if (filtered.length > 1 && normRange) {
+                        const byRange = filtered.filter(c => normalize(c.range) === normRange);
+                        if (byRange.length > 0) filtered = byRange;
+                    }
+                    if (filtered.length > 1 && normLocation) {
+                        const byLoc = filtered.filter(c => normalize(c.location) === normLocation);
+                        if (byLoc.length > 0) filtered = byLoc;
+                    }
+                    const byPart = normPart ? filtered.filter(c => normalize(c.part_name) && (normalize(c.part_name).includes(normPart) || normPart.includes(normalize(c.part_name)))) : [];
+                    const bySerial = normSerial ? filtered.filter(c => normalize(c.serial_no) === normSerial) : [];
+                    const bySino = rawSino !== undefined ? filtered.filter(c => c.sino === rawSino) : [];
 
-                    if (byPart.length === 1) {
+                    if (filtered.length === 1) {
+                        matched = filtered[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Location/Range)';
+                    } else if (byPart.length === 1) {
                         matched = byPart[0];
                         matchMethod = 'Name + ID Code (Disambiguated by Part Name)';
                     } else if (bySerial.length === 1) {
@@ -1380,21 +1466,70 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 }
             }
 
-            // Tier 3: ID Code Unique
+            // Tier 3: ID Code Unique / Disambiguated by Location, Range, Part No, etc.
             if (!matched && normId) {
                 const candidates = tier3Map.get(normId) || [];
                 if (candidates.length === 1) {
                     matched = candidates[0];
                     matchMethod = 'Fallback Unique ID Code';
                 } else if (candidates.length > 1) {
-                    previewRows.push({
-                        rowIndex: row.rowIndex,
-                        status: 'error',
-                        errors: [`Multiple instruments match ID '${rawIdCode}' with different names.`],
-                        changes: [],
-                        raw: row.raw,
-                    });
-                    continue;
+                    let filtered = candidates;
+
+                    // Step 1: Disambiguate by both Location AND Range
+                    if (normLocation && normRange) {
+                        const byBoth = filtered.filter(c => normalize(c.location) === normLocation && normalize(c.range) === normRange);
+                        if (byBoth.length > 0) filtered = byBoth;
+                    }
+
+                    // Step 2: Disambiguate by Range if still multiple
+                    if (filtered.length > 1 && normRange) {
+                        const byRange = filtered.filter(c => normalize(c.range) === normRange);
+                        if (byRange.length > 0) filtered = byRange;
+                    }
+
+                    // Step 3: Disambiguate by Location if still multiple
+                    if (filtered.length > 1 && normLocation) {
+                        const byLoc = filtered.filter(c => normalize(c.location) === normLocation);
+                        if (byLoc.length > 0) filtered = byLoc;
+                    }
+
+                    // Step 4: Disambiguate by Part No if still multiple
+                    if (filtered.length > 1 && normPartNo) {
+                        const byPno = filtered.filter(c => normalize(c.part_no) === normPartNo);
+                        if (byPno.length > 0) filtered = byPno;
+                    }
+
+                    // Step 5: Disambiguate by Part Name if still multiple
+                    if (filtered.length > 1 && normPart) {
+                        const byPname = filtered.filter(c => normalize(c.part_name) === normPart || normalize(c.part_name).includes(normPart));
+                        if (byPname.length > 0) filtered = byPname;
+                    }
+
+                    // Step 6: Disambiguate by Name if still multiple
+                    if (filtered.length > 1 && normName) {
+                        const byName = filtered.filter(c => normalize(c.name) === normName);
+                        if (byName.length > 0) filtered = byName;
+                    }
+
+                    // Step 7: Disambiguate by unassigned candidate in this batch
+                    if (filtered.length > 1) {
+                        const unassigned = filtered.filter(c => !matchedIdsInBatch.has(c.id));
+                        if (unassigned.length > 0) filtered = unassigned;
+                    }
+
+                    if (filtered.length === 1) {
+                        matched = filtered[0];
+                        matchMethod = 'ID Code (Disambiguated by Location/Range)';
+                    } else {
+                        previewRows.push({
+                            rowIndex: row.rowIndex,
+                            status: 'error',
+                            errors: [`Multiple instruments match ID '${rawIdCode}' (${filtered.length} matches). Please specify Location or Range.`],
+                            changes: [],
+                            raw: row.raw,
+                        });
+                        continue;
+                    }
                 }
             }
 
@@ -1409,11 +1544,25 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 continue;
             }
 
+            matchedIdsInBatch.add(matched.id);
+
             // Check changes for active selected fields
             const proposedChanges: Array<{ field: string; label: string; oldValue: any; newValue: any }> = [];
 
             for (const { key, label } of activeFields) {
-                const newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+                let newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+
+                if (key === 'id_code') {
+                    newVal = row.new_id_code ?? row.raw?.['Change ID Code as Below'] ?? row.raw?.['Change ID Code'] ?? row.raw?.['New ID Code'] ?? row.raw?.['ID CODE_1'] ?? newVal;
+                    if (newVal && normalize(newVal) === normId) {
+                        newVal = undefined;
+                    }
+                }
+
+                if (key === 'part_no') {
+                    newVal = row.new_part_no ?? row.part_no ?? row.raw?.['Change Part Number'] ?? row.raw?.['New Part Number'] ?? row.raw?.['New Part No'] ?? row.raw?.['Change Part No'] ?? row.raw?.['Change ID Code as Below_1'] ?? row.raw?.['PART NO_1'] ?? newVal;
+                }
+
                 if (newVal === undefined || newVal === null) continue;
 
                 const cleanNew = String(newVal).trim();
@@ -1521,7 +1670,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
         }
 
         const allowedKeys = new Set([
-            'module', 'location', 'range', 'serial_no', 'make', 'frequency',
+            'id_code', 'module', 'location', 'range', 'serial_no', 'make', 'frequency',
             'least_count', 'part_name', 'part_no', 'agency', 'item_status',
             'status', 'calibration_source', 'device_type', 'notes', 'remarks',
             'customer', 'sector', 'criticality_level', 'cert_no',
@@ -1710,6 +1859,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
         const targetMonth = Number(month); // 1-12
 
         for (const inst of instruments) {
+            inst.status = this.resolveEffectiveStatus(inst);
             const freqMonths = parseFreqMonths(inst.frequency);
 
             // 1. Completed calibration on last_calibration_date
@@ -1735,6 +1885,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
                                 due_date: inst.due_date ? new Date(inst.due_date).toISOString() : localCalDate.toISOString(),
                                 last_calibration_date: localCalDate.toISOString(),
                                 status: inst.status || 'OK',
+                                item_status: inst.item_status,
                                 location: inst.location,
                                 agency: inst.agency,
                                 frequency: inst.frequency || `${freqMonths} month(s)`,
@@ -1796,6 +1947,7 @@ export class InstrumentsService implements OnApplicationBootstrap {
                             due_date: scheduledDateISO,
                             last_calibration_date: inst.last_calibration_date ? new Date(inst.last_calibration_date).toISOString() : null,
                             status: inst.status,
+                            item_status: inst.item_status,
                             location: inst.location,
                             agency: inst.agency,
                             frequency: inst.frequency || `${freqMonths} month(s)`,

@@ -130,7 +130,7 @@ export default function Instruments() {
   const initialCalibratedInRangeStart = searchParams.get("calibrated_in_range_start") || "";
   const initialCalibratedInRangeEnd = searchParams.get("calibrated_in_range_end") || "";
   const initialCalibrationSource = searchParams.get("calibration_source") || "All";
-  const initialItemStatus = searchParams.get("item_status") || "Active";
+  const initialItemStatus = searchParams.get("item_status") || (searchParams.get("status") ? "All" : "Active");
   const initialLocation = searchParams.get("location") || "All";
   const initialModule = searchParams.get("module") || "All";
   const initialExcludeModules = searchParams.get("exclude_modules") || "";
@@ -217,7 +217,19 @@ export default function Instruments() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const isOverdueStatus = rowItem.status === "Overdue" || rowItem.status === "OVER DUE";
+    const sLower = (rowItem.status || "").toLowerCase().trim();
+    const itemLower = (rowItem.item_status || "").toLowerCase().trim();
+    const isRetired = ["scrapped", "inactive", "lost", "under repair", "rejected"].includes(itemLower);
+
+    // If item is physically retired, scrapped, inactive, or has a custom non-standard status, do not show red overdue highlight
+    const standardStatuses = ["ok", "calibrated", "upcoming calibration (10 days before )", "upcoming calibration", "overdue", "over due", ""];
+    const isCustomStatus = !standardStatuses.includes(sLower);
+
+    if (isRetired || isCustomStatus || sLower.includes("calibration")) {
+      return "hover:bg-muted/30 transition-colors";
+    }
+
+    const isOverdueStatus = sLower === "overdue" || sLower === "over due";
 
     if (isOverdueStatus) {
       return "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500 transition-colors";
@@ -511,7 +523,7 @@ export default function Instruments() {
       last_cal_end: searchParams.get("last_cal_end") || "",
       calibrated_in_range_start: searchParams.get("calibrated_in_range_start") || "",
       calibrated_in_range_end: searchParams.get("calibrated_in_range_end") || "",
-      item_status: (searchParams.get("item_status") || "Active") as any,
+      item_status: (searchParams.get("item_status") || (searchParams.get("status") ? "All" : "Active")) as any,
       location: searchParams.get("location") || "All",
       calibration_source: searchParams.get("calibration_source") || "All",
       module: searchParams.get("module") || "All",
@@ -1130,11 +1142,23 @@ export default function Instruments() {
       header: "Status",
       cell: ({ row }) => {
         const inst = row.original;
-        let effectiveStatus = inst.status;
-        const sLower = (inst.status || "").toLowerCase().trim();
-        const isExempt = sLower.includes("calibration") || sLower === "rejected" || sLower === "scrapped";
+        let effectiveStatus = inst.status || "OK";
+        const sLower = effectiveStatus.toLowerCase().trim();
+        const standardStatuses = [
+          "ok",
+          "calibrated",
+          "upcoming calibration (10 days before )",
+          "upcoming calibration",
+          "overdue",
+          "over due",
+          "",
+        ];
+        const isStandard = standardStatuses.includes(sLower);
+        const itemLower = (inst.item_status || "").toLowerCase().trim();
+        const isRetired = ["scrapped", "inactive", "lost", "under repair", "rejected"].includes(itemLower);
 
-        if (!isExempt && inst.due_date) {
+        // Only standard statuses on active instruments dynamically become Overdue when past due
+        if (isStandard && !isRetired && inst.due_date) {
           const dueDate = new Date(inst.due_date);
           dueDate.setHours(0, 0, 0, 0);
           const today = new Date();

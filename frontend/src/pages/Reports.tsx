@@ -528,9 +528,21 @@ export default function Reports() {
         cell: ({ row }) => {
           let s = (row.getValue("status") as string) || "OK";
           const sLower = s.toLowerCase().trim();
-          const isExempt = sLower.includes("calibration") || sLower === "rejected" || sLower === "scrapped";
+          const standardStatuses = [
+            "ok",
+            "calibrated",
+            "upcoming calibration (10 days before )",
+            "upcoming calibration",
+            "overdue",
+            "over due",
+            "",
+          ];
+          const isStandard = standardStatuses.includes(sLower);
+          const itemLower = ((row.getValue("item_status") as string) || "").toLowerCase().trim();
+          const isRetired = ["scrapped", "inactive", "lost", "under repair", "rejected"].includes(itemLower);
+
           const dueDateRaw = (row.original as any)?.due_date;
-          if (!isExempt && dueDateRaw) {
+          if (isStandard && !isRetired && dueDateRaw) {
             const dueDate = new Date(dueDateRaw);
             dueDate.setHours(0, 0, 0, 0);
             const today = new Date();

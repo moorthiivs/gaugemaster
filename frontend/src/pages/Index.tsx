@@ -624,8 +624,10 @@ const Index = () => {
 
     if (type === "overdue") {
       params.set("status", "Overdue");
+      params.set("item_status", itemStatus || "All");
     } else if (type === "due_soon") {
       params.set("status", "Due Soon");
+      params.set("item_status", itemStatus || "All");
     } else if (type === "today") {
       params.set("due_date_start", todayStr);
       params.set("due_date_end", todayStr);
