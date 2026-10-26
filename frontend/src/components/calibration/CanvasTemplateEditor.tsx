@@ -1609,12 +1609,61 @@ export function CanvasTemplateEditor({
       ...(isTolCol ? { tolerance: parseToleranceValue(val) ?? numVal } : {}),
       ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
     };
-    if (isReadingCol && isBlank) {
+    const isMeasurementInputCol =
+      isReadingCol ||
+      targetCol?.type === "reading" ||
+      targetCol?.type === "trial" ||
+      targetCol?.type === "number" ||
+      (!isNominalCol &&
+        !isTolCol &&
+        targetCol?.type !== "formula" &&
+        !targetCol?.formula &&
+        !targetCol?.customFormula &&
+        targetCol?.type !== "status" &&
+        targetCol?.role !== "JUDGEMENT" &&
+        targetCol?.type !== "sl_no" &&
+        !/^(sl_no|point_number|unit|status|judgement|verdict)$/i.test(colId));
+
+    if (isMeasurementInputCol && isBlank) {
       delete updatedRow.reading;
       delete updatedRow.actual;
       delete updatedRow.actual_dimension;
       delete updatedRow.observed_value;
       updatedRow[colId] = "";
+
+      // Check if all measurement columns in this block are now blank
+      const measurementCols = (block.columns || []).filter(
+        (c) =>
+          c &&
+          c.id &&
+          c.type !== "nominal" &&
+          c.role !== "NOMINAL" &&
+          c.role !== "SPECIFICATION" &&
+          c.type !== "tolerance" &&
+          c.role !== "TOLERANCE" &&
+          c.type !== "formula" &&
+          !c.formula &&
+          !c.customFormula &&
+          c.type !== "status" &&
+          c.role !== "JUDGEMENT" &&
+          c.type !== "sl_no" &&
+          c.type !== "unit" &&
+          !/^(sl_no|point_number|unit|status|judgement|verdict|nominal|nom|std_spec)$/i.test(c.id)
+      );
+
+      const allBlank = measurementCols.every((c) => {
+        const v = updatedRow[c.id];
+        return v === "" || v === null || v === undefined || v === "-";
+      });
+
+      if (allBlank) {
+        delete updatedRow.avg;
+        delete updatedRow.average;
+        delete updatedRow.error;
+        delete updatedRow.deviation;
+        delete updatedRow.status;
+        delete updatedRow.judgement;
+      }
     }
 
     // Synchronize trial aliases across row for live formula evaluation
@@ -2851,14 +2900,46 @@ export function CanvasTemplateEditor({
           return evalRes.formatted;
         }
       }
-      if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
-        return formatNumericVal(cellVal);
+
+      // Check if all measurement input columns in this block/table are blank
+      const measurementCols = (tableColumns || []).filter(
+        (c) =>
+          c &&
+          c.id &&
+          c.type !== "nominal" &&
+          c.role !== "NOMINAL" &&
+          c.role !== "SPECIFICATION" &&
+          c.type !== "tolerance" &&
+          c.role !== "TOLERANCE" &&
+          c.type !== "formula" &&
+          !c.formula &&
+          !c.customFormula &&
+          c.type !== "status" &&
+          c.role !== "JUDGEMENT" &&
+          c.type !== "sl_no" &&
+          c.type !== "unit" &&
+          !/^(sl_no|point_number|unit|status|judgement|verdict|nominal|nom|std_spec)$/i.test(c.id)
+      );
+
+      const allMeasurementInputsBlank =
+        measurementCols.length > 0 &&
+        measurementCols.every((c) => {
+          const v = row[c.id];
+          return v === "" || v === null || v === undefined || v === "-";
+        });
+
+      if (allMeasurementInputsBlank) {
+        return "-";
       }
+
       if (col.formula) {
         const evalRes = evalFormulaWithContext(col.formula);
         if (evalRes.success && evalRes.formatted) {
           return evalRes.formatted;
         }
+      }
+      if (cellVal !== undefined && cellVal !== null && cellVal !== "") {
+        return formatNumericVal(cellVal);
       }
       return "-";
     }
@@ -2895,6 +2976,37 @@ export function CanvasTemplateEditor({
         if (evalRes.success && evalRes.formatted) {
           return evalRes.formatted === "-" ? "-" : renderStatusBadge(evalRes.formatted);
         }
+      }
+
+      // Check if all measurement input columns in this block/table are blank
+      const measurementCols = (tableColumns || []).filter(
+        (c) =>
+          c &&
+          c.id &&
+          c.type !== "nominal" &&
+          c.role !== "NOMINAL" &&
+          c.role !== "SPECIFICATION" &&
+          c.type !== "tolerance" &&
+          c.role !== "TOLERANCE" &&
+          c.type !== "formula" &&
+          !c.formula &&
+          !c.customFormula &&
+          c.type !== "status" &&
+          c.role !== "JUDGEMENT" &&
+          c.type !== "sl_no" &&
+          c.type !== "unit" &&
+          !/^(sl_no|point_number|unit|status|judgement|verdict|nominal|nom|std_spec)$/i.test(c.id)
+      );
+
+      const allMeasurementInputsBlank =
+        measurementCols.length > 0 &&
+        measurementCols.every((c) => {
+          const v = row[c.id];
+          return v === "" || v === null || v === undefined || v === "-";
+        });
+
+      if (allMeasurementInputsBlank) {
+        return "-";
       }
 
       // 2. Use pre-computed status value from evaluateCanvasRowFormulas (instant 0ms render)

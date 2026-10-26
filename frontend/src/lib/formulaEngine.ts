@@ -2255,6 +2255,19 @@ export function parseToleranceValue(val: any): number | undefined {
   return isNaN(direct) ? undefined : Math.abs(direct);
 }
 
+export function isPointNoCol(c: any): boolean {
+  return Boolean(
+    c &&
+      (c.id === "point_number" ||
+        c.id === "sl_no" ||
+        c.id === "slno" ||
+        c.id === "sr_no" ||
+        c.id === "item_no" ||
+        c.type === "sl_no" ||
+        /^(sl|sr|item)[\._\s]*no/i.test(c.label || ""))
+  );
+}
+
 /**
  * Builds a comprehensive variable resolution context for a table row.
  * Shared across canvas formula evaluation and custom column calculations.
@@ -2280,8 +2293,6 @@ export function buildRowContext(
     row.description ||
     row.gauge_receipt_condition ||
     "";
-  const isPointNoCol = (c: any) =>
-    c && (c.id === "point_number" || c.id === "sl_no" || c.id === "slno" || c.id === "sr_no" || c.id === "item_no" || /^(sl|sr|item)[\._\s]*no/i.test(c.label || ""));
 
   const nomCol = columns.find(
     (c) => c && !isPointNoCol(c) && (c.id === "nominal" || c.id === "nominal_value" || c.id === "std_spec" || c.id === "std_value" || c.id === "spec" || c.type === "nominal" || c.role === "SPECIFICATION" || c.role === "NOMINAL")
@@ -2512,7 +2523,62 @@ export function buildRowContext(
         c.id === "actual_dimension")
   );
 
-  if (hasTrialCols && trialValues.length > 0) {
+  // Identify all measurement input columns in the table (including custom columns like 'top', 'middle', 'bottom')
+  const measurementInputCols = columns.filter((c) => {
+    if (!c || !c.id) return false;
+    if (isPointNoCol(c)) return false;
+    if (
+      c.type === "nominal" ||
+      c.role === "NOMINAL" ||
+      c.role === "SPECIFICATION" ||
+      c.id === "nominal" ||
+      c.id === "nom" ||
+      c.id === "std_spec" ||
+      /^(specification|description|required_dimension)$/i.test(c.id)
+    ) return false;
+    if (
+      c.type === "tolerance" ||
+      c.role === "TOLERANCE" ||
+      /^(tolerance|tol|tolarance)$/i.test(c.id) ||
+      /tolerance|tolarance/i.test(c.label || "")
+    ) return false;
+    if (
+      c.type === "formula" ||
+      c.formula ||
+      c.customFormula ||
+      c.id === "avg" ||
+      c.id === "average" ||
+      c.id === "error" ||
+      c.id === "deviation"
+    ) return false;
+    if (
+      c.type === "status" ||
+      c.role === "JUDGEMENT" ||
+      /^(status|judgement|judgment|verdict)$/i.test(c.id) ||
+      /judg|status|verdict/i.test(c.label || "")
+    ) return false;
+    if (c.type === "unit" || c.id === "unit") return false;
+    if (c.type === "text" && !c.role) return false;
+    return true;
+  });
+
+  const nonBlankMeasurementVals = measurementInputCols
+    .map((c) => {
+      const val = row[c.id] !== undefined ? row[c.id] : row[c.id.toLowerCase()];
+      return isBlankValue(val) ? undefined : parseFloat(String(val));
+    })
+    .filter((v): v is number => v !== undefined && !isNaN(v));
+
+  const allMeasurementInputsBlank =
+    (measurementInputCols.length > 0 && nonBlankMeasurementVals.length === 0) ||
+    (hasTrialCols && trialValues.length === 0);
+
+  if (allMeasurementInputsBlank) {
+    // If all measurement columns defined on the table are blank, this row has NO readings!
+    // Stale row.avg, row.average, row.error, row.deviation must NOT be used as a phantom reading.
+    actualVal = undefined;
+    rawReading = undefined;
+  } else if (hasTrialCols && trialValues.length > 0) {
     actualVal = trialValues.reduce((a, b) => a + b, 0) / trialValues.length;
   } else if (explicitReadingCols.length === 1 && !hasTrialCols) {
     const rCol = explicitReadingCols[0];
@@ -2522,6 +2588,9 @@ export function buildRowContext(
       if (!isNaN(parsed)) actualVal = parsed;
       rawReading = rVal;
     }
+  } else if (measurementInputCols.length > 0 && nonBlankMeasurementVals.length > 0) {
+    actualVal = nonBlankMeasurementVals.reduce((a, b) => a + b, 0) / nonBlankMeasurementVals.length;
+    rawReading = actualVal;
   } else if (!isBlankValue(row.actual_dimension) && (!hasTrialCols || columns.some(c => c.id === "actual_dimension"))) {
     rawReading = row.actual_dimension;
   } else if (!isBlankValue(row.actual) && (!hasTrialCols || columns.some(c => c.id === "actual"))) {
@@ -2589,16 +2658,20 @@ export function buildRowContext(
     Observation: hasReading ? actualVal : "",
     point_number: typeof row.point_number === "number" ? row.point_number : (typeof row.sl_no === "number" ? row.sl_no : 1),
     sl_no: typeof row.sl_no === "number" ? row.sl_no : (typeof row.point_number === "number" ? row.point_number : 1),
-    avg: trialValues.length > 0 ? actualVal : (row.avg ?? ""),
-    average: trialValues.length > 0 ? actualVal : (row.average ?? ""),
-    error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
-    Error: hasReading ? (actualVal! - nom) : (row.error ?? ""),
-    deviation: (!isBlankValue(row.deviation) && row.deviation !== "-")
+    avg: (hasReading && (trialValues.length > 0 || (measurementInputCols.length > 0 && nonBlankMeasurementVals.length > 0)))
+      ? actualVal
+      : (hasReading ? (row.avg ?? "") : ""),
+    average: (hasReading && (trialValues.length > 0 || (measurementInputCols.length > 0 && nonBlankMeasurementVals.length > 0)))
+      ? actualVal
+      : (hasReading ? (row.average ?? "") : ""),
+    error: hasReading ? (actualVal! - nom) : "",
+    Error: hasReading ? (actualVal! - nom) : "",
+    deviation: (!isBlankValue(row.deviation) && row.deviation !== "-" && hasReading)
       ? (typeof row.deviation === "number" ? row.deviation : (!isNaN(Number(row.deviation)) ? parseFloat(String(row.deviation)) : row.deviation))
-      : (hasReading ? (actualVal! - nom) : (row.deviation ?? "")),
-    Deviation: (!isBlankValue(row.deviation) && row.deviation !== "-")
+      : (hasReading ? (actualVal! - nom) : ""),
+    Deviation: (!isBlankValue(row.deviation) && row.deviation !== "-" && hasReading)
       ? (typeof row.deviation === "number" ? row.deviation : (!isNaN(Number(row.deviation)) ? parseFloat(String(row.deviation)) : row.deviation))
-      : (hasReading ? (actualVal! - nom) : (row.deviation ?? "")),
+      : (hasReading ? (actualVal! - nom) : ""),
     MPE: acceptanceCriteriaValue || tolerance,
     mpe: acceptanceCriteriaValue || tolerance,
     Limit: acceptanceCriteriaValue || tolerance,
@@ -3527,7 +3600,7 @@ export function evaluateCanvasRowFormulas(
       const fDeps = extractFormulaDependencies(formula);
       const measurementDeps = fDeps.filter((d) => {
         const dClean = d.toLowerCase().trim();
-        return (
+        const matchesStatic = (
           /^t\d+$/i.test(dClean) ||
           /^trial\d*$/i.test(dClean) ||
           /^reading\d*$/i.test(dClean) ||
@@ -3539,6 +3612,20 @@ export function evaluateCanvasRowFormulas(
           dClean === "average" ||
           dClean === "error" ||
           dClean === "deviation"
+        );
+        if (matchesStatic) return true;
+        return columns.some(
+          (c) =>
+            c &&
+            c.id &&
+            (c.id.toLowerCase() === dClean || (c.label && c.label.toLowerCase().trim() === dClean)) &&
+            c.type !== "nominal" &&
+            c.role !== "NOMINAL" &&
+            c.role !== "SPECIFICATION" &&
+            c.type !== "tolerance" &&
+            c.role !== "TOLERANCE" &&
+            !isPointNoCol(c) &&
+            c.type !== "unit"
         );
       });
       if (measurementDeps.length > 0) {
@@ -3566,11 +3653,7 @@ export function evaluateCanvasRowFormulas(
       }
       if (isError && (colId === "deviation" || colId === "error" || colLabel.includes("deviation") || colLabel.includes("error"))) {
         newRow.deviation = "-";
-        if (colId !== "error") {
-          newRow.error = undefined;
-        } else {
-          newRow.error = "-";
-        }
+        newRow.error = "-";
       }
       if (isStatus && (colRole === "JUDGEMENT" || colType === "status" || colId === "status" || colId === "judgement" || colLabel.includes("judge"))) {
         newRow.status = "-";
@@ -3747,6 +3830,22 @@ export function evaluateCanvasRowFormulas(
           newRow[colId] = evalRes.formatted;
         }
       }
+    }
+  }
+
+  // Ensure that if the row has no readings at all, stale calculated values are not preserved
+  if (!ctx.hasReading) {
+    if (newRow.avg !== undefined && (isBlankValue(newRow.avg) || isBlankValue(row.avg))) {
+      newRow.avg = "-";
+      newRow.average = "-";
+    }
+    if (newRow.error !== undefined && isBlankValue(newRow.error)) {
+      newRow.error = "-";
+      newRow.deviation = "-";
+    }
+    if (newRow.status !== undefined && isBlankValue(newRow.status)) {
+      newRow.status = "-";
+      newRow.judgement = "-";
     }
   }
 

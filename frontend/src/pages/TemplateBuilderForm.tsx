@@ -1114,7 +1114,8 @@ export default function TemplateBuilderForm() {
         }
 
         if (tpl.layout_blocks && tpl.layout_blocks.length > 0) {
-          setLayoutBlocks(tpl.layout_blocks);
+          const evaluatedBlocks = evaluateAllCanvasBlocks(tpl.layout_blocks, { forceFull: true });
+          setLayoutBlocks(evaluatedBlocks);
         } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
           // Backward compatibility: automatically convert legacy flat calibration points into a visual canvas table_grid block
           const convertedBlock: TableGridBlock = {
@@ -1283,7 +1284,7 @@ export default function TemplateBuilderForm() {
           type: acceptanceType,
         },
         is_canvas_template: true,
-        layout_blocks: layoutBlocks,
+        layout_blocks: evaluateAllCanvasBlocks(layoutBlocks, { forceFull: true }),
         calibration_points: points,
         custom_columns: customColumns,
         standard_columns_config: standardColumnConfigs,
