@@ -624,18 +624,20 @@ const Index = () => {
 
     if (type === "overdue") {
       params.set("status", "Overdue");
-      params.set("item_status", itemStatus || "All");
+      params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
     } else if (type === "due_soon") {
       params.set("status", "Due Soon");
-      params.set("item_status", itemStatus || "All");
+      params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
     } else if (type === "today") {
       params.set("due_date_start", todayStr);
       params.set("due_date_end", todayStr);
       params.set("status", "All");
+      params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
     } else if (type === "today_completed") {
       params.set("calibrated_in_range_start", todayStr);
       params.set("calibrated_in_range_end", todayStr);
     } else if (type === "pending") {
+      params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
       if (startDate)
         params.append("due_date_start", format(startDate, "yyyy-MM-dd"));
       else
@@ -658,6 +660,9 @@ const Index = () => {
           ),
         );
     } else if (type === "calibrated" || type === "due") {
+      if (type === "due") {
+        params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
+      }
       if (startDate)
         params.append(
           "calibrated_in_range_start",
@@ -1190,7 +1195,7 @@ const Index = () => {
             }
             progressPercent={Number(complianceRate)}
             actionLabel="Click to inspect"
-            onClick={() => navigate("/instruments")}
+            onClick={() => navigate(`/instruments?item_status=${itemStatus && itemStatus !== "All" ? itemStatus : "Active"}`)}
             loading={loading}
           />
         )}
@@ -1200,7 +1205,7 @@ const Index = () => {
           <KPICard
             index={6}
             title="Total Master"
-            value={loading ? "—" : data?.total || 0}
+            value={loading ? "—" : (data?.grandTotal ?? data?.total ?? 0)}
             icon={Package}
             variant="neutral"
             subtitle={
@@ -1230,7 +1235,11 @@ const Index = () => {
             onCategoryClick={(categoryName, type) => {
               const params = new URLSearchParams();
               if (location && location !== "All") params.append("location", location);
-              params.set("item_status", itemStatus || "All");
+              if (type !== "actual") {
+                params.set("item_status", itemStatus && itemStatus !== "All" ? itemStatus : "Active");
+              } else {
+                params.set("item_status", itemStatus || "All");
+              }
 
               if (categoryName === "GAUGES") {
                 params.append("is_reference_standard", "false");

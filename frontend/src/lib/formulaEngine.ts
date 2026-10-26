@@ -3756,8 +3756,42 @@ export function evaluateCanvasRowFormulas(
 }
 
 /**
+ * Accurately determines if a formula string references an external table or cell coordinate across tables.
+ * Distinguishes true cross-table references (e.g. "t1.error", "t1!A1", "[Table 1]![A1]")
+ * from pure numeric literals (e.g. "0.004", "1.5") and row-local arithmetic (e.g. "avg - nominal").
+ */
+export function isCrossTableFormula(formula: string | undefined | null): boolean {
+  if (!formula || typeof formula !== "string") return false;
+  const trimmed = formula.trim();
+  if (!trimmed) return false;
+
+  // 1. Exclamation coordinate reference: "t1!A1", "table!col", "[Table]!A1"
+  if (trimmed.includes("!")) return true;
+
+  // 2. Bracketed cross-table reference: "[Table 1].[Col Name]"
+  if (/\[[^\]]+\]\s*\.\s*\[?[A-Za-z0-9_]+\]?/.test(trimmed)) return true;
+
+  // 3. Dot identifier reference: "t1.error", "table_1.col", "block.nominal"
+  // Both table name and column name must start with an alphabetical letter or underscore.
+  // (Prevents false positives on decimal numbers like "0.004", "1.5", etc.)
+  if (/(?<![a-zA-Z0-9_])[a-zA-Z_][a-zA-Z0-9_]*\s*\.\s*[a-zA-Z_][a-zA-Z0-9_]*(?![a-zA-Z0-9_])/.test(trimmed)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a specific row has any cellFormula that references an external table.
+ */
+export function rowHasCrossTableFormula(row: any): boolean {
+  if (!row || !row.cellFormulas || typeof row.cellFormulas !== "object") return false;
+  return Object.values(row.cellFormulas).some((f: any) => isCrossTableFormula(String(f)));
+}
+
+/**
  * Checks whether a table has any cross-table formulas (e.g. column formula referencing
- * another table like "t1.error" or any row with cellFormulas).
+ * another table like "t1.error" or any row with cross-table cellFormulas).
  */
 export function tableHasCrossTableFormulas(table: any): boolean {
   if (!table) return false;
@@ -3765,19 +3799,12 @@ export function tableHasCrossTableFormulas(table: any): boolean {
     const hasCrossCol = table.columns.some(
       (c: any) =>
         c &&
-        typeof c.formula === "string" &&
-        (c.formula.includes(".") || /\[[^\]]+\]\.\[[^\]]+\]/.test(c.formula))
+        (isCrossTableFormula(c.formula) || isCrossTableFormula(c.customFormula))
     );
     if (hasCrossCol) return true;
   }
   if (Array.isArray(table.rows)) {
-    return table.rows.some(
-      (r: any) =>
-        r &&
-        r.cellFormulas &&
-        typeof r.cellFormulas === "object" &&
-        Object.keys(r.cellFormulas).length > 0
-    );
+    return table.rows.some((r: any) => rowHasCrossTableFormula(r));
   }
   return false;
 }
@@ -3866,16 +3893,16 @@ export function evaluateAllCanvasBlocks(
             if (
               options.changedRowIndex !== undefined &&
               rIdx !== options.changedRowIndex &&
-              (!row.cellFormulas || Object.keys(row.cellFormulas).length === 0)
+              !rowHasCrossTableFormula(row)
             ) {
               return row;
             }
           } else {
-            // In downstream tables, only evaluate rows that have cellFormulas
+            // In downstream tables, only evaluate rows that have cross-table cellFormulas
             // or if the table has a cross-table column formula
             if (
-              !table.columns.some((c: any) => c?.formula?.includes(".")) &&
-              (!row.cellFormulas || Object.keys(row.cellFormulas).length === 0)
+              !table.columns.some((c: any) => isCrossTableFormula(c?.formula) || isCrossTableFormula(c?.customFormula)) &&
+              !rowHasCrossTableFormula(row)
             ) {
               return row;
             }

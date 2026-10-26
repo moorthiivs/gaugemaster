@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Instrument } from 'src/instruments/instrument.entity';
 import { CalibrationHistory } from 'src/instruments/calibration-history.entity';
 import { User } from 'src/users/user.entity';
-import { Between, LessThan, MoreThan, Repository, ILike, In, Not } from 'typeorm';
+import { Between, LessThan, MoreThan, Repository, ILike, In, Not, Raw } from 'typeorm';
 
 @Injectable()
 export class DashboardService {
@@ -92,7 +92,9 @@ export class DashboardService {
         // Helper to construct where filter with optional item_status, calibration status, and reference standard
         const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
             ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
-            ...(itemStatus && itemStatus !== 'All' ? { item_status: ILike(itemStatus) } : {}),
+            ...(itemStatus && itemStatus !== 'All'
+                ? { item_status: ILike(itemStatus) }
+                : { item_status: Raw(alias => `COALESCE(LOWER(TRIM(${alias})), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`) }),
             ...(status && status !== 'All' ? { status: ILike(status) } : {}),
             ...(location && location !== 'All' ? { location: ILike(location) } : {}),
             ...(isReferenceStandard === 'true' ? { is_reference_standard: true } : isReferenceStandard === 'false' ? { is_reference_standard: false } : {}),
@@ -148,6 +150,9 @@ export class DashboardService {
             .select('COUNT(*)', 'total')
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL THEN 1 ELSE 0 END)`, 'workingTotal')
             .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true THEN 1 ELSE 0 END)`, 'referenceTotal')
+            .addSelect(`SUM(CASE WHEN COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'activeInServiceTotal')
+            .addSelect(`SUM(CASE WHEN (instrument.is_reference_standard = false OR instrument.is_reference_standard IS NULL) AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'workingActiveTotal')
+            .addSelect(`SUM(CASE WHEN instrument.is_reference_standard = true AND COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected') THEN 1 ELSE 0 END)`, 'referenceActiveTotal')
 
             .addSelect(`SUM(CASE WHEN (
                 (instrument.due_date < :todayStart AND COALESCE(LOWER(TRIM(instrument.status)), 'ok') IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'overdue'))
@@ -211,6 +216,8 @@ export class DashboardService {
 
         if (itemStatus && itemStatus !== 'All') {
             pendingQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        } else {
+            pendingQuery.andWhere(`COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`);
         }
         if (status && status !== 'All') {
             pendingQuery.andWhere('instrument.status ILIKE :status', { status });
@@ -255,6 +262,8 @@ export class DashboardService {
 
         if (itemStatus && itemStatus !== 'All') {
             planQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        } else {
+            planQuery.andWhere(`COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`);
         }
         if (status && status !== 'All') {
             planQuery.andWhere('instrument.status ILIKE :status', { status });
@@ -331,6 +340,8 @@ export class DashboardService {
 
         if (itemStatus && itemStatus !== 'All') {
             devicePendingQuery.andWhere('instrument.item_status ILIKE :itemStatus', { itemStatus });
+        } else {
+            devicePendingQuery.andWhere(`COALESCE(LOWER(TRIM(instrument.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`);
         }
         if (status && status !== 'All') {
             devicePendingQuery.andWhere('instrument.status ILIKE :status', { status });
@@ -390,7 +401,13 @@ export class DashboardService {
         }
 
         const recentActivityPromise = this.instrumentRepository.find({
-            where: getBaseWhere(),
+            where: {
+                ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
+                ...(itemStatus && itemStatus !== 'All' ? { item_status: ILike(itemStatus) } : {}),
+                ...(status && status !== 'All' ? { status: ILike(status) } : {}),
+                ...(location && location !== 'All' ? { location: ILike(location) } : {}),
+                ...(isReferenceStandard === 'true' ? { is_reference_standard: true } : isReferenceStandard === 'false' ? { is_reference_standard: false } : {}),
+            },
             take: 10,
             order: { updated_at: 'DESC' },
             select: ['id', 'name', 'status', 'updated_at', 'id_code', 'location'],
@@ -692,11 +709,12 @@ export class DashboardService {
         }
 
         const grandTotal = Number(kpiResult.total || 0);
+        const inServiceTotal = Number(kpiResult.activeInServiceTotal || 0);
         const activeTotal = isReferenceStandard === 'true'
-            ? Number(kpiResult.referenceTotal || 0)
+            ? (itemStatus && itemStatus !== 'All' ? Number(kpiResult.referenceTotal || 0) : Number(kpiResult.referenceActiveTotal || 0))
             : isReferenceStandard === 'false'
-                ? Number(kpiResult.workingTotal || 0)
-                : grandTotal;
+                ? (itemStatus && itemStatus !== 'All' ? Number(kpiResult.workingTotal || 0) : Number(kpiResult.workingActiveTotal || 0))
+                : (itemStatus && itemStatus !== 'All' ? grandTotal : inServiceTotal);
 
         const activeOverdue = isReferenceStandard === 'true'
             ? Number(kpiResult.referenceOverdue || 0)
@@ -716,6 +734,7 @@ export class DashboardService {
         return {
             total: activeTotal,
             grandTotal,
+            inServiceTotal,
             overallProgress: {
                 total: activeTotal,
                 calibrated: overallCalibrated,
@@ -723,6 +742,8 @@ export class DashboardService {
             },
             workingTotal: Number(kpiResult.workingTotal || 0),
             referenceTotal: Number(kpiResult.referenceTotal || 0),
+            workingActiveTotal: Number(kpiResult.workingActiveTotal || 0),
+            referenceActiveTotal: Number(kpiResult.referenceActiveTotal || 0),
             dueThisMonth,
             overdue: activeOverdue,
             workingOverdue: Number(kpiResult.workingOverdue || 0),
@@ -787,9 +808,13 @@ export class DashboardService {
         const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
         const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
 
-        const getBaseWhere = (extraConditions: Record<string, any> = {}) => ({
+        const getBaseWhere = (extraConditions: Record<string, any> = {}, isCalibrationList = false) => ({
             ...(targetCompanyId ? { companyId: targetCompanyId } : { created_by: { id: In(targetUserIds) } }),
-            ...(itemStatus ? { item_status: itemStatus } : {}),
+            ...(itemStatus && itemStatus !== 'All'
+                ? { item_status: itemStatus }
+                : isCalibrationList
+                    ? { item_status: Raw(alias => `COALESCE(LOWER(TRIM(${alias})), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`) }
+                    : {}),
             ...(status ? { status: status } : {}),
             ...(location ? { location: location } : {}),
             ...extraConditions,
@@ -799,7 +824,7 @@ export class DashboardService {
 
         if (listType === 'total') {
             return this.instrumentRepository.find({
-                where: getBaseWhere(),
+                where: getBaseWhere({}, false),
                 order: { name: 'ASC' },
                 select: selectFields as any,
                 take: 1000,
@@ -810,7 +835,7 @@ export class DashboardService {
             return this.instrumentRepository.find({
                 where: getBaseWhere({
                     due_date: Between(startRange, endRange),
-                }),
+                }, true),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,
                 take: 1000,
@@ -822,7 +847,7 @@ export class DashboardService {
                 where: getBaseWhere({
                     due_date: LessThan(todayStart),
                     status: Not(In(['Under Calibration', 'UNDER_CALIBRATION', 'REJECTED'])),
-                }),
+                }, true),
                 order: { due_date: 'ASC' },
                 select: selectFields as any,
                 take: 1000,

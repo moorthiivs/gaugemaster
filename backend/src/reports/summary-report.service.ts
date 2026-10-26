@@ -78,6 +78,7 @@ export class SummaryReportService {
         .andWhere('i.location = :location', { location: loc.location })
         .andWhere('i.due_date BETWEEN :today AND :dueEndDate', { today, dueEndDate })
         .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
       // Ongoing calibration
@@ -95,6 +96,7 @@ export class SummaryReportService {
         .andWhere('i.location = :location', { location: loc.location })
         .andWhere('i.due_date < :today', { today })
         .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
       // Completed in last 30 days
@@ -151,6 +153,7 @@ export class SummaryReportService {
         .where('i.companyId = :companyId', { companyId: setting.companyId })
         .andWhere('i.due_date BETWEEN :today AND :dueEndDate', { today, dueEndDate })
         .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
       const ongoingCount = await this.instrumentRepository
@@ -164,6 +167,7 @@ export class SummaryReportService {
         .where('i.companyId = :companyId', { companyId: setting.companyId })
         .andWhere('i.due_date < :today', { today })
         .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
       const completedCount = await this.calibrationHistoryRepository

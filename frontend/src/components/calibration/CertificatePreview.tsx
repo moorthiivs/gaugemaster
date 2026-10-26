@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { CalibrationRecord } from "@/types/calibration";
 import { format } from "date-fns";
 import httpClient, { API_URL } from "@/lib/httpClient";
@@ -7,7 +7,7 @@ import { toPng } from "html-to-image";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Download, ImageIcon, Loader2 } from "lucide-react";
+import { Download, ImageIcon, Loader2, Printer } from "lucide-react";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
 import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols, normalizeMatrixTableGeometry } from "@/lib/matrixTableUtils";
@@ -445,6 +445,9 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
       );
     }
 
+    const isDenseVertical = !isScreen && (tbl.rows?.length || 0) > 20;
+    const verticalPad = isDenseVertical ? "py-0.5 px-1" : "py-1.5 px-1";
+
     return (
       <div
         key={tbl.id}
@@ -501,7 +504,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         <th
                           key={col.id}
                           style={{ width: colPercentages[colIdx] }}
-                          className={`py-1.5 px-1 border ${
+                          className={`${verticalPad} border ${
                             isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
                           } ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
                         >
@@ -538,7 +541,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                             key={col.id}
                             rowSpan={2}
                             style={{ width: colIdx >= 0 ? colPercentages[colIdx] : undefined }}
-                            className={`py-1.5 px-1 border ${
+                            className={`${verticalPad} border ${
                               isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
                             } align-middle ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
                           >
@@ -554,7 +557,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                           <th
                             key={col.id}
                             style={{ width: colIdx >= 0 ? colPercentages[colIdx] : undefined }}
-                            className={`py-1.5 px-1 border ${
+                            className={`${verticalPad} border ${
                               isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
                             } ${getTextAlignClass(col.align || 'center')} break-words whitespace-normal leading-tight`}
                           >
@@ -576,7 +579,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                       <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
                         <td
                           colSpan={tbl.columns.length}
-                          className={`py-1.5 px-2 border ${
+                          className={`${verticalPad} border ${
                             isScreen
                               ? "border-border/70 font-semibold text-left text-foreground bg-muted/20 text-xs"
                               : "border border-black font-semibold text-left text-black bg-slate-50/50"
@@ -611,7 +614,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                               key={col.id}
                               colSpan={span > 1 ? span : undefined}
                               rowSpan={rSpan > 1 ? rSpan : undefined}
-                              className={`py-1 px-1 border ${
+                              className={`${verticalPad} border ${
                                 isScreen ? "border-border/70 text-foreground bg-muted/10" : "border border-black text-black bg-slate-50/50"
                               } leading-snug whitespace-pre-line font-semibold text-center align-middle`}
                             >
@@ -627,7 +630,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                               key={col.id}
                               colSpan={span > 1 ? span : undefined}
                               rowSpan={rSpan > 1 ? rSpan : undefined}
-                              className={`py-1 px-1 border ${
+                              className={`${verticalPad} border ${
                                 isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
                               } leading-snug whitespace-pre-line font-semibold text-center align-middle`}
                             >
@@ -647,7 +650,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         return (
                           <td
                             key={col.id}
-                            className={`py-1.5 px-1 border ${
+                            className={`${verticalPad} border ${
                               isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
                             } leading-tight break-words whitespace-normal ${getTextAlignClass(col.align || 'center')}`}
                           >
@@ -785,101 +788,107 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                   {String(matrixBlock.title).trim()}
                 </div>
               )}
-              <div
-                className={isScreen ? "w-full overflow-x-auto" : "w-full overflow-hidden"}
-                style={!isScreen ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
-              >
-                <table
-                  className={`w-full border-collapse text-center font-mono ${isScreen ? "text-xs" : "text-[7.5px]"}`}
-                  style={{ tableLayout: "fixed" }}
-                >
-                  <thead>
-                    {matrixBlock.headers?.map((hRow: any[], hIdx: number) => {
-                      const cells = Array.isArray(hRow) ? hRow : [hRow];
-                      let colPointer = 0;
-                      return (
-                        <tr key={hIdx} className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
-                          {cells.map((rawCell: any, cIdx: number) => {
-                            while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
-                              colPointer++;
-                            }
-                            const actualCol = colPointer;
-                            const cell = normalizeMatrixCell(rawCell);
-                            colPointer += (cell.colSpan || 1);
+              {(() => {
+                const isDenseMatrix = !isScreen && (matrixBlock.rows?.length || 0) > 20;
+                const matrixPad = isDenseMatrix ? "py-0.5 px-1" : "py-1.5 px-1";
+                return (
+                  <div
+                    className={isScreen ? "w-full overflow-x-auto" : "w-full overflow-hidden"}
+                    style={!isScreen ? { scrollbarWidth: "none", msOverflowStyle: "none" } : undefined}
+                  >
+                    <table
+                      className={`w-full border-collapse text-center font-mono ${isScreen ? "text-xs" : "text-[7.5px]"}`}
+                      style={{ tableLayout: "fixed" }}
+                    >
+                      <thead>
+                        {matrixBlock.headers?.map((hRow: any[], hIdx: number) => {
+                          const cells = Array.isArray(hRow) ? hRow : [hRow];
+                          let colPointer = 0;
+                          return (
+                            <tr key={hIdx} className={isScreen ? "bg-muted/40 font-semibold text-muted-foreground" : "bg-slate-100 font-bold"}>
+                              {cells.map((rawCell: any, cIdx: number) => {
+                                while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
+                                  colPointer++;
+                                }
+                                const actualCol = colPointer;
+                                const cell = normalizeMatrixCell(rawCell);
+                                colPointer += (cell.colSpan || 1);
 
-                            if (actualCol >= totalCols || coveredHeaders.has(`${hIdx}_${actualCol}`)) {
-                              return null;
-                            }
+                                if (actualCol >= totalCols || coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                                  return null;
+                                }
 
-                            return (
-                              <th
-                                key={cIdx}
-                                colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
-                                rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
-                                style={{ textAlign: cell.align || "center" }}
-                                className={`py-1.5 px-1 border ${
-                                  isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
-                                } break-words whitespace-normal leading-tight`}
-                              >
-                                {cell.text}
-                              </th>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
-                  </thead>
-                  <tbody>
-                    {(!matrixBlock.rows || matrixBlock.rows.length === 0) ? (
-                      <tr>
-                        <td
-                          colSpan={totalCols}
-                          className={`py-1.5 px-1 border ${
-                            isScreen ? "border-border/70 text-muted-foreground italic text-center" : "border border-black text-black italic text-center"
-                          } leading-snug`}
-                        >
-                          -
-                        </td>
-                      </tr>
-                    ) : (
-                      matrixBlock.rows.map((row: any[], rIdx: number) => {
-                        const cells = Array.isArray(row) ? row : [row];
-                        let colPointer = 0;
-                        return (
-                          <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
-                            {cells.map((rawCell: any, cIdx: number) => {
-                              while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
-                                colPointer++;
-                              }
-                              const actualCol = colPointer;
-                              const cell = normalizeMatrixCell(rawCell);
-                              colPointer += (cell.colSpan || 1);
-
-                              if (actualCol >= totalCols || coveredRows.has(`${rIdx}_${actualCol}`)) {
-                                return null;
-                              }
-
-                              return (
-                                <td
-                                  key={cIdx}
-                                  colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
-                                  rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
-                                  style={{ textAlign: cell.align || "center" }}
-                                  className={`py-1.5 px-1 border ${
-                                    isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
-                                  } leading-tight break-words whitespace-normal`}
-                                >
-                                  {renderCellContent(cell.text)}
-                                </td>
-                              );
-                            })}
+                                return (
+                                  <th
+                                    key={cIdx}
+                                    colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                    rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                    style={{ textAlign: cell.align || "center" }}
+                                    className={`${matrixPad} border ${
+                                      isScreen ? "border-border/70 text-foreground font-semibold" : "border border-black text-black font-bold"
+                                    } break-words whitespace-normal leading-tight`}
+                                  >
+                                    {cell.text}
+                                  </th>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </thead>
+                      <tbody>
+                        {(!matrixBlock.rows || matrixBlock.rows.length === 0) ? (
+                          <tr>
+                            <td
+                              colSpan={totalCols}
+                              className={`${matrixPad} border ${
+                                isScreen ? "border-border/70 text-muted-foreground italic text-center" : "border border-black text-black italic text-center"
+                              } leading-snug`}
+                            >
+                              -
+                            </td>
                           </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                        ) : (
+                          matrixBlock.rows.map((row: any[], rIdx: number) => {
+                            const cells = Array.isArray(row) ? row : [row];
+                            let colPointer = 0;
+                            return (
+                              <tr key={rIdx} className={isScreen ? "hover:bg-muted/20" : undefined}>
+                                {cells.map((rawCell: any, cIdx: number) => {
+                                  while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
+                                    colPointer++;
+                                  }
+                                  const actualCol = colPointer;
+                                  const cell = normalizeMatrixCell(rawCell);
+                                  colPointer += (cell.colSpan || 1);
+
+                                  if (actualCol >= totalCols || coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                    return null;
+                                  }
+
+                                  return (
+                                    <td
+                                      key={cIdx}
+                                      colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                      rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                      style={{ textAlign: cell.align || "center" }}
+                                      className={`${matrixPad} border ${
+                                        isScreen ? "border-border/70 text-foreground" : "border border-black text-black"
+                                      } leading-tight break-words whitespace-normal`}
+                                    >
+                                      {renderCellContent(cell.text)}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
               {block.footerNote && (
                 <div
                   className={
@@ -978,6 +987,190 @@ let memorySignatoriesCache: any[] | null = null;
 let isFetchingCertConfig = false;
 let isFetchingSignatories = false;
 
+export interface CertificatePageSlice {
+  pageIndex: number;
+  sheetNumber: number;
+  start: number;
+  end: number;
+  isFirst: boolean;
+  isLast: boolean;
+}
+
+export function calculatePageSlices(totalDataRows: number, hasDiagram: boolean = false): CertificatePageSlice[] {
+  if (totalDataRows <= 0) {
+    return [{ pageIndex: 0, sheetNumber: 1, start: 0, end: 0, isFirst: true, isLast: true }];
+  }
+
+  // Page 1 single-page capacity: fits all header metadata, DUC, env, traceability, table, uncertainty, remarks, and signatures.
+  const singleCapacity = hasDiagram ? 14 : 26;
+  if (totalDataRows <= singleCapacity) {
+    return [{
+      pageIndex: 0,
+      sheetNumber: 1,
+      start: 0,
+      end: totalDataRows,
+      isFirst: true,
+      isLast: true,
+    }];
+  }
+
+  // Multi-page capacities:
+  // Sheet 1: has full header, metadata, DUC, procedure & env, traceability, diagram, and continuation note.
+  const p1Capacity = hasDiagram ? 24 : 37;
+  // Intermediate sheets (2 to N-1): only continuation header banner and 1-row metadata bar.
+  const continuationCapacity = 50;
+  // Final sheet: continuation header, 1-row metadata bar, plus uncertainty, remarks, and 3 signatures.
+  const finalSheetCapacity = 36;
+
+  // 2-page range: fits within Sheet 1 + Final Sheet (up to 73 rows without diagram)
+  if (totalDataRows <= p1Capacity + finalSheetCapacity) {
+    const s1 = totalDataRows <= p1Capacity + 12
+      ? Math.ceil(totalDataRows / 2)
+      : Math.min(p1Capacity, totalDataRows - 15);
+    return [
+      { pageIndex: 0, sheetNumber: 1, start: 0, end: s1, isFirst: true, isLast: false },
+      { pageIndex: 1, sheetNumber: 2, start: s1, end: totalDataRows, isFirst: false, isLast: true },
+    ];
+  }
+
+  const slices: CertificatePageSlice[] = [];
+  let currentStart = 0;
+  let remaining = totalDataRows;
+
+  // Sheet 1
+  const p1Count = Math.min(remaining, p1Capacity);
+  slices.push({
+    pageIndex: 0,
+    sheetNumber: 1,
+    start: currentStart,
+    end: currentStart + p1Count,
+    isFirst: true,
+    isLast: false,
+  });
+  currentStart += p1Count;
+  remaining -= p1Count;
+
+  // Intermediate sheets
+  while (remaining > finalSheetCapacity) {
+    if (remaining <= finalSheetCapacity + 14) {
+      const half = Math.ceil(remaining / 2);
+      slices.push({
+        pageIndex: slices.length,
+        sheetNumber: slices.length + 1,
+        start: currentStart,
+        end: currentStart + half,
+        isFirst: false,
+        isLast: false,
+      });
+      currentStart += half;
+      remaining -= half;
+      break;
+    }
+
+    const pCount = Math.min(remaining, continuationCapacity);
+    const remainingAfter = remaining - pCount;
+    if (remainingAfter > 0 && remainingAfter < 10) {
+      const balanced = Math.ceil(remaining / 2);
+      slices.push({
+        pageIndex: slices.length,
+        sheetNumber: slices.length + 1,
+        start: currentStart,
+        end: currentStart + balanced,
+        isFirst: false,
+        isLast: false,
+      });
+      currentStart += balanced;
+      remaining -= balanced;
+      break;
+    }
+
+    slices.push({
+      pageIndex: slices.length,
+      sheetNumber: slices.length + 1,
+      start: currentStart,
+      end: currentStart + pCount,
+      isFirst: false,
+      isLast: false,
+    });
+    currentStart += pCount;
+    remaining -= pCount;
+  }
+
+  // Final sheet
+  if (remaining > 0) {
+    slices.push({
+      pageIndex: slices.length,
+      sheetNumber: slices.length + 1,
+      start: currentStart,
+      end: totalDataRows,
+      isFirst: false,
+      isLast: true,
+    });
+  } else if (slices.length > 0) {
+    slices[slices.length - 1].isLast = true;
+  }
+
+  return slices;
+}
+
+export function getBlocksForPage(
+  blocks: any[] | undefined,
+  slice: CertificatePageSlice
+): any[] | undefined {
+  if (!blocks || !Array.isArray(blocks) || blocks.length === 0) return undefined;
+
+  return blocks
+    .map((block) => {
+      if (
+        (block.type === "table_grid" ||
+          block.type === "table" ||
+          block.type === "matrix_table" ||
+          Array.isArray(block.rows)) &&
+        block.rows
+      ) {
+        return {
+          ...block,
+          rows: block.rows.slice(slice.start, slice.end),
+        };
+      }
+
+      if (block.type === "split_row" && Array.isArray(block.children)) {
+        return {
+          ...block,
+          children: block.children.map((child: any) => {
+            if (
+              child &&
+              (child.type === "table_grid" ||
+                child.type === "table" ||
+                child.type === "matrix_table" ||
+                Array.isArray(child.rows)) &&
+              child.rows
+            ) {
+              return {
+                ...child,
+                rows: child.rows.slice(slice.start, slice.end),
+              };
+            }
+            if ((child?.type === "diagram_block" || child?.type === "diagram") && !slice.isFirst) {
+              return { type: "blank" };
+            }
+            return child;
+          }),
+        };
+      }
+
+      if ((block.type === "diagram" || block.type === "diagram_block") && !slice.isFirst) {
+        return null;
+      }
+      if (block.type === "notes" && !slice.isLast) {
+        return null;
+      }
+
+      return block;
+    })
+    .filter(Boolean);
+}
+
 /**
  * Live HTML preview matching standard NABL calibration certificate layout.
  * Formatted according to calibration-certificate-01-3487339.jpg layout.
@@ -994,6 +1187,7 @@ export function CertificatePreview({
   const [downloadingPng, setDownloadingPng] = useState(false);
   const [logoError, setLogoError] = useState(false);
   const certRef = useRef<HTMLDivElement>(null);
+  const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const isPreviewMode =
     Boolean(isTemplatePreview) ||
@@ -1188,19 +1382,21 @@ export function CertificatePreview({
     ((calibration as any).template as any)?.layout_blocks;
 
   // Helper to render Calibration Results
-  const renderCalibrationResult = () => {
-    if (layoutBlocks && layoutBlocks.length > 0) {
-      return <CanvasBlocksRenderer blocks={layoutBlocks} />;
+  const renderCalibrationResult = (customPoints?: any[], customBlocks?: any[]) => {
+    const activeBlocks = customBlocks !== undefined ? customBlocks : layoutBlocks;
+    if (activeBlocks && activeBlocks.length > 0) {
+      return <CanvasBlocksRenderer blocks={activeBlocks} />;
     }
 
-    if (!points || points.length === 0) return null;
-    const hasDescending = points.some(
+    const activePoints = customPoints !== undefined ? customPoints : points;
+    if (!activePoints || activePoints.length === 0) return null;
+    const hasDescending = activePoints.some(
       (pt: any) =>
         pt.descending_reading !== undefined &&
         pt.descending_reading !== null &&
         pt.descending_reading !== 0,
     );
-    const unit = points[0]?.unit || "mm";
+    const unit = activePoints[0]?.unit || points[0]?.unit || "mm";
 
     const stdColConfig = (calibration as any).standard_columns_config || {};
     const customColDefs: any[] = (calibration as any).custom_columns || (calibration as any).template?.custom_columns || [];
@@ -1447,7 +1643,7 @@ export function CertificatePreview({
             )}
           </thead>
           <tbody>
-            {points.map((pt: any, idx: number) => (
+            {activePoints.map((pt: any, idx: number) => (
               <tr
                 key={idx}
                 className="text-center border-b border-black font-mono"
@@ -1528,163 +1724,145 @@ export function CertificatePreview({
             ))}
           </tbody>
         </table>
-        {calibration.uncertainty && calibration.uncertainty.trim() ? (
-          <div className={`p-1 text-[8px] font-bold text-center bg-slate-50 mt-auto border-t`}>
-            Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of
-            confidence Level = {formatUncertainty(calibration.uncertainty, unit)}
-          </div>
-        ) : null}
       </div>
     );
   };
 
-  const numPoints = points.length;
-  const isCompact = numPoints > 7;
-  const totalPages = numPoints <= 21 ? 1 : 1 + Math.ceil((numPoints - 21) / 35);
-  const sheetNoText = `1 of ${totalPages}`;
-
-  const handleDownloadPng = async () => {
-    if (!certRef.current) return;
-    try {
-      setDownloadingPng(true);
-      toast.info("Generating high quality PNG image...");
-
-      if (document.fonts) {
-        await document.fonts.ready;
+  const totalDataRows = useMemo(() => {
+    if (layoutBlocks && Array.isArray(layoutBlocks) && layoutBlocks.length > 0) {
+      const tableBlock = layoutBlocks.find(
+        (b: any) => b && (b.type === "table_grid" || b.type === "table" || (Array.isArray(b.rows) && b.rows.length > 0))
+      );
+      if (tableBlock && Array.isArray(tableBlock.rows)) {
+        return tableBlock.rows.length;
       }
-
-      const certElement = certRef.current;
-      certElement.classList.add("exporting-cert-png");
-      await new Promise((resolve) => setTimeout(resolve, 80));
-
-      const targetWidth = 794;
-      const targetHeight = Math.ceil(Math.max(certElement.scrollHeight, certElement.offsetHeight)) + 4;
-
-      const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
-      const dataUrl = await toPng(certElement, {
-        quality: 1.0,
-        pixelRatio: 2, // 2x high resolution: 1588px width, zero clipping
-        width: targetWidth,
-        height: targetHeight,
-        style: {
-          width: `${targetWidth}px`,
-          minWidth: `${targetWidth}px`,
-          maxWidth: `${targetWidth}px`,
-          height: "auto",
-          minHeight: `${targetHeight}px`,
-          margin: "0",
-          padding: "0",
-          left: "0",
-          top: "0",
-          position: "static",
-          transform: "none",
-          boxShadow: "none",
-          borderRadius: "0",
-          border: "none",
-          overflow: "visible",
-        },
-        backgroundColor: "#ffffff",
-        cacheBust: false,
-        imagePlaceholder: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-        filter: (domNode) => {
-          if (domNode instanceof HTMLImageElement) {
-            // Exclude broken, errored, hidden, or unrendered images from being cloned
-            if (
-              domNode.style.display === "none" ||
-              domNode.getAttribute("data-img-error") === "true" ||
-              (domNode.complete && domNode.naturalWidth === 0) ||
-              !domNode.getAttribute("src")
-            ) {
-              return false;
-            }
-          }
-          return true;
-        },
-      });
-
-      saveAs(dataUrl, `Certificate-${certNum}.png`);
-      toast.success("High quality PNG certificate downloaded successfully!");
-    } catch (err) {
-      console.error("Failed to export certificate image", err);
-      toast.error("Failed to generate PNG certificate image");
-    } finally {
-      if (certRef.current) {
-        certRef.current.classList.remove("exporting-cert-png");
-      }
-      setDownloadingPng(false);
     }
+    return points.length;
+  }, [layoutBlocks, points]);
+
+  const hasDiagram = useMemo(() => {
+    const diag =
+      calibration.diagram_image ||
+      (calibration.instrument as any)?.custom_parameters?.diagram_image ||
+      ((calibration as any).template as any)?.diagram_image;
+    if (diag && typeof diag === "string" && diag.trim()) return true;
+
+    const blocks =
+      (calibration as any).layout_blocks ||
+      ((calibration as any).template as any)?.layout_blocks;
+    if (Array.isArray(blocks)) {
+      return blocks.some(
+        (b: any) =>
+          (b?.type === "diagram" || b?.type === "diagram_block" || (b?.type === "split_row" && b?.children?.some((c: any) => c?.type === "diagram" || c?.type === "diagram_block"))) &&
+          (b?.imageUrl || b?.image || b?.children?.some((c: any) => c?.imageUrl || c?.image))
+      );
+    }
+    return false;
+  }, [calibration]);
+
+  const pageSlices = useMemo(() => {
+    return calculatePageSlices(totalDataRows, hasDiagram);
+  }, [totalDataRows, hasDiagram]);
+
+  const totalPages = pageSlices.length;
+  const isCompact = totalDataRows > 7;
+
+  // ── Render Helpers ──
+  const renderWatermark = () => {
+    if (calibration.approval_status === "Approved") return null;
+    return (
+      <div
+        className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-10"
+        style={{ mixBlendMode: "multiply" }}
+      >
+        <span
+          className="text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg py-3 px-6 rounded-xl"
+          style={{
+            color: "rgba(239, 68, 68, 0.08)",
+            borderColor: "rgba(239, 68, 68, 0.12)",
+            borderWidth: "3px",
+            borderStyle: "solid",
+          }}
+        >
+          {isPreviewMode
+            ? "TEMPLATE PREVIEW"
+            : calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"
+            ? "REVIEWED - PENDING FINAL APPROVAL"
+            : "DRAFT - PENDING REVIEW"}
+        </span>
+      </div>
+    );
   };
 
-  return (
-    <div className="flex flex-col items-center w-full max-w-full overflow-x-auto pb-4">
-      {/* Action Toolbar */}
-      {showDownloadPng !== false && (
-        <div className="w-[794px] shrink-0 max-w-full flex justify-end items-center gap-2 mb-2.5 print:hidden">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleDownloadPng}
-            disabled={downloadingPng}
-            className="h-8 gap-2 text-xs font-bold bg-white dark:bg-slate-900 border-primary/40 hover:bg-primary/5 hover:border-primary text-primary shadow-xs transition-all cursor-pointer"
-          >
-            {downloadingPng ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-            ) : (
-              <ImageIcon className="w-3.5 h-3.5 text-primary" />
-            )}
-            <span>{downloadingPng ? "Exporting High-Res PNG..." : "Download PNG (High Quality)"}</span>
-          </Button>
-        </div>
-      )}
-
-      {/* Main Certificate Sheet */}
-      <div
-        ref={certRef}
-        className="relative bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 min-h-[1123px] overflow-visible print:min-h-[100vh] print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0"
-      >
-        {/* CSS rules for zero scrollbars & clean export */}
-        <style>{`
-          .exporting-cert-png,
-          .exporting-cert-png * {
-            scrollbar-width: none !important;
-            -ms-overflow-style: none !important;
-          }
-          .exporting-cert-png *::-webkit-scrollbar {
-            display: none !important;
-            width: 0 !important;
-            height: 0 !important;
-          }
-          .exporting-cert-png div[class*="overflow-x-auto"],
-          .exporting-cert-png div[class*="overflow-auto"],
-          .exporting-cert-png div[class*="overflow-hidden"] {
-            overflow: visible !important;
-          }
-        `}</style>
-        {/* Dynamic Watermark for Unapproved Draft / Pending Approvals / Template Preview */}
-        {calibration.approval_status !== "Approved" && (
-          <div
-            className="absolute inset-0 pointer-events-none flex items-center justify-center select-none overflow-hidden z-10"
-            style={{ mixBlendMode: "multiply" }}
-          >
-            <span
-              className="text-4xl font-black uppercase tracking-widest -rotate-45 text-center leading-relaxed max-w-lg py-3 px-6 rounded-xl"
-              style={{
-                color: "rgba(239, 68, 68, 0.08)",
-                borderColor: "rgba(239, 68, 68, 0.12)",
-                borderWidth: "3px",
-                borderStyle: "solid",
-              }}
-            >
-              {isPreviewMode
-                ? "TEMPLATE PREVIEW"
-                : calibration.approval_status === "Reviewed" || calibration.approval_status === "Pending Approval"
-                ? "REVIEWED - PENDING FINAL APPROVAL"
-                : "DRAFT - PENDING REVIEW"}
-            </span>
+  const renderHeaderBanner = (isContinuation: boolean = false) => {
+    if (isContinuation) {
+      return (
+        <div
+          className="p-2 text-black w-full"
+          style={{ backgroundColor: headerBgColor }}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 max-w-[200px]">
+              {companyLogoPath && !logoError &&
+                (headerDisplayMode === "logo" ||
+                  headerDisplayMode === "both") && (
+                  <img
+                    src={getCompanyLogoUrl(companyLogoPath)}
+                    alt="Logo"
+                    crossOrigin="anonymous"
+                    className="max-h-8 w-auto object-contain"
+                    onError={(e) => {
+                      const imgEl = e.currentTarget as HTMLImageElement;
+                      imgEl.style.display = "none";
+                      imgEl.setAttribute("data-img-error", "true");
+                      setLogoError(true);
+                    }}
+                  />
+                )}
+              {(headerDisplayMode === "name" ||
+                headerDisplayMode === "both" ||
+                !companyLogoPath ||
+                logoError) && (
+                <div>
+                  <h1 className="text-[11px] font-extrabold text-black uppercase leading-tight">
+                    {headerCompanyName}
+                  </h1>
+                  <p className="text-[7px] font-bold text-black tracking-wider">
+                    {headerCompanySubtitle}
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="text-center flex-1">
+              <h2 className="text-[16px] font-black tracking-tight uppercase text-white leading-none">
+                CALIBRATION CERTIFICATE - CONTINUATION SHEET
+              </h2>
+            </div>
+            <div className="shrink-0 min-w-[140px] flex justify-end">
+              {docNo ? (
+                <div className="text-right text-black min-w-[140px]">
+                  <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                    Doc.No : <span className="font-extrabold">{docNo}</span>
+                  </div>
+                  <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                    Cert.No : <span className="font-extrabold">{calibration.certificate_number || "—"}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-right text-black min-w-[120px]">
+                  <div className="text-[7.5px] font-bold tracking-tight whitespace-nowrap">
+                    Cert.No : <span className="font-extrabold">{calibration.certificate_number || "—"}</span>
+                  </div>
+                  <div className="text-[8px] font-black tracking-tight whitespace-nowrap">{headerRightBoxText2}</div>
+                </div>
+              )}
+            </div>
           </div>
-        )}
-      {/* ── 1. HEADER SECTION (Full Width Edge-to-Edge Banner) ── */}
+        </div>
+      );
+    }
+
+    return (
       <div
         className="p-2.5 text-black w-full"
         style={{ backgroundColor: headerBgColor }}
@@ -1745,541 +1923,1058 @@ export function CertificatePreview({
           </div>
         </div>
       </div>
+    );
+  };
 
-      {/* ── 2. BODY CONTENT SECTION ── */}
-      <div className="p-2.5 flex flex-col flex-1">
-        <div
-          className={`border border-black flex flex-col flex-1 ${isCompact ? "p-1.5 text-[8.5px]" : "p-2 text-[9.5px]"}`}
-          style={{ gap: `${Math.max(2, (Number(certConfig?.tableGap) || 2.5) * 1.33)}px` }}
-        >
-          {/* Top Certificate Metadata Grid */}
-          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
-            <thead>
-              <tr className="bg-slate-100 border-b border-black text-center font-bold">
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration Location</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration On</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Next Calibration Due</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certificate No.:</th>
-                {calibration.ulr_number && (
-                  <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
-                )}
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
-                <th className={isCompact ? "p-0.5" : "p-1"}>Sheet No.</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="text-center font-semibold">
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-black`}>
-                  {inst?.calibration_source || inst?.location || "Permanent Laboratory"}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  {fmtDate(calibration.calibration_date)}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  {fmtDate(calibration.next_calibration_date)}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold`}>
-                  {calibration.certificate_number || "—"}
-                </td>
-                {calibration.ulr_number && (
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-slate-800`}>
-                    {calibration.ulr_number}
-                  </td>
-                )}
-                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  {fmtDate(
-                    calibration.certificate_issue_date ||
-                      calibration.calibration_date,
-                  )}
-                </td>
-                <td className={isCompact ? "p-0.5" : "p-1"}>{sheetNoText}</td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Description & Identification (4 Columns / 2 Rows) */}
-          <div className="border border-black">
-            <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black text-center uppercase`}>
-              Description & Identification
-            </div>
-            <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
-              <tbody>
-                {/* Row 1: Instrument (DUC) | Make | Range | Serial No */}
-                <tr className="border-b border-black">
-                  <td className="w-[26%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Instrument (DUC)</div>
-                    <div className="font-bold truncate">{instrumentName || inst?.name || "-"}</div>
-                  </td>
-                  <td className="w-[30%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Make</div>
-                    <div className="font-bold truncate">{inst?.make || "-"}</div>
-                  </td>
-                  <td className="w-[23%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">{rangeLabel}</div>
-                    <div className="font-bold truncate">{inst?.range || "-"}</div>
-                  </td>
-                  <td className="w-[21%] p-1 overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Serial No.</div>
-                    <div className="font-bold truncate">{inst?.serial_no || "-"}</div>
-                  </td>
-                </tr>
-                {/* Row 2: Least Count | ID No | Instrument Cond | Location */}
-                <tr>
-                  <td className="w-[26%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
-                    <div className="font-bold truncate">{inst?.least_count || "-"}</div>
-                  </td>
-                  <td className="w-[30%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">ID No.</div>
-                    <div className="font-bold truncate">{inst?.id_code || "-"}</div>
-                  </td>
-                  <td className="w-[23%] p-1 border-r border-black overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Instrument Cond.</div>
-                    <div className="font-bold truncate">SATISFACTORY</div>
-                  </td>
-                  <td className="w-[21%] p-1 overflow-hidden">
-                    <div className="font-bold text-slate-600 text-[8px]">Location</div>
-                    <div className="font-bold truncate">{inst?.location || "Permanent Laboratory"}</div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          {/* Procedure & Environmental Conditions Table */}
-          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
-            <thead>
-              <tr className="bg-slate-100 border-b border-black font-bold text-left">
-                <th className={`w-[26%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No, Name &amp; Rev/Date</th>
-                <th className={`w-[30%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
-                <th className={`w-[23%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
-                <th className={`w-[21%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-black">
-                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  <div className="font-bold text-black leading-tight text-[8px] mb-0.5">
-                    {procedureName || "-"}
-                  </div>
-                  {procedureNo && (
-                    <div className="font-semibold text-slate-800 dark:text-slate-200 leading-tight text-[7.5px] mt-0.5">
-                      Proc No: {procedureNo}
-                    </div>
-                  )}
-                  {(procedureRev || procedureDate) && (
-                    <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
-                      {[procedureRev ? `Rev-${procedureRev.replace(/^rev-?/i, "")}` : "", procedureDate ? `dated ${procedureDate}` : ""].filter(Boolean).join(" ")}
-                    </div>
-                  )}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  {acceptanceCriteriaDocNo || acceptanceCriteriaReference ? (
-                    <>
-                      <div className="font-semibold leading-tight text-[7.5px]">
-                        Doc.No.: {acceptanceCriteriaDocNo || acceptanceCriteriaReference}
-                      </div>
-                      {(acceptanceCriteriaRev || acceptanceCriteriaDate) && (
-                        <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
-                          {[acceptanceCriteriaRev ? `Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, "")}` : "", acceptanceCriteriaDate ? `dated ${acceptanceCriteriaDate}` : ""].filter(Boolean).join(" ")}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-slate-600 font-medium leading-tight text-[7.5px]">
-                      {acceptanceCriteriaText || "-"}
-                    </div>
-                  )}
-                </td>
-                <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
-                </td>
-                <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
-                  {(calibration as any).discipline || "DIMENSION (Basic Measuring Instrument, Gauge etc)"}
-                </td>
-              </tr>
-              <tr>
-                <td colSpan={4} className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"} font-medium`}>
-                  <span className="font-bold">Environmental Conditions</span> : Temperature at {env.temperature || "-"}° C RH {env.humidity || "-"} %
-                  {Boolean(env.soaking_time || env.soaking_start_time || env.soaking_end_time) && (
-                    <span className="ml-3">
-                      | <span className="font-bold">Soaking Details:</span> {env.soaking_start_time && `Start: ${env.soaking_start_time} `}
-                      {env.soaking_end_time && `| End: ${env.soaking_end_time} `}
-                      {env.soaking_time && `| Soaking Time: ${env.soaking_time}`}
-                    </span>
-                  )}
-                  {Boolean((env as any).receipt_condition || (calibration as any).receipt_condition) && (
-                    <span className="ml-3">
-                      | <span className="font-bold">Receipt Condition:</span> {String((env as any).receipt_condition || (calibration as any).receipt_condition)}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-
-          {/* Traceability of Master Used */}
-          <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
-            <thead>
-              <tr>
-                <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-center border-b border-black`}>
-                  TRACEABILITY OF MASTER USED
-                </th>
-              </tr>
-              <tr className="bg-slate-100 border-b border-black font-bold text-center">
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  Instrument Desc.
-                </th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                  Sr No / Id. No.
-                </th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
-                <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
-                <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {calibration.reference_standards?.length > 0 ? (
-                calibration.reference_standards.map(
-                  (ref: any, idx: number) => (
-                    <tr key={idx} className="text-center border-b border-black">
-                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                        {ref.name || ref.instrument_desc || ref.description || "-"}
-                      </td>
-                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                        {ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || "-"}
-                      </td>
-                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                        {ref.id || ref.id_code || ref.serial_no || ref.sr_no || "-"}
-                      </td>
-                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                        {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
-                      </td>
-                      <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                        {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
-                      </td>
-                      <td className={isCompact ? "p-0.5" : "p-1"}>
-                        {(ref.agency && ref.agency.trim()) ? ref.agency.trim() : "-"}
-                      </td>
-                    </tr>
-                  ),
-                )
-              ) : (
-                <tr className="text-center border-b border-black">
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                    {(calibration as any)?.reference_standard_name || "Gauge Block Set"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                    {(calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || "Standard"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                    {(calibration as any)?.reference_standard_id || "REF-01"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                    {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
-                  </td>
-                  <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
-                    {fmtDate((calibration as any)?.reference_standard_validity)}
-                  </td>
-                  <td className={isCompact ? "p-0.5" : "p-1"}>
-                    {((calibration as any)?.reference_standard_agency && (calibration as any).reference_standard_agency.trim()) ? (calibration as any).reference_standard_agency.trim() : "-"}
-                  </td>
-                </tr>
-              )}
-
-            </tbody>
-          </table>
-
-          {/* Optional Diagram / Schematic Image */}
-          {(() => {
-            let diagramImage: string | null = null;
-            if (calibration.diagram_image && typeof calibration.diagram_image === "string" && calibration.diagram_image.trim()) {
-              diagramImage = calibration.diagram_image;
-            } else if ((calibration.instrument as any)?.custom_parameters?.diagram_image && typeof (calibration.instrument as any).custom_parameters.diagram_image === "string" && (calibration.instrument as any).custom_parameters.diagram_image.trim()) {
-              diagramImage = (calibration.instrument as any).custom_parameters.diagram_image;
-            } else if (((calibration as any).template as any)?.diagram_image && typeof ((calibration as any).template as any).diagram_image === "string" && ((calibration as any).template as any).diagram_image.trim()) {
-              diagramImage = ((calibration as any).template as any).diagram_image;
-            }
-            if (!diagramImage || (typeof diagramImage === "string" && !diagramImage.trim())) return null;
-
-            const diagramWidth =
-              calibration.diagram_image_width ||
-              ((calibration as any).template as any)?.diagram_image_width ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_width ||
-              300;
-            const diagramHeight =
-              calibration.diagram_image_height ||
-              ((calibration as any).template as any)?.diagram_image_height ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_height ||
-              140;
-            const diagramAlignment =
-              calibration.diagram_image_alignment ||
-              ((calibration as any).template as any)?.diagram_image_alignment ||
-              (calibration.instrument as any)?.custom_parameters?.diagram_image_alignment ||
-              "center";
-
-            return (
-              <div
-                className={`w-full border border-black bg-white p-1.5 flex ${
-                  diagramAlignment === "left"
-                    ? "justify-start"
-                    : diagramAlignment === "right"
-                    ? "justify-end"
-                    : "justify-center"
-                } items-center`}
-              >
-                <img
-                  src={diagramImage}
-                  alt="Calibration Diagram"
-                  crossOrigin="anonymous"
-                  style={{
-                    width: `${diagramWidth}px`,
-                    maxWidth: "100%",
-                    maxHeight: `${diagramHeight}px`,
-                    objectFit: "contain",
-                  }}
-                  className="block"
-                  onError={(e) => {
-                    const imgEl = e.currentTarget as HTMLImageElement;
-                    imgEl.style.display = "none";
-                    imgEl.setAttribute("data-img-error", "true");
-                  }}
-                />
-              </div>
-            );
-          })()}
-
-          {/* Calibration Result */}
-          {renderCalibrationResult()}
-
-          {/* Remarks Section */}
-          {Boolean(calibration.remarks && typeof calibration.remarks === "string" && calibration.remarks.trim()) && (
-            <div
-              className={`border border-black bg-white ${
-                isCompact ? "p-1 px-1.5 mb-1 text-[7.5px]" : "p-1.5 px-2 mb-1.5 text-[8.5px]"
-              } leading-normal text-left`}
-            >
-              <span className="font-bold text-black uppercase tracking-wider block text-[7.5px] mb-0.5">
-                Remarks / Notes:
-              </span>
-              <div className="font-medium text-black whitespace-pre-line leading-relaxed font-sans">
-                {calibration.remarks.trim()}
-              </div>
-            </div>
+  const renderFullMetadataTable = (sheetNoStr: string) => (
+    <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
+      <thead>
+        <tr className="bg-slate-100 border-b border-black text-center font-bold">
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration Location</th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Calibration On</th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Next Calibration Due</th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certificate No.:</th>
+          {calibration.ulr_number && (
+            <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>ULR No.</th>
           )}
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Certi Issue Date</th>
+          <th className={isCompact ? "p-0.5" : "p-1"}>Sheet No.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr className="text-center font-semibold">
+          <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-black`}>
+            {inst?.calibration_source || inst?.location || "Permanent Laboratory"}
+          </td>
+          <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+            {fmtDate(calibration.calibration_date)}
+          </td>
+          <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+            {fmtDate(calibration.next_calibration_date)}
+          </td>
+          <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold`}>
+            {calibration.certificate_number || "—"}
+          </td>
+          {calibration.ulr_number && (
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"} font-bold text-slate-800`}>
+              {calibration.ulr_number}
+            </td>
+          )}
+          <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+            {fmtDate(
+              calibration.certificate_issue_date ||
+                calibration.calibration_date,
+            )}
+          </td>
+          <td className={isCompact ? "p-0.5" : "p-1"}>{sheetNoStr}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
 
-          {/* Signature & Authentication Block (3 Columns: Calibrated By | Reviewed By | Approved By) */}
-          {(() => {
-            const isImgUrl = (str?: string) =>
-              !!str && (str.startsWith("data:image") || str.startsWith("http") || str.startsWith("/"));
+  const renderContinuationMetadataBar = (sheetNoStr: string) => (
+    <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[8.5px]"} font-semibold text-center mb-1`}>
+      <thead>
+        <tr className="bg-slate-100 font-bold border-b border-black">
+          <th className="border-r border-black p-0.5">Certificate No.</th>
+          <th className="border-r border-black p-0.5">Instrument (DUC)</th>
+          <th className="border-r border-black p-0.5">ID / Sr No.</th>
+          <th className="border-r border-black p-0.5">Calibration Date</th>
+          <th className="p-0.5">Sheet No.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td className="border-r border-black p-0.5 font-bold">{calibration.certificate_number || "—"}</td>
+          <td className="border-r border-black p-0.5 font-bold truncate max-w-[200px]">{instrumentName || inst?.name || "-"}</td>
+          <td className="border-r border-black p-0.5">{inst?.id_code || inst?.serial_no || "-"}</td>
+          <td className="border-r border-black p-0.5">{fmtDate(calibration.calibration_date)}</td>
+          <td className="p-0.5 font-bold">{sheetNoStr}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
 
-            const isApproved =
-              !isPreviewMode &&
-              (calibration.approval_status === "Approved" ||
-                (calibration as any).approval_status === "APPROVED" ||
-                Boolean((calibration as any).approved_at) ||
-                (Boolean(calibration.approved_by) && calibration.approved_by !== "Pending Approval")) &&
-              Boolean(calibration.approved_by && calibration.approved_by.trim() !== "" && calibration.approved_by !== "Pending Approval");
-
-            const isReviewed =
-              !isPreviewMode &&
-              Boolean(calibration.reviewed_by && calibration.reviewed_by.trim() !== "" && calibration.reviewed_by !== "Pending Review") &&
-              (calibration.approval_status === "Reviewed" ||
-                calibration.approval_status === "Approved" ||
-                (calibration as any).approval_status === "APPROVED" ||
-                Boolean((calibration as any).reviewed_at) ||
-                Boolean((calibration as any).reviewed_by_signature) ||
-                Boolean(calibration.reviewed_by && calibration.reviewed_by !== "Pending Review"));
-
-            const rawCalibratedSig = !isPreviewMode ? (calibration as any).calibrated_by_signature : null;
-            const calibratedSigImg = isPreviewMode
-              ? null
-              : isImgUrl(rawCalibratedSig)
-              ? rawCalibratedSig
-              : ((user?.name === calibration.calibrated_by || user?.id === calibration.calibrated_by) && isImgUrl((user as any)?.signature))
-              ? (user as any).signature
-              : usersList.find(
-                  (u) =>
-                    (u.name === calibration.calibrated_by || u.id === calibration.calibrated_by) &&
-                    isImgUrl(u.signature),
-                )?.signature || null;
-
-            const rawReviewedSig = isReviewed ? (calibration as any).reviewed_by_signature : null;
-            const reviewedSigImg = isReviewed
-              ? (isImgUrl(rawReviewedSig)
-                  ? rawReviewedSig
-                  : ((user?.name === calibration.reviewed_by || user?.id === (calibration as any).reviewed_by_id) && isImgUrl((user as any)?.signature))
-                  ? (user as any).signature
-                  : usersList.find(
-                      (u) =>
-                        (u.name === calibration.reviewed_by ||
-                          u.id === calibration.reviewed_by ||
-                          u.id === (calibration as any).reviewed_by_id) &&
-                        isImgUrl(u.signature),
-                    )?.signature || null)
-              : null;
-
-            const rawApprovedSig = isApproved ? (calibration as any).approved_by_signature : null;
-            const approvedSigImg = isApproved
-              ? (isImgUrl(rawApprovedSig)
-                  ? rawApprovedSig
-                  : ((user?.name === calibration.approved_by || user?.id === (calibration as any).approved_by_id) && isImgUrl((user as any)?.signature))
-                  ? (user as any).signature
-                  : usersList.find(
-                      (u) =>
-                        (u.name === calibration.approved_by ||
-                          u.id === calibration.approved_by ||
-                          u.id === (calibration as any).approved_by_id) &&
-                        isImgUrl(u.signature),
-                    )?.signature || null)
-              : null;
-
-            const sigWidth = Number(certConfig?.signatureImageWidth) || 75;
-            const sigHeight = Number(certConfig?.signatureImageHeight) || 28;
-
-            return (
-              <div className={`border border-black ${isCompact ? "p-1.5 mt-auto" : "p-2 mt-auto"} grid grid-cols-3 gap-2 items-end`}>
-                {/* Column 1: Calibrated By */}
-                <div className="text-center space-y-0.5">
-                  <div
-                    className="flex items-end justify-center"
-                    style={{ minHeight: `${sigHeight * 1.33}px` }}
-                  >
-                    {!isPreviewMode && calibratedSigImg ? (
-                      <img
-                        src={calibratedSigImg}
-                        alt="Signature"
-                        crossOrigin="anonymous"
-                        style={{
-                          maxHeight: `${sigHeight * 1.33}px`,
-                          maxWidth: `${sigWidth * 1.33}px`,
-                        }}
-                        className="object-contain mx-auto"
-                        onError={(e) => {
-                          const imgEl = e.currentTarget as HTMLImageElement;
-                          imgEl.style.display = "none";
-                          imgEl.setAttribute("data-img-error", "true");
-                        }}
-                      />
-                    ) : !isPreviewMode && calibration.calibrated_by ? (
-                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.calibrated_by}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="border-t border-black pt-0.5">
-                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {isPreviewMode ? "Calibrated By" : (calibration.calibrated_by || "Calibrated By")}
-                    </p>
-                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
-                      {calibration.calibrated_by_designation ||
-                        "Calibration Engineer"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Column 2: Reviewed By */}
-                <div className="text-center space-y-0.5">
-                  <div
-                    className="flex items-end justify-center"
-                    style={{ minHeight: `${sigHeight * 1.33}px` }}
-                  >
-                    {!isPreviewMode && isReviewed && reviewedSigImg ? (
-                      <img
-                        src={reviewedSigImg}
-                        alt="Signature"
-                        crossOrigin="anonymous"
-                        style={{
-                          maxHeight: `${sigHeight * 1.33}px`,
-                          maxWidth: `${sigWidth * 1.33}px`,
-                        }}
-                        className="object-contain mx-auto"
-                        onError={(e) => {
-                          const imgEl = e.currentTarget as HTMLImageElement;
-                          imgEl.style.display = "none";
-                          imgEl.setAttribute("data-img-error", "true");
-                        }}
-                      />
-                    ) : !isPreviewMode && isReviewed && calibration.reviewed_by ? (
-                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.reviewed_by}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="border-t border-black pt-0.5">
-                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {isPreviewMode ? "Reviewed By" : (isReviewed ? (calibration.reviewed_by || "Reviewed By") : "Reviewed By")}
-                    </p>
-                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
-                      {calibration.reviewed_by_designation ||
-                        "Quality Head"}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Column 3: Approved By */}
-                <div className="text-center space-y-0.5">
-                  <div
-                    className="flex items-end justify-center"
-                    style={{ minHeight: `${sigHeight * 1.33}px` }}
-                  >
-                    {!isPreviewMode && isApproved && approvedSigImg ? (
-                      <img
-                        src={approvedSigImg}
-                        alt="Signature"
-                        crossOrigin="anonymous"
-                        style={{
-                          maxHeight: `${sigHeight * 1.33}px`,
-                          maxWidth: `${sigWidth * 1.33}px`,
-                        }}
-                        className="object-contain mx-auto"
-                        onError={(e) => {
-                          const imgEl = e.currentTarget as HTMLImageElement;
-                          imgEl.style.display = "none";
-                          imgEl.setAttribute("data-img-error", "true");
-                        }}
-                      />
-                    ) : !isPreviewMode && isApproved && calibration.approved_by ? (
-                      <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
-                        {calibration.approved_by}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="border-t border-black pt-0.5">
-                    <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
-                      {isPreviewMode ? "Approved By" : (isApproved ? (calibration.approved_by || "Approved By") : "Approved By")}
-                    </p>
-                    <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
-                      {calibration.approved_by_designation ||
-                        "Technical Director"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
+  const renderDescriptionAndIdentification = () => (
+    <div className="border border-black">
+      <div className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold border-b border-black text-center uppercase`}>
+        Description &amp; Identification
       </div>
-
-      {/* ── 3. FOOTER SECTION (Full Width Edge-to-Edge Banner at Bottom) ── */}
-      <div
-        className="mt-auto w-full border-t border-black p-1.5 text-[8.5px] text-center space-y-0.5 text-black font-semibold"
-        style={{ backgroundColor: headerBgColor }}
-      >
-        <div className="font-extrabold uppercase text-[9px]">
-          {footerLine1 || "CALIBRATION CENTER :"}
-        </div>
-        <p className="font-bold">
-          {footerLine2 ||
-            ""}
-        </p>
-        <p>
-          {footerLine3 ||
-            "☎ : "}
-        </p>
-      </div>
+      <table className={`w-full border-collapse ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
+        <tbody>
+          {/* Row 1: Instrument (DUC) | Make | Range | Serial No */}
+          <tr className="border-b border-black">
+            <td className="w-[26%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Instrument (DUC)</div>
+              <div className="font-bold truncate">{instrumentName || inst?.name || "-"}</div>
+            </td>
+            <td className="w-[30%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Make</div>
+              <div className="font-bold truncate">{inst?.make || "-"}</div>
+            </td>
+            <td className="w-[23%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">{rangeLabel}</div>
+              <div className="font-bold truncate">{inst?.range || "-"}</div>
+            </td>
+            <td className="w-[21%] p-1 overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Serial No.</div>
+              <div className="font-bold truncate">{inst?.serial_no || "-"}</div>
+            </td>
+          </tr>
+          {/* Row 2: Least Count | ID No | Instrument Cond | Location */}
+          <tr>
+            <td className="w-[26%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
+              <div className="font-bold truncate">{inst?.least_count || "-"}</div>
+            </td>
+            <td className="w-[30%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">ID No.</div>
+              <div className="font-bold truncate">{inst?.id_code || "-"}</div>
+            </td>
+            <td className="w-[23%] p-1 border-r border-black overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Instrument Cond.</div>
+              <div className="font-bold truncate">SATISFACTORY</div>
+            </td>
+            <td className="w-[21%] p-1 overflow-hidden">
+              <div className="font-bold text-slate-600 text-[8px]">Location</div>
+              <div className="font-bold truncate">{inst?.location || "Permanent Laboratory"}</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-  </div>
+  );
+
+  const renderProcedureAndEnv = () => (
+    <table className={`w-full border-collapse border border-black ${isCompact ? "text-[7.5px]" : "text-[8.5px]"}`} style={{ tableLayout: "fixed" }}>
+      <thead>
+        <tr className="bg-slate-100 border-b border-black font-bold text-left">
+          <th className={`w-[26%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Procedure No, Name &amp; Rev/Date</th>
+          <th className={`w-[30%] border-r border-black whitespace-nowrap overflow-hidden ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Acceptance Criteria Doc.No &amp; Rev-Date</th>
+          <th className={`w-[23%] border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Standard Reference</th>
+          <th className={`w-[21%] ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>Discipline</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr className="border-b border-black">
+          <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+            <div className="font-bold text-black leading-tight text-[8px] mb-0.5">
+              {procedureName || "-"}
+            </div>
+            {procedureNo && (
+              <div className="font-semibold text-slate-800 dark:text-slate-200 leading-tight text-[7.5px] mt-0.5">
+                Proc No: {procedureNo}
+              </div>
+            )}
+            {(procedureRev || procedureDate) && (
+              <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                {[procedureRev ? `Rev-${procedureRev.replace(/^rev-?/i, "")}` : "", procedureDate ? `dated ${procedureDate}` : ""].filter(Boolean).join(" ")}
+              </div>
+            )}
+          </td>
+          <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+            {acceptanceCriteriaDocNo || acceptanceCriteriaReference ? (
+              <>
+                <div className="font-semibold leading-tight text-[7.5px]">
+                  Doc.No.: {acceptanceCriteriaDocNo || acceptanceCriteriaReference}
+                </div>
+                {(acceptanceCriteriaRev || acceptanceCriteriaDate) && (
+                  <div className="text-slate-600 font-medium leading-tight text-[7px] mt-0.5">
+                    {[acceptanceCriteriaRev ? `Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, "")}` : "", acceptanceCriteriaDate ? `dated ${acceptanceCriteriaDate}` : ""].filter(Boolean).join(" ")}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="text-slate-600 font-medium leading-tight text-[7.5px]">
+                {acceptanceCriteriaText || "-"}
+              </div>
+            )}
+          </td>
+          <td className={`border-r border-black ${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+            {(calibration as any).standard_reference || calibration.remarks || "Standard calibration per ISO/IEC 17025"}
+          </td>
+          <td className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"}`}>
+            {(calibration as any).discipline || "DIMENSION (Basic Measuring Instrument, Gauge etc)"}
+          </td>
+        </tr>
+        <tr>
+          <td colSpan={4} className={`${isCompact ? "p-0.5 px-1.5" : "p-1 px-1.5"} font-medium`}>
+            <span className="font-bold">Environmental Conditions</span> : Temperature at {env.temperature || "-"}° C RH {env.humidity || "-"} %
+            {Boolean(env.soaking_time || env.soaking_start_time || env.soaking_end_time) && (
+              <span className="ml-3">
+                | <span className="font-bold">Soaking Details:</span> {env.soaking_start_time && `Start: ${env.soaking_start_time} `}
+                {env.soaking_end_time && `| End: ${env.soaking_end_time} `}
+                {env.soaking_time && `| Soaking Time: ${env.soaking_time}`}
+              </span>
+            )}
+            {Boolean((env as any).receipt_condition || (calibration as any).receipt_condition) && (
+              <span className="ml-3">
+                | <span className="font-bold">Receipt Condition:</span> {String((env as any).receipt_condition || (calibration as any).receipt_condition)}
+              </span>
+            )}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  );
+
+  const renderTraceabilityOfMasters = () => (
+    <table className={`w-full border-collapse border border-black ${isCompact ? "text-[8px]" : "text-[9px]"}`}>
+      <thead>
+        <tr>
+          <th colSpan={6} className={`bg-slate-200 text-black ${isCompact ? "text-[8.5px] py-0.5 px-1.5" : "text-[10px] py-0.5 px-2"} font-bold text-center border-b border-black`}>
+            TRACEABILITY OF MASTER USED
+          </th>
+        </tr>
+        <tr className="bg-slate-100 border-b border-black font-bold text-center">
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+            Instrument Desc.
+          </th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Make</th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+            Sr No / Id. No.
+          </th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Cert.No.</th>
+          <th className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>Validity</th>
+          <th className={isCompact ? "p-0.5" : "p-1"}>Cal.Agency</th>
+        </tr>
+      </thead>
+      <tbody>
+        {calibration.reference_standards?.length > 0 ? (
+          calibration.reference_standards.map(
+            (ref: any, idx: number) => (
+              <tr key={idx} className="text-center border-b border-black">
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  {ref.name || ref.instrument_desc || ref.description || "-"}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  {ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || "-"}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  {ref.id || ref.id_code || ref.serial_no || ref.sr_no || "-"}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  {ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/01"}
+                </td>
+                <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+                  {fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity)}
+                </td>
+                <td className={isCompact ? "p-0.5" : "p-1"}>
+                  {(ref.agency && ref.agency.trim()) ? ref.agency.trim() : "-"}
+                </td>
+              </tr>
+            ),
+          )
+        ) : (
+          <tr className="text-center border-b border-black">
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+              {(calibration as any)?.reference_standard_name || "Gauge Block Set"}
+            </td>
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+              {(calibration as any)?.reference_standard_make || (calibration as any)?.instrument?.make || "Standard"}
+            </td>
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+              {(calibration as any)?.reference_standard_id || "REF-01"}
+            </td>
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+              {(calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || "AE/CC/REF/101"}
+            </td>
+            <td className={`border-r border-black ${isCompact ? "p-0.5" : "p-1"}`}>
+              {fmtDate((calibration as any)?.reference_standard_validity)}
+            </td>
+            <td className={isCompact ? "p-0.5" : "p-1"}>
+              {((calibration as any)?.reference_standard_agency && (calibration as any).reference_standard_agency.trim()) ? (calibration as any).reference_standard_agency.trim() : "-"}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+
+  const renderDiagram = () => {
+    let diagramImage: string | null = null;
+    if (calibration.diagram_image && typeof calibration.diagram_image === "string" && calibration.diagram_image.trim()) {
+      diagramImage = calibration.diagram_image;
+    } else if ((calibration.instrument as any)?.custom_parameters?.diagram_image && typeof (calibration.instrument as any).custom_parameters.diagram_image === "string" && (calibration.instrument as any).custom_parameters.diagram_image.trim()) {
+      diagramImage = (calibration.instrument as any).custom_parameters.diagram_image;
+    } else if (((calibration as any).template as any)?.diagram_image && typeof ((calibration as any).template as any).diagram_image === "string" && ((calibration as any).template as any).diagram_image.trim()) {
+      diagramImage = ((calibration as any).template as any).diagram_image;
+    }
+    if (!diagramImage || (typeof diagramImage === "string" && !diagramImage.trim())) return null;
+
+    const diagramWidth =
+      calibration.diagram_image_width ||
+      ((calibration as any).template as any)?.diagram_image_width ||
+      (calibration.instrument as any)?.custom_parameters?.diagram_image_width ||
+      300;
+    const diagramHeight =
+      calibration.diagram_image_height ||
+      ((calibration as any).template as any)?.diagram_image_height ||
+      (calibration.instrument as any)?.custom_parameters?.diagram_image_height ||
+      140;
+    const diagramAlignment =
+      calibration.diagram_image_alignment ||
+      ((calibration as any).template as any)?.diagram_image_alignment ||
+      (calibration.instrument as any)?.custom_parameters?.diagram_image_alignment ||
+      "center";
+
+    return (
+      <div
+        className={`w-full border border-black bg-white p-1.5 flex ${
+          diagramAlignment === "left"
+            ? "justify-start"
+            : diagramAlignment === "right"
+            ? "justify-end"
+            : "justify-center"
+        } items-center`}
+      >
+        <img
+          src={diagramImage}
+          alt="Calibration Diagram"
+          crossOrigin="anonymous"
+          style={{
+            width: `${diagramWidth}px`,
+            maxWidth: "100%",
+            maxHeight: `${diagramHeight}px`,
+            objectFit: "contain",
+          }}
+          className="block"
+          onError={(e) => {
+            const imgEl = e.currentTarget as HTMLImageElement;
+            imgEl.style.display = "none";
+            imgEl.setAttribute("data-img-error", "true");
+          }}
+        />
+      </div>
+    );
+  };
+
+  const renderContinuationNote = (nextSheet: number, total: number) => (
+    <div className="mt-auto py-1 text-center text-[8.5px] font-bold tracking-wider text-slate-600 border-t border-dashed border-slate-300">
+      --- Continued on Sheet {nextSheet} of {total} ---
+    </div>
+  );
+
+  const renderUncertainty = () => {
+    if (!calibration.uncertainty || !calibration.uncertainty.trim()) return null;
+    const unit = points[0]?.unit || "mm";
+    return (
+      <div className={`p-1 text-[8px] font-bold text-center bg-slate-50 border border-black mb-1`}>
+        Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of
+        confidence Level = {formatUncertainty(calibration.uncertainty, unit)}
+      </div>
+    );
+  };
+
+  const renderRemarks = () => {
+    if (!Boolean(calibration.remarks && typeof calibration.remarks === "string" && calibration.remarks.trim())) {
+      return null;
+    }
+    return (
+      <div
+        className={`border border-black bg-white ${
+          isCompact ? "p-1 px-1.5 mb-1 text-[7.5px]" : "p-1.5 px-2 mb-1.5 text-[8.5px]"
+        } leading-normal text-left`}
+      >
+        <span className="font-bold text-black uppercase tracking-wider block text-[7.5px] mb-0.5">
+          Remarks / Notes:
+        </span>
+        <div className="font-medium text-black whitespace-pre-line leading-relaxed font-sans">
+          {calibration.remarks.trim()}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSignatures = () => {
+    const isImgUrl = (str?: string) =>
+      !!str && (str.startsWith("data:image") || str.startsWith("http") || str.startsWith("/"));
+
+    const isApproved =
+      !isPreviewMode &&
+      (calibration.approval_status === "Approved" ||
+        (calibration as any).approval_status === "APPROVED" ||
+        Boolean((calibration as any).approved_at) ||
+        (Boolean(calibration.approved_by) && calibration.approved_by !== "Pending Approval")) &&
+      Boolean(calibration.approved_by && calibration.approved_by.trim() !== "" && calibration.approved_by !== "Pending Approval");
+
+    const isReviewed =
+      !isPreviewMode &&
+      Boolean(calibration.reviewed_by && calibration.reviewed_by.trim() !== "" && calibration.reviewed_by !== "Pending Review") &&
+      (calibration.approval_status === "Reviewed" ||
+        calibration.approval_status === "Approved" ||
+        (calibration as any).approval_status === "APPROVED" ||
+        Boolean((calibration as any).reviewed_at) ||
+        Boolean((calibration as any).reviewed_by_signature) ||
+        Boolean(calibration.reviewed_by && calibration.reviewed_by !== "Pending Review"));
+
+    const rawCalibratedSig = !isPreviewMode ? (calibration as any).calibrated_by_signature : null;
+    const calibratedSigImg = isPreviewMode
+      ? null
+      : isImgUrl(rawCalibratedSig)
+      ? rawCalibratedSig
+      : ((user?.name === calibration.calibrated_by || user?.id === calibration.calibrated_by) && isImgUrl((user as any)?.signature))
+      ? (user as any).signature
+      : usersList.find(
+          (u) =>
+            (u.name === calibration.calibrated_by || u.id === calibration.calibrated_by) &&
+            isImgUrl(u.signature),
+        )?.signature || null;
+
+    const rawReviewedSig = isReviewed ? (calibration as any).reviewed_by_signature : null;
+    const reviewedSigImg = isReviewed
+      ? (isImgUrl(rawReviewedSig)
+          ? rawReviewedSig
+          : ((user?.name === calibration.reviewed_by || user?.id === (calibration as any).reviewed_by_id) && isImgUrl((user as any)?.signature))
+          ? (user as any).signature
+          : usersList.find(
+              (u) =>
+                (u.name === calibration.reviewed_by ||
+                  u.id === calibration.reviewed_by ||
+                  u.id === (calibration as any).reviewed_by_id) &&
+                isImgUrl(u.signature),
+            )?.signature || null)
+      : null;
+
+    const rawApprovedSig = isApproved ? (calibration as any).approved_by_signature : null;
+    const approvedSigImg = isApproved
+      ? (isImgUrl(rawApprovedSig)
+          ? rawApprovedSig
+          : ((user?.name === calibration.approved_by || user?.id === (calibration as any).approved_by_id) && isImgUrl((user as any)?.signature))
+          ? (user as any).signature
+          : usersList.find(
+              (u) =>
+                (u.name === calibration.approved_by ||
+                  u.id === calibration.approved_by ||
+                  u.id === (calibration as any).approved_by_id) &&
+                isImgUrl(u.signature),
+            )?.signature || null)
+      : null;
+
+    const sigWidth = Number(certConfig?.signatureImageWidth) || 75;
+    const sigHeight = Number(certConfig?.signatureImageHeight) || 28;
+
+    return (
+      <div className={`border border-black ${isCompact ? "p-1.5 mt-auto" : "p-2 mt-auto"} grid grid-cols-3 gap-2 items-end`}>
+        {/* Column 1: Calibrated By */}
+        <div className="text-center space-y-0.5">
+          <div
+            className="flex items-end justify-center"
+            style={{ minHeight: `${sigHeight * 1.33}px` }}
+          >
+            {!isPreviewMode && calibratedSigImg ? (
+              <img
+                src={calibratedSigImg}
+                alt="Signature"
+                crossOrigin="anonymous"
+                style={{
+                  maxHeight: `${sigHeight * 1.33}px`,
+                  maxWidth: `${sigWidth * 1.33}px`,
+                }}
+                className="object-contain mx-auto"
+                onError={(e) => {
+                  const imgEl = e.currentTarget as HTMLImageElement;
+                  imgEl.style.display = "none";
+                  imgEl.setAttribute("data-img-error", "true");
+                }}
+              />
+            ) : !isPreviewMode && calibration.calibrated_by ? (
+              <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
+                {calibration.calibrated_by}
+              </span>
+            ) : null}
+          </div>
+          <div className="border-t border-black pt-0.5">
+            <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+              {isPreviewMode ? "Calibrated By" : (calibration.calibrated_by || "Calibrated By")}
+            </p>
+            <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
+              {calibration.calibrated_by_designation ||
+                "Calibration Engineer"}
+            </p>
+          </div>
+        </div>
+
+        {/* Column 2: Reviewed By */}
+        <div className="text-center space-y-0.5">
+          <div
+            className="flex items-end justify-center"
+            style={{ minHeight: `${sigHeight * 1.33}px` }}
+          >
+            {!isPreviewMode && isReviewed && reviewedSigImg ? (
+              <img
+                src={reviewedSigImg}
+                alt="Signature"
+                crossOrigin="anonymous"
+                style={{
+                  maxHeight: `${sigHeight * 1.33}px`,
+                  maxWidth: `${sigWidth * 1.33}px`,
+                }}
+                className="object-contain mx-auto"
+                onError={(e) => {
+                  const imgEl = e.currentTarget as HTMLImageElement;
+                  imgEl.style.display = "none";
+                  imgEl.setAttribute("data-img-error", "true");
+                }}
+              />
+            ) : !isPreviewMode && isReviewed && calibration.reviewed_by ? (
+              <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
+                {calibration.reviewed_by}
+              </span>
+            ) : null}
+          </div>
+          <div className="border-t border-black pt-0.5">
+            <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+              {isPreviewMode ? "Reviewed By" : (isReviewed ? (calibration.reviewed_by || "Reviewed By") : "Reviewed By")}
+            </p>
+            <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
+              {calibration.reviewed_by_designation ||
+                "Quality Head"}
+            </p>
+          </div>
+        </div>
+
+        {/* Column 3: Approved By */}
+        <div className="text-center space-y-0.5">
+          <div
+            className="flex items-end justify-center"
+            style={{ minHeight: `${sigHeight * 1.33}px` }}
+          >
+            {!isPreviewMode && isApproved && approvedSigImg ? (
+              <img
+                src={approvedSigImg}
+                alt="Signature"
+                crossOrigin="anonymous"
+                style={{
+                  maxHeight: `${sigHeight * 1.33}px`,
+                  maxWidth: `${sigWidth * 1.33}px`,
+                }}
+                className="object-contain mx-auto"
+                onError={(e) => {
+                  const imgEl = e.currentTarget as HTMLImageElement;
+                  imgEl.style.display = "none";
+                  imgEl.setAttribute("data-img-error", "true");
+                }}
+              />
+            ) : !isPreviewMode && isApproved && calibration.approved_by ? (
+              <span className={`font-cursive italic text-slate-700 ${isCompact ? "text-[10px]" : "text-xs"}`}>
+                {calibration.approved_by}
+              </span>
+            ) : null}
+          </div>
+          <div className="border-t border-black pt-0.5">
+            <p className={`font-bold ${isCompact ? "text-[8px]" : "text-[9.5px]"}`}>
+              {isPreviewMode ? "Approved By" : (isApproved ? (calibration.approved_by || "Approved By") : "Approved By")}
+            </p>
+            <p className={`${isCompact ? "text-[7.5px]" : "text-[8.5px]"} text-slate-600`}>
+              {calibration.approved_by_designation ||
+                "Technical Director"}
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFooterBanner = () => (
+    <div
+      className="mt-auto w-full border-t border-black p-1.5 text-[8.5px] text-center space-y-0.5 text-black font-semibold"
+      style={{ backgroundColor: headerBgColor }}
+    >
+      <div className="font-extrabold uppercase text-[9px]">
+        {footerLine1 || "CALIBRATION CENTER :"}
+      </div>
+      <p className="font-bold">
+        {footerLine2 || ""}
+      </p>
+      <p>
+        {footerLine3 || "☎ : "}
+      </p>
+    </div>
+  );
+
+  // ── High Resolution Export Handlers ──
+  const handleDownloadSingleSheetPng = async (sheetIdx: number) => {
+    const pageEl = pageRefs.current[sheetIdx];
+    if (!pageEl) return;
+    try {
+      setDownloadingPng(true);
+      toast.info(`Generating high quality PNG for Sheet ${sheetIdx + 1}...`);
+
+      if (document.fonts) {
+        await document.fonts.ready;
+      }
+
+      pageEl.classList.add("exporting-cert-png");
+      await new Promise((resolve) => setTimeout(resolve, 80));
+
+      const targetWidth = 794;
+      const targetHeight = 1123;
+      const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
+      const filename =
+        totalPages === 1
+          ? `Certificate-${certNum}.png`
+          : `Certificate-${certNum}-Sheet-${sheetIdx + 1}-of-${totalPages}.png`;
+
+      const dataUrl = await toPng(pageEl, {
+        quality: 1.0,
+        pixelRatio: 2, // 2x high resolution: 1588x2246 px
+        width: targetWidth,
+        height: targetHeight,
+        style: {
+          width: `${targetWidth}px`,
+          minWidth: `${targetWidth}px`,
+          maxWidth: `${targetWidth}px`,
+          height: `${targetHeight}px`,
+          minHeight: `${targetHeight}px`,
+          maxHeight: `${targetHeight}px`,
+          margin: "0",
+          padding: "0",
+          left: "0",
+          top: "0",
+          position: "static",
+          transform: "none",
+          boxShadow: "none",
+          borderRadius: "0",
+          border: "none",
+          overflow: "hidden",
+        },
+        backgroundColor: "#ffffff",
+        cacheBust: false,
+        imagePlaceholder: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+        filter: (domNode) => {
+          if (domNode instanceof HTMLImageElement) {
+            if (
+              domNode.style.display === "none" ||
+              domNode.getAttribute("data-img-error") === "true" ||
+              (domNode.complete && domNode.naturalWidth === 0) ||
+              !domNode.getAttribute("src")
+            ) {
+              return false;
+            }
+          }
+          return true;
+        },
+      });
+
+      saveAs(dataUrl, filename);
+      toast.success(`Sheet ${sheetIdx + 1} downloaded successfully!`);
+    } catch (err) {
+      console.error(`Failed to export Sheet ${sheetIdx + 1}`, err);
+      toast.error(`Failed to generate PNG for Sheet ${sheetIdx + 1}`);
+    } finally {
+      if (pageEl) {
+        pageEl.classList.remove("exporting-cert-png");
+      }
+      setDownloadingPng(false);
+    }
+  };
+
+  const handleDownloadAllSheetsPng = async () => {
+    try {
+      setDownloadingPng(true);
+      toast.info(`Preparing to export all ${totalPages} sheets...`);
+
+      if (document.fonts) {
+        await document.fonts.ready;
+      }
+
+      for (let i = 0; i < totalPages; i++) {
+        const pageEl = pageRefs.current[i];
+        if (!pageEl) continue;
+
+        pageEl.classList.add("exporting-cert-png");
+        await new Promise((resolve) => setTimeout(resolve, 80));
+
+        const targetWidth = 794;
+        const targetHeight = 1123;
+        const certNum = (calibration.certificate_number || "CERTIFICATE").replace(/[\/\\]/g, "-");
+        const filename =
+          totalPages === 1
+            ? `Certificate-${certNum}.png`
+            : `Certificate-${certNum}-Sheet-${i + 1}-of-${totalPages}.png`;
+
+        const dataUrl = await toPng(pageEl, {
+          quality: 1.0,
+          pixelRatio: 2,
+          width: targetWidth,
+          height: targetHeight,
+          style: {
+            width: `${targetWidth}px`,
+            minWidth: `${targetWidth}px`,
+            maxWidth: `${targetWidth}px`,
+            height: `${targetHeight}px`,
+            minHeight: `${targetHeight}px`,
+            maxHeight: `${targetHeight}px`,
+            margin: "0",
+            padding: "0",
+            left: "0",
+            top: "0",
+            position: "static",
+            transform: "none",
+            boxShadow: "none",
+            borderRadius: "0",
+            border: "none",
+            overflow: "hidden",
+          },
+          backgroundColor: "#ffffff",
+          cacheBust: false,
+          imagePlaceholder: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+          filter: (domNode) => {
+            if (domNode instanceof HTMLImageElement) {
+              if (
+                domNode.style.display === "none" ||
+                domNode.getAttribute("data-img-error") === "true" ||
+                (domNode.complete && domNode.naturalWidth === 0) ||
+                !domNode.getAttribute("src")
+              ) {
+                return false;
+              }
+            }
+            return true;
+          },
+        });
+
+        pageEl.classList.remove("exporting-cert-png");
+        saveAs(dataUrl, filename);
+
+        // Allow browser time to trigger each download cleanly
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+
+      toast.success(`All ${totalPages} sheets downloaded successfully!`);
+    } catch (err) {
+      console.error("Failed to export all sheets", err);
+      toast.error("Failed to export all certificate sheets");
+    } finally {
+      pageRefs.current.forEach((el) => el?.classList.remove("exporting-cert-png"));
+      setDownloadingPng(false);
+    }
+  };
+
+  const handlePrintCertificate = () => {
+    const pageEls = pageRefs.current.filter(Boolean) as HTMLDivElement[];
+    if (pageEls.length === 0) {
+      window.print();
+      return;
+    }
+
+    let iframe = document.getElementById("cert-print-iframe") as HTMLIFrameElement | null;
+    if (iframe) {
+      iframe.remove();
+    }
+
+    iframe = document.createElement("iframe");
+    iframe.id = "cert-print-iframe";
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "none";
+    iframe.style.visibility = "hidden";
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow?.document;
+    if (!doc) {
+      window.print();
+      return;
+    }
+
+    let stylesHtml = "";
+    document.querySelectorAll("style, link[rel='stylesheet']").forEach((node) => {
+      stylesHtml += node.outerHTML;
+    });
+
+    const pagesHtml = pageEls.map((el) => el.outerHTML).join("\n");
+    const certNum = (calibration.certificate_number || "Certificate").replace(/[\/\\]/g, "-");
+
+    doc.open();
+    doc.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Certificate-${certNum}</title>
+          ${stylesHtml}
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 0;
+            }
+            *, *::before, *::after {
+              box-sizing: border-box !important;
+              -webkit-print-color-adjust: exact !important;
+              print-color-adjust: exact !important;
+              color-adjust: exact !important;
+            }
+            html, body {
+              margin: 0 !important;
+              padding: 0 !important;
+              background: #ffffff !important;
+              width: 100% !important;
+              height: auto !important;
+              overflow: visible !important;
+            }
+            .cert-page {
+              width: 210mm !important;
+              min-width: 210mm !important;
+              max-width: 210mm !important;
+              height: 297mm !important;
+              min-height: 297mm !important;
+              max-height: 297mm !important;
+              margin: 0 auto !important;
+              padding: 0 !important;
+              border: none !important;
+              border-radius: 0 !important;
+              box-shadow: none !important;
+              page-break-inside: avoid !important;
+              break-inside: avoid !important;
+              page-break-after: always !important;
+              break-after: page !important;
+              overflow: hidden !important;
+              box-sizing: border-box !important;
+            }
+            .cert-page:last-child {
+              page-break-after: avoid !important;
+              break-after: avoid !important;
+            }
+          </style>
+        </head>
+        <body>
+          ${pagesHtml}
+        </body>
+      </html>
+    `);
+    doc.close();
+
+    setTimeout(() => {
+      try {
+        iframe?.contentWindow?.focus();
+        iframe?.contentWindow?.print();
+      } catch (e) {
+        console.error("Print iframe failed, fallback to window.print", e);
+        window.print();
+      }
+    }, 350);
+  };
+
+  return (
+    <div className="flex flex-col items-center w-full max-w-full overflow-x-auto pb-6">
+      {/* Action Toolbar */}
+      {showDownloadPng !== false && (
+        <div className="w-[794px] shrink-0 max-w-full flex flex-wrap justify-between items-center gap-2 mb-3 print:hidden">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground font-semibold">
+            {totalPages > 1 && (
+              <span className="bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 rounded text-[11px] font-bold">
+                {totalPages} Physical Sheets ({totalDataRows} Points)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {totalPages > 1 ? (
+              <>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={handleDownloadAllSheetsPng}
+                  disabled={downloadingPng}
+                  className="h-8 gap-2 text-xs font-bold shadow-xs transition-all cursor-pointer bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  {downloadingPng ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  <span>{downloadingPng ? "Exporting Sheets..." : `Download All (${totalPages} PNGs)`}</span>
+                </Button>
+                <div className="flex items-center gap-0.5 bg-slate-100 dark:bg-slate-800 p-0.5 rounded border border-slate-300 dark:border-slate-700">
+                  {pageSlices.map((slice, idx) => (
+                    <Button
+                      key={idx}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDownloadSingleSheetPng(idx)}
+                      disabled={downloadingPng}
+                      className="h-7 px-2 text-[11px] font-bold text-slate-700 dark:text-slate-200 hover:bg-white dark:hover:bg-slate-900 shadow-none cursor-pointer"
+                    >
+                      Sheet {slice.sheetNumber}
+                    </Button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleDownloadSingleSheetPng(0)}
+                disabled={downloadingPng}
+                className="h-8 gap-2 text-xs font-bold bg-white dark:bg-slate-900 border-primary/40 hover:bg-primary/5 hover:border-primary text-primary shadow-xs transition-all cursor-pointer"
+              >
+                {downloadingPng ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                ) : (
+                  <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                )}
+                <span>{downloadingPng ? "Exporting High-Res PNG..." : "Download PNG (High Quality)"}</span>
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePrintCertificate}
+              disabled={downloadingPng}
+              className="h-8 gap-1.5 text-xs font-bold bg-white dark:bg-slate-900 border-slate-300 hover:bg-slate-50 text-slate-700 dark:text-slate-200 shadow-xs transition-all cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Print / PDF</span>
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Print & Export Styles */}
+      <style>{`
+        .exporting-cert-png,
+        .exporting-cert-png * {
+          scrollbar-width: none !important;
+          -ms-overflow-style: none !important;
+        }
+        .exporting-cert-png *::-webkit-scrollbar {
+          display: none !important;
+          width: 0 !important;
+          height: 0 !important;
+        }
+        .exporting-cert-png div[class*="overflow-x-auto"],
+        .exporting-cert-png div[class*="overflow-auto"],
+        .exporting-cert-png div[class*="overflow-hidden"] {
+          overflow: visible !important;
+        }
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 0;
+          }
+          [role="dialog"] > div:first-child,
+          [data-radix-dialog-content] > div:first-child,
+          [data-radix-dialog-title],
+          [data-radix-dialog-description],
+          button,
+          .print\\:hidden {
+            display: none !important;
+          }
+          [role="dialog"],
+          [data-radix-dialog-content],
+          div[class*="overflow-y-auto"] {
+            position: static !important;
+            max-height: none !important;
+            height: auto !important;
+            overflow: visible !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            transform: none !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          body {
+            background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+          .cert-page {
+            page-break-after: always !important;
+            break-after: page !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            margin: 0 auto !important;
+            border: none !important;
+            box-shadow: none !important;
+            width: 210mm !important;
+            min-height: 297mm !important;
+            max-height: 297mm !important;
+            overflow: hidden !important;
+          }
+          .cert-page:last-child {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+          }
+        }
+      `}</style>
+
+      {/* Pages Container */}
+      {pageSlices.map((slice) => {
+        const pagePoints = points.slice(slice.start, slice.end);
+        const pageBlocks = getBlocksForPage(layoutBlocks, slice);
+        const sheetText = `${slice.sheetNumber} of ${totalPages}`;
+
+        return (
+          <div
+            key={slice.pageIndex}
+            ref={(el) => {
+              pageRefs.current[slice.pageIndex] = el;
+              if (slice.pageIndex === 0) {
+                (certRef as any).current = el;
+              }
+            }}
+            className="cert-page relative bg-white text-black border border-slate-300 rounded-sm shadow-xl text-[10px] leading-normal font-sans flex flex-col w-[794px] min-w-[794px] max-w-[794px] shrink-0 min-h-[1123px] max-h-[1123px] overflow-hidden print:min-h-[100vh] print:max-h-none print:max-w-none print:w-full print:border-none print:shadow-none print:rounded-none print:m-0 print:break-after-page mb-6"
+          >
+            {renderWatermark()}
+            {renderHeaderBanner(!slice.isFirst)}
+
+            {/* Body Content */}
+            <div className="p-2.5 flex flex-col flex-1 overflow-hidden">
+              <div
+                className={`border border-black flex flex-col flex-1 overflow-hidden ${
+                  isCompact ? "p-1.5 text-[8.5px]" : "p-2 text-[9.5px]"
+                }`}
+                style={{ gap: `${Math.max(2, (Number(certConfig?.tableGap) || 2.5) * 1.33)}px` }}
+              >
+                {slice.isFirst ? (
+                  <>
+                    {renderFullMetadataTable(sheetText)}
+                    {renderDescriptionAndIdentification()}
+                    {renderProcedureAndEnv()}
+                    {renderTraceabilityOfMasters()}
+                    {renderDiagram()}
+                    {renderCalibrationResult(pagePoints, pageBlocks)}
+                    {!slice.isLast && renderContinuationNote(slice.sheetNumber + 1, totalPages)}
+                    {slice.isLast && (
+                      <>
+                        {renderUncertainty()}
+                        {renderRemarks()}
+                        {renderSignatures()}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {renderContinuationMetadataBar(sheetText)}
+                    {renderCalibrationResult(pagePoints, pageBlocks)}
+                    {!slice.isLast && renderContinuationNote(slice.sheetNumber + 1, totalPages)}
+                    {slice.isLast && (
+                      <>
+                        {renderUncertainty()}
+                        {renderRemarks()}
+                        {renderSignatures()}
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {renderFooterBanner()}
+          </div>
+        );
+      })}
+    </div>
   );
 }

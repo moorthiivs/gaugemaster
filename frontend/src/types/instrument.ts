@@ -82,6 +82,8 @@ export type Instrument = {
  */
 export type DashboardSummary = {
   total: number;
+  grandTotal?: number;
+  inServiceTotal?: number;
   overallProgress?: {
     total: number;
     calibrated: number;
@@ -89,6 +91,8 @@ export type DashboardSummary = {
   };
   workingTotal?: number;
   referenceTotal?: number;
+  workingActiveTotal?: number;
+  referenceActiveTotal?: number;
   dueThisMonth: number;
   overdue: number;
   workingOverdue?: number;

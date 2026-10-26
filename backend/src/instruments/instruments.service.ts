@@ -667,8 +667,15 @@ export class InstrumentsService implements OnApplicationBootstrap {
             ];
             const lowerAuto = (autoStatus || '').trim().toLowerCase();
             const isStandard = standardStatuses.includes(lowerAuto);
+            const isNonCalibratable = ['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(
+                (autoItemStatus || '').toLowerCase().trim(),
+            );
 
-            if (isStandard) {
+            if (isNonCalibratable) {
+                if (!autoStatus || lowerAuto === 'overdue') {
+                    autoStatus = autoItemStatus;
+                }
+            } else if (isStandard) {
                 if (parsedDueDate) {
                     const today = new Date();
                     today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
@@ -806,6 +813,8 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 '',
             ];
             const isStandard = standardStatuses.includes(lowerTarget);
+            const effectiveItemStatus = (payload.item_status || instrument.item_status || 'Active').toLowerCase().trim();
+            const isNonCalibratable = ['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(effectiveItemStatus);
 
             if (lowerTarget.includes('under calibration') || lowerTarget.includes('sent for calibration')) {
                 payload.status = targetStatus;
@@ -813,8 +822,15 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 // Explicit custom status (e.g. "not in use", "Spare", "Under Maintenance") or REJECTED / Scrapped
                 // PRESERVE user's explicit status! Never force it to Overdue!
                 payload.status = targetStatus;
+            } else if (isNonCalibratable) {
+                // Non-calibratable asset lifecycle (Scrapped, Inactive, etc.): NEVER force to 'Overdue'!
+                if (lowerTarget === 'overdue') {
+                    payload.status = payload.item_status || instrument.item_status || 'OK';
+                } else {
+                    payload.status = targetStatus || 'OK';
+                }
             } else {
-                // Standard status: dynamically adjust based on due date
+                // Standard status: dynamically adjust based on due date for active in-service items
                 const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
                 if (finalDueDate) {
                     const parsedDueDate = this.parseDateSafe(finalDueDate);
@@ -1759,14 +1775,18 @@ export class InstrumentsService implements OnApplicationBootstrap {
 
             const today = this.getTodayStart();
 
-            // 1. Single atomic SQL update: marks all expired instruments as Overdue (exempting active calibrations, rejected, scrapped)
+            // 1. Single atomic SQL update: marks all expired in-service instruments as Overdue
+            // Exempt active calibrations, and non-calibratable item statuses (Scrapped, Inactive, Lost, Under Repair, Rejected)
             const resultOverdue = await this.instrumentRepository
                 .createQueryBuilder()
                 .update(Instrument)
                 .set({ status: 'Overdue' })
                 .where('due_date < :today', { today })
                 .andWhere(
-                    "status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'REJECTED', 'Scrapped', 'Overdue')",
+                    "status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'Overdue')",
+                )
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
                 )
                 .execute();
 
@@ -1777,10 +1797,24 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 .set({ status: 'OK' })
                 .where('due_date >= :today', { today })
                 .andWhere("status = 'Overdue'")
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
+                )
+                .execute();
+
+            // 3. One-time healing/cleanup: fix non-calibratable instruments that were wrongly turned 'Overdue' by previous logic
+            const resultNonCalCleaned = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: () => "COALESCE(NULLIF(TRIM(item_status), ''), 'Inactive')" })
+                .where("status = 'Overdue'")
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
+                )
                 .execute();
 
             logger.log(
-                `✅ Auto-status sync completed: ${resultOverdue.affected || 0} marked Overdue, ${resultRestored.affected || 0} restored to OK.`,
+                `✅ Auto-status sync completed: ${resultOverdue.affected || 0} marked Overdue, ${resultRestored.affected || 0} restored to OK, ${resultNonCalCleaned.affected || 0} non-calibratable restored from Overdue.`,
             );
         } catch (error) {
             console.error('❌ Error in autoupdateinstrumentStatus cron:', error);

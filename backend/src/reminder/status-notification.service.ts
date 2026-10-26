@@ -79,11 +79,12 @@ export class StatusNotificationService {
         },
       });
 
-      // Filter out instruments currently 'Sent for Calibration' or 'Scrapped' / 'Lost' / 'Inactive'
+      // Filter out instruments currently 'Sent for Calibration' or non-calibratable ('Scrapped', 'Lost', 'Inactive', 'Under Repair', 'Rejected')
       const filtered = dueInstruments.filter((inst) => {
         const s = (inst.status || '').toLowerCase().trim();
         const itemS = (inst.item_status || '').toLowerCase().trim();
-        return s !== 'sent for calibration' && itemS !== 'scrapped' && itemS !== 'lost' && itemS !== 'inactive';
+        const nonCalibratable = ['scrapped', 'lost', 'inactive', 'under repair', 'rejected'];
+        return s !== 'sent for calibration' && !nonCalibratable.includes(itemS);
       });
 
       if (filtered.length === 0) continue;
@@ -176,11 +177,12 @@ export class StatusNotificationService {
         },
       });
 
-      // Filter out instruments currently 'Sent for Calibration' or inactive
+      // Filter out instruments currently 'Sent for Calibration' or non-calibratable
       const filtered = overdueInstruments.filter((inst) => {
         const s = (inst.status || '').toLowerCase().trim();
         const itemS = (inst.item_status || '').toLowerCase().trim();
-        return s !== 'sent for calibration' && itemS !== 'scrapped' && itemS !== 'lost' && itemS !== 'inactive';
+        const nonCalibratable = ['scrapped', 'lost', 'inactive', 'under repair', 'rejected'];
+        return s !== 'sent for calibration' && !nonCalibratable.includes(itemS);
       });
 
       if (filtered.length === 0) continue;
