@@ -36,11 +36,13 @@ export class AuthService {
   /** Returns which auth features are enabled for this deployment */
   getAuthConfig() {
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const regConfig = this.configService.get<string>('ENABLE_REGISTRATION');
+    const registrationEnabled = regConfig !== 'false' && process.env.ENABLE_REGISTRATION !== 'false';
     return {
       googleEnabled: this.googleEnabled,
       googleClientId: clientId || null,
       passwordEnabled: true,
-      registrationEnabled: false, // Admin creates users; no public signup
+      registrationEnabled,
     };
   }
 
@@ -90,6 +92,10 @@ export class AuthService {
   }
 
   async register(createUserDto: CreateUserDto) {
+    const config = this.getAuthConfig();
+    if (!config.registrationEnabled) {
+      throw new ForbiddenException('Public user registration is disabled. Users must be created by an administrator.');
+    }
     const user = await this.usersService.create(createUserDto);
     const roleName = user.role?.name || user.roleId || 'Admin';
     const payload = {

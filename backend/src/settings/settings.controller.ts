@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards, Req, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
@@ -43,25 +43,11 @@ export class SettingsController {
   getTheme(
     @Query('userId') queryUserId: string,
     @Query('companyId') queryCompanyId: string,
-    @Headers('authorization') authHeader: string,
     @Req() req: any,
   ) {
-    let tokenUserId: string | undefined;
-    let tokenCompanyId: string | undefined;
-
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.split(' ')[1];
-        const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        tokenUserId = payload.sub;
-        tokenCompanyId = payload.companyId;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    const userId = queryUserId || req.user?.userId || req.user?.id || tokenUserId;
-    const companyId = queryCompanyId || req.user?.companyId || tokenCompanyId;
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (queryCompanyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (queryUserId || user.userId || user.id) : (user.userId || user.id);
 
     return this.settingsService.getThemeSettings(userId, companyId);
   }
@@ -69,29 +55,14 @@ export class SettingsController {
   @Post('theme')
   saveTheme(
     @Body() body: any,
-    @Headers('authorization') authHeader: string,
     @Req() req: any,
   ) {
-    let tokenUserId: string | undefined;
-    let tokenCompanyId: string | undefined;
-    let tokenPayload: any = null;
-
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      try {
-        const token = authHeader.split(' ')[1];
-        tokenPayload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-        tokenUserId = tokenPayload.sub;
-        tokenCompanyId = tokenPayload.companyId;
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    const userId = body.userId || req.user?.userId || req.user?.id || tokenUserId;
-    const companyId = body.companyId || req.user?.companyId || tokenCompanyId;
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (body.companyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (body.userId || user.userId || user.id) : (user.userId || user.id);
     const themeSettings = body.themeSettings || body;
 
-    return this.settingsService.saveThemeSettings(userId, companyId, themeSettings, req.user || tokenPayload);
+    return this.settingsService.saveThemeSettings(userId, companyId, themeSettings, user);
   }
 
   @Get(':userId/:companyId')
@@ -99,34 +70,33 @@ export class SettingsController {
   getSettings(
     @Param('userId') userId: string,
     @Param('companyId') companyId: string,
+    @Req() req: any,
   ) {
+    const user = req.user || {};
+    if (!user.isSuperAdmin && user.companyId && companyId && user.companyId !== companyId) {
+      throw new ForbiddenException('Access denied to other company settings');
+    }
     return this.settingsService.findOne(userId, companyId);
   }
 
   @Post("mailconfig")
   @RequirePermission('settings', 'edit')
-  create(@Body() createSettingDto: CreateSettingDto, @Headers('authorization') authHeader: string) {
-    if (!createSettingDto.userId || createSettingDto.userId === 'undefined') {
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-                const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-                createSettingDto.userId = payload.sub;
-                createSettingDto.companyId = createSettingDto.companyId || payload.companyId;
-            } catch (e) {
-                console.error("Failed to decode token", e);
-            }
-        }
-    }
-    //console.log("RECEIVED SETTINGS PAYLOAD: ", createSettingDto);
+  create(@Body() createSettingDto: CreateSettingDto, @Req() req: any) {
+    const user = req.user || {};
+    createSettingDto.companyId = user.isSuperAdmin ? (createSettingDto.companyId || user.companyId) : user.companyId;
+    createSettingDto.userId = user.isSuperAdmin ? (createSettingDto.userId || user.userId || user.id) : (user.userId || user.id);
     return this.settingsService.create(createSettingDto);
   }
 
   @Get('fetchmailconfig')
   fetchMailConfig(
-    @Query('userId') userId: string,
-    @Query('companyId') companyId: string,
+    @Query('userId') queryUserId: string,
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
   ) {
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (queryCompanyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (queryUserId || user.userId || user.id) : (user.userId || user.id);
     return this.settingsService.findOne(userId, companyId);
   }
 

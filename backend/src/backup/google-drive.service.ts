@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { DriveToken } from './drive-token.entity';
 
 @Injectable()
@@ -45,6 +46,11 @@ export class GoogleDriveService {
     /** Generate the URL to redirect the user to for Google consent */
     getAuthUrl(companyId: string): string {
         const oauth2Client = this.createOAuth2Client();
+        const secret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster-oauth-secret';
+        const statePayload = Buffer.from(JSON.stringify({ companyId, ts: Date.now() })).toString('base64url');
+        const signature = crypto.createHmac('sha256', secret).update(statePayload).digest('base64url');
+        const state = `${statePayload}.${signature}`;
+
         return oauth2Client.generateAuthUrl({
             access_type: 'offline',
             prompt: 'consent', // Force consent to always get refresh_token
@@ -52,12 +58,33 @@ export class GoogleDriveService {
                 'https://www.googleapis.com/auth/drive.file',
                 'https://www.googleapis.com/auth/userinfo.email',
             ],
-            state: companyId, // Pass companyId through OAuth state
+            state,
         });
     }
 
     /** Exchange the authorization code for tokens and store them */
-    async handleCallback(code: string, companyId: string): Promise<DriveToken> {
+    async handleCallback(code: string, rawState: string): Promise<DriveToken> {
+        let companyId = rawState;
+        // Verify state signature if signed format
+        if (rawState && rawState.includes('.')) {
+            const secret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster-oauth-secret';
+            const [payloadStr, signature] = rawState.split('.');
+            const expectedSig = crypto.createHmac('sha256', secret).update(payloadStr).digest('base64url');
+            if (signature !== expectedSig) {
+                throw new BadRequestException('OAuth state validation failed: untrusted or forged state');
+            }
+            try {
+                const parsed = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf8'));
+                companyId = parsed.companyId;
+            } catch {
+                throw new BadRequestException('Invalid OAuth state payload format');
+            }
+        }
+
+        if (!companyId) {
+            throw new BadRequestException('Company ID is missing from OAuth state');
+        }
+
         const oauth2Client = this.createOAuth2Client();
         const { tokens } = await oauth2Client.getToken(code);
 

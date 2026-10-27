@@ -11,6 +11,7 @@ import {
   UseGuards,
   Req,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Response } from 'express';
@@ -63,7 +64,11 @@ export class CalibrationController {
   }
 
   @Get('drafts/:userId')
-  async getAllDrafts(@Param('userId') userId: string) {
+  async getAllDrafts(@Param('userId') userId: string, @Req() req: any) {
+    const callerId = req.user?.userId || req.user?.id;
+    if (!req.user?.isSuperAdmin && userId !== callerId) {
+      throw new ForbiddenException('Cannot view drafts of another user');
+    }
     return this.calibrationService.getAllDrafts(userId);
   }
 
@@ -73,8 +78,10 @@ export class CalibrationController {
   }
 
   @Post('draft')
-  async saveDraft(@Body() body: { userId: string; data: any; draftId?: string }) {
-    return this.calibrationService.saveDraft(body.userId, body.data, body.draftId);
+  async saveDraft(@Body() body: { userId: string; data: any; draftId?: string }, @Req() req: any) {
+    const callerId = req.user?.userId || req.user?.id;
+    const effectiveUserId = req.user?.isSuperAdmin ? (body.userId || callerId) : callerId;
+    return this.calibrationService.saveDraft(effectiveUserId, body.data, body.draftId);
   }
 
   @Delete('draft/:id')
@@ -257,8 +264,13 @@ export class CalibrationController {
 
   @Get(':id')
   @RequirePermission('calibrations', 'view')
-  async findOne(@Param('id') id: string) {
-    return this.calibrationService.findOne(id);
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const cal = await this.calibrationService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && cal.companyId && user.companyId && cal.companyId !== user.companyId) {
+      throw new ForbiddenException('Access denied to calibration outside your company');
+    }
+    return cal;
   }
 
   @Put(':id')
@@ -266,13 +278,19 @@ export class CalibrationController {
   async update(
     @Param('id') id: string,
     @Body() body: { dto: any; editedByUserId?: string; editedByName?: string },
+    @Req() req: any,
   ) {
+    const cal = await this.calibrationService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && cal.companyId && user.companyId && cal.companyId !== user.companyId) {
+      throw new ForbiddenException('Cannot modify calibration outside your company');
+    }
     const dto = body.dto || body;
     return this.calibrationService.update(
       id,
       dto,
-      body.editedByUserId,
-      body.editedByName,
+      body.editedByUserId || user.userId || user.id,
+      body.editedByName || user.name,
     );
   }
 

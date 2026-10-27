@@ -11,12 +11,20 @@ import compression from 'compression';
 import type { Request, Response, NextFunction } from 'express';
 import { uploadsAuthMiddleware } from './uploads/uploads-auth.middleware';
 
-
 // Set process timezone to UTC to ensure correct database date parsing
 process.env.TZ = 'UTC';
 
 async function bootstrap() { 
   const app = await NestFactory.create(AppModule);
+
+  // Essential HTTP Security Headers (Anti-Clickjacking, MIME Sniffing, HSTS)
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
 
   // Enable HTTP response compression (gzip / deflate) for payloads >= 1KB
   app.use(
@@ -24,6 +32,22 @@ async function bootstrap() {
       threshold: 1024,
     }),
   );
+
+
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const rawEncoding = req.headers['content-encoding'];
+    if (rawEncoding) {
+      const encodingStr = Array.isArray(rawEncoding) ? rawEncoding.join(',') : String(rawEncoding);
+      if (/\bbr\b|brotli/i.test(encodingStr)) {
+        return res.status(415).json({
+          statusCode: 415,
+          error: 'Unsupported Media Type',
+          message: 'Brotli request content-encoding is not permitted for security compliance.',
+        });
+      }
+    }
+    next();
+  });
 
   // Increase payload limit for bulk uploads and multimodal certificate processing
   app.use(express.json({ limit: '50mb' }));
@@ -66,7 +90,6 @@ async function bootstrap() {
   // Secure static file serving for uploads (protecting certificates, diagrams, instructions)
   app.use('/uploads', uploadsAuthMiddleware, express.static(join(process.cwd(), 'uploads')));
 
-
   // SPA fallback for non-API routes
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith('/api')) {
@@ -75,16 +98,18 @@ async function bootstrap() {
     res.sendFile(join(__dirname, 'public', 'index.html'));
   });
 
-  // Swagger setup
-  const config = new DocumentBuilder()
-    .setTitle('Instrument Tracker API')
-    .setDescription('API documentation')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // Swagger setup: enabled in non-production or when explicitly enabled
+  if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true') {
+    const config = new DocumentBuilder()
+      .setTitle('Instrument Tracker API')
+      .setDescription('API documentation')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api-docs', app, document);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api-docs', app, document);
+  }
 
   await app.listen(process.env.PORT || 5000);
 }

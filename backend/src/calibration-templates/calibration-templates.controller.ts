@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
   UseGuards,
   Req,
 } from '@nestjs/common';
@@ -151,8 +152,13 @@ export class CalibrationTemplatesController {
 
   @Get(':id')
   @RequirePermission('templates', 'view')
-  async findOne(@Param('id') id: string) {
-    return this.templatesService.findOne(id);
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const template = await this.templatesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && template.companyId && user.companyId && template.companyId !== user.companyId) {
+      throw new ForbiddenException('Access denied to template outside your company');
+    }
+    return template;
   }
 
   @Put(':id')
@@ -162,6 +168,11 @@ export class CalibrationTemplatesController {
     @Body() dto: UpdateCalibrationTemplateDto,
     @Req() req: any,
   ) {
+    const template = await this.templatesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && template.companyId && user.companyId && template.companyId !== user.companyId) {
+      throw new ForbiddenException('Cannot modify template outside your company');
+    }
     if (!dto.companyId && req.user?.companyId) {
       dto.companyId = req.user.companyId;
     }

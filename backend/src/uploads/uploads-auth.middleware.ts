@@ -8,6 +8,7 @@ import * as jwt from 'jsonwebtoken';
  * - Enforces path-traversal protection.
  * - Allows public access only to /logos for company branding.
  * - Accepts JWT via Authorization header ('Bearer <token>') or ?token=<token> query parameter (for img/iframe/window.open).
+ * - Enforces Content-Security-Policy: script-src 'none' to mitigate SVG stored XSS.
  */
 export function createUploadsAuthMiddleware(jwtSecretOverride?: string) {
   const uploadRoot = path.resolve(process.cwd(), 'uploads');
@@ -42,6 +43,7 @@ export function createUploadsAuthMiddleware(jwtSecretOverride?: string) {
     if (posixPath.startsWith('/logos/') || posixPath === '/logos') {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Cache-Control', 'public, max-age=86400');
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; script-src 'none';");
       return next();
     }
 
@@ -62,15 +64,27 @@ export function createUploadsAuthMiddleware(jwtSecretOverride?: string) {
       });
     }
 
-    const secret = jwtSecretOverride || process.env.JWT_SECRET || 'gaugemaster';
+    const configuredSecret = jwtSecretOverride || process.env.JWT_SECRET;
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      return res.status(500).json({
+        statusCode: 500,
+        error: 'Internal Server Error',
+        message: 'Server security configuration error: JWT_SECRET must be set in production.',
+      });
+    }
+
+    const secret = configuredSecret || 'gaugemaster';
 
     try {
       const decoded = jwt.verify(token, secret);
       (req as any).user = decoded;
 
-      // Add security headers
+      // Add defensive security headers
       res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+      res.setHeader('Content-Security-Policy', "default-src 'self' data: blob:; script-src 'none'; object-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:;");
       return next();
     } catch {
       return res.status(401).json({
