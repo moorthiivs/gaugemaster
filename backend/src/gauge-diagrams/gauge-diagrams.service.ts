@@ -68,7 +68,7 @@ export class GaugeDiagramsService {
       gauge_name: dto.gauge_name,
       id_code: dto.id_code,
       part_name: dto.part_name,
-      instrument_id: dto.instrument_id,
+      instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
       description: dto.description,
       companyId: targetCompanyId,
       version: 1,
@@ -130,7 +130,7 @@ export class GaugeDiagramsService {
       diagram.part_name = dto.part_name;
     }
     if (dto.instrument_id !== undefined) {
-      diagram.instrument_id = dto.instrument_id;
+      diagram.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
     }
     if (dto.description !== undefined) {
       diagram.description = dto.description;

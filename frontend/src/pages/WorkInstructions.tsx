@@ -70,6 +70,9 @@ import { DocumentViewerModal } from "@/components/documentation/DocumentViewerMo
 import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
 import { InstrumentSearchSelector } from "@/components/documentation/InstrumentSearchSelector";
 import { Instrument } from "@/types/instrument";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { createInstrument } from "@/lib/instrumentActions";
 import { isExcelFile, downloadFileFromUrl } from "@/lib/tokenStorage";
 
 export default function WorkInstructions() {
@@ -88,6 +91,8 @@ export default function WorkInstructions() {
 
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createEntryMode, setCreateEntryMode] = useState<"master" | "manual">("master");
+  const [createRegisterInMaster, setCreateRegisterInMaster] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
   const [createIdCode, setCreateIdCode] = useState("");
   const [createPartName, setCreatePartName] = useState("");
@@ -235,17 +240,41 @@ export default function WorkInstructions() {
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createTitle.trim()) {
-      toast.error("Please select a gauge or enter a work instruction title");
+      toast.error("Please enter a work instruction title or select from master");
       return;
     }
 
     setIsSubmitting(true);
     try {
+      let finalInstrumentId = createInstrumentId;
+
+      if (createEntryMode === "manual" && createRegisterInMaster && !finalInstrumentId) {
+        try {
+          const cleanName = createTitle.trim().replace(/^WI:\s*/i, "") || createTitle.trim();
+          const newInst = await createInstrument({
+            name: cleanName,
+            id_code: createIdCode.trim() || undefined,
+            part_name: createPartName.trim() || undefined,
+            device_type: "Gauge",
+            companyId: user?.companyId,
+            status: "OK",
+            item_status: "Active",
+          });
+          if (newInst?.id) {
+            finalInstrumentId = newInst.id;
+            toast.success(`Registered new gauge "${cleanName}" in Instruments Master`);
+          }
+        } catch (instErr: any) {
+          console.warn("Could not auto-register in instruments master:", instErr);
+          toast.warning("Could not auto-register in Instruments Master, proceeding to save instruction");
+        }
+      }
+
       const formData = new FormData();
       formData.append("title", createTitle.trim());
       if (createIdCode.trim()) formData.append("id_code", createIdCode.trim());
       if (createPartName.trim()) formData.append("part_name", createPartName.trim());
-      if (createInstrumentId) formData.append("instrument_id", createInstrumentId);
+      if (finalInstrumentId) formData.append("instrument_id", finalInstrumentId);
       if (createDescription.trim()) formData.append("description", createDescription.trim());
       if (user?.companyId) formData.append("companyId", user.companyId);
       if (createFile) formData.append("file", createFile);
@@ -259,6 +288,8 @@ export default function WorkInstructions() {
       setCreateInstrumentId("");
       setCreateDescription("");
       setCreateFile(null);
+      setCreateRegisterInMaster(false);
+      setCreateEntryMode("master");
 
       // Offer immediate view option
       if (created.file_path) {
@@ -301,7 +332,7 @@ export default function WorkInstructions() {
       formData.append("title", editTitle.trim());
       formData.append("id_code", editIdCode.trim());
       formData.append("part_name", editPartName.trim());
-      if (editInstrumentId) formData.append("instrument_id", editInstrumentId);
+      formData.append("instrument_id", editInstrumentId ? editInstrumentId.trim() : "");
       if (editDescription !== undefined) formData.append("description", editDescription.trim());
       if (editActionDetails.trim()) formData.append("actionDetails", editActionDetails.trim());
       if (editFile) formData.append("file", editFile);
@@ -804,53 +835,178 @@ export default function WorkInstructions() {
 
       {/* CREATE WORK INSTRUCTION DIALOG */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Work Instruction</DialogTitle>
             <DialogDescription>
-              Select a gauge/instrument from the master list (filtered by device type: gauge) to link instructions, and attach the SOP or guide.
+              Select an existing gauge from the Instruments Master or enter details manually, and attach the SOP or guide.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleCreateSubmit} className="space-y-4 py-2">
-            {/* High performance 2,000+ Gauge Selector */}
-            <InstrumentSearchSelector
-              label="Select Target Gauge / Instrument"
-              required
-              companyId={user?.companyId}
-              defaultDeviceType="gauge"
-              selectedInstrumentId={createInstrumentId}
-              selectedName={createTitle}
-              selectedIdCode={createIdCode}
-              selectedPartName={createPartName}
-              onSelect={(selected: Instrument) => {
-                const titleText = selected.name ? `WI: ${selected.name}` : "";
-                setCreateTitle(titleText);
-                setCreateIdCode(selected.id_code || "");
-                setCreatePartName(selected.part_name || "");
-                setCreateInstrumentId(selected.id || "");
-              }}
-              onClear={() => {
-                setCreateTitle("");
-                setCreateIdCode("");
-                setCreatePartName("");
-                setCreateInstrumentId("");
-              }}
-            />
+            <Tabs
+              value={createEntryMode}
+              onValueChange={(val) => setCreateEntryMode(val as "master" | "manual")}
+              className="w-full"
+            >
+              <TabsList className="grid grid-cols-2 w-full mb-3">
+                <TabsTrigger value="master" className="text-xs gap-1.5 font-medium">
+                  <Search className="h-3.5 w-3.5" />
+                  Select from Master
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="text-xs gap-1.5 font-medium">
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Manual Entry / Create New
+                </TabsTrigger>
+              </TabsList>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="wi-title" className="text-xs font-semibold">
-                Instruction Title <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="wi-title"
-                placeholder="e.g. WI: Operating & Zero Check for Vernier Caliper"
-                value={createTitle}
-                onChange={(e) => setCreateTitle(e.target.value)}
-                required
-                className="h-9 text-sm"
-              />
-            </div>
+              <TabsContent value="master" className="space-y-3 mt-0">
+                <InstrumentSearchSelector
+                  label="Search Gauge in Master"
+                  required={false}
+                  companyId={user?.companyId}
+                  defaultDeviceType="gauge"
+                  selectedInstrumentId={createInstrumentId}
+                  selectedName={createTitle}
+                  selectedIdCode={createIdCode}
+                  selectedPartName={createPartName}
+                  onSelect={(selected: Instrument) => {
+                    const titleText = selected.name ? `WI: ${selected.name}` : "";
+                    setCreateTitle(titleText);
+                    setCreateIdCode(selected.id_code || "");
+                    setCreatePartName(selected.part_name || "");
+                    setCreateInstrumentId(selected.id || "");
+                  }}
+                  onClear={() => {
+                    setCreateInstrumentId("");
+                  }}
+                />
+
+                <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Edit2 className="h-3 w-3" />
+                      Preloaded Details (Editable)
+                    </span>
+                    {createInstrumentId && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setCreateInstrumentId("");
+                          setCreateEntryMode("manual");
+                          toast.info("Switched to manual entry mode with preloaded values preserved");
+                        }}
+                        className="h-6 text-[11px] text-muted-foreground hover:text-foreground px-2"
+                      >
+                        Unlink to Manual
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="wi-title" className="text-xs font-semibold">
+                      Instruction Title <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="wi-title"
+                      placeholder="e.g. WI: Operating & Zero Check for Vernier Caliper"
+                      value={createTitle}
+                      onChange={(e) => setCreateTitle(e.target.value)}
+                      required
+                      className="h-9 text-sm bg-background"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-wi-id-code" className="text-xs font-semibold">
+                        ID Code / IMTE
+                      </Label>
+                      <Input
+                        id="create-wi-id-code"
+                        placeholder="e.g. VC-01"
+                        value={createIdCode}
+                        onChange={(e) => setCreateIdCode(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-wi-part-name" className="text-xs font-semibold">
+                        Part Name
+                      </Label>
+                      <Input
+                        id="create-wi-part-name"
+                        placeholder="e.g. Engine Block"
+                        value={createPartName}
+                        onChange={(e) => setCreatePartName(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="manual" className="space-y-3 mt-0">
+                <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-manual-wi-title" className="text-xs font-semibold">
+                      Instruction Title <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="create-manual-wi-title"
+                      placeholder="e.g. WI: Cleaning & Inspection of Dial Bore Gauge"
+                      value={createTitle}
+                      onChange={(e) => setCreateTitle(e.target.value)}
+                      required
+                      className="h-9 text-sm bg-background"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-wi-id-code" className="text-xs font-semibold">
+                        ID Code / IMTE
+                      </Label>
+                      <Input
+                        id="create-manual-wi-id-code"
+                        placeholder="e.g. DBG-05"
+                        value={createIdCode}
+                        onChange={(e) => setCreateIdCode(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-wi-part-name" className="text-xs font-semibold">
+                        Part Name
+                      </Label>
+                      <Input
+                        id="create-manual-wi-part-name"
+                        placeholder="e.g. Cylinder Liner"
+                        value={createPartName}
+                        onChange={(e) => setCreatePartName(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 pt-2 border-t border-border/60">
+                    <Checkbox
+                      id="create-wi-register-master"
+                      checked={createRegisterInMaster}
+                      onCheckedChange={(checked) => setCreateRegisterInMaster(!!checked)}
+                    />
+                    <Label
+                      htmlFor="create-wi-register-master"
+                      className="text-xs font-medium cursor-pointer text-foreground leading-none"
+                    >
+                      Also register this item in Instruments Master
+                    </Label>
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
 
             <div className="space-y-1.5">
               <Label htmlFor="create-wi-desc" className="text-xs font-semibold">
@@ -917,7 +1073,7 @@ export default function WorkInstructions() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting || !createTitle} className="gap-2">
+              <Button type="submit" disabled={isSubmitting || !createTitle.trim()} className="gap-2">
                 {isSubmitting ? "Saving..." : "Save Work Instruction"}
               </Button>
             </DialogFooter>
@@ -962,37 +1118,57 @@ export default function WorkInstructions() {
 
       {/* EDIT INSTRUCTION DIALOG */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Work Instruction</DialogTitle>
             <DialogDescription>
-              Update instruction details, change linked instrument, or upload a new revision.
+              Update instruction details, change or unlink master instrument, and upload a new revision.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleEditSubmit} className="space-y-4 py-2">
-            {/* Re-select or change from master list */}
-            <InstrumentSearchSelector
-              label="Linked Gauge in Master List"
-              required
-              companyId={user?.companyId}
-              defaultDeviceType="gauge"
-              selectedInstrumentId={editInstrumentId}
-              selectedName={editTitle}
-              selectedIdCode={editIdCode}
-              selectedPartName={editPartName}
-              onSelect={(inst: Instrument) => {
-                if (!editTitle) {
-                  setEditTitle(inst.name ? `WI: ${inst.name}` : "");
-                }
-                setEditIdCode(inst.id_code || "");
-                setEditPartName(inst.part_name || "");
-                setEditInstrumentId(inst.id || "");
-              }}
-              onClear={() => {
-                setEditInstrumentId("");
-              }}
-            />
+            {/* Master Instrument Link & Status */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Linked Master Gauge (Optional)</Label>
+                {editInstrumentId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEditInstrumentId("");
+                      toast.info("Unlinked from master gauge. The instruction is now saved as a standalone manual entry.");
+                    }}
+                    className="h-6 text-[11px] text-destructive hover:bg-destructive/10 px-2"
+                  >
+                    Unlink (Keep as Manual Entry)
+                  </Button>
+                )}
+              </div>
+
+              <InstrumentSearchSelector
+                label=""
+                required={false}
+                companyId={user?.companyId}
+                defaultDeviceType="gauge"
+                selectedInstrumentId={editInstrumentId}
+                selectedName={editTitle}
+                selectedIdCode={editIdCode}
+                selectedPartName={editPartName}
+                onSelect={(inst: Instrument) => {
+                  if (!editTitle) {
+                    setEditTitle(inst.name ? `WI: ${inst.name}` : "");
+                  }
+                  setEditIdCode(inst.id_code || "");
+                  setEditPartName(inst.part_name || "");
+                  setEditInstrumentId(inst.id || "");
+                }}
+                onClear={() => {
+                  setEditInstrumentId("");
+                }}
+              />
+            </div>
 
             <div className="space-y-1.5">
               <Label className="text-xs font-semibold">Title</Label>
@@ -1083,7 +1259,7 @@ export default function WorkInstructions() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={isSubmitting || !editTitle.trim()}>
                 {isSubmitting ? "Updating..." : "Save Changes"}
               </Button>
             </DialogFooter>

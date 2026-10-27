@@ -68,6 +68,9 @@ import { DocumentViewerModal } from "@/components/documentation/DocumentViewerMo
 import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
 import { InstrumentSearchSelector } from "@/components/documentation/InstrumentSearchSelector";
 import { Instrument } from "@/types/instrument";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { createInstrument } from "@/lib/instrumentActions";
 
 export default function GaugeDiagrams() {
   useSEO({
@@ -85,6 +88,8 @@ export default function GaugeDiagrams() {
 
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createEntryMode, setCreateEntryMode] = useState<"master" | "manual">("master");
+  const [createRegisterInMaster, setCreateRegisterInMaster] = useState(false);
   const [createGaugeName, setCreateGaugeName] = useState("");
   const [createIdCode, setCreateIdCode] = useState("");
   const [createPartName, setCreatePartName] = useState("");
@@ -232,17 +237,40 @@ export default function GaugeDiagrams() {
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createGaugeName.trim()) {
-      toast.error("Please select a gauge from the Instruments Master list");
+      toast.error("Please enter a gauge name or select from master");
       return;
     }
 
     setIsSubmitting(true);
     try {
+      let finalInstrumentId = createInstrumentId;
+
+      if (createEntryMode === "manual" && createRegisterInMaster && !finalInstrumentId) {
+        try {
+          const newInst = await createInstrument({
+            name: createGaugeName.trim(),
+            id_code: createIdCode.trim() || undefined,
+            part_name: createPartName.trim() || undefined,
+            device_type: "Gauge",
+            companyId: user?.companyId,
+            status: "OK",
+            item_status: "Active",
+          });
+          if (newInst?.id) {
+            finalInstrumentId = newInst.id;
+            toast.success(`Registered new gauge "${createGaugeName.trim()}" in Instruments Master`);
+          }
+        } catch (instErr: any) {
+          console.warn("Could not auto-register in instruments master:", instErr);
+          toast.warning("Could not auto-register in Instruments Master, proceeding to save diagram");
+        }
+      }
+
       const formData = new FormData();
       formData.append("gauge_name", createGaugeName.trim());
       if (createIdCode.trim()) formData.append("id_code", createIdCode.trim());
       if (createPartName.trim()) formData.append("part_name", createPartName.trim());
-      if (createInstrumentId) formData.append("instrument_id", createInstrumentId);
+      if (finalInstrumentId) formData.append("instrument_id", finalInstrumentId);
       if (createDescription.trim()) formData.append("description", createDescription.trim());
       if (user?.companyId) formData.append("companyId", user.companyId);
       if (createFile) formData.append("file", createFile);
@@ -256,6 +284,8 @@ export default function GaugeDiagrams() {
       setCreateInstrumentId("");
       setCreateDescription("");
       setCreateFile(null);
+      setCreateRegisterInMaster(false);
+      setCreateEntryMode("master");
 
       // Offer immediate view option
       if (created.file_path) {
@@ -298,7 +328,7 @@ export default function GaugeDiagrams() {
       formData.append("gauge_name", editGaugeName.trim());
       formData.append("id_code", editIdCode.trim());
       formData.append("part_name", editPartName.trim());
-      if (editInstrumentId) formData.append("instrument_id", editInstrumentId);
+      formData.append("instrument_id", editInstrumentId ? editInstrumentId.trim() : "");
       if (editDescription !== undefined) formData.append("description", editDescription.trim());
       if (editActionDetails.trim()) formData.append("actionDetails", editActionDetails.trim());
       if (editFile) formData.append("file", editFile);
@@ -782,38 +812,177 @@ export default function GaugeDiagrams() {
 
       {/* CREATE GAUGE DIAGRAM DIALOG */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create Gauge Diagram</DialogTitle>
             <DialogDescription>
-              Select a gauge from the Instruments Master (filtered by device type: gauge) and attach the diagram schematic.
+              Select an existing gauge from the Instruments Master or enter details manually, and attach the diagram schematic.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleCreateSubmit} className="space-y-4 py-2">
-            {/* High performance 2,000+ Gauge Selector with on-screen filter */}
-            <InstrumentSearchSelector
-              label="Select Gauge from Master"
-              required
-              companyId={user?.companyId}
-              defaultDeviceType="gauge"
-              selectedInstrumentId={createInstrumentId}
-              selectedName={createGaugeName}
-              selectedIdCode={createIdCode}
-              selectedPartName={createPartName}
-              onSelect={(inst: Instrument) => {
-                setCreateGaugeName(inst.name || "");
-                setCreateIdCode(inst.id_code || "");
-                setCreatePartName(inst.part_name || "");
-                setCreateInstrumentId(inst.id || "");
-              }}
-              onClear={() => {
-                setCreateGaugeName("");
-                setCreateIdCode("");
-                setCreatePartName("");
-                setCreateInstrumentId("");
-              }}
-            />
+            <Tabs
+              value={createEntryMode}
+              onValueChange={(val) => setCreateEntryMode(val as "master" | "manual")}
+              className="w-full"
+            >
+              <TabsList className="grid grid-cols-2 w-full mb-3">
+                <TabsTrigger value="master" className="text-xs gap-1.5 font-medium">
+                  <Search className="h-3.5 w-3.5" />
+                  Select from Master
+                </TabsTrigger>
+                <TabsTrigger value="manual" className="text-xs gap-1.5 font-medium">
+                  <PlusCircle className="h-3.5 w-3.5" />
+                  Manual Entry / Create New
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="master" className="space-y-3 mt-0">
+                <InstrumentSearchSelector
+                  label="Search Gauge in Master"
+                  required={false}
+                  companyId={user?.companyId}
+                  defaultDeviceType="gauge"
+                  selectedInstrumentId={createInstrumentId}
+                  selectedName={createGaugeName}
+                  selectedIdCode={createIdCode}
+                  selectedPartName={createPartName}
+                  onSelect={(inst: Instrument) => {
+                    setCreateGaugeName(inst.name || "");
+                    setCreateIdCode(inst.id_code || "");
+                    setCreatePartName(inst.part_name || "");
+                    setCreateInstrumentId(inst.id || "");
+                  }}
+                  onClear={() => {
+                    setCreateInstrumentId("");
+                  }}
+                />
+
+                <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                      <Edit2 className="h-3 w-3" />
+                      Preloaded Details (Editable)
+                    </span>
+                    {createInstrumentId && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setCreateInstrumentId("");
+                          setCreateEntryMode("manual");
+                          toast.info("Switched to manual entry mode with preloaded values preserved");
+                        }}
+                        className="h-6 text-[11px] text-muted-foreground hover:text-foreground px-2"
+                      >
+                        Unlink to Manual
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-gauge-name" className="text-xs font-semibold">
+                      Gauge Name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="create-gauge-name"
+                      placeholder="e.g. Thread Plug Gauge M12x1.5"
+                      value={createGaugeName}
+                      onChange={(e) => setCreateGaugeName(e.target.value)}
+                      required
+                      className="h-9 text-sm bg-background"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-id-code" className="text-xs font-semibold">
+                        ID Code / IMTE
+                      </Label>
+                      <Input
+                        id="create-id-code"
+                        placeholder="e.g. TG-042"
+                        value={createIdCode}
+                        onChange={(e) => setCreateIdCode(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-part-name" className="text-xs font-semibold">
+                        Part Name
+                      </Label>
+                      <Input
+                        id="create-part-name"
+                        placeholder="e.g. Crankcase Outer Body"
+                        value={createPartName}
+                        onChange={(e) => setCreatePartName(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="manual" className="space-y-3 mt-0">
+                <div className="rounded-lg border bg-muted/20 p-3.5 space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="create-manual-gauge-name" className="text-xs font-semibold">
+                      Gauge Name <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="create-manual-gauge-name"
+                      placeholder="e.g. Air Plug Gauge 25.000mm"
+                      value={createGaugeName}
+                      onChange={(e) => setCreateGaugeName(e.target.value)}
+                      required
+                      className="h-9 text-sm bg-background"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-id-code" className="text-xs font-semibold">
+                        ID Code / IMTE
+                      </Label>
+                      <Input
+                        id="create-manual-id-code"
+                        placeholder="e.g. APG-102"
+                        value={createIdCode}
+                        onChange={(e) => setCreateIdCode(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-part-name" className="text-xs font-semibold">
+                        Part Name
+                      </Label>
+                      <Input
+                        id="create-manual-part-name"
+                        placeholder="e.g. Hydraulic Cylinder"
+                        value={createPartName}
+                        onChange={(e) => setCreatePartName(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2 pt-2 border-t border-border/60">
+                    <Checkbox
+                      id="create-register-master"
+                      checked={createRegisterInMaster}
+                      onCheckedChange={(checked) => setCreateRegisterInMaster(!!checked)}
+                    />
+                    <Label
+                      htmlFor="create-register-master"
+                      className="text-xs font-medium cursor-pointer text-foreground leading-none"
+                    >
+                      Also register this gauge in Instruments Master
+                    </Label>
+                  </div>
+                </div>
+              </TabsContent>
+            </Tabs>
 
             <div className="space-y-1.5">
               <Label htmlFor="create-diag-desc" className="text-xs font-semibold">
@@ -880,7 +1049,7 @@ export default function GaugeDiagrams() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting || !createGaugeName} className="gap-2">
+              <Button type="submit" disabled={isSubmitting || !createGaugeName.trim()} className="gap-2">
                 {isSubmitting ? "Saving..." : "Save Gauge Diagram"}
               </Button>
             </DialogFooter>
@@ -925,40 +1094,76 @@ export default function GaugeDiagrams() {
 
       {/* EDIT DIAGRAM DIALOG */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Gauge Diagram</DialogTitle>
             <DialogDescription>
-              Update gauge details, change linked instrument, or upload a new revision.
+              Update gauge details, change or unlink master instrument, and upload a new diagram revision.
             </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleEditSubmit} className="space-y-4 py-2">
-            {/* Re-select or change from master list */}
-            <InstrumentSearchSelector
-              label="Linked Gauge in Master List"
-              required
-              companyId={user?.companyId}
-              defaultDeviceType="gauge"
-              selectedInstrumentId={editInstrumentId}
-              selectedName={editGaugeName}
-              selectedIdCode={editIdCode}
-              selectedPartName={editPartName}
-              onSelect={(inst: Instrument) => {
-                setEditGaugeName(inst.name || "");
-                setEditIdCode(inst.id_code || "");
-                setEditPartName(inst.part_name || "");
-                setEditInstrumentId(inst.id || "");
-              }}
-              onClear={() => {
-                setEditInstrumentId("");
-              }}
-            />
+            {/* Master Instrument Link & Status */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold">Linked Master Gauge (Optional)</Label>
+                {editInstrumentId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setEditInstrumentId("");
+                      toast.info("Unlinked from master gauge. Diagram is now saved as a standalone manual entry.");
+                    }}
+                    className="h-6 text-[11px] text-destructive hover:bg-destructive/10 px-2"
+                  >
+                    Unlink (Keep as Manual Entry)
+                  </Button>
+                )}
+              </div>
+
+              <InstrumentSearchSelector
+                label=""
+                required={false}
+                companyId={user?.companyId}
+                defaultDeviceType="gauge"
+                selectedInstrumentId={editInstrumentId}
+                selectedName={editGaugeName}
+                selectedIdCode={editIdCode}
+                selectedPartName={editPartName}
+                onSelect={(inst: Instrument) => {
+                  if (!editGaugeName) setEditGaugeName(inst.name || "");
+                  setEditIdCode(inst.id_code || "");
+                  setEditPartName(inst.part_name || "");
+                  setEditInstrumentId(inst.id || "");
+                }}
+                onClear={() => {
+                  setEditInstrumentId("");
+                }}
+              />
+            </div>
+
+            {/* Manual Edit Fields */}
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-gauge-name" className="text-xs font-semibold">
+                Gauge Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="edit-gauge-name"
+                value={editGaugeName}
+                onChange={(e) => setEditGaugeName(e.target.value)}
+                required
+                placeholder="e.g. Thread Plug Gauge M12x1.5"
+                className="h-9 text-sm"
+              />
+            </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">ID Code / IMTE</Label>
+                <Label htmlFor="edit-id-code" className="text-xs font-semibold">ID Code / IMTE</Label>
                 <Input
+                  id="edit-id-code"
                   value={editIdCode}
                   onChange={(e) => setEditIdCode(e.target.value)}
                   placeholder="e.g. PG-01"
@@ -966,8 +1171,9 @@ export default function GaugeDiagrams() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs font-semibold">Part Name</Label>
+                <Label htmlFor="edit-part-name" className="text-xs font-semibold">Part Name</Label>
                 <Input
+                  id="edit-part-name"
                   value={editPartName}
                   onChange={(e) => setEditPartName(e.target.value)}
                   placeholder="e.g. Flange Adapter"
@@ -977,8 +1183,9 @@ export default function GaugeDiagrams() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Description</Label>
+              <Label htmlFor="edit-diag-desc" className="text-xs font-semibold">Description</Label>
               <Textarea
+                id="edit-diag-desc"
                 value={editDescription}
                 onChange={(e) => setEditDescription(e.target.value)}
                 rows={2}
@@ -1016,8 +1223,9 @@ export default function GaugeDiagrams() {
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Revision Notes / Reason for Change</Label>
+              <Label htmlFor="edit-action-details" className="text-xs font-semibold">Revision Notes / Reason for Change</Label>
               <Input
+                id="edit-action-details"
                 placeholder="e.g. Added detail view of vernier scale markings"
                 value={editActionDetails}
                 onChange={(e) => setEditActionDetails(e.target.value)}
@@ -1034,7 +1242,7 @@ export default function GaugeDiagrams() {
               >
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={isSubmitting || !editGaugeName.trim()}>
                 {isSubmitting ? "Updating..." : "Save Changes"}
               </Button>
             </DialogFooter>

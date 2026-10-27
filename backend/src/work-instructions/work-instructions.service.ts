@@ -68,7 +68,7 @@ export class WorkInstructionsService {
       title: dto.title,
       id_code: dto.id_code,
       part_name: dto.part_name,
-      instrument_id: dto.instrument_id,
+      instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
       description: dto.description,
       companyId: targetCompanyId,
       version: 1,
@@ -129,7 +129,7 @@ export class WorkInstructionsService {
       instruction.part_name = dto.part_name;
     }
     if (dto.instrument_id !== undefined) {
-      instruction.instrument_id = dto.instrument_id;
+      instruction.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
     }
     if (dto.description !== undefined) {
       instruction.description = dto.description;

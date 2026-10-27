@@ -30,7 +30,7 @@ interface InstrumentSearchSelectorProps {
 
 export function InstrumentSearchSelector({
   label = "Select Gauge / Instrument",
-  required = true,
+  required = false,
   companyId,
   defaultDeviceType = "gauge",
   selectedInstrumentId,
@@ -110,7 +110,7 @@ export function InstrumentSearchSelector({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const hasSelection = Boolean(selectedName || selectedIdCode || selectedInstrumentId);
+  const hasSelection = Boolean(selectedInstrumentId);
 
   const handleSelectItem = (inst: Instrument) => {
     onSelect(inst);

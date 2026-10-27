@@ -26,8 +26,8 @@ export class GaugeDiagramHistory {
   @Column({ nullable: true })
   part_name?: string;
 
-  @Column({ nullable: true })
-  instrument_id?: string;
+  @Column({ type: 'varchar', nullable: true })
+  instrument_id?: string | null;
 
   @Column({ nullable: true })
   document_name: string;
