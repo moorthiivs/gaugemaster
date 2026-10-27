@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -111,23 +111,38 @@ export class InstrumentsController {
 
     @Get(':id')
     @RequirePermission('instruments', 'view')
-    async findOne(@Param('id') id: string) {
-        return this.instrumentsService.findOne(id);
+    async findOne(@Param('id') id: string, @Req() req: any) {
+        const inst = await this.instrumentsService.findOne(id);
+        const user = req.user || {};
+        if (!user.isSuperAdmin && inst.companyId && user.companyId && inst.companyId !== user.companyId) {
+            throw new ForbiddenException('Access denied to instrument outside your company');
+        }
+        return inst;
     }
 
     @Post()
     @RequirePermission('instruments', 'create')
-    create(@Body() createInstrumentDto: CreateInstrumentDto) {
+    create(@Body() createInstrumentDto: CreateInstrumentDto, @Req() req: any) {
+        const user = req.user || {};
+        if (!user.isSuperAdmin && user.companyId) {
+            createInstrumentDto.companyId = user.companyId;
+        }
         return this.instrumentsService.create(createInstrumentDto);
     }
 
     @Patch(':id')
     @Put(':id')
     @RequirePermission('instruments', 'edit')
-    update(
+    async update(
         @Param('id') id: string,
-        @Body() updateInstrumentDto: UpdateInstrumentDto
+        @Body() updateInstrumentDto: UpdateInstrumentDto,
+        @Req() req: any,
     ) {
+        const inst = await this.instrumentsService.findOne(id);
+        const user = req.user || {};
+        if (!user.isSuperAdmin && inst.companyId && user.companyId && inst.companyId !== user.companyId) {
+            throw new ForbiddenException('Cannot modify instrument outside your company');
+        }
         return this.instrumentsService.update(id, updateInstrumentDto);
     }
 
@@ -149,7 +164,12 @@ export class InstrumentsController {
             }
         }
     }))
-    async uploadCertificate(@Param('id') id: string, @UploadedFile() file: any) {
+    async uploadCertificate(@Param('id') id: string, @UploadedFile() file: any, @Req() req: any) {
+        const inst = await this.instrumentsService.findOne(id);
+        const user = req.user || {};
+        if (!user.isSuperAdmin && inst.companyId && user.companyId && inst.companyId !== user.companyId) {
+            throw new ForbiddenException('Cannot upload certificate for instrument outside your company');
+        }
         let fileUrl = `/uploads/certificates/${file.filename}`;
         
         await this.instrumentsService.update(id, { 
@@ -161,14 +181,24 @@ export class InstrumentsController {
     // Google Sheets integration removed based on user request
 
     @Post('backfill-sino')
+    @RequirePermission('settings', 'edit')
     async backfillSino() {
         return this.instrumentsService.backfillSino();
     }
 
     @Post('bulk-upload')
     @RequirePermission('instruments', 'create')
-    async bulkUpload(@Body() dto: CreateInstrumentDto | CreateInstrumentDto[]) {
+    async bulkUpload(
+        @Body() dto: CreateInstrumentDto | CreateInstrumentDto[],
+        @Req() req: any,
+    ) {
         const dataArray = Array.isArray(dto) ? dto : [dto];
+        const user = req.user || {};
+        if (!user.isSuperAdmin && user.companyId) {
+            for (const item of dataArray) {
+                item.companyId = user.companyId;
+            }
+        }
         return this.instrumentsService.bulkUpload(dataArray);
     }
 

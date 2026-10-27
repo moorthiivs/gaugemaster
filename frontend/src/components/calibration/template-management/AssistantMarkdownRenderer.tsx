@@ -524,12 +524,12 @@ const DiagramView: React.FC<{ code: string }> = ({ code }) => {
         mermaid.initialize({
           startOnLoad: false,
           theme: isDark ? "dark" : "neutral",
-          securityLevel: "loose",
+          securityLevel: "strict",
           fontFamily: "'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
           flowchart: {
             curve: "basis",
             useMaxWidth: true,
-            htmlLabels: true
+            htmlLabels: false
           }
         });
 

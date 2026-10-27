@@ -49,6 +49,11 @@ export class PermissionsGuard implements CanActivate {
       return true;
     }
 
+    // Standard unrestricted core modules (matches frontend usePermissions.ts)
+    if (required.module === 'dashboard' || required.module === 'profile') {
+      return true;
+    }
+
     // Fetch user with eager-loaded role from database to get latest permissions
     const user = await this.userRepository.findOne({
       where: { id: jwtUser.userId },

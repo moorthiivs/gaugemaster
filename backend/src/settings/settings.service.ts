@@ -56,10 +56,23 @@ export class SettingsService {
           };
         }
 
+        let mergedSmtpConfig: any = existing.smtpConfig;
+        if (createSettingDto.smtpConfig) {
+          const rawSmtp: any = createSettingDto.smtpConfig;
+          const newPass = (rawSmtp.password || rawSmtp.pass)?.toString().trim();
+          const isMaskedOrEmpty = !newPass || newPass.includes('•') || newPass.includes('*');
+          mergedSmtpConfig = {
+            ...(existing.smtpConfig || {}),
+            ...createSettingDto.smtpConfig,
+            password: isMaskedOrEmpty ? (existing.smtpConfig as any)?.password : (rawSmtp.password || rawSmtp.pass),
+          };
+        }
+
         const updatePayload: any = {
           ...createSettingDto,
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
           ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
+          ...(mergedSmtpConfig ? { smtpConfig: mergedSmtpConfig } : {}),
         };
 
         if (createSettingDto.themeSettings && (existing.themeSettings as any)?.userThemes) {
@@ -97,6 +110,12 @@ export class SettingsService {
       setting.aiConfig = {
         ...setting.aiConfig,
         apiKey: masked,
+      };
+    }
+    if (setting.smtpConfig?.password) {
+      setting.smtpConfig = {
+        ...setting.smtpConfig,
+        password: '••••••••',
       };
     }
     return setting;
