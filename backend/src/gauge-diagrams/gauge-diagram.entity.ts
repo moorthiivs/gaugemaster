@@ -24,6 +24,9 @@ export class GaugeDiagram {
   @Column({ nullable: true })
   part_name?: string;
 
+  @Column({ nullable: true })
+  range?: string;
+
   @Column({ type: 'varchar', nullable: true })
   instrument_id?: string | null;
 

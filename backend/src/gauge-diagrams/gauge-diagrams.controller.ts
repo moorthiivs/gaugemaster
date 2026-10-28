@@ -68,10 +68,11 @@ export class GaugeDiagramsController {
     @Query('search') search?: string,
     @Query('id_code') id_code?: string,
     @Query('part_name') part_name?: string,
+    @Query('range') range?: string,
   ) {
     const isSuperAdmin = !!req.user?.isSuperAdmin;
     const companyId = isSuperAdmin ? (queryCompanyId || req.user?.companyId) : req.user?.companyId;
-    return this.service.findAll(companyId, search, id_code, part_name);
+    return this.service.findAll(companyId, search, id_code, part_name, range);
   }
 
   @Get(':id')

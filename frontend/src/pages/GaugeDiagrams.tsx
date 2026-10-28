@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
@@ -49,6 +49,7 @@ import {
   Compass,
   Hash,
   Cog,
+  Ruler,
   Filter,
   X,
 } from "lucide-react";
@@ -86,6 +87,28 @@ export default function GaugeDiagrams() {
   const [selectedIdCode, setSelectedIdCode] = useState("");
   const [selectedPartName, setSelectedPartName] = useState("");
 
+  // Column Visibility State (persisted in localStorage)
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
+    try {
+      const saved = localStorage.getItem("gm_gauge_diagrams_cols");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleColumnVisibilityChange = (updaterOrValue: any) => {
+    setColumnVisibility((prev) => {
+      const next = typeof updaterOrValue === "function" ? updaterOrValue(prev) : updaterOrValue;
+      try {
+        localStorage.setItem("gm_gauge_diagrams_cols", JSON.stringify(next));
+      } catch (e) {
+        console.error("Failed to persist column visibility:", e);
+      }
+      return next;
+    });
+  };
+
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createEntryMode, setCreateEntryMode] = useState<"master" | "manual">("master");
@@ -93,6 +116,7 @@ export default function GaugeDiagrams() {
   const [createGaugeName, setCreateGaugeName] = useState("");
   const [createIdCode, setCreateIdCode] = useState("");
   const [createPartName, setCreatePartName] = useState("");
+  const [createRange, setCreateRange] = useState("");
   const [createInstrumentId, setCreateInstrumentId] = useState("");
   const [createDescription, setCreateDescription] = useState("");
   const [createFile, setCreateFile] = useState<File | null>(null);
@@ -108,6 +132,7 @@ export default function GaugeDiagrams() {
   const [editGaugeName, setEditGaugeName] = useState("");
   const [editIdCode, setEditIdCode] = useState("");
   const [editPartName, setEditPartName] = useState("");
+  const [editRange, setEditRange] = useState("");
   const [editInstrumentId, setEditInstrumentId] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editFile, setEditFile] = useState<File | null>(null);
@@ -251,6 +276,7 @@ export default function GaugeDiagrams() {
             name: createGaugeName.trim(),
             id_code: createIdCode.trim() || undefined,
             part_name: createPartName.trim() || undefined,
+            range: createRange.trim() || undefined,
             device_type: "Gauge",
             companyId: user?.companyId,
             status: "OK",
@@ -270,6 +296,7 @@ export default function GaugeDiagrams() {
       formData.append("gauge_name", createGaugeName.trim());
       if (createIdCode.trim()) formData.append("id_code", createIdCode.trim());
       if (createPartName.trim()) formData.append("part_name", createPartName.trim());
+      if (createRange.trim()) formData.append("range", createRange.trim());
       if (finalInstrumentId) formData.append("instrument_id", finalInstrumentId);
       if (createDescription.trim()) formData.append("description", createDescription.trim());
       if (user?.companyId) formData.append("companyId", user.companyId);
@@ -306,6 +333,7 @@ export default function GaugeDiagrams() {
     setEditGaugeName(item.gauge_name);
     setEditIdCode(item.id_code || "");
     setEditPartName(item.part_name || "");
+    setEditRange(item.range || "");
     setEditInstrumentId(item.instrument_id || "");
     setEditDescription(item.description || "");
     setEditFile(null);
@@ -328,6 +356,7 @@ export default function GaugeDiagrams() {
       formData.append("gauge_name", editGaugeName.trim());
       formData.append("id_code", editIdCode.trim());
       formData.append("part_name", editPartName.trim());
+      formData.append("range", editRange.trim());
       formData.append("instrument_id", editInstrumentId ? editInstrumentId.trim() : "");
       if (editDescription !== undefined) formData.append("description", editDescription.trim());
       if (editActionDetails.trim()) formData.append("actionDetails", editActionDetails.trim());
@@ -412,6 +441,7 @@ export default function GaugeDiagrams() {
     () => [
       {
         id: "sno",
+        enableHiding: false,
         header: () => <div className="text-center font-semibold">S.No</div>,
         cell: ({ row }) => (
           <div className="text-center font-mono text-xs text-muted-foreground">
@@ -422,6 +452,7 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "gauge_name",
+        meta: { title: "Gauge Name" },
         header: () => <span className="font-semibold min-w-[200px]">Gauge Name</span>,
         cell: ({ row }) => {
           const diag = row.original;
@@ -441,6 +472,7 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "id_code",
+        meta: { title: "ID Code / IMTE" },
         header: () => <span className="font-semibold whitespace-nowrap min-w-[140px]">ID Code / IMTE</span>,
         cell: ({ row }) => {
           const code = row.original.id_code;
@@ -461,6 +493,7 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "part_name",
+        meta: { title: "Part Name" },
         header: () => <span className="font-semibold whitespace-nowrap min-w-[120px]">Part Name</span>,
         cell: ({ row }) => {
           const part = row.original.part_name;
@@ -476,7 +509,29 @@ export default function GaugeDiagrams() {
         size: 140,
       },
       {
+        accessorKey: "range",
+        meta: { title: "Range / Size" },
+        header: () => <span className="font-semibold whitespace-nowrap min-w-[120px]">Range / Size</span>,
+        cell: ({ row }) => {
+          const range = row.original.range;
+          return range ? (
+            <Badge
+              variant="outline"
+              className="font-mono text-xs font-medium px-2.5 py-0.5 rounded-md whitespace-nowrap inline-flex items-center gap-1.5 bg-muted/40 border-border/80 text-foreground shadow-2xs hover:bg-muted/60 max-w-[200px]"
+              title={range}
+            >
+              <Ruler className="h-3 w-3 text-primary/70 shrink-0" />
+              <span className="truncate">{range}</span>
+            </Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+        size: 130,
+      },
+      {
         accessorKey: "document_name",
+        meta: { title: "Diagram File" },
         header: () => <span className="font-semibold">Diagram File</span>,
         cell: ({ row }) => {
           const diag = row.original;
@@ -502,6 +557,7 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "version",
+        meta: { title: "Version" },
         header: () => <div className="text-center font-semibold">Version</div>,
         cell: ({ row }) => (
           <div className="text-center">
@@ -514,6 +570,7 @@ export default function GaugeDiagrams() {
       },
       {
         accessorKey: "updated_at",
+        meta: { title: "Last Updated" },
         header: () => <span className="font-semibold">Last Updated</span>,
         cell: ({ row }) => {
           const diag = row.original;
@@ -533,6 +590,7 @@ export default function GaugeDiagrams() {
       },
       {
         id: "actions",
+        enableHiding: false,
         header: () => <div className="text-right font-semibold pr-4">Action</div>,
         cell: ({ row }) => {
           const diag = row.original;
@@ -790,6 +848,8 @@ export default function GaugeDiagrams() {
               setPageSize(s);
               setPageIndex(1);
             }}
+            columnVisibility={columnVisibility}
+            onColumnVisibilityChange={handleColumnVisibilityChange}
             hideSearch={true}
             hideColumnToggle={false}
             emptyTitle={isFiltered ? "No matching gauge diagrams" : "No gauge diagrams found"}
@@ -847,10 +907,12 @@ export default function GaugeDiagrams() {
                   selectedName={createGaugeName}
                   selectedIdCode={createIdCode}
                   selectedPartName={createPartName}
+                  selectedRange={createRange}
                   onSelect={(inst: Instrument) => {
                     setCreateGaugeName(inst.name || "");
                     setCreateIdCode(inst.id_code || "");
                     setCreatePartName(inst.part_name || "");
+                    setCreateRange(inst.range || "");
                     setCreateInstrumentId(inst.id || "");
                   }}
                   onClear={() => {
@@ -895,7 +957,7 @@ export default function GaugeDiagrams() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="create-id-code" className="text-xs font-semibold">
                         ID Code / IMTE
@@ -920,6 +982,18 @@ export default function GaugeDiagrams() {
                         className="h-9 text-sm bg-background"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-range" className="text-xs font-semibold">
+                        Range / Size
+                      </Label>
+                      <Input
+                        id="create-range"
+                        placeholder="e.g. 0 - 150 mm"
+                        value={createRange}
+                        onChange={(e) => setCreateRange(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>
@@ -940,7 +1014,7 @@ export default function GaugeDiagrams() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="create-manual-id-code" className="text-xs font-semibold">
                         ID Code / IMTE
@@ -963,6 +1037,18 @@ export default function GaugeDiagrams() {
                         value={createPartName}
                         onChange={(e) => setCreatePartName(e.target.value)}
                         className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-range" className="text-xs font-semibold">
+                        Range / Size
+                      </Label>
+                      <Input
+                        id="create-manual-range"
+                        placeholder="e.g. 0 - 25 mm"
+                        value={createRange}
+                        onChange={(e) => setCreateRange(e.target.value)}
+                        className="h-9 text-sm font-mono bg-background"
                       />
                     </div>
                   </div>
@@ -1132,10 +1218,12 @@ export default function GaugeDiagrams() {
                 selectedName={editGaugeName}
                 selectedIdCode={editIdCode}
                 selectedPartName={editPartName}
+                selectedRange={editRange}
                 onSelect={(inst: Instrument) => {
                   if (!editGaugeName) setEditGaugeName(inst.name || "");
                   setEditIdCode(inst.id_code || "");
                   setEditPartName(inst.part_name || "");
+                  setEditRange(inst.range || "");
                   setEditInstrumentId(inst.id || "");
                 }}
                 onClear={() => {

@@ -35,6 +35,7 @@ export interface GaugeDiagram {
   gauge_name: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
   instrument_id?: string;
   document_name?: string;
   file_type?: string;
@@ -56,6 +57,7 @@ export interface GaugeDiagramHistory {
   gauge_name: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
   instrument_id?: string;
   document_name?: string;
   file_type?: string;
@@ -73,6 +75,7 @@ export interface WorkInstruction {
   title: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
   instrument_id?: string;
   document_name?: string;
   file_type?: string;
@@ -94,6 +97,7 @@ export interface WorkInstructionHistory {
   title: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
   instrument_id?: string;
   document_name?: string;
   file_type?: string;

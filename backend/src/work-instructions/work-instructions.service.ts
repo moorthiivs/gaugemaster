@@ -15,7 +15,7 @@ export class WorkInstructionsService {
     private readonly historyRepo: Repository<WorkInstructionHistory>,
   ) {}
 
-  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string) {
+  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string, range?: string) {
     const baseWhere: any = {};
     if (companyId) {
       baseWhere.companyId = companyId;
@@ -34,6 +34,7 @@ export class WorkInstructionsService {
           { ...baseWhere, title: pattern },
           { ...baseWhere, id_code: pattern },
           { ...baseWhere, part_name: pattern },
+          { ...baseWhere, range: pattern },
         ],
         order: { created_at: 'DESC' },
       });
@@ -68,6 +69,7 @@ export class WorkInstructionsService {
       title: dto.title,
       id_code: dto.id_code,
       part_name: dto.part_name,
+      range: dto.range,
       instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
       description: dto.description,
       companyId: targetCompanyId,
@@ -88,6 +90,7 @@ export class WorkInstructionsService {
       title: saved.title,
       id_code: saved.id_code,
       part_name: saved.part_name,
+      range: saved.range,
       instrument_id: saved.instrument_id,
       document_name: saved.document_name,
       file_type: saved.file_type,
@@ -128,6 +131,9 @@ export class WorkInstructionsService {
     if (dto.part_name !== undefined) {
       instruction.part_name = dto.part_name;
     }
+    if (dto.range !== undefined) {
+      instruction.range = dto.range;
+    }
     if (dto.instrument_id !== undefined) {
       instruction.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
     }
@@ -154,6 +160,7 @@ export class WorkInstructionsService {
       title: updated.title,
       id_code: updated.id_code,
       part_name: updated.part_name,
+      range: updated.range,
       instrument_id: updated.instrument_id,
       document_name: updated.document_name,
       file_type: updated.file_type,

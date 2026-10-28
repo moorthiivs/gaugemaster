@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { format } from "date-fns";
-import { ColumnDef } from "@tanstack/react-table";
+import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { DataTable } from "@/components/DataTable";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth";
@@ -53,6 +53,7 @@ import {
   Cog,
   Filter,
   X,
+  Ruler,
 } from "lucide-react";
 import { DocumentationFilterCombobox } from "@/components/documentation/DocumentationFilterCombobox";
 import {
@@ -89,6 +90,28 @@ export default function WorkInstructions() {
   const [selectedIdCode, setSelectedIdCode] = useState("");
   const [selectedPartName, setSelectedPartName] = useState("");
 
+  // Column Visibility State (persisted in localStorage)
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(() => {
+    try {
+      const saved = localStorage.getItem("gm_work_instructions_cols");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const handleColumnVisibilityChange = (updaterOrValue: any) => {
+    setColumnVisibility((prev) => {
+      const next = typeof updaterOrValue === "function" ? updaterOrValue(prev) : updaterOrValue;
+      try {
+        localStorage.setItem("gm_work_instructions_cols", JSON.stringify(next));
+      } catch (e) {
+        console.error("Failed to persist column visibility:", e);
+      }
+      return next;
+    });
+  };
+
   // Create Modal State
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createEntryMode, setCreateEntryMode] = useState<"master" | "manual">("master");
@@ -96,6 +119,7 @@ export default function WorkInstructions() {
   const [createTitle, setCreateTitle] = useState("");
   const [createIdCode, setCreateIdCode] = useState("");
   const [createPartName, setCreatePartName] = useState("");
+  const [createRange, setCreateRange] = useState("");
   const [createInstrumentId, setCreateInstrumentId] = useState("");
   const [createDescription, setCreateDescription] = useState("");
   const [createFile, setCreateFile] = useState<File | null>(null);
@@ -111,6 +135,7 @@ export default function WorkInstructions() {
   const [editTitle, setEditTitle] = useState("");
   const [editIdCode, setEditIdCode] = useState("");
   const [editPartName, setEditPartName] = useState("");
+  const [editRange, setEditRange] = useState("");
   const [editInstrumentId, setEditInstrumentId] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [editFile, setEditFile] = useState<File | null>(null);
@@ -255,6 +280,7 @@ export default function WorkInstructions() {
             name: cleanName,
             id_code: createIdCode.trim() || undefined,
             part_name: createPartName.trim() || undefined,
+            range: createRange.trim() || undefined,
             device_type: "Gauge",
             companyId: user?.companyId,
             status: "OK",
@@ -274,6 +300,7 @@ export default function WorkInstructions() {
       formData.append("title", createTitle.trim());
       if (createIdCode.trim()) formData.append("id_code", createIdCode.trim());
       if (createPartName.trim()) formData.append("part_name", createPartName.trim());
+      if (createRange.trim()) formData.append("range", createRange.trim());
       if (finalInstrumentId) formData.append("instrument_id", finalInstrumentId);
       if (createDescription.trim()) formData.append("description", createDescription.trim());
       if (user?.companyId) formData.append("companyId", user.companyId);
@@ -285,6 +312,7 @@ export default function WorkInstructions() {
       setCreateTitle("");
       setCreateIdCode("");
       setCreatePartName("");
+      setCreateRange("");
       setCreateInstrumentId("");
       setCreateDescription("");
       setCreateFile(null);
@@ -310,6 +338,7 @@ export default function WorkInstructions() {
     setEditTitle(item.title);
     setEditIdCode(item.id_code || "");
     setEditPartName(item.part_name || "");
+    setEditRange(item.range || "");
     setEditInstrumentId(item.instrument_id || "");
     setEditDescription(item.description || "");
     setEditFile(null);
@@ -332,6 +361,7 @@ export default function WorkInstructions() {
       formData.append("title", editTitle.trim());
       formData.append("id_code", editIdCode.trim());
       formData.append("part_name", editPartName.trim());
+      formData.append("range", editRange.trim());
       formData.append("instrument_id", editInstrumentId ? editInstrumentId.trim() : "");
       if (editDescription !== undefined) formData.append("description", editDescription.trim());
       if (editActionDetails.trim()) formData.append("actionDetails", editActionDetails.trim());
@@ -421,6 +451,7 @@ export default function WorkInstructions() {
     () => [
       {
         id: "sno",
+        enableHiding: false,
         header: () => <div className="text-center font-semibold">S.No</div>,
         cell: ({ row }) => (
           <div className="text-center font-mono text-xs text-muted-foreground">
@@ -431,6 +462,7 @@ export default function WorkInstructions() {
       },
       {
         accessorKey: "title",
+        meta: { title: "Work Instruction / Title" },
         header: () => <span className="font-semibold min-w-[200px]">Work Instruction / Title</span>,
         cell: ({ row }) => {
           const inst = row.original;
@@ -450,6 +482,7 @@ export default function WorkInstructions() {
       },
       {
         accessorKey: "id_code",
+        meta: { title: "ID Code / IMTE" },
         header: () => <span className="font-semibold whitespace-nowrap min-w-[140px]">ID Code / IMTE</span>,
         cell: ({ row }) => {
           const code = row.original.id_code;
@@ -470,6 +503,7 @@ export default function WorkInstructions() {
       },
       {
         accessorKey: "part_name",
+        meta: { title: "Part Name" },
         header: () => <span className="font-semibold whitespace-nowrap min-w-[120px]">Part Name</span>,
         cell: ({ row }) => {
           const part = row.original.part_name;
@@ -485,7 +519,29 @@ export default function WorkInstructions() {
         size: 140,
       },
       {
+        accessorKey: "range",
+        meta: { title: "Range / Size" },
+        header: () => <span className="font-semibold whitespace-nowrap min-w-[120px]">Range / Size</span>,
+        cell: ({ row }) => {
+          const range = row.original.range;
+          return range ? (
+            <Badge
+              variant="outline"
+              className="font-mono text-xs font-medium px-2.5 py-0.5 rounded-md whitespace-nowrap inline-flex items-center gap-1.5 bg-muted/40 border-border/80 text-foreground shadow-2xs hover:bg-muted/60 max-w-[200px]"
+              title={range}
+            >
+              <Ruler className="h-3 w-3 text-primary/70 shrink-0" />
+              <span className="truncate">{range}</span>
+            </Badge>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">-</span>
+          );
+        },
+        size: 130,
+      },
+      {
         accessorKey: "document_name",
+        meta: { title: "Document" },
         header: () => <span className="font-semibold">Document</span>,
         cell: ({ row }) => {
           const inst = row.original;
@@ -520,6 +576,7 @@ export default function WorkInstructions() {
       },
       {
         accessorKey: "version",
+        meta: { title: "Version" },
         header: () => <div className="text-center font-semibold">Version</div>,
         cell: ({ row }) => (
           <div className="text-center">
@@ -532,6 +589,7 @@ export default function WorkInstructions() {
       },
       {
         accessorKey: "updated_at",
+        meta: { title: "Last Updated" },
         header: () => <span className="font-semibold">Last Updated</span>,
         cell: ({ row }) => {
           const inst = row.original;
@@ -551,6 +609,7 @@ export default function WorkInstructions() {
       },
       {
         id: "actions",
+        enableHiding: false,
         header: () => <div className="text-right font-semibold pr-4">Action</div>,
         cell: ({ row }) => {
           const inst = row.original;
@@ -629,6 +688,7 @@ export default function WorkInstructions() {
                 setCreateTitle("");
                 setCreateIdCode("");
                 setCreatePartName("");
+                setCreateRange("");
                 setCreateInstrumentId("");
                 setCreateDescription("");
                 setCreateFile(null);
@@ -813,6 +873,8 @@ export default function WorkInstructions() {
               setPageSize(s);
               setPageIndex(1);
             }}
+            columnVisibility={columnVisibility}
+            onColumnVisibilityChange={handleColumnVisibilityChange}
             hideSearch={true}
             hideColumnToggle={false}
             emptyTitle={isFiltered ? "No matching work instructions" : "No work instructions found"}
@@ -870,11 +932,13 @@ export default function WorkInstructions() {
                   selectedName={createTitle}
                   selectedIdCode={createIdCode}
                   selectedPartName={createPartName}
+                  selectedRange={createRange}
                   onSelect={(selected: Instrument) => {
                     const titleText = selected.name ? `WI: ${selected.name}` : "";
                     setCreateTitle(titleText);
                     setCreateIdCode(selected.id_code || "");
                     setCreatePartName(selected.part_name || "");
+                    setCreateRange(selected.range || "");
                     setCreateInstrumentId(selected.id || "");
                   }}
                   onClear={() => {
@@ -919,7 +983,7 @@ export default function WorkInstructions() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="create-wi-id-code" className="text-xs font-semibold">
                         ID Code / IMTE
@@ -944,6 +1008,18 @@ export default function WorkInstructions() {
                         className="h-9 text-sm bg-background"
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-wi-range" className="text-xs font-semibold">
+                        Range / Size
+                      </Label>
+                      <Input
+                        id="create-wi-range"
+                        placeholder="e.g. 0-150 mm"
+                        value={createRange}
+                        onChange={(e) => setCreateRange(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>
@@ -964,7 +1040,7 @@ export default function WorkInstructions() {
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
                       <Label htmlFor="create-manual-wi-id-code" className="text-xs font-semibold">
                         ID Code / IMTE
@@ -986,6 +1062,18 @@ export default function WorkInstructions() {
                         placeholder="e.g. Cylinder Liner"
                         value={createPartName}
                         onChange={(e) => setCreatePartName(e.target.value)}
+                        className="h-9 text-sm bg-background"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="create-manual-wi-range" className="text-xs font-semibold">
+                        Range / Size
+                      </Label>
+                      <Input
+                        id="create-manual-wi-range"
+                        placeholder="e.g. 50-100 mm"
+                        value={createRange}
+                        onChange={(e) => setCreateRange(e.target.value)}
                         className="h-9 text-sm bg-background"
                       />
                     </div>
@@ -1156,12 +1244,14 @@ export default function WorkInstructions() {
                 selectedName={editTitle}
                 selectedIdCode={editIdCode}
                 selectedPartName={editPartName}
+                selectedRange={editRange}
                 onSelect={(inst: Instrument) => {
                   if (!editTitle) {
                     setEditTitle(inst.name ? `WI: ${inst.name}` : "");
                   }
                   setEditIdCode(inst.id_code || "");
                   setEditPartName(inst.part_name || "");
+                  setEditRange(inst.range || "");
                   setEditInstrumentId(inst.id || "");
                 }}
                 onClear={() => {
@@ -1180,7 +1270,7 @@ export default function WorkInstructions() {
               />
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="space-y-1.5">
                 <Label className="text-xs font-semibold">ID Code / IMTE</Label>
                 <Input
@@ -1196,6 +1286,15 @@ export default function WorkInstructions() {
                   value={editPartName}
                   onChange={(e) => setEditPartName(e.target.value)}
                   placeholder="e.g. Flange Adapter"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-semibold">Range / Size</Label>
+                <Input
+                  value={editRange}
+                  onChange={(e) => setEditRange(e.target.value)}
+                  placeholder="e.g. 0-100 mm"
                   className="h-9 text-sm"
                 />
               </div>

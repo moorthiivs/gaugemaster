@@ -15,7 +15,7 @@ export class GaugeDiagramsService {
     private readonly historyRepo: Repository<GaugeDiagramHistory>,
   ) {}
 
-  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string) {
+  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string, range?: string) {
     const baseWhere: any = {};
     if (companyId) {
       baseWhere.companyId = companyId;
@@ -34,6 +34,7 @@ export class GaugeDiagramsService {
           { ...baseWhere, gauge_name: pattern },
           { ...baseWhere, id_code: pattern },
           { ...baseWhere, part_name: pattern },
+          { ...baseWhere, range: pattern },
         ],
         order: { created_at: 'DESC' },
       });
@@ -68,6 +69,7 @@ export class GaugeDiagramsService {
       gauge_name: dto.gauge_name,
       id_code: dto.id_code,
       part_name: dto.part_name,
+      range: dto.range,
       instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
       description: dto.description,
       companyId: targetCompanyId,
@@ -89,6 +91,7 @@ export class GaugeDiagramsService {
       gauge_name: saved.gauge_name,
       id_code: saved.id_code,
       part_name: saved.part_name,
+      range: saved.range,
       instrument_id: saved.instrument_id,
       document_name: saved.document_name,
       file_type: saved.file_type,
@@ -129,6 +132,9 @@ export class GaugeDiagramsService {
     if (dto.part_name !== undefined) {
       diagram.part_name = dto.part_name;
     }
+    if (dto.range !== undefined) {
+      diagram.range = dto.range;
+    }
     if (dto.instrument_id !== undefined) {
       diagram.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
     }
@@ -155,6 +161,7 @@ export class GaugeDiagramsService {
       gauge_name: updated.gauge_name,
       id_code: updated.id_code,
       part_name: updated.part_name,
+      range: updated.range,
       instrument_id: updated.instrument_id,
       document_name: updated.document_name,
       file_type: updated.file_type,

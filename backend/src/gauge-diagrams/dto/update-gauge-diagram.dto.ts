@@ -15,6 +15,10 @@ export class UpdateGaugeDiagramDto {
 
   @IsOptional()
   @IsString()
+  range?: string;
+
+  @IsOptional()
+  @IsString()
   instrument_id?: string;
 
   @IsOptional()

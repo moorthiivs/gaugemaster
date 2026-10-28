@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Search, Compass, Check, X, RefreshCw, Layers, Hash, Cog } from "lucide-react";
+import { Search, Compass, Check, X, RefreshCw, Layers, Hash, Cog, Ruler } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,7 @@ interface InstrumentSearchSelectorProps {
   selectedName?: string;
   selectedIdCode?: string;
   selectedPartName?: string;
+  selectedRange?: string;
   onSelect: (instrument: Instrument) => void;
   onClear?: () => void;
 }
@@ -37,6 +38,7 @@ export function InstrumentSearchSelector({
   selectedName,
   selectedIdCode,
   selectedPartName,
+  selectedRange,
   onSelect,
   onClear,
 }: InstrumentSearchSelectorProps) {
@@ -154,6 +156,12 @@ export function InstrumentSearchSelector({
                 <Badge variant="secondary" className="text-[11px] font-medium gap-1">
                   <Cog className="h-3 w-3 text-muted-foreground" />
                   <span>Part: {selectedPartName}</span>
+                </Badge>
+              )}
+              {selectedRange && (
+                <Badge variant="secondary" className="text-[11px] font-mono gap-1 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20">
+                  <Ruler className="h-3 w-3 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span>Range: {selectedRange}</span>
                 </Badge>
               )}
             </div>
@@ -281,6 +289,11 @@ export function InstrumentSearchSelector({
                           {inst.part_name && (
                             <span className="px-1.5 py-0.5 bg-primary/10 text-primary rounded text-[10px] font-medium truncate max-w-[150px]">
                               Part: {inst.part_name}
+                            </span>
+                          )}
+                          {inst.range && (
+                            <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-mono truncate max-w-[140px]" title={`Range: ${inst.range}`}>
+                              Range: {inst.range}
                             </span>
                           )}
 

@@ -305,9 +305,11 @@ export function DataTable<TData, TValue>({
                       checked={column.getIsVisible()}
                       onCheckedChange={(value) => column.toggleVisibility(!!value)}
                     >
-                      {typeof column.columnDef.header === "string"
-                        ? column.columnDef.header
-                        : column.id.replace(/_/g, " ")}
+                      {(column.columnDef.meta as any)?.title ||
+                        (column.columnDef.meta as any)?.label ||
+                        (typeof column.columnDef.header === "string"
+                          ? column.columnDef.header
+                          : column.id.replace(/_/g, " "))}
                     </DropdownMenuCheckboxItem>
                   )
                 })}

@@ -15,6 +15,10 @@ export class CreateWorkInstructionDto {
 
   @IsOptional()
   @IsString()
+  range?: string;
+
+  @IsOptional()
+  @IsString()
   instrument_id?: string;
 
   @IsOptional()

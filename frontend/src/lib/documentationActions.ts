@@ -55,6 +55,7 @@ export async function getGaugeDiagrams(params?: {
   search?: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
 }): Promise<GaugeDiagram[]> {
   const response = await httpClient.get<GaugeDiagram[]>('/gauge-diagrams', { params });
   return response.data;
@@ -98,6 +99,7 @@ export async function getWorkInstructions(params?: {
   search?: string;
   id_code?: string;
   part_name?: string;
+  range?: string;
 }): Promise<WorkInstruction[]> {
   const response = await httpClient.get<WorkInstruction[]>('/work-instructions', { params });
   return response.data;
