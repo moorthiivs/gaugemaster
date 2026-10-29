@@ -253,8 +253,16 @@ export class CalibrationService implements OnModuleInit {
     const qb = this.calibrationRepository
       .createQueryBuilder('cal')
       .leftJoin('cal.created_by', 'user')
-      .where('user.id IN (:...userIds)', { userIds })
-      .andWhere('cal.certificate_number IS NOT NULL');
+      .where('cal.certificate_number IS NOT NULL');
+
+    if (companyId) {
+      qb.andWhere('(cal."companyId" = :companyId OR (cal."companyId" IS NULL AND user.id IN (:...userIds)))', {
+        companyId,
+        userIds: userIds.length > 0 ? userIds : ['00000000-0000-0000-0000-000000000000'],
+      });
+    } else if (userIds.length > 0) {
+      qb.andWhere('user.id IN (:...userIds)', { userIds });
+    }
 
     if (dateFrom && dateTo) {
       qb.andWhere(
@@ -297,8 +305,16 @@ export class CalibrationService implements OnModuleInit {
     const qb = this.calibrationRepository
       .createQueryBuilder('cal')
       .leftJoin('cal.created_by', 'user')
-      .where('user.id IN (:...userIds)', { userIds })
-      .andWhere('cal.ulr_number IS NOT NULL');
+      .where('cal.ulr_number IS NOT NULL');
+
+    if (companyId) {
+      qb.andWhere('(cal."companyId" = :companyId OR (cal."companyId" IS NULL AND user.id IN (:...userIds)))', {
+        companyId,
+        userIds: userIds.length > 0 ? userIds : ['00000000-0000-0000-0000-000000000000'],
+      });
+    } else if (userIds.length > 0) {
+      qb.andWhere('user.id IN (:...userIds)', { userIds });
+    }
 
     if (dateFrom && dateTo) {
       qb.andWhere(
@@ -335,23 +351,26 @@ export class CalibrationService implements OnModuleInit {
     userId: string,
     companyId: string,
   ): Promise<string> {
-    if (companyId) {
-      try {
-        await this.calibrationRepository.query(
-          `SELECT pg_advisory_lock(hashtext('company_cert_' || $1))`,
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      if (companyId) {
+        await queryRunner.query(
+          `SELECT pg_advisory_xact_lock(hashtext('company_cert_' || $1))`,
           [companyId],
         );
-        return await this.computeNextCertificateNumber(userId, companyId);
-      } finally {
-        try {
-          await this.calibrationRepository.query(
-            `SELECT pg_advisory_unlock(hashtext('company_cert_' || $1))`,
-            [companyId],
-          );
-        } catch {}
       }
+      const certNumber = await this.computeNextCertificateNumber(userId, companyId);
+      await queryRunner.commitTransaction();
+      return certNumber;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
-    return this.computeNextCertificateNumber(userId, companyId);
   }
 
   private async computeNextCertificateNumber(
@@ -430,23 +449,26 @@ export class CalibrationService implements OnModuleInit {
     userId: string,
     companyId: string,
   ): Promise<string> {
-    if (companyId) {
-      try {
-        await this.calibrationRepository.query(
-          `SELECT pg_advisory_lock(hashtext('company_ulr_' || $1))`,
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      if (companyId) {
+        await queryRunner.query(
+          `SELECT pg_advisory_xact_lock(hashtext('company_ulr_' || $1))`,
           [companyId],
         );
-        return await this.computeNextUlrNumber(userId, companyId);
-      } finally {
-        try {
-          await this.calibrationRepository.query(
-            `SELECT pg_advisory_unlock(hashtext('company_ulr_' || $1))`,
-            [companyId],
-          );
-        } catch {}
       }
+      const ulrNumber = await this.computeNextUlrNumber(userId, companyId);
+      await queryRunner.commitTransaction();
+      return ulrNumber;
+    } catch (err) {
+      await queryRunner.rollbackTransaction();
+      throw err;
+    } finally {
+      await queryRunner.release();
     }
-    return this.computeNextUlrNumber(userId, companyId);
   }
 
   private async computeNextUlrNumber(
@@ -2093,11 +2115,41 @@ export class CalibrationService implements OnModuleInit {
       .where('cal.id != :targetId', { targetId: id })
       .andWhere('cal.certificate_number IS NOT NULL');
 
-    if (userIds.length > 0) {
+    if (companyId) {
+      qb.andWhere('(cal."companyId" = :companyId OR (cal."companyId" IS NULL AND user.id IN (:...userIds)))', {
+        companyId,
+        userIds: userIds.length > 0 ? userIds : ['00000000-0000-0000-0000-000000000000'],
+      });
+    } else if (userIds.length > 0) {
       qb.andWhere('user.id IN (:...userIds)', { userIds });
     }
 
     const allCalibrations = await qb.getMany();
+
+    // 1. Gather all downstream calibrations matching certificate prefix
+    const downstream: Array<{
+      cal: Calibration;
+      seq: number;
+    }> = [];
+
+    for (const cal of allCalibrations) {
+      if (!cal.certificate_number || !cal.certificate_number.startsWith(certPrefix)) {
+        continue;
+      }
+      const cParts = cal.certificate_number.split(sep);
+      const cSeq = parseInt(cParts[cParts.length - 1], 10);
+      if (!isNaN(cSeq) && cSeq > targetSeq) {
+        downstream.push({ cal, seq: cSeq });
+      }
+    }
+
+    // 2. Sort strictly by old sequence ascending, breaking ties by creation date
+    downstream.sort((a, b) => {
+      if (a.seq !== b.seq) return a.seq - b.seq;
+      const tA = a.cal.created_at ? new Date(a.cal.created_at).getTime() : 0;
+      const tB = b.cal.created_at ? new Date(b.cal.created_at).getTime() : 0;
+      return tA - tB;
+    });
 
     const affectedCalibrations: Array<{
       id: string;
@@ -2114,46 +2166,41 @@ export class CalibrationService implements OnModuleInit {
 
     const ulrSep = config?.ulrSeparator || this.DEFAULT_ULR_SEPARATOR;
 
-    for (const cal of allCalibrations) {
-      if (!cal.certificate_number || !cal.certificate_number.startsWith(certPrefix)) {
-        continue;
-      }
-      const cParts = cal.certificate_number.split(sep);
-      const cSeq = parseInt(cParts[cParts.length - 1], 10);
-      if (!isNaN(cSeq) && cSeq > targetSeq) {
-        const newSeq = cSeq - 1;
-        const newCertNo = `${certPrefix}${String(newSeq).padStart(seqLen, '0')}`;
+    // 3. Sequentially renumber from targetSeq to eliminate any middle gaps completely
+    for (let i = 0; i < downstream.length; i++) {
+      const item = downstream[i];
+      const newSeq = targetSeq + i;
+      const newCertNo = `${certPrefix}${String(newSeq).padStart(seqLen, '0')}`;
 
-        let newUlrNo: string | undefined = undefined;
-        if (cal.ulr_number) {
-          const uParts = cal.ulr_number.split(ulrSep);
-          const uSeq = parseInt(uParts[uParts.length - 1], 10);
-          if (!isNaN(uSeq) && uSeq > 1) {
-            const uPrefix = uParts.slice(0, uParts.length - 1).join(ulrSep) + ulrSep;
-            const uLen = uParts[uParts.length - 1].length || config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
-            newUlrNo = `${uPrefix}${String(uSeq - 1).padStart(uLen, '0')}`;
-          }
+      let newUlrNo: string | undefined = undefined;
+      if (item.cal.ulr_number) {
+        const uParts = item.cal.ulr_number.split(ulrSep);
+        const uSeq = parseInt(uParts[uParts.length - 1], 10);
+        if (!isNaN(uSeq) && uSeq > 1) {
+          const uPrefix = uParts.slice(0, uParts.length - 1).join(ulrSep) + ulrSep;
+          const uLen = uParts[uParts.length - 1].length || config?.ulrSeqLength || this.DEFAULT_ULR_SEQ_LENGTH;
+          newUlrNo = `${uPrefix}${String(uSeq - 1).padStart(uLen, '0')}`;
         }
+      }
 
+      if (item.cal.certificate_number !== newCertNo || (newUlrNo && item.cal.ulr_number !== newUlrNo)) {
         affectedCalibrations.push({
-          id: cal.id,
-          instrumentName: cal.instrument?.name,
-          idCode: cal.instrument?.id_code,
-          calibration_date: cal.calibration_date ? new Date(cal.calibration_date).toISOString() : undefined,
-          oldCertificateNumber: cal.certificate_number,
+          id: item.cal.id,
+          instrumentName: item.cal.instrument?.name,
+          idCode: item.cal.instrument?.id_code,
+          calibration_date: item.cal.calibration_date ? new Date(item.cal.calibration_date).toISOString() : undefined,
+          oldCertificateNumber: item.cal.certificate_number,
           newCertificateNumber: newCertNo,
-          oldUlrNumber: cal.ulr_number,
+          oldUlrNumber: item.cal.ulr_number,
           newUlrNumber: newUlrNo,
-          oldSeq: cSeq,
+          oldSeq: item.seq,
           newSeq: newSeq,
         });
       }
     }
 
-    affectedCalibrations.sort((a, b) => a.oldSeq - b.oldSeq);
-
     const currentNextSeq = config?.certNextSeq ?? 0;
-    const newNextSeq = currentNextSeq > targetSeq ? currentNextSeq - 1 : currentNextSeq;
+    const newNextSeq = downstream.length > 0 ? targetSeq + downstream.length : targetSeq;
 
     return {
       canResequence: true,
@@ -2191,6 +2238,10 @@ export class CalibrationService implements OnModuleInit {
     const actingUserId = user?.id || user?.userId || userId;
     const actingUserName = user?.name || user?.email || 'User';
 
+    const instrumentId = calibration.instrument_id || calibration.instrument?.id;
+    const calDate = calibration.calibration_date;
+    const nextDate = calibration.next_calibration_date;
+
     let affectedCalibrations: Array<{
       id: string;
       newCertificateNumber: string;
@@ -2217,12 +2268,36 @@ export class CalibrationService implements OnModuleInit {
     try {
       if (companyId) {
         await queryRunner.query(
-          `SELECT pg_advisory_lock(hashtext('company_cert_' || $1))`,
+          `SELECT pg_advisory_xact_lock(hashtext('company_cert_' || $1))`,
           [companyId],
         );
       }
 
-      // If resequencing was selected, shift subsequent certificates atomically
+      // Step 1: Soft-delete the target calibration FIRST, freeing its certificate number slot
+      await queryRunner.manager.update(Calibration, id, {
+        deleted_at: new Date(),
+        deleted_by_id: actingUserId,
+        deleted_by_name: actingUserName,
+        deletion_reason: reason || null,
+      });
+
+      // Step 2: Append audit log for the soft-delete event
+      const deleteAudit = queryRunner.manager.create(CalibrationAuditLog, {
+        calibration_id: id,
+        edited_by_id: actingUserId,
+        edited_by_name: actingUserName,
+        changes_summary: [
+          {
+            field: 'status',
+            oldValue: calibration.approval_status || 'Active',
+            newValue: 'Moved to Recovery Center',
+          },
+          ...(reason ? [{ field: 'deletion_reason', oldValue: null, newValue: reason }] : []),
+        ],
+      });
+      await queryRunner.manager.save(CalibrationAuditLog, deleteAudit);
+
+      // Step 3: If resequencing was selected, shift subsequent certificates sequentially
       if (resequence && affectedCalibrations.length > 0) {
         for (const aff of affectedCalibrations) {
           const updatePayload: Partial<Calibration> = {
@@ -2253,7 +2328,7 @@ export class CalibrationService implements OnModuleInit {
           await queryRunner.manager.save(CalibrationAuditLog, audit);
         }
 
-        // Adjust settings counter down if appropriate
+        // Adjust settings counter to true contiguous new next sequence
         if (shouldUpdateConfig && actingUserId && companyId) {
           const settings = await this.settingsService.findOne(actingUserId, companyId);
           if (settings?.certificateConfig) {
@@ -2268,34 +2343,6 @@ export class CalibrationService implements OnModuleInit {
           }
         }
       }
-
-      const instrumentId = calibration.instrument_id || calibration.instrument?.id;
-      const calDate = calibration.calibration_date;
-      const nextDate = calibration.next_calibration_date;
-
-      // Soft delete the calibration record (Preserving record & audit log!)
-      await queryRunner.manager.update(Calibration, id, {
-        deleted_at: new Date(),
-        deleted_by_id: actingUserId,
-        deleted_by_name: actingUserName,
-        deletion_reason: reason || null,
-      });
-
-      // Append audit log for the soft-delete event
-      const deleteAudit = queryRunner.manager.create(CalibrationAuditLog, {
-        calibration_id: id,
-        edited_by_id: actingUserId,
-        edited_by_name: actingUserName,
-        changes_summary: [
-          {
-            field: 'status',
-            oldValue: calibration.approval_status || 'Active',
-            newValue: 'Moved to Recovery Center',
-          },
-          ...(reason ? [{ field: 'deletion_reason', oldValue: null, newValue: reason }] : []),
-        ],
-      });
-      await queryRunner.manager.save(CalibrationAuditLog, deleteAudit);
 
       await queryRunner.commitTransaction();
 

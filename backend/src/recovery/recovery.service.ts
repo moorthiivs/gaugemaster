@@ -218,9 +218,24 @@ export class RecoveryService {
       }
 
       const rows = await qb.orderBy('cal.deleted_at', 'DESC').getMany();
+      const activeCals = await this.calibrationRepo.find({
+        where: companyId ? { companyId } : {},
+        select: ['certificate_number'],
+      });
+      const activeCertSet = new Set(activeCals.map(c => c.certificate_number).filter(Boolean));
+
       for (const cal of rows) {
         const parentInst = cal.instrument;
         const isParentDeleted = parentInst?.deleted_at != null;
+        const isCertConflict = !!cal.certificate_number && activeCertSet.has(cal.certificate_number);
+
+        const canRestore = !isParentDeleted && !isCertConflict;
+        let conflictWarning: string | undefined = undefined;
+        if (isParentDeleted) {
+          conflictWarning = `Parent instrument (${parentInst?.id_code || parentInst?.name}) is in Recovery Center. Restore instrument first.`;
+        } else if (isCertConflict) {
+          conflictWarning = `Certificate number "${cal.certificate_number}" is currently active on another instrument.`;
+        }
 
         allItems.push({
           id: cal.id,
@@ -242,10 +257,8 @@ export class RecoveryService {
           deletedByName: cal.deleted_by_name,
           deletionReason: cal.deletion_reason,
           deletedWithParentId: cal.deleted_with_parent_id,
-          canRestore: !isParentDeleted,
-          conflictWarning: isParentDeleted
-            ? `Parent instrument (${parentInst?.id_code || parentInst?.name}) is in Recovery Center. Restore instrument first.`
-            : undefined,
+          canRestore,
+          conflictWarning,
         });
       }
     }
@@ -1015,6 +1028,22 @@ export class RecoveryService {
             throw new BadRequestException(
               `Cannot restore calibration: Parent instrument "${parentInst.id_code || parentInst.name}" is currently deleted. Please restore the parent instrument first.`,
             );
+          }
+
+          // Guard against certificate number collision with existing active records
+          if (cal.certificate_number) {
+            const conflictCal = await queryRunner.manager.findOne(Calibration, {
+              where: {
+                certificate_number: cal.certificate_number,
+                companyId: cal.companyId || companyId,
+              },
+              relations: ['instrument'],
+            });
+            if (conflictCal && conflictCal.id !== cal.id) {
+              throw new BadRequestException(
+                `Cannot restore calibration: Certificate number "${cal.certificate_number}" is currently active on instrument "${conflictCal.instrument?.id_code || conflictCal.id}". You must resolve certificate collision before restoring.`,
+              );
+            }
           }
 
           // Restore calibration

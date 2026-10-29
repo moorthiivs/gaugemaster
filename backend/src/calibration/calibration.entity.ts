@@ -11,6 +11,7 @@ import {
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
@@ -20,6 +21,10 @@ import { CalibrationAuditLog } from './calibration-audit-log.entity';
  * Includes calibration data points, reference standard info,
  * environmental conditions, verdict, and certificate/ULR numbers.
  */
+@Index(['companyId', 'certificate_number'], {
+  unique: true,
+  where: '"deleted_at" IS NULL AND "certificate_number" IS NOT NULL',
+})
 @Entity('calibrations')
 export class Calibration {
   @PrimaryColumn('uuid')
