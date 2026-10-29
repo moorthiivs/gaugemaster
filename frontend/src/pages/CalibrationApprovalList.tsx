@@ -53,6 +53,8 @@ import {
   Loader2,
   Trash2,
   Undo2,
+  Hash,
+  Ruler,
 } from "lucide-react";
 
 export default function CalibrationApprovalList() {
@@ -883,9 +885,39 @@ export default function CalibrationApprovalList() {
                     <span>Review Calibration: {selectedRecord.certificate_number}</span>
                     {renderStatusBadge(selectedRecord.approval_status || "Calibration Completed")}
                   </DialogTitle>
-                  <DialogDescription className="text-xs mt-1">
-                    Instrument: <span className="font-semibold text-foreground">{selectedRecord.instrument?.name}</span> ({selectedRecord.instrument?.id_code})
-                  </DialogDescription>
+                  {(() => {
+                    const headerInst = selectedRecord.instrument || {};
+                    const headerIdCode = headerInst.id_code || (selectedRecord as any).instrument_id_code || "-";
+                    const headerName = headerInst.name || (selectedRecord as any).instrument_name || "N/A";
+                    const headerPart = [headerInst.part_name || (selectedRecord as any).part_name, headerInst.part_no || (selectedRecord as any).part_no].filter(Boolean).join(" / ");
+
+                    return (
+                      <DialogDescription className="text-xs mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-muted-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <span className="font-medium text-muted-foreground">Gauge / Instrument:</span>
+                          <span className="font-semibold text-foreground">{headerName}</span>
+                        </span>
+
+                        <span className="flex items-center gap-1">
+                          <span className="font-medium text-muted-foreground">ID Code:</span>
+                          <Badge
+                            variant="outline"
+                            className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-muted/50 border-border/80 text-foreground flex items-center gap-1"
+                          >
+                            <Hash className="w-3 h-3 text-primary/70 shrink-0" />
+                            <span>{headerIdCode}</span>
+                          </Badge>
+                        </span>
+
+                        {headerPart && (
+                          <span className="flex items-center gap-1 text-xs">
+                            <span className="font-medium text-muted-foreground">Part:</span>
+                            <span className="font-medium text-foreground">{headerPart}</span>
+                          </span>
+                        )}
+                      </DialogDescription>
+                    );
+                  })()}
                 </div>
               </div>
             </DialogHeader>
@@ -988,6 +1020,11 @@ export default function CalibrationApprovalList() {
                   const hasLayoutBlocks = Array.isArray(layoutBlocks) && layoutBlocks.length > 0;
 
                   const points = selectedRecord.calibration_points || [];
+                  const inst = selectedRecord.instrument || {};
+                  const instIdCode = inst.id_code || (selectedRecord as any).instrument_id_code || "-";
+                  const instName = inst.name || (selectedRecord as any).instrument_name || "-";
+                  const instRange = inst.range || (selectedRecord as any).range || (selectedRecord as any).specification || "-";
+                  const instPart = [inst.part_name || (selectedRecord as any).part_name, inst.part_no || (selectedRecord as any).part_no].filter(Boolean).join(" / ") || "-";
                   const unit = points[0]?.unit || "mm";
 
                   const calibratedBy = selectedRecord.calibrated_by || selectedRecord.created_by?.name || selectedRecord.created_by?.email || "N/A";
@@ -1089,92 +1126,79 @@ export default function CalibrationApprovalList() {
 
                   return (
                     <div className="space-y-4">
-                      {/* Meta details grid */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-muted/30 p-3 rounded-lg border text-xs">
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Calibrated By</span>
-                          <span className="font-medium text-foreground">{calibratedBy}</span>
+                      {/* Gauge / Instrument Metrology & Specifications Card */}
+                      <div className="bg-card rounded-xl border border-border/80 shadow-2xs overflow-hidden">
+                        {/* Top: Core Gauge Identity */}
+                        <div className="p-3.5 sm:p-4 bg-muted/20 border-b border-border/60">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 items-center">
+                            <div>
+                              <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase block mb-1">
+                                Gauge / Instrument ID
+                              </span>
+                              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-background border border-border/80 shadow-2xs">
+                                <Hash className="w-3.5 h-3.5 text-primary shrink-0" />
+                                <span className="font-mono font-bold text-sm text-foreground tracking-tight select-all">
+                                  {instIdCode}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase block mb-1">
+                                Gauge / Instrument Name
+                              </span>
+                              <span className="font-semibold text-foreground text-sm block" title={instName}>
+                                {instName}
+                              </span>
+                            </div>
+
+                            <div>
+                              <span className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase block mb-1">
+                                Part Name / Number
+                              </span>
+                              <span className="font-medium text-foreground text-sm block" title={instPart}>
+                                {instPart}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Calibration Date</span>
-                          <span className="font-medium text-foreground tabular-nums">{calDate}</span>
+
+                        {/* Middle: Dedicated Specification & Range (Full Width, Zero Truncation, High Readability) */}
+                        <div className="p-3.5 sm:p-4 bg-primary/[0.02] border-b border-border/60">
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Ruler className="w-3.5 h-3.5 text-primary shrink-0" />
+                            <span className="text-[10px] font-bold tracking-wider text-primary uppercase">
+                              Specification / Range
+                            </span>
+                          </div>
+                          <div className="bg-background rounded-lg p-3 border border-primary/20 shadow-2xs">
+                            <p className="text-sm font-medium text-foreground leading-relaxed whitespace-pre-wrap break-words select-text">
+                              {instRange}
+                            </p>
+                          </div>
                         </div>
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Temperature / Humidity</span>
-                          <span className="font-medium text-foreground">{envDisplay}</span>
-                        </div>
-                        {uncertaintyStr && (
+
+                        {/* Bottom: Environmental & Execution Audit Trail */}
+                        <div className="p-3 sm:p-3.5 bg-muted/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                           <div>
-                            <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Uncertainty</span>
-                            <span className="font-mono font-semibold text-foreground">{uncertaintyStr}</span>
+                            <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Calibrated By</span>
+                            <span className="font-medium text-foreground text-xs mt-0.5 block">{calibratedBy}</span>
                           </div>
-                        )}
-                      </div>
-
-                      {/* Standard & Procedure References */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-card p-3 rounded-lg border text-xs">
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Procedure No &amp; Name</span>
-                          <span className="font-medium font-mono text-foreground">
-                            {(selectedRecord as any).procedure_no || selectedRecord.procedure_name || selectedRecord.procedure_reference
-                              ? [
-                                  (selectedRecord as any).procedure_no || selectedRecord.procedure_reference,
-                                  selectedRecord.procedure_name,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" - ")
-                              : "-"}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Standard Reference</span>
-                          <span className="font-medium font-mono text-foreground">{selectedRecord.standard_reference || "Standard calibration per ISO/IEC 17025"}</span>
-                        </div>
-                      </div>
-
-                      {/* Reference Standard Info */}
-                      <div className="border rounded-lg p-3 bg-card text-xs space-y-2">
-                        <div className="font-semibold text-primary uppercase tracking-wider text-[10px] flex items-center justify-between">
-                          <span>Reference Standard / Master Used</span>
-                          {refStandardsList && <Badge variant="outline" className="text-[10px]">{refStandardsList.length} Masters</Badge>}
-                        </div>
-
-                        {refStandardsList ? (
-                          <div className="overflow-x-auto border rounded-md">
-                            <table className="w-full text-xs text-left">
-                              <thead className="bg-muted/50 text-muted-foreground uppercase text-[10px] border-b">
-                                <tr>
-                                  <th className="p-2">Master Name</th>
-                                  <th className="p-2">Make</th>
-                                  <th className="p-2">ID / Sr No</th>
-                                  <th className="p-2">Cert No</th>
-                                  <th className="p-2">Cal Agency</th>
-                                  <th className="p-2">Validity</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y">
-                                {refStandardsList.map((ref: any, idx: number) => (
-                                  <tr key={idx} className="hover:bg-muted/20">
-                                    <td className="p-2 font-medium">{ref.name || selectedRecord.reference_standard_name || "SPECIAL GAUGE"}</td>
-                                    <td className="p-2">{ref.make || "-"}</td>
-                                    <td className="p-2 font-mono">{ref.id || selectedRecord.reference_standard_id || "SPG953/01"}</td>
-                                    <td className="p-2 font-mono">{ref.cert_no || "AE/CC/REF/01"}</td>
-                                    <td className="p-2">{ref.agency || "NABL Lab"}</td>
-                                    <td className="p-2 font-mono">
-                                      {ref.validity ? new Date(ref.validity).toLocaleDateString("en-IN") : selectedRecord.reference_standard_validity ? new Date(selectedRecord.reference_standard_validity).toLocaleDateString("en-IN") : "-"}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Calibration Date</span>
+                            <span className="font-medium text-foreground text-xs tabular-nums mt-0.5 block">{calDate}</span>
                           </div>
-                        ) : (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
-                            <div><span className="text-muted-foreground">Standard Name:</span> <span className="font-medium">{selectedRecord.reference_standard_name || "SPECIAL GAUGE"}</span></div>
-                            <div><span className="text-muted-foreground">Standard ID:</span> <span className="font-mono">{selectedRecord.reference_standard_id || "SPG953/01"}</span></div>
-                            <div><span className="text-muted-foreground">Traceable To:</span> <span className="font-medium">{selectedRecord.reference_standard_traceable_to || "NABL Lab"}</span></div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Temperature / Humidity</span>
+                            <span className="font-medium text-foreground text-xs mt-0.5 block">{envDisplay}</span>
                           </div>
-                        )}
+                          {uncertaintyStr && (
+                            <div>
+                              <span className="text-muted-foreground block text-[10px] uppercase font-semibold">Uncertainty</span>
+                              <span className="font-mono font-semibold text-foreground text-xs mt-0.5 block">{uncertaintyStr}</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
 
                       {/* Acceptance Criteria Banner */}
