@@ -1717,8 +1717,68 @@ export default function Instruments() {
   ]);
 
   const availableDeviceTypes = useMemo(() => {
-    return ["Instruments", "Gauges", "Reference Standards"];
-  }, []);
+    const standard = [
+      { label: "Instruments", value: "Instrument", isRef: false, isGauge: false, isInst: true },
+      { label: "Gauges", value: "Gauge", isRef: false, isGauge: true, isInst: false },
+      { label: "Reference Standards", value: "Reference Standard", isRef: true, isGauge: false, isInst: false },
+    ];
+
+    const extraTypes: { label: string; value: string; isRef: boolean; isGauge: boolean; isInst: boolean }[] = [];
+    const seen = new Set(["instrument", "instruments", "gauge", "gauges", "reference standard", "reference standards", "master", "masters", "all"]);
+
+    (DeviceTypeFilter || []).forEach((dt) => {
+      if (dt && typeof dt === "string" && dt.trim()) {
+        const trimmed = dt.trim();
+        const lower = trimmed.toLowerCase();
+        if (!seen.has(lower)) {
+          seen.add(lower);
+          extraTypes.push({
+            label: trimmed,
+            value: trimmed,
+            isRef: false,
+            isGauge: false,
+            isInst: false,
+          });
+        }
+      }
+    });
+
+    if (filters.device_type && filters.device_type !== "All") {
+      const trimmed = filters.device_type.trim();
+      const lower = trimmed.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        extraTypes.push({
+          label: trimmed,
+          value: trimmed,
+          isRef: false,
+          isGauge: false,
+          isInst: false,
+        });
+      }
+    }
+
+    return [...standard, ...extraTypes];
+  }, [DeviceTypeFilter, filters.device_type]);
+
+  const allDeviceTypeOptions = useMemo(() => {
+    const list = ["Instrument", "Gauge", "Reference Standard"];
+    (DeviceTypeFilter || []).forEach((dt) => {
+      if (dt && typeof dt === "string" && dt.trim()) {
+        const trimmed = dt.trim();
+        if (!list.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+          list.push(trimmed);
+        }
+      }
+    });
+    if (filters.device_type && filters.device_type !== "All") {
+      const trimmed = filters.device_type.trim();
+      if (!list.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+        list.push(trimmed);
+      }
+    }
+    return list;
+  }, [DeviceTypeFilter, filters.device_type]);
 
   return (
     <>
@@ -1771,28 +1831,27 @@ export default function Instruments() {
               >
                 All
               </button>
-              {availableDeviceTypes.map((dt) => {
-                const isRefTab = dt.toLowerCase().includes("reference") || dt.toLowerCase().includes("master");
-                const isGaugeTab = dt.toLowerCase().includes("gauge");
-                const isInstTab = dt.toLowerCase().includes("instrument");
-
-                const isSelected =
-                  (isRefTab && (filters.is_reference_standard === "true" || filters.device_type === "Reference Standard" || filters.device_type === "Master")) ||
-                  (isGaugeTab && filters.device_type === "Gauge" && filters.is_reference_standard !== "true") ||
-                  (isInstTab && filters.device_type === "Instrument" && filters.is_reference_standard !== "true");
+              {availableDeviceTypes.map((tab) => {
+                const isSelected = tab.isRef
+                  ? (filters.is_reference_standard === "true" || filters.device_type === "Reference Standard" || filters.device_type === "Master")
+                  : tab.isGauge
+                  ? (filters.device_type === "Gauge" && filters.is_reference_standard !== "true")
+                  : tab.isInst
+                  ? (filters.device_type === "Instrument" && filters.is_reference_standard !== "true")
+                  : (filters.device_type?.toLowerCase() === tab.value.toLowerCase());
 
                 return (
                   <button 
-                    key={dt}
+                    key={tab.value}
                     type="button"
                     onClick={() => updateFilter({
-                      device_type: isRefTab ? "Reference Standard" : isGaugeTab ? "Gauge" : "Instrument",
-                      is_reference_standard: isRefTab ? "true" : "false",
+                      device_type: tab.value,
+                      is_reference_standard: tab.isRef ? "true" : tab.isInst || tab.isGauge ? "false" : "All",
                       page: 1
                     })}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all capitalize ${isSelected ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${isSelected ? 'bg-primary text-primary-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'}`}
                   >
-                    {dt}
+                    {tab.label}
                   </button>
                 );
               })}
@@ -1902,6 +1961,41 @@ export default function Instruments() {
                 <SelectContent>
                   {ItemStatusFilter.filter(s => s && s.trim() !== "").map((itemSt) => (
                     <SelectItem key={itemSt} value={itemSt}>{itemSt === "All" ? "All Item Status" : itemSt}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Device Type Filter */}
+            <div className="w-full sm:w-[130px] md:w-[145px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">D</Badge> Device Type
+              </Label>
+              <Select
+                value={
+                  filters.device_type && filters.device_type !== "All"
+                    ? (allDeviceTypeOptions.find(opt => opt.toLowerCase() === filters.device_type?.toLowerCase()) || filters.device_type)
+                    : "All"
+                }
+                onValueChange={(v) => {
+                  if (v === "All") {
+                    updateFilter({ device_type: "All", is_reference_standard: "All", page: 1 });
+                  } else if (v.toLowerCase().includes("reference") || v.toLowerCase().includes("master")) {
+                    updateFilter({ device_type: v, is_reference_standard: "true", page: 1 });
+                  } else if (v.toLowerCase() === "instrument" || v.toLowerCase() === "gauge") {
+                    updateFilter({ device_type: v, is_reference_standard: "false", page: 1 });
+                  } else {
+                    updateFilter({ device_type: v, is_reference_standard: "All", page: 1 });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
+                  <SelectValue placeholder="All Device Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Device Types</SelectItem>
+                  {allDeviceTypeOptions.map((dt) => (
+                    <SelectItem key={dt} value={dt}>{dt}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

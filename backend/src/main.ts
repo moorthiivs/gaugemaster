@@ -10,6 +10,7 @@ import * as express from 'express';
 import compression from 'compression';
 import type { Request, Response, NextFunction } from 'express';
 import { uploadsAuthMiddleware } from './uploads/uploads-auth.middleware';
+import { MulterExceptionFilter } from './common/filters/multer-exception.filter';
 
 // Set process timezone to UTC to ensure correct database date parsing
 process.env.TZ = 'UTC';
@@ -50,8 +51,11 @@ async function bootstrap() {
   });
 
   // Increase payload limit for bulk uploads and multimodal certificate processing
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use(express.json({ limit: '60mb' }));
+  app.use(express.urlencoded({ limit: '60mb', extended: true }));
+
+  // Global exception filter for file upload limits & multer errors
+  app.useGlobalFilters(new MulterExceptionFilter());
 
   // Global DTO input validation & sanitization
   app.useGlobalPipes(

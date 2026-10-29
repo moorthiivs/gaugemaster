@@ -73,6 +73,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { createInstrument } from "@/lib/instrumentActions";
 
+const MAX_DOC_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_DOC_FILE_SIZE_MB = 50;
+
 export default function GaugeDiagrams() {
   useSEO({
     title: "Gauge Diagrams — GaugeMaster",
@@ -266,6 +269,11 @@ export default function GaugeDiagrams() {
       return;
     }
 
+    if (createFile && createFile.size > MAX_DOC_FILE_SIZE_BYTES) {
+      toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(createFile.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       let finalInstrumentId = createInstrumentId;
@@ -347,6 +355,11 @@ export default function GaugeDiagrams() {
     if (!editingItem) return;
     if (!editGaugeName.trim()) {
       toast.error("Gauge Name is required");
+      return;
+    }
+
+    if (editFile && editFile.size > MAX_DOC_FILE_SIZE_BYTES) {
+      toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(editFile.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
       return;
     }
 
@@ -1096,7 +1109,13 @@ export default function GaugeDiagrams() {
                   accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
-                      setCreateFile(e.target.files[0]);
+                      const file = e.target.files[0];
+                      if (file.size > MAX_DOC_FILE_SIZE_BYTES) {
+                        toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(file.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+                        e.target.value = "";
+                        return;
+                      }
+                      setCreateFile(file);
                     }
                   }}
                 />
@@ -1109,7 +1128,7 @@ export default function GaugeDiagrams() {
                     <div className="flex flex-col items-center">
                       <span className="text-xs font-semibold text-primary">{createFile.name}</span>
                       <span className="text-[10px] text-muted-foreground">
-                        {(createFile.size / 1024 / 1024).toFixed(2)} MB &bull; Click to replace
+                        {(createFile.size / 1024 / 1024).toFixed(2)} MB / 50MB &bull; Click to replace
                       </span>
                     </div>
                   ) : (
@@ -1118,7 +1137,7 @@ export default function GaugeDiagrams() {
                         Click to select or drop diagram image / PDF
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        Supported: PNG, JPG, WebP, SVG, PDF (Max 25MB)
+                        Supported: PNG, JPG, WebP, SVG, PDF (Max 50MB)
                       </span>
                     </>
                   )}
@@ -1293,17 +1312,23 @@ export default function GaugeDiagrams() {
                   accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml"
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
-                      setEditFile(e.target.files[0]);
+                      const file = e.target.files[0];
+                      if (file.size > MAX_DOC_FILE_SIZE_BYTES) {
+                        toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(file.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+                        e.target.value = "";
+                        return;
+                      }
+                      setEditFile(file);
                     }
                   }}
                 />
                 <label htmlFor="edit-diag-file-upload" className="cursor-pointer flex flex-col items-center gap-1">
                   <Upload className="h-5 w-5 text-muted-foreground" />
                   {editFile ? (
-                    <span className="text-xs font-semibold text-primary">{editFile.name} (Will increment to v{(editingItem?.version || 1) + 1})</span>
+                    <span className="text-xs font-semibold text-primary">{editFile.name} ({(editFile.size / 1024 / 1024).toFixed(2)} MB / 50MB &bull; Will increment to v{(editingItem?.version || 1) + 1})</span>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement
+                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement (Max 50MB)
                     </span>
                   )}
                 </label>

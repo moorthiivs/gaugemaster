@@ -211,6 +211,7 @@ export function InstrumentSearchSelector({
                   <SelectItem value="gauge">Gauges</SelectItem>
                   <SelectItem value="instrument">Instruments</SelectItem>
                   <SelectItem value="reference standard">Reference Standards</SelectItem>
+                  <SelectItem value="AP/EP Display Unit">AP/EP Display Unit</SelectItem>
                   <SelectItem value="equipment">Equipment</SelectItem>
                   <SelectItem value="All">All Types</SelectItem>
                 </SelectContent>

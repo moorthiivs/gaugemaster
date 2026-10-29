@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  PayloadTooLargeException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -26,6 +27,7 @@ import { PermissionsGuard } from '../auth/permissions.guard';
 import { RequirePermission } from '../auth/require-permission.decorator';
 
 const uploadDirectory = './uploads/calibration-procedures';
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB max allowed
 if (!fs.existsSync(uploadDirectory)) {
   fs.mkdirSync(uploadDirectory, { recursive: true });
 }
@@ -85,7 +87,7 @@ export class CalibrationProceduresController {
     FileInterceptor('file', {
       storage,
       fileFilter,
-      limits: { fileSize: 25 * 1024 * 1024 }, // 25MB max
+      limits: { fileSize: MAX_FILE_SIZE_BYTES }, // 50MB max
     }),
   )
   async create(
@@ -93,6 +95,10 @@ export class CalibrationProceduresController {
     @Body() dto: CreateCalibrationProcedureDto,
     @UploadedFile() file?: any,
   ) {
+    if (file && file.size > MAX_FILE_SIZE_BYTES) {
+      throw new PayloadTooLargeException('File size exceeds maximum allowed limit of 50MB. Please select a file under 50MB.');
+    }
+
     const user = req.user || {};
     const isSuperAdmin = !!user.isSuperAdmin;
     const companyId = isSuperAdmin ? (dto.companyId || user.companyId) : user.companyId;
@@ -108,7 +114,7 @@ export class CalibrationProceduresController {
     FileInterceptor('file', {
       storage,
       fileFilter,
-      limits: { fileSize: 25 * 1024 * 1024 },
+      limits: { fileSize: MAX_FILE_SIZE_BYTES }, // 50MB max
     }),
   )
   async update(
@@ -117,6 +123,10 @@ export class CalibrationProceduresController {
     @Body() dto: UpdateCalibrationProcedureDto,
     @UploadedFile() file?: any,
   ) {
+    if (file && file.size > MAX_FILE_SIZE_BYTES) {
+      throw new PayloadTooLargeException('File size exceeds maximum allowed limit of 50MB. Please select a file under 50MB.');
+    }
+
     const user = req.user || {};
     const companyId = user.companyId;
     const userId = user.id || user.userId || user.sub;

@@ -58,7 +58,7 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Device Type",
     type: "select",
     col: 4,
-    options: ["Instrument", "Gauge", "Reference Standard"]
+    options: ["Instrument", "Gauge", "Reference Standard", "AP/EP Display Unit"]
   },
   { name: "make", label: "Item Make", type: "text", col: 4 },
   { name: "item_type", label: "Item Type", type: "text", col: 4 },
