@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In, DataSource } from 'typeorm';
 import { Calibration } from './calibration.entity';
@@ -2028,8 +2028,10 @@ export class CalibrationService implements OnModuleInit {
     });
   }
 
-  async getResequencePreview(id: string): Promise<{
+  async getResequencePreview(id: string, user?: any): Promise<{
     canResequence: boolean;
+    isIssuedOrApproved?: boolean;
+    requiresSuperAdmin?: boolean;
     message?: string;
     targetCalibration: {
       id: string;
@@ -2096,6 +2098,31 @@ export class CalibrationService implements OnModuleInit {
           id: target.id,
           certificate_number: target.certificate_number,
           targetSeq: 0,
+        },
+        affectedCalibrations: [],
+        currentNextSeq: config?.certNextSeq || 0,
+        newNextSeq: config?.certNextSeq || 0,
+      };
+    }
+
+    // Check if calibration is Approved or Issued (ISO/IEC 17025 compliance)
+    const isApprovedOrIssued =
+      target.approval_status === 'Approved' || target.certificate_generated === true;
+
+    if (isApprovedOrIssued && !user?.isSuperAdmin) {
+      return {
+        canResequence: false,
+        isIssuedOrApproved: true,
+        requiresSuperAdmin: true,
+        message:
+          'This calibration is officially Approved/Issued. In compliance with ISO/IEC 17025 standards, resequencing downstream certificates is restricted. Only Super Admins can resequence approved records, or you can delete without resequencing (Void).',
+        targetCalibration: {
+          id: target.id,
+          certificate_number: target.certificate_number,
+          ulr_number: target.ulr_number,
+          instrumentName: target.instrument?.name,
+          idCode: target.instrument?.id_code,
+          targetSeq,
         },
         affectedCalibrations: [],
         currentNextSeq: config?.certNextSeq || 0,
@@ -2200,10 +2227,12 @@ export class CalibrationService implements OnModuleInit {
     }
 
     const currentNextSeq = config?.certNextSeq ?? 0;
-    const newNextSeq = downstream.length > 0 ? targetSeq + downstream.length : targetSeq;
+    const newNextSeq = downstream.length > 0 ? targetSeq + downstream.length : Math.max(0, targetSeq - 1);
 
     return {
       canResequence: true,
+      isIssuedOrApproved: isApprovedOrIssued,
+      requiresSuperAdmin: false,
       targetCalibration: {
         id: target.id,
         certificate_number: target.certificate_number,
@@ -2253,8 +2282,16 @@ export class CalibrationService implements OnModuleInit {
     let newNextSeq = 0;
 
     if (resequence && calibration.certificate_number) {
-      const preview = await this.getResequencePreview(id);
-      if (preview.canResequence && preview.affectedCalibrations.length > 0) {
+      const isApprovedOrIssued =
+        calibration.approval_status === 'Approved' || calibration.certificate_generated === true;
+      if (isApprovedOrIssued && !user?.isSuperAdmin) {
+        throw new BadRequestException(
+          'Resequencing downstream certificates on an Approved/Issued calibration is restricted by ISO/IEC 17025 compliance. Only Super Admins can authorize sequence shifts on approved records.',
+        );
+      }
+
+      const preview = await this.getResequencePreview(id, user);
+      if (preview.canResequence) {
         affectedCalibrations = preview.affectedCalibrations;
         shouldUpdateConfig = true;
         newNextSeq = preview.newNextSeq;
@@ -2328,19 +2365,20 @@ export class CalibrationService implements OnModuleInit {
           await queryRunner.manager.save(CalibrationAuditLog, audit);
         }
 
-        // Adjust settings counter to true contiguous new next sequence
-        if (shouldUpdateConfig && actingUserId && companyId) {
-          const settings = await this.settingsService.findOne(actingUserId, companyId);
-          if (settings?.certificateConfig) {
-            await this.settingsService.create({
-              userId: actingUserId,
-              companyId,
-              certificateConfig: {
-                ...settings.certificateConfig,
-                certNextSeq: Math.max(0, newNextSeq),
-              },
-            });
-          }
+      }
+
+      // Step 4: Adjust settings counter to true contiguous new next sequence (both middle and latest deletes)
+      if (resequence && shouldUpdateConfig && actingUserId && companyId) {
+        const settings = await this.settingsService.findOne(actingUserId, companyId);
+        if (settings?.certificateConfig) {
+          await this.settingsService.create({
+            userId: actingUserId,
+            companyId,
+            certificateConfig: {
+              ...settings.certificateConfig,
+              certNextSeq: Math.max(0, newNextSeq),
+            },
+          });
         }
       }
 

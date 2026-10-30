@@ -2,6 +2,9 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  Inject,
+  forwardRef,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -17,6 +20,7 @@ import { WorkInstruction } from '../work-instructions/work-instruction.entity';
 import { GaugeDiagram } from '../gauge-diagrams/gauge-diagram.entity';
 import { Standard } from '../standards/standard.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
+import { CalibrationService } from '../calibration/calibration.service';
 import { InstrumentsService } from '../instruments/instruments.service';
 import { RecoveryQueryDto } from './dto/recovery-query.dto';
 
@@ -64,6 +68,8 @@ export class RecoveryService {
     private readonly standardRepo: Repository<Standard>,
     private readonly auditLogsService: AuditLogsService,
     private readonly instrumentsService: InstrumentsService,
+    @Inject(forwardRef(() => CalibrationService))
+    private readonly calibrationService: CalibrationService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -1028,6 +1034,7 @@ export class RecoveryService {
     module: string,
     id: string,
     user: any,
+    reassignOnConflict: boolean = false,
   ): Promise<{
     success: boolean;
     message: string;
@@ -1150,6 +1157,10 @@ export class RecoveryService {
           }
 
           // Guard against certificate number collision with existing active records
+          let finalCertNumber = cal.certificate_number;
+          let wasReassigned = false;
+          const originalOccupiedCert = cal.certificate_number;
+
           if (cal.certificate_number) {
             const conflictCal = await queryRunner.manager.findOne(Calibration, {
               where: {
@@ -1159,19 +1170,35 @@ export class RecoveryService {
               relations: ['instrument'],
             });
             if (conflictCal && conflictCal.id !== cal.id) {
-              throw new BadRequestException(
-                `Cannot restore calibration: Certificate number "${cal.certificate_number}" is currently active on instrument "${conflictCal.instrument?.id_code || conflictCal.id}". You must resolve certificate collision before restoring.`,
-              );
+              if (reassignOnConflict) {
+                finalCertNumber = await this.calibrationService.generateCertificateNumber(
+                  userId,
+                  cal.companyId || companyId,
+                );
+                wasReassigned = true;
+              } else {
+                const occupiedBy =
+                  conflictCal.instrument?.id_code ||
+                  conflictCal.instrument?.name ||
+                  conflictCal.id;
+                throw new ConflictException({
+                  message: `Cannot restore calibration: Original certificate number "${cal.certificate_number}" is currently active on instrument "${occupiedBy}". You can restore and assign the next available certificate number.`,
+                  code: 'CERTIFICATE_COLLISION',
+                  occupiedCertificateNumber: cal.certificate_number,
+                  conflictingInstrument: occupiedBy,
+                });
+              }
             }
           }
 
-          // Restore calibration
+          // Restore calibration (update certificate number if reassigned)
           await queryRunner.manager.update(Calibration, id, {
             deleted_at: null as any,
             deleted_by_id: null as any,
             deleted_by_name: null as any,
             deletion_reason: null as any,
             deleted_with_parent_id: null as any,
+            ...(wasReassigned ? { certificate_number: finalCertNumber } : {}),
           });
 
           // Write audit log
@@ -1181,10 +1208,19 @@ export class RecoveryService {
             action: 'CALIBRATION_RESTORE',
             resource: `/api/recovery/calibrations/${id}/restore`,
             resourceType: 'Calibration',
-            description: `Restored calibration certificate "${cal.certificate_number}" for instrument "${parentInst.id_code}".`,
+            description: wasReassigned
+              ? `Restored calibration for instrument "${parentInst.id_code}" with newly assigned certificate "${finalCertNumber}" (original "${originalOccupiedCert}" was occupied).`
+              : `Restored calibration certificate "${cal.certificate_number}" for instrument "${parentInst.id_code}".`,
             details: {
               calibrationId: cal.id,
-              certificateNumber: cal.certificate_number,
+              certificateNumber: finalCertNumber,
+              ...(wasReassigned
+                ? {
+                    originalCertificateNumber: originalOccupiedCert,
+                    reassigned: true,
+                    reason: 'Original certificate number was occupied by active record',
+                  }
+                : {}),
               instrumentId: parentInst.id,
               restoredBy: userName,
             },
@@ -1224,7 +1260,9 @@ export class RecoveryService {
 
           return {
             success: true,
-            message: `Calibration certificate "${cal.certificate_number}" restored successfully.`,
+            message: wasReassigned
+              ? `Calibration restored successfully with new certificate number "${finalCertNumber}" (original "${originalOccupiedCert}" was occupied).`
+              : `Calibration certificate "${finalCertNumber}" restored successfully.`,
             restoredId: cal.id,
           };
         }

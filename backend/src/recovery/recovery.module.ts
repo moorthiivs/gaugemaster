@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
+import { CalibrationModule } from '../calibration/calibration.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Calibration } from '../calibration/calibration.entity';
@@ -29,6 +30,7 @@ import { RecoveryService } from './recovery.service';
     ]),
     AuditLogsModule,
     InstrumentsModule,
+    forwardRef(() => CalibrationModule),
   ],
   controllers: [RecoveryController],
   providers: [RecoveryService],

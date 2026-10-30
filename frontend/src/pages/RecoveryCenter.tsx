@@ -366,18 +366,30 @@ export default function RecoveryCenter() {
     setRestoreModalOpen(true);
   };
 
-  const handleConfirmRestore = async () => {
+  const handleConfirmRestore = async (reassignOnConflict: boolean = false) => {
     if (!targetRestoreItem) return;
     setRestoring(true);
     try {
-      const res = await restoreRecord(targetRestoreItem.module, targetRestoreItem.id);
+      const res = await restoreRecord(targetRestoreItem.module, targetRestoreItem.id, reassignOnConflict);
       toast.success(res.message || 'Record restored successfully!');
       setRestoreModalOpen(false);
+      setCollisionModalOpen(false);
       setTargetRestoreItem(null);
+      setCollisionData(null);
       fetchStats();
       fetchItems();
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || 'Failed to restore record');
+      const resp = err?.response?.data;
+      if (resp?.code === 'CERTIFICATE_COLLISION' || err?.response?.status === 409) {
+        setRestoreModalOpen(false);
+        setCollisionData({
+          occupiedNumber: resp?.occupiedCertificateNumber || targetRestoreItem.identifier,
+          conflictingInstrument: resp?.conflictingInstrument || 'Active Instrument',
+        });
+        setCollisionModalOpen(true);
+      } else {
+        toast.error(resp?.message || 'Failed to restore record');
+      }
     } finally {
       setRestoring(false);
     }
@@ -1248,6 +1260,58 @@ export default function RecoveryCenter() {
             >
               {restoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
               <span>Restore Record</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Certificate Collision Dialog */}
+      <Dialog open={collisionModalOpen} onOpenChange={setCollisionModalOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <div className="p-1.5 rounded-lg bg-amber-500/10">
+                <AlertTriangle className="w-5 h-5 text-amber-600" />
+              </div>
+              <DialogTitle className="text-base font-bold">
+                Original Certificate Number Occupied
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs pt-2 space-y-2">
+              <p>
+                Original certificate number{" "}
+                <strong className="font-mono text-foreground font-bold">{collisionData?.occupiedNumber}</strong>{" "}
+                is now active on instrument{" "}
+                <strong className="text-foreground">{collisionData?.conflictingInstrument}</strong> (due to a prior sequence shift).
+              </p>
+              <p className="text-muted-foreground">
+                To maintain uniqueness and audit compliance, would you like to restore this calibration and assign the <strong>next available certificate number</strong> in the sequence?
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCollisionModalOpen(false);
+                setCollisionData(null);
+                setTargetRestoreItem(null);
+              }}
+              disabled={restoring}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => handleConfirmRestore(true)}
+              disabled={restoring}
+              className="text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
+            >
+              {restoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+              <span>Restore with Next Available Number</span>
             </Button>
           </DialogFooter>
         </DialogContent>

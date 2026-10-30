@@ -169,6 +169,8 @@ export async function getCalibrationAuditLogs(calibrationId: string) {
 
 export interface ResequencePreviewData {
   canResequence: boolean;
+  isIssuedOrApproved?: boolean;
+  requiresSuperAdmin?: boolean;
   message?: string;
   targetCalibration: {
     id: string;

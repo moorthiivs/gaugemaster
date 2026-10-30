@@ -302,8 +302,8 @@ export class CalibrationController {
 
   @Get(':id/resequence-preview')
   @RequirePermission('calibrations', 'delete')
-  async getResequencePreview(@Param('id') id: string) {
-    return this.calibrationService.getResequencePreview(id);
+  async getResequencePreview(@Param('id') id: string, @Req() req: any) {
+    return this.calibrationService.getResequencePreview(id, req.user);
   }
 
   @Delete(':id')

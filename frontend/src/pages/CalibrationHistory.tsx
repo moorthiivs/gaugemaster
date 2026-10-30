@@ -217,7 +217,7 @@ export default function CalibrationHistory() {
     if (!selectedDeleteCalibration || !id) return;
     setDeleting(true);
     try {
-      const shouldResequence = resequenceChoice === "resequence";
+      const shouldResequence = (resequencePreview?.canResequence ?? false) && resequenceChoice === "resequence";
       await deleteCalibration(selectedDeleteCalibration.id, shouldResequence, deleteReason.trim() || undefined);
       const affectedCount =
         resequencePreview?.affectedCalibrations?.length || 0;
@@ -811,6 +811,12 @@ export default function CalibrationHistory() {
                   </p>
                 </div>
 
+                {resequencePreview?.isIssuedOrApproved && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs text-amber-900 dark:text-amber-200">
+                    <strong>Super Admin Notice:</strong> This calibration is officially Approved/Issued. Resequencing downstream numbers will alter already-issued certificate numbers.
+                  </div>
+                )}
+
                 {/* Option Choice Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div
@@ -1017,6 +1023,17 @@ export default function CalibrationHistory() {
                 <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
                   This calibration will be moved to the <strong>Trash (Recovery Center)</strong> and can be restored at any time.
                 </div>
+                {resequencePreview?.isIssuedOrApproved && (
+                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-900 dark:text-blue-300 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 text-blue-600 shrink-0" />
+                      ISO/IEC 17025 Compliance Protection
+                    </p>
+                    <p className="text-muted-foreground text-[11px]">
+                      This calibration is officially Approved/Issued. Certificate numbers cannot be renumbered to protect certificate integrity and audit compliance. It will be safely voided without altering other certificate numbers.
+                    </p>
+                  </div>
+                )}
                 {resequencePreview &&
                   resequencePreview.affectedCalibrations.length === 0 && (
                     <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">

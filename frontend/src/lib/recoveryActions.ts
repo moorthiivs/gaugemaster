@@ -87,8 +87,13 @@ export async function getRecoveryItemDetail(module: string, id: string): Promise
   return res.data;
 }
 
-export async function restoreRecord(module: string, id: string): Promise<RestoreResponse> {
-  const res = await httpClient.post<RestoreResponse>(`/recovery/${module}/${id}/restore`);
+export async function restoreRecord(
+  module: string,
+  id: string,
+  reassignOnConflict: boolean = false,
+): Promise<RestoreResponse> {
+  const url = `/recovery/${module}/${id}/restore${reassignOnConflict ? '?reassignOnConflict=true' : ''}`;
+  const res = await httpClient.post<RestoreResponse>(url);
   return res.data;
 }
 

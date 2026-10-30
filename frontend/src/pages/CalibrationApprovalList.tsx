@@ -368,7 +368,7 @@ export default function CalibrationApprovalList() {
     }
     setDeleting(true);
     try {
-      const shouldResequence = resequenceChoice === "resequence";
+      const shouldResequence = (resequencePreview?.canResequence ?? false) && resequenceChoice === "resequence";
       await deleteCalibration(calibrationToDelete.id, shouldResequence, deleteReason.trim());
       const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
       toast({
@@ -1765,8 +1765,13 @@ export default function CalibrationApprovalList() {
                 <Loader2 className="w-4 h-4 animate-spin text-primary" />
                 <span>Checking certificate sequence impact...</span>
               </div>
-            ) : resequencePreview && resequencePreview.affectedCalibrations.length > 0 ? (
+            ) : resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 ? (
               <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/20 text-xs space-y-2">
+                {resequencePreview.isIssuedOrApproved && (
+                  <p className="p-1.5 rounded bg-amber-500/20 text-[10px] text-amber-900 dark:text-amber-200 font-semibold">
+                    Super Admin Notice: Approved record resequencing enabled.
+                  </p>
+                )}
                 <p className="font-semibold text-amber-900 dark:text-amber-200">
                   Subsequent Certificate Renumbering Available
                 </p>
@@ -1794,6 +1799,13 @@ export default function CalibrationApprovalList() {
                     <span>Keep existing certificate numbers</span>
                   </label>
                 </div>
+              </div>
+            ) : resequencePreview?.isIssuedOrApproved ? (
+              <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-900 dark:text-blue-300 space-y-1">
+                <p className="font-semibold">ISO/IEC 17025 Compliance Protection</p>
+                <p className="text-[11px] text-muted-foreground">
+                  This calibration is officially Approved/Issued. Certificate numbers cannot be renumbered to protect audit compliance. It will be safely voided and moved to Recovery Center.
+                </p>
               </div>
             ) : null}
 

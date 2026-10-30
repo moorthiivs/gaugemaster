@@ -109,9 +109,13 @@ export class RecoveryController {
     @Req() req: any,
     @Param('module') module: string,
     @Param('id') id: string,
+    @Query('reassignOnConflict') reassignOnConflict?: string,
+    @Body('reassignOnConflict') bodyReassignOnConflict?: boolean,
   ) {
     this.checkModuleAccess(req, module, 'restore');
-    return this.recoveryService.restoreRecord(module, id, req.user);
+    const shouldReassign =
+      reassignOnConflict === 'true' || reassignOnConflict === '1' || bodyReassignOnConflict === true;
+    return this.recoveryService.restoreRecord(module, id, req.user, shouldReassign);
   }
 
   @Post('bulk-restore')
