@@ -66,11 +66,12 @@ export interface CanvasColumnDef {
   key?: string;
   name?: string;
   label: string;
-  type: "nominal" | "reading" | "trial" | "formula" | "text" | "status" | "tolerance" | "number";
+  type: "nominal" | "reading" | "trial" | "formula" | "text" | "status" | "tolerance" | "number" | "sl_no" | "unit" | (string & {});
   role?: ColumnRole;
   semanticRole?: ColumnSemanticRole;
   dataType?: ColumnDataType;
   formula?: string; // e.g. "actual - nominal", "AVERAGE(t1,t2,t3,t4,t5)", "actual >= lowerLimit AND actual <= upperLimit"
+  customFormula?: string;
   sourceFormula?: string; // Original Excel formula if extracted (e.g. "=D31-C31")
   dependsOn?: string[]; // Column IDs or semantic variables required for calculation
   formulaSource?: "SOURCE_EXCEL" | "EXCEL_TRANSLATED" | "AI_INFERRED" | "SYSTEM_GENERATED" | "USER_DEFINED";

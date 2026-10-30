@@ -162,6 +162,13 @@ export default function RecoveryCenter() {
   const [targetRestoreItem, setTargetRestoreItem] = useState<RecoveryItem | null>(null);
   const [restoring, setRestoring] = useState(false);
 
+  // Collision Modal State for Calibration restores
+  const [collisionModalOpen, setCollisionModalOpen] = useState(false);
+  const [collisionData, setCollisionData] = useState<{
+    occupiedNumber: string;
+    conflictingInstrument: string;
+  } | null>(null);
+
   const [permanentDeleteModalOpen, setPermanentDeleteModalOpen] = useState(false);
   const [targetPermanentDeleteItem, setTargetPermanentDeleteItem] = useState<RecoveryItem | null>(null);
   const [permanentDeleting, setPermanentDeleting] = useState(false);
@@ -1254,7 +1261,7 @@ export default function RecoveryCenter() {
             <Button
               variant="default"
               size="sm"
-              onClick={handleConfirmRestore}
+              onClick={() => handleConfirmRestore(false)}
               disabled={restoring}
               className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
             >

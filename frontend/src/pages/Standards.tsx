@@ -1166,6 +1166,7 @@ export default function Standards() {
       <DocumentHistoryModal
         isOpen={historyModal.isOpen}
         onClose={() => setHistoryModal((prev) => ({ ...prev, isOpen: false }))}
+        entityName="Calibration Standard"
         itemName={historyModal.itemName}
         itemId={historyModal.itemId}
         historyList={historyModal.list.map((h) => ({
@@ -1179,6 +1180,16 @@ export default function Standards() {
           created_at: h.created_at,
         }))}
         isLoading={historyModal.isLoading}
+        onViewDocument={(histItem) => {
+          setViewerDoc({
+            isOpen: true,
+            title: `${historyModal.itemName} (v${histItem.version})`,
+            documentName: histItem.document_name,
+            filePath: histItem.file_path,
+            fileType: histItem.file_type,
+            version: histItem.version,
+          });
+        }}
       />
     </div>
   );
