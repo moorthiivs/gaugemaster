@@ -23,38 +23,49 @@ export function parseLocalDate(dateStr?: string | null): Date | undefined {
  */
 export function parseFrequencyMonths(freq?: string): number {
   if (!freq || typeof freq !== "string") return 12;
-  const normalized = freq.trim().toLowerCase();
+  // 1. Strip parenthetical content like "(364D)" to prevent false number extraction
+  const clean = freq.replace(/\(.*?\)/g, "").trim().toLowerCase();
+  if (!clean) return 12;
 
-  if (normalized.includes("half") || normalized.includes("semi")) return 6;
-  if (normalized.includes("quarter")) return 3;
+  // 2. Specific textual intervals
+  if (clean.includes("half") || clean.includes("semi")) return 6;
+  if (clean.includes("quarter")) return 3;
 
-  if (normalized.includes("year") || normalized.includes("yr") || normalized.includes("annu")) {
-    const match = normalized.match(/(\d+)/);
+  // 3. Year matches: "1 Year", "Once in year", "once in 2years", "2 YRS", "Yearly"
+  if (clean.includes("year") || clean.includes("yr") || clean.includes("annu")) {
+    const match = clean.match(/(\d+)/);
     const num = match ? parseInt(match[1], 10) : 1;
-    return num * 12;
+    return (num > 0 ? num : 1) * 12;
   }
 
-  if (normalized.includes("month") || normalized.includes("mo")) {
-    const match = normalized.match(/(\d+)/);
+  // 4. Month matches: "1 MONTH", "6 Months", "Once in 6 months", "monthly"
+  if (clean.includes("month") || clean.includes("mo")) {
+    const match = clean.match(/(\d+)/);
     const num = match ? parseInt(match[1], 10) : 1;
-    return num;
+    return num > 0 ? num : 1;
   }
 
-  if (normalized.includes("week") || normalized.includes("wk")) {
-    const match = normalized.match(/(\d+)/);
+  // 5. Week matches
+  if (clean.includes("week") || clean.includes("wk")) {
+    const match = clean.match(/(\d+)/);
     const num = match ? parseInt(match[1], 10) : 1;
     return Math.max(1, Math.round((num * 7) / 30));
   }
 
-  if (normalized.includes("day")) {
-    const match = normalized.match(/(\d+)/);
+  // 6. Day matches
+  if (clean.includes("day")) {
+    const match = clean.match(/(\d+)/);
     const num = match ? parseInt(match[1], 10) : 1;
     return Math.max(1, Math.round(num / 30));
   }
 
-  const match = normalized.match(/(\d+)/);
+  // 7. Pure digits fallback
+  const match = clean.match(/(\d+)/);
   if (match) {
     const val = parseInt(match[1], 10);
+    if (val === 1 || val === 2) {
+      return val * 12;
+    }
     return val > 0 ? val : 12;
   }
 

@@ -1199,52 +1199,78 @@ export class InstrumentsService implements OnApplicationBootstrap {
         return 12;
     }
 
+    private addMonthsClamped(date: Date, months: number): Date {
+        const result = new Date(date);
+        const originalDay = result.getDate();
+        result.setDate(1); // prevent premature month overflow
+        result.setMonth(result.getMonth() + months);
+        const daysInTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+        result.setDate(Math.min(originalDay, daysInTargetMonth));
+        return result;
+    }
+
     public calculateDueDateFromFrequency(baseDate: Date | string, frequencyStr?: string): Date {
         const d = new Date(baseDate);
         if (isNaN(d.getTime())) return new Date();
 
-        if (!frequencyStr) {
-            d.setFullYear(d.getFullYear() + 1);
-            return d;
+        if (!frequencyStr || typeof frequencyStr !== 'string') {
+            return this.addMonthsClamped(d, 12);
         }
 
-        const normalized = frequencyStr.toLowerCase().trim();
-        if (normalized.includes('year') || normalized.includes('yr') || normalized.includes('annu')) {
-            const match = normalized.match(/\d+/);
-            const num = match ? parseInt(match[0], 10) : 1;
-            d.setFullYear(d.getFullYear() + num);
-            return d;
+        // 1. Strip parenthetical expressions like "(364D)" to prevent false number matches
+        const clean = frequencyStr.replace(/\(.*?\)/g, '').trim().toLowerCase();
+
+        // 2. Specific text intervals
+        if (clean.includes('half') || clean.includes('semi')) {
+            return this.addMonthsClamped(d, 6);
         }
-        if (normalized.includes('month') || normalized.includes('mo')) {
-            const match = normalized.match(/\d+/);
-            const num = match ? parseInt(match[0], 10) : 1;
-            d.setMonth(d.getMonth() + num);
-            return d;
+        if (clean.includes('quarter')) {
+            return this.addMonthsClamped(d, 3);
         }
-        if (normalized.includes('week') || normalized.includes('wk')) {
-            const match = normalized.match(/\d+/);
-            const num = match ? parseInt(match[0], 10) : 1;
-            d.setDate(d.getDate() + num * 7);
-            return d;
+
+        // 3. Year matches: "1 Year", "Once in year", "once in 2years", "2 YRS", "Yearly"
+        if (clean.includes('year') || clean.includes('yr') || clean.includes('annu')) {
+            const match = clean.match(/(\d+)/);
+            const years = match ? parseInt(match[1], 10) : 1;
+            return this.addMonthsClamped(d, (years > 0 ? years : 1) * 12);
         }
-        if (normalized.includes('day')) {
-            const match = normalized.match(/\d+/);
-            const num = match ? parseInt(match[0], 10) : 1;
-            d.setDate(d.getDate() + num);
-            return d;
+
+        // 4. Month matches: "1 MONTH", "6 Months", "Once in 6 months", "monthly"
+        if (clean.includes('month') || clean.includes('mo')) {
+            const match = clean.match(/(\d+)/);
+            const months = match ? parseInt(match[1], 10) : 1;
+            return this.addMonthsClamped(d, months > 0 ? months : 1);
         }
-        const match = normalized.match(/\d+/);
+
+        // 5. Week matches
+        if (clean.includes('week') || clean.includes('wk')) {
+            const match = clean.match(/(\d+)/);
+            const weeks = match ? parseInt(match[1], 10) : 1;
+            const res = new Date(d);
+            res.setDate(res.getDate() + weeks * 7);
+            return res;
+        }
+
+        // 6. Day matches
+        if (clean.includes('day')) {
+            const match = clean.match(/(\d+)/);
+            const days = match ? parseInt(match[1], 10) : 1;
+            const res = new Date(d);
+            res.setDate(res.getDate() + days);
+            return res;
+        }
+
+        // 7. Pure digits fallback
+        const match = clean.match(/(\d+)/);
         if (match) {
-            const val = parseInt(match[0], 10);
+            const val = parseInt(match[1], 10);
             if (val === 1 || val === 2) {
-                d.setFullYear(d.getFullYear() + val);
-            } else {
-                d.setMonth(d.getMonth() + val);
+                return this.addMonthsClamped(d, val * 12);
             }
-            return d;
+            return this.addMonthsClamped(d, val > 0 ? val : 12);
         }
-        d.setFullYear(d.getFullYear() + 1);
-        return d;
+
+        return this.addMonthsClamped(d, 12);
     }
 
 

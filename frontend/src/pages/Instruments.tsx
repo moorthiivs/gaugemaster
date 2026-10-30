@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { format } from "date-fns";
+import { format, addMonths } from "date-fns";
+import { computeNextDueDate, parseFrequencyMonths } from "@/lib/dateUtils";
 import { Instrument, InstrumentQuery } from "@/types/instrument";
 import { listInstruments, getFilterParams, updateInstrument, deleteInstrument, deleteInstrumentsBulk } from "@/lib/instrumentActions";
 import { normalizeItemStatus, deduplicateItemStatuses } from "@/lib/itemStatus";
@@ -1023,15 +1024,6 @@ export default function Instruments() {
     }
   };
 
-  const parseFrequencyMonths = (freq: string) => {
-    if (!freq) return 0;
-    const match = freq.match(/(\d+)/);
-    if (!match) return 0;
-    let val = parseInt(match[1], 10);
-    if (freq.toLowerCase().includes("year")) val *= 12;
-    return val;
-  };
-
   const handleOpenHistory = async (inst: Instrument) => {
     setHistoryModalOpen(true);
     setLoadingHistory(true);
@@ -1062,10 +1054,8 @@ export default function Instruments() {
     setNewCertNo(inst.cert_no || "");
     setCertificateFile(null);
 
-    const freqMonths = parseFrequencyMonths(inst.frequency) || 12;
-    const due = new Date(calDate);
-    due.setMonth(due.getMonth() + freqMonths);
-    setNewDueDate(format(due, 'yyyy-MM-dd'));
+    const calculatedDue = computeNextDueDate(calDateStr, inst.frequency);
+    setNewDueDate(calculatedDue || format(addMonths(calDate, 12), 'yyyy-MM-dd'));
 
     setDateModalOpen(true);
   };

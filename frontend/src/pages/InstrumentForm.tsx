@@ -45,6 +45,17 @@ const computeStatusOptions = (
   return Array.from(optionsSet);
 };
 
+export const STANDARD_FREQUENCIES = [
+  "1 Year",
+  "6 Months",
+  "3 Months",
+  "2 Years",
+  "3 Years",
+  "1 Month",
+  "12 MONTH",
+  "Once in year"
+];
+
 const INSTRUMENT_FIELDS: FormFieldConfig[] = [
   { name: "name", label: "Instrument Name", type: "text", col: 6 },
   { name: "id_code", label: "ID Code / IMTE", type: "text", col: 6 },
@@ -84,7 +95,7 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Frequency",
     type: "select",
     col: 6,
-    options: ["1 MONTH", "2 MONTH", "3 MONTH", "6 MONTH", "12 MONTH", "24 MONTH", "36 MONTH", "48 MONTH", "60 MONTH"]
+    options: STANDARD_FREQUENCIES
   },
   {
     name: "status",
@@ -196,6 +207,17 @@ export default function InstrumentForm() {
 
   const dynamicFormFields: FormFieldConfig[] = useMemo(() => {
     const baseFields: FormFieldConfig[] = INSTRUMENT_FIELDS.map((f) => {
+      if (f.name === "frequency") {
+        const currentFreq = instrumentData?.frequency;
+        const opts = [...STANDARD_FREQUENCIES];
+        if (currentFreq && !opts.includes(currentFreq)) {
+          opts.push(currentFreq);
+        }
+        return {
+          ...f,
+          options: opts,
+        };
+      }
       if (f.name === "status") {
         return {
           ...f,
@@ -216,7 +238,7 @@ export default function InstrumentForm() {
     });
 
     return [...baseFields, ...customFields];
-  }, [customFields, customStatuses]);
+  }, [customFields, customStatuses, instrumentData?.frequency]);
 
   // 2. Fetch instrument details if in Edit Mode
   useEffect(() => {
@@ -245,7 +267,7 @@ export default function InstrumentForm() {
           serial_no: i.serial_no ?? "",
           least_count: i.least_count ?? "",
           location: i.location ?? "",
-          frequency: i.frequency || "12 MONTH",
+          frequency: i.frequency || "1 Year",
           last_calibration_date: i.last_calibration_date ? i.last_calibration_date.slice(0, 10) : "",
           due_date: i.due_date ? i.due_date.slice(0, 10) : "",
           agency: i.agency ?? "",
@@ -286,7 +308,7 @@ export default function InstrumentForm() {
         // Set default values for New Instrument Mode
         setInstrumentData({
           device_type: "Instrument",
-          frequency: "12 MONTH",
+          frequency: "1 Year",
           status: "OK",
           item_status: "Active",
           last_calibration_date: "",
@@ -401,7 +423,7 @@ export default function InstrumentForm() {
       customStatuses.some((s) => s.toLowerCase() === currentStatus.toLowerCase().trim());
 
     if (name === "last_calibration_date") {
-      const frequency = getValues("frequency") || "12 MONTH";
+      const frequency = getValues("frequency") || "1 Year";
       if (value && frequency) {
         const nextDueDate = computeNextDueDate(value, frequency);
         if (nextDueDate) {

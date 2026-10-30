@@ -123,7 +123,7 @@ export const downloadTemplate = async (customHeaders: string[] = []) => {
   (ws as any).dataValidations.add("H2:H999", {
     type: "list",
     allowBlank: true,
-    formulae: ['"1 MONTH,2 MONTH,3 MONTH,6 MONTH,12 MONTH,24 MONTH,36 MONTH,48 MONTH,60 MONTH"'],
+    formulae: ['"1 Year,6 Months,3 Months,2 Years,3 Years,1 Month,12 MONTH,Once in year"'],
   });
 
   // Add dropdown validation for Device Type column (Column N)

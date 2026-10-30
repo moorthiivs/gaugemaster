@@ -3162,31 +3162,6 @@ export default function CalibrationWizard() {
     }
   }, [wizardIsCanvas, wizardLayoutBlocks, calPoints, calTolerance, isVerdictManuallyOverridden]);
 
-  // Auto-calculate next calibration due date based on frequency
-  useEffect(() => {
-    if (calDate && selectedInstrument?.frequency) {
-      const match = selectedInstrument.frequency.match(/(\d+)\s*(MONTH|YEAR|DAY)S?/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const unit = match[2].toUpperCase();
-        
-        try {
-          let newDate = parseISO(calDate);
-          if (unit === "MONTH") {
-            newDate = addMonths(newDate, num);
-          } else if (unit === "YEAR") {
-            newDate = addMonths(newDate, num * 12);
-          }
-          // Note: DAYS could be added if date-fns addDays is imported, but typically it's MONTH/YEAR
-          
-          setNextCalDate(format(newDate, "yyyy-MM-dd"));
-        } catch (e) {
-          console.error("Error parsing date", e);
-        }
-      }
-    }
-  }, [calDate, selectedInstrument?.frequency]);
-
   // Validate all reference standards for expired validity (blocking) or due within 15 days (warning)
   const validateReferenceStandards = () => {
     const expiredItems: any[] = [];
