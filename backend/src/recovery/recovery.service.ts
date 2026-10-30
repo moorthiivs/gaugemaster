@@ -15,6 +15,7 @@ import { CalibrationTemplate } from '../calibration-templates/entities/calibrati
 import { CalibrationProcedure } from '../calibration-procedures/calibration-procedure.entity';
 import { WorkInstruction } from '../work-instructions/work-instruction.entity';
 import { GaugeDiagram } from '../gauge-diagrams/gauge-diagram.entity';
+import { Standard } from '../standards/standard.entity';
 import { AuditLogsService } from '../audit-logs/audit-logs.service';
 import { InstrumentsService } from '../instruments/instruments.service';
 import { RecoveryQueryDto } from './dto/recovery-query.dto';
@@ -27,7 +28,8 @@ export interface RecoveryItemDto {
     | 'templates'
     | 'calibration_procedures'
     | 'work_instructions'
-    | 'gauge_diagrams';
+    | 'gauge_diagrams'
+    | 'standards';
   moduleLabel: string;
   recordName: string;
   identifier: string;
@@ -58,6 +60,8 @@ export class RecoveryService {
     private readonly instructionRepo: Repository<WorkInstruction>,
     @InjectRepository(GaugeDiagram)
     private readonly diagramRepo: Repository<GaugeDiagram>,
+    @InjectRepository(Standard)
+    private readonly standardRepo: Repository<Standard>,
     private readonly auditLogsService: AuditLogsService,
     private readonly instrumentsService: InstrumentsService,
     private readonly dataSource: DataSource,
@@ -74,6 +78,7 @@ export class RecoveryService {
     calibration_procedures: number;
     work_instructions: number;
     gauge_diagrams: number;
+    standards: number;
   }> {
     const whereCompany = (qb: any, alias: string) => {
       if (companyId) {
@@ -105,13 +110,18 @@ export class RecoveryService {
     whereCompany(diagQb, 'd');
     const gauge_diagrams = await diagQb.getCount();
 
+    const stdQb = this.standardRepo.createQueryBuilder('s').withDeleted().where('s.deleted_at IS NOT NULL');
+    whereCompany(stdQb, 's');
+    const standards = await stdQb.getCount();
+
     const total =
       instruments +
       calibrations +
       templates +
       calibration_procedures +
       work_instructions +
-      gauge_diagrams;
+      gauge_diagrams +
+      standards;
 
     return {
       total,
@@ -121,6 +131,7 @@ export class RecoveryService {
       calibration_procedures,
       work_instructions,
       gauge_diagrams,
+      standards,
     };
   }
 
@@ -456,6 +467,56 @@ export class RecoveryService {
       }
     }
 
+    // 7. Standards
+    if (moduleFilter === 'all' || moduleFilter === 'standards') {
+      const qb = this.standardRepo
+        .createQueryBuilder('st')
+        .withDeleted()
+        .where('st.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(st."companyId" = :companyId OR st."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('st.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('st.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(st.deleted_by_name) LIKE :dBy OR st.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere(
+          '(LOWER(st.standard_number) LIKE :s OR LOWER(st.standard_name) LIKE :s OR LOWER(st.standard_type) LIKE :s OR LOWER(st.document_name) LIKE :s)',
+          { s: `%${search}%` },
+        );
+      }
+
+      const rows = await qb.orderBy('st.deleted_at', 'DESC').getMany();
+      for (const st of rows) {
+        allItems.push({
+          id: st.id,
+          module: 'standards',
+          moduleLabel: 'Standard',
+          recordName: st.standard_name || st.standard_number || 'Standard',
+          identifier: st.standard_number || st.standard_name,
+          recordDetails: {
+            standard_number: st.standard_number,
+            standard_name: st.standard_name,
+            standard_type: st.standard_type,
+            document_name: st.document_name,
+            version: st.version,
+            file_path: st.file_path,
+            description: st.description,
+          },
+          deletedAt: st.deleted_at!,
+          deletedById: st.deleted_by_id,
+          deletedByName: st.deleted_by_name,
+          deletionReason: st.deletion_reason,
+          canRestore: true,
+        });
+      }
+    }
+
     // Sort descending by deletedAt
     allItems.sort((a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime());
 
@@ -657,6 +718,36 @@ export class RecoveryService {
       const rows = await qb.getMany();
       for (const row of rows) {
         allItems.push({ id: row.id, module: 'gauge_diagrams' });
+      }
+    }
+
+    // 7. Standards
+    if (moduleFilter === 'all' || moduleFilter === 'standards') {
+      const qb = this.standardRepo
+        .createQueryBuilder('st')
+        .withDeleted()
+        .select(['st.id'])
+        .where('st.deleted_at IS NOT NULL');
+      if (companyId) {
+        qb.andWhere('(st."companyId" = :companyId OR st."companyId" IS NULL)', { companyId });
+      }
+      if (startDate) qb.andWhere('st.deleted_at >= :startDate', { startDate });
+      if (endDate) qb.andWhere('st.deleted_at <= :endDate', { endDate });
+      if (deletedBy) {
+        qb.andWhere('(LOWER(st.deleted_by_name) LIKE :dBy OR st.deleted_by_id = :dById)', {
+          dBy: `%${deletedBy.toLowerCase()}%`,
+          dById: deletedBy,
+        });
+      }
+      if (search) {
+        qb.andWhere(
+          '(LOWER(st.standard_number) LIKE :s OR LOWER(st.standard_name) LIKE :s OR LOWER(st.standard_type) LIKE :s OR LOWER(st.document_name) LIKE :s)',
+          { s: `%${search.toLowerCase()}%` },
+        );
+      }
+      const rows = await qb.getMany();
+      for (const row of rows) {
+        allItems.push({ id: row.id, module: 'standards' });
       }
     }
 
@@ -881,6 +972,34 @@ export class RecoveryService {
           deletedById: gd.deleted_by_id,
           deletedByName: gd.deleted_by_name,
           deletionReason: gd.deletion_reason,
+          canRestore: conflicts.length === 0,
+          conflictWarning: conflicts.length > 0 ? conflicts.join(' ') : undefined,
+        };
+        break;
+      }
+
+      case 'standards': {
+        const st = await this.standardRepo.findOne({
+          where: { id },
+          withDeleted: true,
+        });
+        if (!st || !st.deleted_at) throw new NotFoundException('Deleted standard not found');
+
+        if (st.file_path && !fs.existsSync(path.resolve(process.cwd(), st.file_path.replace(/^\//, '')))) {
+          conflicts.push('Underlying standard document file could not be verified in server storage.');
+        }
+
+        item = {
+          id: st.id,
+          module: 'standards',
+          moduleLabel: 'Standard',
+          recordName: st.standard_name || st.standard_number,
+          identifier: st.standard_number || st.standard_name,
+          recordDetails: st,
+          deletedAt: st.deleted_at,
+          deletedById: st.deleted_by_id,
+          deletedByName: st.deleted_by_name,
+          deletionReason: st.deletion_reason,
           canRestore: conflicts.length === 0,
           conflictWarning: conflicts.length > 0 ? conflicts.join(' ') : undefined,
         };
@@ -1263,6 +1382,41 @@ export class RecoveryService {
           };
         }
 
+        case 'standards': {
+          const st = await queryRunner.manager.findOne(Standard, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!st || !st.deleted_at) {
+            throw new NotFoundException('Deleted standard not found in Recovery Center.');
+          }
+
+          await queryRunner.manager.update(Standard, id, {
+            deleted_at: null as any,
+            deleted_by_id: null as any,
+            deleted_by_name: null as any,
+            deletion_reason: null as any,
+          });
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: st.companyId || companyId,
+            action: 'STANDARD_RESTORE',
+            resource: `/api/recovery/standards/${id}/restore`,
+            resourceType: 'Standard',
+            description: `Restored standard "${st.standard_number} - ${st.standard_name}".`,
+            details: { standardId: st.id, restoredBy: userName },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Standard "${st.standard_number} - ${st.standard_name}" restored successfully.`,
+            restoredId: st.id,
+          };
+        }
+
         default:
           throw new BadRequestException(`Unsupported module: ${module}`);
       }
@@ -1629,6 +1783,55 @@ export class RecoveryService {
           return {
             success: true,
             message: `Gauge diagram "${recordName}" permanently deleted.`,
+            deletedId: id,
+          };
+        }
+
+        case 'standards': {
+          const st = await queryRunner.manager.findOne(Standard, {
+            where: { id },
+            withDeleted: true,
+          });
+          if (!st || !st.deleted_at) {
+            throw new NotFoundException('Deleted standard not found in Recovery Center.');
+          }
+          recordName = `${st.standard_number || ''} ${st.standard_name || ''}`.trim() || id;
+
+          await queryRunner.manager
+            .createQueryBuilder()
+            .delete()
+            .from('standard_history')
+            .where('standard_id = :id', { id })
+            .execute();
+
+          if (st.file_path && fs.existsSync(st.file_path)) {
+            try {
+              fs.unlinkSync(st.file_path);
+            } catch (err) {
+              this.logger.warn(`Could not unlink file ${st.file_path}: ${err}`);
+            }
+          }
+
+          await queryRunner.manager.delete(Standard, id);
+
+          await this.auditLogsService.createLog({
+            userId,
+            companyId: st.companyId || companyId,
+            action: 'STANDARD_PERMANENT_DELETE',
+            resource: `/api/recovery/standards/${id}/permanent`,
+            resourceType: 'Standard',
+            description: `Permanently deleted standard "${recordName}".`,
+            details: {
+              standardId: id,
+              purgedBy: userName,
+            },
+          });
+
+          await queryRunner.commitTransaction();
+
+          return {
+            success: true,
+            message: `Standard "${recordName}" permanently deleted.`,
             deletedId: id,
           };
         }

@@ -44,6 +44,12 @@ export function usePermissions() {
     }
 
     // Smart fallback for granular submodules if not yet configured in legacy role
+    if (rolePermissions && moduleKey === "standards" && rolePermissions.standards === undefined) {
+      if (rolePermissions.calibration_procedures !== undefined) {
+        return !!rolePermissions.calibration_procedures[action];
+      }
+    }
+
     if (rolePermissions && rolePermissions.templates !== undefined) {
       if (moduleKey === "template_builder") {
         return !!rolePermissions.templates[action];

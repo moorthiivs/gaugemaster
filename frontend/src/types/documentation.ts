@@ -109,3 +109,39 @@ export interface WorkInstructionHistory {
   companyId?: string;
   created_at: string;
 }
+
+export interface Standard {
+  id: string;
+  standard_number: string;
+  standard_name: string;
+  standard_type: string;
+  document_name?: string;
+  file_type?: string;
+  file_path?: string;
+  version: number;
+  description?: string;
+  companyId?: string;
+  created_by_id?: string;
+  created_by_name?: string;
+  updated_by_id?: string;
+  updated_by_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StandardHistory {
+  id: string;
+  standard_id: string;
+  standard_number: string;
+  standard_name: string;
+  standard_type: string;
+  document_name?: string;
+  file_type?: string;
+  file_path?: string;
+  version: number;
+  action_details?: string;
+  created_by_id?: string;
+  created_by_name?: string;
+  companyId?: string;
+  created_at: string;
+}

@@ -19,6 +19,7 @@ export const DEFAULT_MODULES = [
   'calibration_procedures',
   'work_instructions',
   'gauge_diagrams',
+  'standards',
   // Administration
   'reports',
   'recovery',
@@ -38,6 +39,7 @@ const FULL_ACCESS_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: true, edit: true, view: true, delete: true },
   work_instructions: { create: true, edit: true, view: true, delete: true },
   gauge_diagrams: { create: true, edit: true, view: true, delete: true },
+  standards: { create: true, edit: true, view: true, delete: true },
   reports: { create: true, edit: true, view: true, delete: true },
   recovery: { create: true, edit: true, view: true, delete: true },
   users: { create: true, edit: true, view: true, delete: true },
@@ -56,6 +58,7 @@ const QUALITY_MANAGER_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: true, edit: true, view: true, delete: true },
   work_instructions: { create: true, edit: true, view: true, delete: true },
   gauge_diagrams: { create: true, edit: true, view: true, delete: true },
+  standards: { create: true, edit: true, view: true, delete: true },
   reports: { create: true, edit: true, view: true, delete: false },
   recovery: { create: true, edit: true, view: true, delete: false },
   users: { create: false, edit: false, view: true, delete: false },
@@ -74,6 +77,7 @@ const CALIBRATION_REVIEWER_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: false, edit: false, view: true, delete: false },
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  standards: { create: false, edit: false, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
   recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
@@ -92,6 +96,7 @@ const CALIBRATION_APPROVER_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: false, edit: false, view: true, delete: false },
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  standards: { create: false, edit: false, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
   recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
@@ -110,6 +115,7 @@ const CALIBRATION_ENGINEER_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: true, edit: true, view: true, delete: false },
   work_instructions: { create: true, edit: true, view: true, delete: false },
   gauge_diagrams: { create: true, edit: true, view: true, delete: false },
+  standards: { create: true, edit: true, view: true, delete: false },
   reports: { create: true, edit: false, view: true, delete: false },
   recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
@@ -128,6 +134,7 @@ const LAB_TECHNICIAN_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: false, edit: false, view: true, delete: false },
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  standards: { create: false, edit: false, view: true, delete: false },
   reports: { create: false, edit: false, view: true, delete: false },
   recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
@@ -146,6 +153,7 @@ const VIEWER_PERMISSIONS: RolePermissions = {
   calibration_procedures: { create: false, edit: false, view: true, delete: false },
   work_instructions: { create: false, edit: false, view: true, delete: false },
   gauge_diagrams: { create: false, edit: false, view: true, delete: false },
+  standards: { create: false, edit: false, view: true, delete: false },
   reports: { create: false, edit: false, view: true, delete: false },
   recovery: { create: false, edit: false, view: false, delete: false },
   users: { create: false, edit: false, view: false, delete: false },
@@ -247,8 +255,8 @@ export class RolesService implements OnModuleInit {
           modified = true;
         }
 
-        // 6. calibration_procedures, work_instructions, gauge_diagrams
-        const docModules = ['calibration_procedures', 'work_instructions', 'gauge_diagrams'];
+        // 6. calibration_procedures, work_instructions, gauge_diagrams, standards
+        const docModules = ['calibration_procedures', 'work_instructions', 'gauge_diagrams', 'standards'];
         for (const mod of docModules) {
           if (!p[mod]) {
             if (isAdmin) {

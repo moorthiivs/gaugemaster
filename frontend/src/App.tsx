@@ -24,6 +24,7 @@ const InstrumentForm = lazy(() => import("./pages/InstrumentForm"));
 const CalibrationProcedures = lazy(() => import("./pages/CalibrationProcedures"));
 const WorkInstructions = lazy(() => import("./pages/WorkInstructions"));
 const GaugeDiagrams = lazy(() => import("./pages/GaugeDiagrams"));
+const Standards = lazy(() => import("./pages/Standards"));
 const Reports = lazy(() => import("./pages/Reports"));
 const CalibrationApprovalList = lazy(() => import("./pages/CalibrationApprovalList"));
 const TemplateBuilder = lazy(() => import("./pages/TemplateBuilder"));
@@ -102,6 +103,7 @@ const App = () => (
                       <Route path="/calibration-procedures" element={<ProtectedRoute module="calibration_procedures" action="view"><CalibrationProcedures /></ProtectedRoute>} />
                       <Route path="/work-instructions" element={<ProtectedRoute module="work_instructions" action="view"><WorkInstructions /></ProtectedRoute>} />
                       <Route path="/gauge-diagrams" element={<ProtectedRoute module="gauge_diagrams" action="view"><GaugeDiagrams /></ProtectedRoute>} />
+                      <Route path="/standards" element={<ProtectedRoute module="standards" action="view"><Standards /></ProtectedRoute>} />
                       <Route path="/reports" element={<ProtectedRoute module="reports" action="view"><Reports /></ProtectedRoute>} />
                       <Route path="/calibration/approval" element={<ProtectedRoute module="calibration_approvals" action="view"><CalibrationApprovalList /></ProtectedRoute>} />
                       <Route path="/calibration/templates" element={<ProtectedRoute module="templates" action="view"><TemplateBuilder /></ProtectedRoute>} />

@@ -68,6 +68,7 @@ const navigationGroups = [
       { title: "Calibration Procedure", url: "/calibration-procedures", icon: FileText, module: "calibration_procedures", action: "view" },
       { title: "Work Instructions", url: "/work-instructions", icon: BookOpen, module: "work_instructions", action: "view" },
       { title: "Gauge Diagram", url: "/gauge-diagrams", icon: Compass, module: "gauge_diagrams", action: "view" },
+      { title: "Standards", url: "/standards", icon: ShieldCheck, module: "standards", action: "view" },
     ],
   },
   {

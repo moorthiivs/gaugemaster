@@ -7,6 +7,7 @@ import { CalibrationTemplate } from '../calibration-templates/entities/calibrati
 import { CalibrationProcedure } from '../calibration-procedures/calibration-procedure.entity';
 import { WorkInstruction } from '../work-instructions/work-instruction.entity';
 import { GaugeDiagram } from '../gauge-diagrams/gauge-diagram.entity';
+import { Standard } from '../standards/standard.entity';
 import { User } from '../users/user.entity';
 
 import { AuditLogsModule } from '../audit-logs/audit-logs.module';
@@ -23,6 +24,7 @@ import { RecoveryService } from './recovery.service';
       CalibrationProcedure,
       WorkInstruction,
       GaugeDiagram,
+      Standard,
       User,
     ]),
     AuditLogsModule,

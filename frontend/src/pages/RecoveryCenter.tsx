@@ -56,6 +56,7 @@ import {
   Trash2,
   XCircle,
   Check,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -80,6 +81,7 @@ const MODULE_OPTIONS = [
   { value: 'calibration_procedures', label: 'Procedures', icon: FileText },
   { value: 'work_instructions', label: 'Work Instructions', icon: BookOpen },
   { value: 'gauge_diagrams', label: 'Gauge Diagrams', icon: Compass },
+  { value: 'standards', label: 'Standards', icon: ShieldCheck },
 ];
 
 export default function RecoveryCenter() {
@@ -110,6 +112,7 @@ export default function RecoveryCenter() {
     calibration_procedures: 0,
     work_instructions: 0,
     gauge_diagrams: 0,
+    standards: 0,
   });
 
   const [loading, setLoading] = useState(true);
@@ -508,6 +511,15 @@ export default function RecoveryCenter() {
             <Compass className="w-3 h-3" /> Diagram
           </Badge>
         );
+      case 'standards':
+        return (
+          <Badge
+            variant="outline"
+            className="bg-teal-500/10 text-teal-700 dark:text-teal-400 border-teal-500/20 font-semibold gap-1 text-[11px]"
+          >
+            <ShieldCheck className="w-3 h-3" /> Standard
+          </Badge>
+        );
       default:
         return <Badge variant="outline">{mod}</Badge>;
     }
@@ -582,7 +594,7 @@ export default function RecoveryCenter() {
       />
 
       {/* Module Summary Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3">
         <Card
           onClick={() => {
             setSelectedModule('all');
@@ -740,6 +752,29 @@ export default function RecoveryCenter() {
             </div>
             <div className="text-xl font-bold font-mono mt-1 text-foreground">
               {stats.gauge_diagrams}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card
+          onClick={() => {
+            setSelectedModule('standards');
+            setPage(1);
+            handleClearSelection();
+          }}
+          className={`cursor-pointer transition-all hover:shadow-md ${
+            selectedModule === 'standards'
+              ? 'border-teal-500 ring-1 ring-teal-500 bg-teal-500/5'
+              : 'hover:border-border/80'
+          }`}
+        >
+          <CardContent className="p-3.5 flex flex-col justify-between h-full">
+            <div className="flex items-center justify-between text-muted-foreground text-xs font-medium">
+              <span>Standards</span>
+              <ShieldCheck className="w-4 h-4 text-teal-500" />
+            </div>
+            <div className="text-xl font-bold font-mono mt-1 text-foreground">
+              {stats.standards}
             </div>
           </CardContent>
         </Card>

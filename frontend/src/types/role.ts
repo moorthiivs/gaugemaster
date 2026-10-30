@@ -95,6 +95,12 @@ export const MODULE_NAMES: ModuleDefinition[] = [
     description: 'Manage technical blueprint diagrams, drawings, and dimensional schematics',
     category: 'Master Data',
   },
+  {
+    key: 'standards',
+    label: 'Standards Master',
+    description: 'Manage calibration reference standards, standard numbers, types, and specification documents',
+    category: 'Master Data',
+  },
 
   // Administration
   {

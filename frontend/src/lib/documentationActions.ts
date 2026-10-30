@@ -6,6 +6,8 @@ import {
   GaugeDiagramHistory,
   WorkInstruction,
   WorkInstructionHistory,
+  Standard,
+  StandardHistory,
 } from '@/types/documentation';
 
 // ==========================================
@@ -131,5 +133,47 @@ export async function deleteWorkInstruction(id: string, reason?: string): Promis
 
 export async function getWorkInstructionHistory(id: string): Promise<WorkInstructionHistory[]> {
   const response = await httpClient.get<WorkInstructionHistory[]>(`/work-instructions/${id}/history`);
+  return response.data;
+}
+
+// ==========================================
+// 4. Standards
+// ==========================================
+
+export async function getStandards(params?: {
+  companyId?: string;
+  search?: string;
+  standard_type?: string;
+}): Promise<Standard[]> {
+  const response = await httpClient.get<Standard[]>('/standards', { params });
+  return response.data;
+}
+
+export async function getStandard(id: string): Promise<Standard> {
+  const response = await httpClient.get<Standard>(`/standards/${id}`);
+  return response.data;
+}
+
+export async function createStandard(formData: FormData): Promise<Standard> {
+  const response = await httpClient.post<Standard>('/standards', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+}
+
+export async function updateStandard(id: string, formData: FormData): Promise<Standard> {
+  const response = await httpClient.put<Standard>(`/standards/${id}`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+}
+
+export async function deleteStandard(id: string, reason?: string): Promise<{ success: boolean; message: string }> {
+  const response = await httpClient.delete(`/standards/${id}`, { params: { reason } });
+  return response.data;
+}
+
+export async function getStandardHistory(id: string): Promise<StandardHistory[]> {
+  const response = await httpClient.get<StandardHistory[]>(`/standards/${id}/history`);
   return response.data;
 }

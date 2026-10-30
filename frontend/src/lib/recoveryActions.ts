@@ -8,7 +8,8 @@ export interface RecoveryItem {
     | 'templates'
     | 'calibration_procedures'
     | 'work_instructions'
-    | 'gauge_diagrams';
+    | 'gauge_diagrams'
+    | 'standards';
   moduleLabel: string;
   recordName: string;
   identifier: string;
@@ -30,6 +31,7 @@ export interface RecoveryStats {
   calibration_procedures: number;
   work_instructions: number;
   gauge_diagrams: number;
+  standards: number;
 }
 
 export interface RecoveryQueryParams {
