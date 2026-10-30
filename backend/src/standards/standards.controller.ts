@@ -75,6 +75,14 @@ export class StandardsController {
     return this.service.findAll(companyId, search, type);
   }
 
+  @Get('types')
+  @RequirePermission('standards', 'view')
+  async getDistinctTypes(@Req() req: any, @Query('companyId') queryCompanyId?: string) {
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const companyId = isSuperAdmin ? (queryCompanyId || req.user?.companyId) : req.user?.companyId;
+    return this.service.getDistinctTypes(companyId);
+  }
+
   @Get(':id')
   @RequirePermission('standards', 'view')
   async findOne(@Param('id') id: string, @Req() req: any) {
@@ -158,3 +166,4 @@ export class StandardsController {
     return this.service.getHistory(id, companyId);
   }
 }
+

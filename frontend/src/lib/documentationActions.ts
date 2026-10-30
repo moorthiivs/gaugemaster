@@ -177,3 +177,8 @@ export async function getStandardHistory(id: string): Promise<StandardHistory[]>
   const response = await httpClient.get<StandardHistory[]>(`/standards/${id}/history`);
   return response.data;
 }
+
+export async function getStandardTypes(companyId?: string): Promise<string[]> {
+  const response = await httpClient.get<string[]>('/standards/types', { params: { companyId } });
+  return response.data;
+}

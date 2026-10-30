@@ -53,3 +53,4 @@ export class StandardHistory {
   @CreateDateColumn()
   created_at: Date;
 }
+

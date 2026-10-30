@@ -74,3 +74,4 @@ export class Standard {
   @Column({ type: 'text', nullable: true })
   deletion_reason?: string | null;
 }
+

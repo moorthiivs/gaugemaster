@@ -38,6 +38,19 @@ export class StandardsService {
     return qb.getMany();
   }
 
+  async getDistinctTypes(companyId?: string): Promise<string[]> {
+    const qb = this.standardRepo
+      .createQueryBuilder('standard')
+      .select('DISTINCT TRIM(standard.standard_type)', 'standard_type')
+      .where('standard.standard_type IS NOT NULL AND standard.standard_type != \'\'');
+    if (companyId) {
+      qb.andWhere('standard.companyId = :companyId', { companyId });
+    }
+    const raw = await qb.getRawMany();
+    const types = raw.map((r) => r.standard_type).filter(Boolean);
+    return Array.from(new Set(types)).sort();
+  }
+
   async findOne(id: string, companyId?: string) {
     const where: any = { id };
     if (companyId) {
@@ -182,3 +195,4 @@ export class StandardsService {
     });
   }
 }
+

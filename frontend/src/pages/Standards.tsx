@@ -48,6 +48,8 @@ import {
   CheckCircle2,
   RefreshCw,
   X,
+  Filter,
+  RotateCcw,
 } from "lucide-react";
 import {
   Standard,
@@ -55,6 +57,7 @@ import {
 } from "@/types/documentation";
 import {
   getStandards,
+  getStandardTypes,
   createStandard,
   updateStandard,
   deleteStandard,
@@ -88,6 +91,7 @@ export default function Standards() {
   const { user } = useAuth();
   const { canAccess } = usePermissions();
   const [standards, setStandards] = useState<Standard[]>([]);
+  const [serverTypes, setServerTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTypeFilter, setSelectedTypeFilter] = useState("All");
@@ -151,11 +155,15 @@ export default function Standards() {
   const fetchStandards = async () => {
     setLoading(true);
     try {
-      const data = await getStandards({
-        companyId: user?.companyId,
-        search: searchQuery,
-      });
+      const [data, types] = await Promise.all([
+        getStandards({
+          companyId: user?.companyId,
+          search: searchQuery.trim() || undefined,
+        }),
+        getStandardTypes(user?.companyId).catch(() => []),
+      ]);
       setStandards(data || []);
+      setServerTypes(types || []);
     } catch (err: any) {
       toast.error(err.response?.data?.message || "Failed to load standards");
     } finally {
@@ -169,16 +177,93 @@ export default function Standards() {
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    setPageIndex(1);
     fetchStandards();
   };
 
-  // Filtered standards according to search & quick type chips
+  // Dynamically aggregate all distinct standard types from database/server & loaded records
+  const dynamicStandardTypes = useMemo(() => {
+    const typeCounts = new Map<string, number>();
+
+    // Count types from loaded standards
+    standards.forEach((std) => {
+      const t = std.standard_type?.trim();
+      if (t) {
+        const existingKey = Array.from(typeCounts.keys()).find(
+          (k) => k.toLowerCase() === t.toLowerCase()
+        );
+        if (existingKey) {
+          typeCounts.set(existingKey, (typeCounts.get(existingKey) || 0) + 1);
+        } else {
+          typeCounts.set(t, 1);
+        }
+      }
+    });
+
+    // Also include types reported by server if not yet populated
+    serverTypes.forEach((st) => {
+      const t = st?.trim();
+      if (t) {
+        const existingKey = Array.from(typeCounts.keys()).find(
+          (k) => k.toLowerCase() === t.toLowerCase()
+        );
+        if (!existingKey) {
+          typeCounts.set(t, 0);
+        }
+      }
+    });
+
+    // Sort alphabetically
+    const sortedTypes = Array.from(typeCounts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return [
+      { name: "All", count: standards.length },
+      ...sortedTypes,
+    ];
+  }, [standards, serverTypes]);
+
+  // Combined dynamic filtering & responsive live search
   const filteredStandards = useMemo(() => {
     return standards.filter((item) => {
-      if (selectedTypeFilter === "All") return true;
-      return (item.standard_type || "").toLowerCase().includes(selectedTypeFilter.toLowerCase());
+      // 1. Dynamic Type Filter
+      if (selectedTypeFilter !== "All") {
+        const itemType = (item.standard_type || "").trim().toLowerCase();
+        const targetType = selectedTypeFilter.trim().toLowerCase();
+        if (itemType !== targetType && !itemType.includes(targetType)) {
+          return false;
+        }
+      }
+
+      // 2. Client-side search for instant live typing responsiveness
+      if (searchQuery.trim()) {
+        const q = searchQuery.trim().toLowerCase();
+        const matchesNumber = (item.standard_number || "").toLowerCase().includes(q);
+        const matchesName = (item.standard_name || "").toLowerCase().includes(q);
+        const matchesType = (item.standard_type || "").toLowerCase().includes(q);
+        const matchesDesc = (item.description || "").toLowerCase().includes(q);
+        const matchesDoc = (item.document_name || "").toLowerCase().includes(q);
+        if (!matchesNumber && !matchesName && !matchesType && !matchesDesc && !matchesDoc) {
+          return false;
+        }
+      }
+
+      return true;
     });
-  }, [standards, selectedTypeFilter]);
+  }, [standards, selectedTypeFilter, searchQuery]);
+
+  // Ensure pageIndex resets when filter or search changes
+  useEffect(() => {
+    setPageIndex(1);
+  }, [selectedTypeFilter, searchQuery]);
+
+  // Pagination calculation
+  const totalItems = filteredStandards.length;
+  const pageCount = Math.max(1, Math.ceil(totalItems / pageSize));
+  const paginatedStandards = useMemo(() => {
+    return filteredStandards.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+  }, [filteredStandards, pageIndex, pageSize]);
 
   // Handle Create
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -192,7 +277,7 @@ export default function Standards() {
       return;
     }
     if (!createStandardType.trim()) {
-      toast.error("Standard Type is required (e.g. International Standard, IS, DIN)");
+      toast.error("Standard Type is required (e.g. International, IS, DIN, test)");
       return;
     }
 
@@ -359,11 +444,6 @@ export default function Standards() {
     }
   };
 
-  const pageCount = Math.max(1, Math.ceil(filteredStandards.length / pageSize));
-  const paginatedStandards = useMemo(() => {
-    return filteredStandards.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
-  }, [filteredStandards, pageIndex, pageSize]);
-
   const standardColumns = useMemo<ColumnDef<Standard>[]>(
     () => [
       {
@@ -416,7 +496,14 @@ export default function Standards() {
           return (
             <Badge
               variant="outline"
-              className="text-xs font-medium border-border/80 bg-muted/40 text-foreground"
+              className="text-xs font-semibold border-border/80 bg-muted/50 text-foreground cursor-pointer hover:bg-primary/10 hover:text-primary transition-colors"
+              onClick={() => {
+                if (std.standard_type) {
+                  setSelectedTypeFilter(std.standard_type.trim());
+                  setPageIndex(1);
+                }
+              }}
+              title="Click to filter by this standard type"
             >
               {std.standard_type}
             </Badge>
@@ -594,7 +681,7 @@ export default function Standards() {
         </div>
       </div>
 
-      {/* Main Card with Search and Filters */}
+      {/* Main Card with Search and Dynamic Filters */}
       <Card>
         <CardHeader className="pb-3 border-b">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -618,7 +705,7 @@ export default function Standards() {
                     type="button"
                     onClick={() => {
                       setSearchQuery("");
-                      fetchStandards();
+                      setPageIndex(1);
                     }}
                     className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
                   >
@@ -632,31 +719,57 @@ export default function Standards() {
             </form>
           </div>
 
-          {/* Type Filter Pills */}
+          {/* Dynamic Type Filter Pills */}
           <div className="flex flex-wrap items-center gap-1.5 pt-3">
-            <span className="text-xs font-medium text-muted-foreground mr-1">Filter by Type:</span>
-            {["All", "ISO", "IS", "DIN", "ASME", "Reference Standard"].map((filter) => (
-              <button
-                key={filter}
-                type="button"
-                onClick={() => setSelectedTypeFilter(filter)}
-                className={`text-xs px-2.5 py-1 rounded-full border transition-all ${
-                  selectedTypeFilter === filter
-                    ? "bg-primary text-primary-foreground border-primary font-medium"
-                    : "bg-background text-muted-foreground border-border hover:bg-muted"
-                }`}
+            <span className="text-xs font-semibold text-muted-foreground mr-1 flex items-center gap-1">
+              <Filter className="h-3.5 w-3.5 text-primary" />
+              Filter by Type:
+            </span>
+            {dynamicStandardTypes.map((tab) => {
+              const isSelected = selectedTypeFilter.toLowerCase() === tab.name.toLowerCase();
+              return (
+                <button
+                  key={tab.name}
+                  type="button"
+                  onClick={() => {
+                    setSelectedTypeFilter(tab.name);
+                    setPageIndex(1);
+                  }}
+                  className={`text-xs px-2.5 py-1 rounded-full border transition-all flex items-center gap-1.5 ${
+                    isSelected
+                      ? "bg-primary text-primary-foreground border-primary font-bold shadow-xs"
+                      : "bg-background text-muted-foreground border-border hover:bg-muted"
+                  }`}
+                >
+                  <span>{tab.name}</span>
+                  <span
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-medium ${
+                      isSelected
+                        ? "bg-primary-foreground/20 text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              );
+            })}
+
+            {/* Quick Reset if filters are active */}
+            {(selectedTypeFilter !== "All" || searchQuery) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setSelectedTypeFilter("All");
+                  setSearchQuery("");
+                  setPageIndex(1);
+                }}
+                className="h-6 px-2 text-xs font-semibold text-destructive hover:text-destructive hover:bg-destructive/10 ml-1 gap-1"
               >
-                {filter}
-              </button>
-            ))}
-            {selectedTypeFilter !== "All" && (
-              <button
-                type="button"
-                onClick={() => setSelectedTypeFilter("All")}
-                className="text-xs text-primary hover:underline ml-1"
-              >
-                Reset
-              </button>
+                <RotateCcw className="h-3 w-3" />
+                Reset Filter
+              </Button>
             )}
           </div>
         </CardHeader>
@@ -666,42 +779,25 @@ export default function Standards() {
             columns={standardColumns}
             data={paginatedStandards}
             loading={loading}
-            emptyMessage="No standards found. Click 'Add Standard' to register your first standard."
+            pageCount={pageCount}
+            pageIndex={pageIndex}
+            pageSize={pageSize}
+            totalItems={totalItems}
+            onPageChange={setPageIndex}
+            onPageSizeChange={(s) => {
+              setPageSize(s);
+              setPageIndex(1);
+            }}
+            hideSearch={true}
+            hideColumnToggle={false}
+            emptyTitle="No standards found"
+            emptyDescription={
+              searchQuery || selectedTypeFilter !== "All"
+                ? "No standards match your filter criteria. Try adjusting or resetting your filter."
+                : "Click 'Add Standard' to register your first standard."
+            }
+            emptyIcon={ShieldCheck}
           />
-
-          {/* Simple Pagination controls */}
-          {pageCount > 1 && (
-            <div className="flex items-center justify-between py-4 border-t mt-4 text-xs text-muted-foreground">
-              <div>
-                Showing {(pageIndex - 1) * pageSize + 1} to{" "}
-                {Math.min(pageIndex * pageSize, filteredStandards.length)} of{" "}
-                {filteredStandards.length} standards
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => setPageIndex((p) => Math.max(1, p - 1))}
-                  disabled={pageIndex === 1}
-                >
-                  Previous
-                </Button>
-                <span className="font-mono text-xs px-2">
-                  {pageIndex} / {pageCount}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs"
-                  onClick={() => setPageIndex((p) => Math.min(pageCount, p + 1))}
-                  disabled={pageIndex === pageCount}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -741,14 +837,15 @@ export default function Standards() {
                   <Input
                     id="standard-type"
                     list={typeDataListId}
-                    placeholder="e.g. International, IS, DIN"
+                    placeholder="e.g. International, IS, DIN, test"
                     value={createStandardType}
                     onChange={(e) => setCreateStandardType(e.target.value)}
                     className="text-xs h-9"
                     required
                   />
                   <datalist id={typeDataListId}>
-                    {COMMON_STANDARD_TYPES.map((t) => (
+                    {/* Combine common presets + existing dynamic types */}
+                    {Array.from(new Set([...dynamicStandardTypes.filter(t => t.name !== 'All').map(t => t.name), ...COMMON_STANDARD_TYPES])).map((t) => (
                       <option key={t} value={t} />
                     ))}
                   </datalist>

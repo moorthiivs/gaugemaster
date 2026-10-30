@@ -72,3 +72,4 @@ export class CreateStandardsAndStandardHistoryTables1779440000000 implements Mig
     await queryRunner.query(`DROP TABLE IF EXISTS "standards";`);
   }
 }
+
