@@ -17,7 +17,7 @@ import { BulkUpdatePreviewDto, BulkUpdateExecuteDto } from '../dto/bulk-update.d
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
 import { User } from 'src/users/user.entity';
-import { ValidationService } from 'src/validation/validation.service';
+import { ValidationService, parseDateOrNull } from 'src/validation/validation.service';
 import { MailerService } from 'src/mail/mailer.service';
 import { StatusNotificationService } from 'src/reminder/status-notification.service';
 
@@ -616,12 +616,26 @@ export class InstrumentsService implements OnApplicationBootstrap {
 
     private parseDateSafe(dateString: any): Date | undefined {
         if (!dateString) return undefined;
-        const d = new Date(dateString);
-        return isNaN(d.getTime()) ? undefined : d;
+        const d = parseDateOrNull(dateString);
+        return d || undefined;
     }
 
     async create(instrumentDto: CreateInstrumentDto, skipUniqueCheck = false) {
         try {
+            // Normalize localized date strings (e.g. 15.12.2025 or DD/MM/YYYY) to ISO strings
+            if (instrumentDto.last_calibration_date) {
+                const parsed = this.parseDateSafe(instrumentDto.last_calibration_date);
+                if (parsed) {
+                    instrumentDto.last_calibration_date = parsed.toISOString();
+                }
+            }
+            if (instrumentDto.due_date) {
+                const parsed = this.parseDateSafe(instrumentDto.due_date);
+                if (parsed) {
+                    instrumentDto.due_date = parsed.toISOString();
+                }
+            }
+
             // Configurable Validation
             await this.validationService.validateData(instrumentDto.companyId, instrumentDto);
 
@@ -781,6 +795,19 @@ export class InstrumentsService implements OnApplicationBootstrap {
             }
             if (payload.updated_by) {
                 payload.updated_by = { id: payload.updated_by };
+            }
+
+            if (payload.last_calibration_date !== undefined && payload.last_calibration_date !== null && payload.last_calibration_date !== '') {
+                const parsed = this.parseDateSafe(payload.last_calibration_date);
+                if (parsed) {
+                    payload.last_calibration_date = parsed.toISOString();
+                }
+            }
+            if (payload.due_date !== undefined && payload.due_date !== null && payload.due_date !== '') {
+                const parsed = this.parseDateSafe(payload.due_date);
+                if (parsed) {
+                    payload.due_date = parsed.toISOString();
+                }
             }
 
             // Configurable Validation

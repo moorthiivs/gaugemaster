@@ -208,28 +208,60 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [showErrorsOnly, setShowErrorsOnly] = useState(false);
 
-  const excelDateToISO = (excelDate: any) => {
+  const excelDateToISO = (excelDate: any): string | null => {
     if (!excelDate) return null;
 
-    // Handle Excel numeric date codes
-    if (typeof excelDate === "number") {
-      const dateObj = XLSX.SSF.parse_date_code(excelDate);
-      if (!dateObj) return null;
-      return new Date(dateObj.y, dateObj.m - 1, dateObj.d).toISOString();
+    // 1. Numeric Excel date codes (e.g. 46000 or "46000")
+    const numVal = Number(excelDate);
+    if (typeof excelDate === "number" || (!isNaN(numVal) && !String(excelDate).includes("-") && !String(excelDate).includes("/") && !String(excelDate).includes("."))) {
+      if (numVal > 30000 && numVal < 70000) {
+        const dateObj = XLSX.SSF.parse_date_code(numVal);
+        if (dateObj) {
+          return new Date(Date.UTC(dateObj.y, dateObj.m - 1, dateObj.d)).toISOString();
+        }
+      }
     }
 
-    const dateStr = excelDate.toString().trim();
+    const dateStr = String(excelDate).trim();
     if (!dateStr) return null;
 
-    // Handle DD-MM-YYYY or DD/MM/YYYY
-    const ddmmyyyyMatch = dateStr.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
-    if (ddmmyyyyMatch) {
-      const [_, day, month, year] = ddmmyyyyMatch;
-      const date = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
-      return isNaN(date.getTime()) ? null : date.toISOString();
+    // 2. DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY (Handles dot format e.g. 15.12.2025)
+    const ddmmyyyy = dateStr.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})$/);
+    if (ddmmyyyy) {
+      const day = parseInt(ddmmyyyy[1], 10);
+      const month = parseInt(ddmmyyyy[2], 10) - 1;
+      const year = parseInt(ddmmyyyy[3], 10);
+      const d = new Date(Date.UTC(year, month, day));
+      if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+        return d.toISOString();
+      }
     }
 
-    // Fallback to standard JS parser
+    // 3. DD.MM.YY, DD/MM/YY, DD-MM-YY (2-digit year)
+    const ddmmyy = dateStr.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2})$/);
+    if (ddmmyy) {
+      const day = parseInt(ddmmyy[1], 10);
+      const month = parseInt(ddmmyy[2], 10) - 1;
+      const year = 2000 + parseInt(ddmmyy[3], 10);
+      const d = new Date(Date.UTC(year, month, day));
+      if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+        return d.toISOString();
+      }
+    }
+
+    // 4. YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+    const yyyymmdd = dateStr.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/);
+    if (yyyymmdd) {
+      const year = parseInt(yyyymmdd[1], 10);
+      const month = parseInt(yyyymmdd[2], 10) - 1;
+      const day = parseInt(yyyymmdd[3], 10);
+      const d = new Date(Date.UTC(year, month, day));
+      if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+        return d.toISOString();
+      }
+    }
+
+    // 5. Standard JS parser fallback (e.g. 15-Dec-2025)
     const parsed = new Date(dateStr);
     return isNaN(parsed.getTime()) ? null : parsed.toISOString();
   };
@@ -305,6 +337,9 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
       }
     } else {
       lastCalDate = excelDateToISO(rawLastCal);
+      if (!lastCalDate) {
+        errors.push(`${lastCalRule?.displayName || "Last Calibration Date"} must be a valid date`);
+      }
     }
 
     const rawDue = mapped.due_date || (dueKey ? raw[dueKey] : findRawValue(raw, ["DUE DATE", "Next Cal. Date", "Due Date", "Next Cal"]));
@@ -319,6 +354,9 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
       }
     } else {
       dueDate = excelDateToISO(rawDue);
+      if (!dueDate) {
+        errors.push(`${dueRule?.displayName || "Due Date"} must be a valid date`);
+      }
     }
 
     const enforceStrictDate = dueRule ? dueRule.isStrictDate !== false : true;
@@ -375,10 +413,14 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
 
         const rawRows = XLSX.utils.sheet_to_json<Record<string, any>>(worksheet, { defval: "" });
 
-        // Filter out completely blank rows
-        const rows = rawRows.filter((r) =>
-          Object.values(r).some((val) => val !== undefined && val !== null && val.toString().trim() !== "")
-        );
+        // Filter out completely blank rows or rows without any instrument identifier
+        const rows = rawRows.filter((r) => {
+          const hasVal = Object.values(r).some((val) => val !== undefined && val !== null && val.toString().trim() !== "");
+          if (!hasVal) return false;
+          const id = findRawValue(r, ["ID CODE", "IMTE", "ID Code", "ID", "Instrument ID"]);
+          const name = findRawValue(r, ["NAME OF INSTRUMENT", "Name", "Description", "Instrument Name"]);
+          return Boolean((id && String(id).trim()) || (name && String(name).trim()));
+        });
 
         if (rows.length === 0) {
           toast({ title: "Empty file", description: "The Excel file has no data rows.", variant: "destructive" });
@@ -440,16 +482,26 @@ export default function ExcelUpload({ endpoint, mapRow, onComplete, onRefresh, r
               }
             });
 
-            const mapped = {
+            const parsedLastCal = excelDateToISO(lastCalRaw);
+            const parsedDue = excelDateToISO(dueRaw);
+
+            const mapped: Record<string, any> = {
               ...mapRow({
                 ...processedRaw,
-                "LAST CALIBRATION DATE": excelDateToISO(lastCalRaw) || processedRaw["LAST CALIBRATION DATE"],
-                "DUE DATE": excelDateToISO(dueRaw) || processedRaw["DUE DATE"],
+                "LAST CALIBRATION DATE": parsedLastCal || processedRaw["LAST CALIBRATION DATE"],
+                "DUE DATE": parsedDue || processedRaw["DUE DATE"],
               }),
               created_by: user.id,
               updated_by: user.id,
               companyId: user.companyId,
             };
+
+            if (parsedLastCal) {
+              mapped.last_calibration_date = parsedLastCal;
+            }
+            if (parsedDue) {
+              mapped.due_date = parsedDue;
+            }
 
             const errors = validateRow(raw, mapped, globalIdx, idCodeCounts, lastCalKey, dueKey);
             parsed.push({ rowIndex: globalIdx + 1, raw, mapped, errors, isValid: errors.length === 0 });

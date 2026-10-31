@@ -30,12 +30,12 @@ export class CreateInstrumentDto {
 
     @IsOptional()
     @ValidateIf((o, v) => v != null && v !== '')
-    @IsDateString()
+    @IsString()
     last_calibration_date?: string;
 
     @IsOptional()
     @ValidateIf((o, v) => v != null && v !== '')
-    @IsDateString()
+    @IsString()
     due_date?: string;
 
     @IsOptional()

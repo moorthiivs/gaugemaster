@@ -3,6 +3,63 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ValidationRule } from './validation-rule.entity';
 
+export function parseDateOrNull(value: any): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === 'number') {
+    if (value > 30000 && value < 70000) {
+      const ms = Math.round((value - 25569) * 86400 * 1000);
+      const d = new Date(ms);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  const str = String(value).trim();
+  if (!str) return null;
+
+  // 1. Check DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY (e.g. 15.12.2025)
+  const ddmmyyyy = str.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})$/);
+  if (ddmmyyyy) {
+    const day = parseInt(ddmmyyyy[1], 10);
+    const month = parseInt(ddmmyyyy[2], 10) - 1;
+    const year = parseInt(ddmmyyyy[3], 10);
+    const d = new Date(Date.UTC(year, month, day));
+    if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+      return d;
+    }
+  }
+
+  // 2. Check DD.MM.YY, DD/MM/YY, DD-MM-YY (2-digit year)
+  const ddmmyy = str.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2})$/);
+  if (ddmmyy) {
+    const day = parseInt(ddmmyy[1], 10);
+    const month = parseInt(ddmmyy[2], 10) - 1;
+    const year = 2000 + parseInt(ddmmyy[3], 10);
+    const d = new Date(Date.UTC(year, month, day));
+    if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+      return d;
+    }
+  }
+
+  // 3. Check YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+  const yyyymmdd = str.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/);
+  if (yyyymmdd) {
+    const year = parseInt(yyyymmdd[1], 10);
+    const month = parseInt(yyyymmdd[2], 10) - 1;
+    const day = parseInt(yyyymmdd[3], 10);
+    const d = new Date(Date.UTC(year, month, day));
+    if (!isNaN(d.getTime()) && d.getUTCDate() === day && d.getUTCMonth() === month) {
+      return d;
+    }
+  }
+
+  const parsed = new Date(str);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
 @Injectable()
 export class ValidationService {
   constructor(
@@ -109,8 +166,8 @@ export class ValidationService {
       
       if (value !== undefined && value !== null && value !== '') {
         if (rule.validationType === 'date') {
-          const isInvalid = value instanceof Date ? isNaN(value.getTime()) : isNaN(Date.parse(value));
-          if (isInvalid) {
+          const parsedDate = parseDateOrNull(value);
+          if (!parsedDate) {
             errors.push(`${rule.displayName} must be a valid date`);
           }
         }
