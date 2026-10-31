@@ -1790,6 +1790,7 @@ export class CalibrationService implements OnModuleInit {
 
     const keysToTrack: (keyof CreateCalibrationDto)[] = [
       'calibration_date',
+      'certificate_issue_date',
       'calibration_type',
       'reference_standard_name',
       'reference_standard_id',
@@ -1812,7 +1813,20 @@ export class CalibrationService implements OnModuleInit {
         const oldVal = (existing as any)[key];
         const newVal = dto[key];
 
-        if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
+        let isDifferent = false;
+        if (
+          key === 'calibration_date' ||
+          key === 'certificate_issue_date' ||
+          key === 'next_calibration_date'
+        ) {
+          const oldTime = oldVal ? new Date(oldVal).getTime() : null;
+          const newTime = newVal ? new Date(newVal).getTime() : null;
+          isDifferent = oldTime !== newTime;
+        } else {
+          isDifferent = JSON.stringify(oldVal) !== JSON.stringify(newVal);
+        }
+
+        if (isDifferent) {
           changesSummary.push({
             field: key,
             oldValue: oldVal,
@@ -1823,6 +1837,13 @@ export class CalibrationService implements OnModuleInit {
     }
 
     if (dto.calibration_date) existing.calibration_date = new Date(dto.calibration_date);
+    if (dto.certificate_issue_date !== undefined) {
+      existing.certificate_issue_date = dto.certificate_issue_date
+        ? new Date(dto.certificate_issue_date)
+        : (dto.calibration_date ? new Date(dto.calibration_date) : existing.calibration_date);
+    } else if (dto.calibration_date && !existing.certificate_issue_date) {
+      existing.certificate_issue_date = new Date(dto.calibration_date);
+    }
     if (dto.calibration_type !== undefined) existing.calibration_type = dto.calibration_type;
     
     // Generate ULR if newly enabled
