@@ -889,16 +889,48 @@ export class InstrumentsService implements OnApplicationBootstrap {
 
                 // History logic
                 if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
-                    // Prevent duplicate history entries for the exact same calibration date on this instrument
-                    const existingHistory = savedInst.last_calibration_date ? await histRepo.findOne({
-                        where: {
-                            instrument: { id: savedInst.id },
-                            last_calibration_date: savedInst.last_calibration_date,
-                        },
-                        order: { created_at: 'DESC' },
-                    }) : null;
+                    let existingHistory: CalibrationHistory | null = null;
+
+                    // 1. Look for history record matching the previous calibration date if provided
+                    if ((updateInstrumentDto as any).previous_last_calibration_date) {
+                        const prevDate = new Date((updateInstrumentDto as any).previous_last_calibration_date);
+                        existingHistory = await histRepo.findOne({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                last_calibration_date: prevDate,
+                            },
+                            order: { created_at: 'DESC' },
+                        });
+                    }
+
+                    // 2. If not found by previous date, look for an entry matching the new calibration date
+                    if (!existingHistory && savedInst.last_calibration_date) {
+                        existingHistory = await histRepo.findOne({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                last_calibration_date: savedInst.last_calibration_date,
+                            },
+                            order: { created_at: 'DESC' },
+                        });
+                    }
+
+                    // 3. Fallback: for in-house calibrations, update the most recent in-house history entry
+                    if (!existingHistory && savedInst.calibration_source === 'In-House') {
+                        const inHouseHistories = await histRepo.find({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                calibration_source: 'In-House',
+                            },
+                            order: { created_at: 'DESC' },
+                            take: 1,
+                        });
+                        if (inHouseHistories.length > 0) {
+                            existingHistory = inHouseHistories[0];
+                        }
+                    }
 
                     if (existingHistory) {
+                        existingHistory.last_calibration_date = savedInst.last_calibration_date;
                         existingHistory.due_date = savedInst.due_date;
                         if (savedInst.certificate_file) {
                             existingHistory.certificate_file = savedInst.certificate_file;
@@ -916,6 +948,24 @@ export class InstrumentsService implements OnApplicationBootstrap {
                             calibration_source: savedInst.calibration_source,
                         });
                         await histRepo.save(history);
+                    }
+
+                    // Clean up any remaining obsolete duplicate history entries matching previous_last_calibration_date
+                    if ((updateInstrumentDto as any).previous_last_calibration_date && savedInst.last_calibration_date) {
+                        const prevDate = new Date((updateInstrumentDto as any).previous_last_calibration_date);
+                        if (prevDate.getTime() !== new Date(savedInst.last_calibration_date).getTime()) {
+                            const staleEntries = await histRepo.find({
+                                where: {
+                                    instrument: { id: savedInst.id },
+                                    last_calibration_date: prevDate,
+                                },
+                            });
+                            for (const stale of staleEntries) {
+                                if (!existingHistory || stale.id !== existingHistory.id) {
+                                    await histRepo.remove(stale).catch(() => {});
+                                }
+                            }
+                        }
                     }
                 } else if (updateInstrumentDto.certificate_file) {
                     // If only certificate is uploaded, update the latest history entry

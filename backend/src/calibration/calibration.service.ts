@@ -1784,6 +1784,7 @@ export class CalibrationService implements OnModuleInit {
     if (!existing) {
       throw new NotFoundException(`Calibration with ID ${id} not found`);
     }
+    const previousCalDate = existing.calibration_date ? new Date(existing.calibration_date) : null;
 
     // Track changes for audit log
     const changesSummary: { field: string; oldValue: any; newValue: any }[] = [];
@@ -2008,20 +2009,29 @@ export class CalibrationService implements OnModuleInit {
           updatedCp.receipt_condition = dto.receipt_condition;
         }
 
+        const instUpdatePayload: Record<string, any> = {
+          last_calibration_date: saved.calibration_date as any,
+          due_date: saved.next_calibration_date as any,
+          calibration_source: 'In-House',
+          cert_no: saved.certificate_number,
+          previous_last_calibration_date: previousCalDate || undefined,
+        };
+
         if (saved.approval_status === 'Approved') {
-          await this.instrumentsService.update(saved.instrument_id, {
-            last_calibration_date: saved.calibration_date as any,
-            due_date: saved.next_calibration_date as any,
-            status: saved.verdict === 'FAIL' ? 'REJECTED' : 'OK',
-            calibration_source: 'In-House',
-            custom_parameters: updatedCp,
-          } as any);
+          const cleanCp = { ...updatedCp };
+          delete cleanCp.calibration_sub_status;
+          instUpdatePayload.custom_parameters = cleanCp;
+          instUpdatePayload.status = saved.verdict === 'FAIL' ? 'REJECTED' : 'OK';
+          if (saved.certificate_file) {
+            instUpdatePayload.certificate_file = saved.certificate_file;
+          }
         } else {
-          await this.instrumentsService.update(saved.instrument_id, {
-            calibration_source: 'In-House',
-            custom_parameters: updatedCp,
-          } as any);
+          updatedCp.calibration_sub_status = saved.approval_status === 'Reviewed' ? 'Approve Pending' : 'Review Pending';
+          instUpdatePayload.status = 'Under Calibration';
+          instUpdatePayload.custom_parameters = updatedCp;
         }
+
+        await this.instrumentsService.update(saved.instrument_id, instUpdatePayload as any);
       } catch (err) {
         console.warn(`Failed to update instrument ${saved.instrument_id} on calibration update`, err);
       }

@@ -960,6 +960,8 @@ export default function CalibrationWizard() {
   const [calDate, setCalDate] = useState(toLocalYyyyMmDd(new Date()));
   const [certIssueDate, setCertIssueDate] = useState(toLocalYyyyMmDd(new Date()));
   const [nextCalDate, setNextCalDate] = useState("");
+  const lastCalDateRef = useRef<string | null>(null);
+  const lastInstrumentIdRef = useRef<string | null>(null);
   const [systemUsers, setSystemUsers] = useState<any[]>([]);
 
   // Template Variant & Instrument Master Custom Parameters State
@@ -1528,11 +1530,26 @@ export default function CalibrationWizard() {
 
   // Auto-calculate Next Calibration Due Date based on Instrument Frequency
   useEffect(() => {
-    if (calDate && selectedInstrument) {
-      const computed = computeNextDueDate(calDate, selectedInstrument.frequency);
-      setNextCalDate(computed);
+    if (isInitializing || editLoading) return;
+    if (!calDate || !selectedInstrument) return;
+
+    // In edit or draft mode, do not overwrite the loaded next_calibration_date unless the user actually changed calDate or instrument
+    if (editIdParam || draftIdParam) {
+      const instrumentChanged = lastInstrumentIdRef.current !== null && lastInstrumentIdRef.current !== selectedInstrument.id;
+      const calDateChanged = lastCalDateRef.current !== null && lastCalDateRef.current !== calDate;
+
+      if (!instrumentChanged && !calDateChanged) {
+        lastInstrumentIdRef.current = selectedInstrument.id;
+        lastCalDateRef.current = calDate;
+        return; // Retain loaded / custom nextCalDate!
+      }
     }
-  }, [calDate, selectedInstrument]);
+
+    lastInstrumentIdRef.current = selectedInstrument.id;
+    lastCalDateRef.current = calDate;
+    const computed = computeNextDueDate(calDate, selectedInstrument.frequency);
+    setNextCalDate(computed);
+  }, [calDate, selectedInstrument, isInitializing, editLoading, editIdParam, draftIdParam]);
 
   // Step 5 — ULR & Certificate
   const [ulrEnabled, setUlrEnabled] = useState(false);
@@ -2672,9 +2689,10 @@ export default function CalibrationWizard() {
         setApprovedById((cal as any).approved_by_id || "");
         
         if (!isRecalibration) {
-          setCalDate(
-            toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date())
-          );
+          const loadedCalDate = toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date());
+          setCalDate(loadedCalDate);
+          lastCalDateRef.current = loadedCalDate;
+          lastInstrumentIdRef.current = cal.instrument?.id || (cal as any).instrument_id || null;
           setCertIssueDate(
             toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
               toLocalYyyyMmDd(cal.calibration_date) ||
@@ -2868,7 +2886,10 @@ export default function CalibrationWizard() {
     setApprovedBy(d.approvedBy || "");
     setApprovedByDesignation(d.approvedByDesignation || "");
     setApprovedById(d.approvedById || "");
-    setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
+    const restoredCalDate = d.calDate || new Date().toISOString().split("T")[0];
+    setCalDate(restoredCalDate);
+    lastCalDateRef.current = restoredCalDate;
+    lastInstrumentIdRef.current = d.selectedInstrument?.id || null;
     setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
     setNextCalDate(d.nextCalDate || "");
   };
