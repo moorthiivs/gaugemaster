@@ -1521,6 +1521,11 @@ export default function CalibrationWizard() {
     originalCalDate?: string;
   } | null>(null);
 
+  const draftIdRef = useRef<string | null>(draftIdParam || null);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [editLoading, setEditLoading] = useState(!!editIdParam || !!recalibrateIdParam);
+
   // Sync certIssueDate to calDate by default (for new calibrations)
   useEffect(() => {
     if (calDate && !editIdParam && !recalibrateIdParam && !draftIdParam) {
@@ -1563,11 +1568,6 @@ export default function CalibrationWizard() {
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [templateSearchQuery, setTemplateSearchQuery] = useState("");
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
-
-  const draftIdRef = useRef<string | null>(draftIdParam || null);
-  const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [editLoading, setEditLoading] = useState(!!editIdParam || !!recalibrateIdParam);
 
   const { canAccess } = usePermissions();
 
