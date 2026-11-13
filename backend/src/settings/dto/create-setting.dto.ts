@@ -3,29 +3,70 @@ import { IsString, IsOptional, IsEmail, IsUUID, IsArray, ValidateNested, IsBoole
 import { Type } from 'class-transformer';
 
 class SmtpConfigDto {
-    @ApiProperty({ example: 'smtp.gmail.com' })
+    // Primary properties used by frontend MailConfig, Setting entity, and mailer.service.ts
+    @ApiProperty({ example: 'smtp.gmail.com', required: false })
+    @IsOptional()
     @IsString()
-    host: string;
+    smtpServer?: string;
 
-    @ApiProperty({ example: 465 })
-    @IsNumber()
-    port: number;
+    @ApiProperty({ example: 587, required: false })
+    @IsOptional()
+    smtpPort?: string | number;
 
-    @ApiProperty({ example: 'user@gmail.com' })
+    @ApiProperty({ example: 'user@gmail.com', required: false })
+    @IsOptional()
     @IsString()
-    user: string;
+    username?: string;
 
-    @ApiProperty({ example: 'password123' })
+    @ApiProperty({ example: 'password123', required: false })
+    @IsOptional()
     @IsString()
-    pass: string;
+    password?: string;
 
-    @ApiProperty({ example: true })
+    @ApiProperty({ example: 'tls', required: false })
+    @IsOptional()
+    @IsString()
+    encryption?: string;
+
+    @ApiProperty({ example: true, required: false })
+    @IsOptional()
     @IsBoolean()
-    secure: boolean;
+    enableNotifications?: boolean;
 
-    @ApiProperty({ example: 'noreply@company.com' })
+    @ApiProperty({ example: true, required: false })
+    @IsOptional()
+    @IsBoolean()
+    enableAlerts?: boolean;
+
+    // Alternative / legacy nodemailer field aliases (all optional)
+    @ApiProperty({ example: 'smtp.gmail.com', required: false })
+    @IsOptional()
+    @IsString()
+    host?: string;
+
+    @ApiProperty({ example: 465, required: false })
+    @IsOptional()
+    port?: number;
+
+    @ApiProperty({ example: 'user@gmail.com', required: false })
+    @IsOptional()
+    @IsString()
+    user?: string;
+
+    @ApiProperty({ example: 'password123', required: false })
+    @IsOptional()
+    @IsString()
+    pass?: string;
+
+    @ApiProperty({ example: true, required: false })
+    @IsOptional()
+    @IsBoolean()
+    secure?: boolean;
+
+    @ApiProperty({ example: 'noreply@company.com', required: false })
+    @IsOptional()
     @IsEmail()
-    fromEmail: string;
+    fromEmail?: string;
 }
 
 export class CreateSettingDto {

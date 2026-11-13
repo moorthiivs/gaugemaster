@@ -40,13 +40,15 @@ export default function MailConfig() {
             }
             const response = await httpClient.post('/settings/mailconfig', allData)
 
-            if (response.status === 201) {
-                const { id } = response.data
-                const updatedUser = {
-                    ...user,
-                    settingsid: id
-                };
-                setUser(updatedUser)
+            if (response.status === 201 || response.status === 200) {
+                const { id } = response.data || {};
+                if (id) {
+                    const updatedUser = {
+                        ...user,
+                        settingsid: id
+                    };
+                    setUser(updatedUser);
+                }
 
                 toast({
                     title: "Settings saved",
@@ -54,10 +56,18 @@ export default function MailConfig() {
                 });
             }
 
-        } catch (error) {
-            console.log(error);
+        } catch (error: any) {
+            console.error("Failed to save email configuration:", error);
+            const errMsg = error?.response?.data?.message;
+            toast({
+                title: "Failed to save settings",
+                description: Array.isArray(errMsg)
+                    ? errMsg.join(", ")
+                    : errMsg || "Failed to save email configuration. Please check your settings.",
+                variant: "destructive",
+            });
         } finally {
-            setIsSaving(false)
+            setIsSaving(false);
         }
 
     };

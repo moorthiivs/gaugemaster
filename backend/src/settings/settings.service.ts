@@ -64,7 +64,11 @@ export class SettingsService {
           mergedSmtpConfig = {
             ...(existing.smtpConfig || {}),
             ...createSettingDto.smtpConfig,
+            smtpServer: rawSmtp.smtpServer || rawSmtp.host || (existing.smtpConfig as any)?.smtpServer,
+            smtpPort: rawSmtp.smtpPort !== undefined ? Number(rawSmtp.smtpPort) : (rawSmtp.port !== undefined ? Number(rawSmtp.port) : (existing.smtpConfig as any)?.smtpPort),
+            username: rawSmtp.username || rawSmtp.user || (existing.smtpConfig as any)?.username,
             password: isMaskedOrEmpty ? (existing.smtpConfig as any)?.password : (rawSmtp.password || rawSmtp.pass),
+            encryption: rawSmtp.encryption || (rawSmtp.secure !== undefined ? (rawSmtp.secure ? 'ssl' : 'tls') : (existing.smtpConfig as any)?.encryption),
           };
         }
 
@@ -91,9 +95,20 @@ export class SettingsService {
         return this.sanitizeSetting(updated);
       }
 
-      const newSetting = this.settingsRepository.create(createSettingDto);
-      const saved = await this.settingsRepository.save(newSetting);
-      return this.sanitizeSetting(saved);
+      if (createSettingDto.smtpConfig) {
+        const rawSmtp: any = createSettingDto.smtpConfig;
+        createSettingDto.smtpConfig = {
+          ...rawSmtp,
+          smtpServer: rawSmtp.smtpServer || rawSmtp.host,
+          smtpPort: rawSmtp.smtpPort !== undefined ? Number(rawSmtp.smtpPort) : (rawSmtp.port !== undefined ? Number(rawSmtp.port) : 587),
+          username: rawSmtp.username || rawSmtp.user,
+          password: rawSmtp.password || rawSmtp.pass,
+          encryption: rawSmtp.encryption || (rawSmtp.secure !== undefined ? (rawSmtp.secure ? 'ssl' : 'tls') : 'tls'),
+        };
+      }
+      const newSetting = this.settingsRepository.create(createSettingDto as any);
+      const saved = await this.settingsRepository.save(newSetting as any);
+      return this.sanitizeSetting(saved as Setting);
 
     } catch (error) {
       console.log(error);
