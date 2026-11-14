@@ -149,14 +149,29 @@ export default function LocationSettings() {
     if (!finalLocation) {
       return toast({ title: "Validation Error", description: "Location name is required.", variant: "destructive" });
     }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!formHeadEmail.trim()) {
       return toast({ title: "Validation Error", description: "Location Head Email is required.", variant: "destructive" });
     }
+    if (!emailRegex.test(formHeadEmail.trim())) {
+      return toast({ title: "Validation Error", description: "Please enter a valid Location Head Email address.", variant: "destructive" });
+    }
 
-    const managementArr = formManagementEmails
+    const rawManagementArr = formManagementEmails
       .split(",")
       .map((e) => e.trim())
-      .filter((e) => e.length > 0 && e.includes("@"));
+      .filter(Boolean);
+
+    const invalidMgmt = rawManagementArr.filter((e) => !emailRegex.test(e));
+    if (invalidMgmt.length > 0) {
+      return toast({
+        title: "Validation Error",
+        description: `Invalid management email address: ${invalidMgmt.join(", ")}`,
+        variant: "destructive",
+      });
+    }
+
+    const managementArr = rawManagementArr;
 
     setSaving(true);
     try {

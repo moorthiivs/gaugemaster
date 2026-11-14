@@ -177,6 +177,19 @@ export class CreateSettingDto {
         enabled?: boolean;
     };
 
+    @ApiProperty({ description: 'Days before due date to start sending due reminder emails', example: 15, required: false })
+    @IsOptional()
+    @IsNumber()
+    dueReminderThresholdDays?: number;
+
+    @ApiProperty({ description: 'Management summary report configuration', required: false })
+    @IsOptional()
+    summaryReportConfig?: {
+        enabled: boolean;
+        frequency: string;
+        managementRecipients?: string[];
+    };
+
     @ApiProperty({ description: 'Custom instrument status names for company', required: false, type: [String] })
     @IsOptional()
     customInstrumentStatuses?: string[];

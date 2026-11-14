@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
+import { UpsertLocationEmailDto } from './dto/upsert-location-email.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { MailerService } from '../mail/mailer.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -135,20 +136,51 @@ export class SettingsController {
   }
 
   @Get('location-emails')
-  async getLocationEmails(@Query('companyId') companyId: string) {
-    return this.settingsService.getLocationEmails(companyId);
+  @RequirePermission('settings', 'view')
+  async getLocationEmails(
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    const effectiveCompanyId = user.isSuperAdmin
+      ? (queryCompanyId || user.companyId)
+      : user.companyId;
+
+    if (!effectiveCompanyId) return [];
+    return this.settingsService.getLocationEmails(effectiveCompanyId);
   }
 
   @Post('location-emails')
   @RequirePermission('settings', 'edit')
-  async saveLocationEmail(@Body() body: any) {
-    return this.settingsService.upsertLocationEmail(body);
+  async saveLocationEmail(
+    @Body() dto: UpsertLocationEmailDto,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    const effectiveCompanyId = user.isSuperAdmin
+      ? (dto.companyId || user.companyId)
+      : user.companyId;
+
+    if (!effectiveCompanyId) {
+      throw new ForbiddenException('Company ID is required to configure location emails');
+    }
+    return this.settingsService.upsertLocationEmail(
+      {
+        ...dto,
+        companyId: effectiveCompanyId,
+      },
+      user.isSuperAdmin,
+    );
   }
 
   @Delete('location-emails/:id')
   @RequirePermission('settings', 'edit')
-  async deleteLocationEmail(@Param('id') id: string) {
-    return this.settingsService.deleteLocationEmail(id);
+  async deleteLocationEmail(
+    @Param('id') id: string,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    return this.settingsService.deleteLocationEmail(id, user.companyId, !!user.isSuperAdmin);
   }
 
   @Get('instrument-statuses')

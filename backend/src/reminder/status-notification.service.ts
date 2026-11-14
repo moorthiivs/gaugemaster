@@ -8,6 +8,16 @@ import { Setting } from '../settings/entities/setting.entity';
 import { MailerService } from '../mail/mailer.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+function escapeHtml(str: any): string {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 @Injectable()
 export class StatusNotificationService {
   private readonly logger = new Logger(StatusNotificationService.name);
@@ -70,21 +80,21 @@ export class StatusNotificationService {
       targetEnd.setDate(today.getDate() + thresholdDays);
       targetEnd.setHours(23, 59, 59, 999);
 
-      // Find instruments at this location due between today and targetEnd
-      const dueInstruments = await this.instrumentRepository.find({
-        where: {
-          companyId: locMap.companyId,
-          location: locMap.location,
-          due_date: Between(today, targetEnd),
-        },
-      });
+      // Find instruments at this location due between today and targetEnd (case-insensitive trimmed location)
+      const dueInstruments = await this.instrumentRepository
+        .createQueryBuilder('i')
+        .where('i.companyId = :companyId', { companyId: locMap.companyId })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: locMap.location })
+        .andWhere('i.due_date BETWEEN :today AND :targetEnd', { today, targetEnd })
+        .getMany();
 
-      // Filter out instruments currently 'Sent for Calibration' or non-calibratable ('Scrapped', 'Lost', 'Inactive', 'Under Repair', 'Rejected')
+      // Filter out instruments currently 'Sent for Calibration', 'Under Calibration' or non-calibratable ('Scrapped', 'Lost', 'Inactive', 'Under Repair', 'Rejected')
       const filtered = dueInstruments.filter((inst) => {
         const s = (inst.status || '').toLowerCase().trim();
         const itemS = (inst.item_status || '').toLowerCase().trim();
         const nonCalibratable = ['scrapped', 'lost', 'inactive', 'under repair', 'rejected'];
-        return s !== 'sent for calibration' && !nonCalibratable.includes(itemS);
+        const isUnderCalOrSent = s === 'sent for calibration' || s.includes('under calibration') || s === 'under_calibration';
+        return !isUnderCalOrSent && !nonCalibratable.includes(itemS);
       });
 
       if (filtered.length === 0) continue;
@@ -95,11 +105,11 @@ export class StatusNotificationService {
           (inst, i) => `
           <tr style="background:${i % 2 === 0 ? '#f9f9f9' : '#ffffff'};">
             <td style="padding:8px;border:1px solid #ddd;text-align:center;">${i + 1}</td>
-            <td style="padding:8px;border:1px solid #ddd;font-weight:bold;">${inst.id_code || '-'}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.name}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.serial_no || '-'}</td>
+            <td style="padding:8px;border:1px solid #ddd;font-weight:bold;">${escapeHtml(inst.id_code || '-')}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.name)}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.serial_no || '-')}</td>
             <td style="padding:8px;border:1px solid #ddd;color:#d97706;font-weight:bold;">${inst.due_date ? new Date(inst.due_date).toLocaleDateString() : '-'}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.agency || '-'}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.agency || '-')}</td>
           </tr>`,
         )
         .join('');
@@ -109,8 +119,8 @@ export class StatusNotificationService {
           <h2 style="color:#2563eb; border-bottom:2px solid #2563eb; padding-bottom:8px;">
             Calibration Reminder: Instruments Due Soon
           </h2>
-          <p>Dear <strong>${locMap.headName || 'Location Head'}</strong>,</p>
-          <p>The following <strong>${filtered.length}</strong> instrument(s) at <strong>${locMap.location}</strong> are due for calibration within <strong>${thresholdDays} days</strong>. Please submit them to the calibration lab.</p>
+          <p>Dear <strong>${escapeHtml(locMap.headName || 'Location Head')}</strong>,</p>
+          <p>The following <strong>${filtered.length}</strong> instrument(s) at <strong>${escapeHtml(locMap.location)}</strong> are due for calibration within <strong>${thresholdDays} days</strong>. Please submit them to the calibration lab.</p>
           
           <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:13px;">
             <thead>
@@ -169,20 +179,20 @@ export class StatusNotificationService {
     for (const locMap of locationMappings) {
       if (!locMap.headEmail || !locMap.location) continue;
 
-      const overdueInstruments = await this.instrumentRepository.find({
-        where: {
-          companyId: locMap.companyId,
-          location: locMap.location,
-          due_date: LessThan(today),
-        },
-      });
+      const overdueInstruments = await this.instrumentRepository
+        .createQueryBuilder('i')
+        .where('i.companyId = :companyId', { companyId: locMap.companyId })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: locMap.location })
+        .andWhere('i.due_date < :today', { today })
+        .getMany();
 
-      // Filter out instruments currently 'Sent for Calibration' or non-calibratable
+      // Filter out instruments currently 'Sent for Calibration', 'Under Calibration' or non-calibratable
       const filtered = overdueInstruments.filter((inst) => {
         const s = (inst.status || '').toLowerCase().trim();
         const itemS = (inst.item_status || '').toLowerCase().trim();
         const nonCalibratable = ['scrapped', 'lost', 'inactive', 'under repair', 'rejected'];
-        return s !== 'sent for calibration' && !nonCalibratable.includes(itemS);
+        const isUnderCalOrSent = s === 'sent for calibration' || s.includes('under calibration') || s === 'under_calibration';
+        return !isUnderCalOrSent && !nonCalibratable.includes(itemS);
       });
 
       if (filtered.length === 0) continue;
@@ -192,11 +202,11 @@ export class StatusNotificationService {
           (inst, i) => `
           <tr style="background:${i % 2 === 0 ? '#fff1f2' : '#ffffff'};">
             <td style="padding:8px;border:1px solid #ddd;text-align:center;">${i + 1}</td>
-            <td style="padding:8px;border:1px solid #ddd;font-weight:bold;color:#b91c1c;">${inst.id_code || '-'}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.name}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.serial_no || '-'}</td>
+            <td style="padding:8px;border:1px solid #ddd;font-weight:bold;color:#b91c1c;">${escapeHtml(inst.id_code || '-')}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.name)}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.serial_no || '-')}</td>
             <td style="padding:8px;border:1px solid #ddd;color:#b91c1c;font-weight:bold;">${inst.due_date ? new Date(inst.due_date).toLocaleDateString() : '-'}</td>
-            <td style="padding:8px;border:1px solid #ddd;">${inst.agency || '-'}</td>
+            <td style="padding:8px;border:1px solid #ddd;">${escapeHtml(inst.agency || '-')}</td>
           </tr>`,
         )
         .join('');
@@ -206,8 +216,8 @@ export class StatusNotificationService {
           <h2 style="color:#b91c1c; border-bottom:2px solid #b91c1c; padding-bottom:8px;">
             ⚠️ OVERDUE CALIBRATION ALERT
           </h2>
-          <p>Dear <strong>${locMap.headName || 'Location Head'}</strong>,</p>
-          <p>The following <strong>${filtered.length}</strong> instrument(s) at <strong>${locMap.location}</strong> have <span style="color:#b91c1c;font-weight:bold;">passed their calibration due date</span>. Please submit them to the lab immediately.</p>
+          <p>Dear <strong>${escapeHtml(locMap.headName || 'Location Head')}</strong>,</p>
+          <p>The following <strong>${filtered.length}</strong> instrument(s) at <strong>${escapeHtml(locMap.location)}</strong> have <span style="color:#b91c1c;font-weight:bold;">passed their calibration due date</span>. Please submit them to the lab immediately.</p>
           
           <table style="width:100%; border-collapse:collapse; margin-top:16px; font-size:13px;">
             <thead>
@@ -263,9 +273,11 @@ export class StatusNotificationService {
       return;
     }
 
-    const locMap = await this.locationEmailRepository.findOne({
-      where: { companyId: instrument.companyId, location: instrument.location },
-    });
+    const locMap = await this.locationEmailRepository
+      .createQueryBuilder('l')
+      .where('l.companyId = :companyId', { companyId: instrument.companyId })
+      .andWhere('LOWER(TRIM(l.location)) = LOWER(TRIM(:location))', { location: instrument.location })
+      .getOne();
 
     if (!locMap || !locMap.headEmail) {
       this.logger.debug(`No Location Head mapped for company ${instrument.companyId} location "${instrument.location}".`);
@@ -280,30 +292,30 @@ export class StatusNotificationService {
         <h2 style="color:#16a34a; border-bottom:2px solid #16a34a; padding-bottom:8px; margin-top:0;">
           ✅ Calibration Complete — Ready for Collection
         </h2>
-        <p>Dear <strong>${locMap.headName || 'Location Head'}</strong>,</p>
-        <p>The calibration process has been completed for the following instrument at <strong>${instrument.location}</strong>. You may now collect the instrument from the lab.</p>
+        <p>Dear <strong>${escapeHtml(locMap.headName || 'Location Head')}</strong>,</p>
+        <p>The calibration process has been completed for the following instrument at <strong>${escapeHtml(instrument.location)}</strong>. You may now collect the instrument from the lab.</p>
         
         <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:16px; margin:16px 0;">
           <table style="width:100%; font-size:14px; line-height:1.6;">
             <tr>
               <td style="width:40%; font-weight:bold; color:#15803d;">Instrument Name:</td>
-              <td>${instrument.name || '-'}</td>
+              <td>${escapeHtml(instrument.name || '-')}</td>
             </tr>
             <tr>
               <td style="font-weight:bold; color:#15803d;">ID Code / IMTE:</td>
-              <td>${instrument.id_code || '-'}</td>
+              <td>${escapeHtml(instrument.id_code || '-')}</td>
             </tr>
             <tr>
               <td style="font-weight:bold; color:#15803d;">Serial No:</td>
-              <td>${instrument.serial_no || '-'}</td>
+              <td>${escapeHtml(instrument.serial_no || '-')}</td>
             </tr>
             <tr>
               <td style="font-weight:bold; color:#15803d;">Calibration Date:</td>
-              <td>${lastCalStr}</td>
+              <td>${escapeHtml(lastCalStr)}</td>
             </tr>
             <tr>
               <td style="font-weight:bold; color:#15803d;">Next Due Date:</td>
-              <td style="font-weight:bold; color:#16a34a;">${dueStr}</td>
+              <td style="font-weight:bold; color:#16a34a;">${escapeHtml(dueStr)}</td>
             </tr>
             <tr>
               <td style="font-weight:bold; color:#15803d;">Status:</td>
@@ -318,7 +330,7 @@ export class StatusNotificationService {
       </div>
     `;
 
-    const subject = `[Calibration Complete] Ready for Collection: ${instrument.name} (${instrument.id_code})`;
+    const subject = `[Calibration Complete] Ready for Collection: ${escapeHtml(instrument.name)} (${escapeHtml(instrument.id_code)})`;
 
     try {
       await this.mailerService.sendMail({

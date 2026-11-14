@@ -9,6 +9,16 @@ import { Setting } from '../settings/entities/setting.entity';
 import { MailerService } from '../mail/mailer.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
+function escapeHtml(str: any): string {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 @Injectable()
 export class SummaryReportService {
   private readonly logger = new Logger(SummaryReportService.name);
@@ -66,18 +76,22 @@ export class SummaryReportService {
       dueEndDate.setDate(today.getDate() + thresholdDays);
       dueEndDate.setHours(23, 59, 59, 999);
 
-      // Query counts for this location
-      const totalInstruments = await this.instrumentRepository.count({
-        where: { companyId: loc.companyId, location: loc.location },
-      });
+      // Query counts for this location (case-insensitive trimmed location)
+      const totalInstruments = await this.instrumentRepository
+        .createQueryBuilder('i')
+        .where('i.companyId = :companyId', { companyId: loc.companyId })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: loc.location })
+        .getCount();
 
       // Due soon
       const dueSoonCount = await this.instrumentRepository
         .createQueryBuilder('i')
         .where('i.companyId = :companyId', { companyId: loc.companyId })
-        .andWhere('i.location = :location', { location: loc.location })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: loc.location })
         .andWhere('i.due_date BETWEEN :today AND :dueEndDate', { today, dueEndDate })
-        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) NOT IN (:...excludedStatuses)', {
+          excludedStatuses: ['sent for calibration', 'under calibration', 'under_calibration'],
+        })
         .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
@@ -85,17 +99,21 @@ export class SummaryReportService {
       const ongoingCount = await this.instrumentRepository
         .createQueryBuilder('i')
         .where('i.companyId = :companyId', { companyId: loc.companyId })
-        .andWhere('i.location = :location', { location: loc.location })
-        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) = :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: loc.location })
+        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) IN (:...labStatuses)', {
+          labStatuses: ['sent for calibration', 'under calibration', 'under_calibration'],
+        })
         .getCount();
 
       // Overdue
       const overdueCount = await this.instrumentRepository
         .createQueryBuilder('i')
         .where('i.companyId = :companyId', { companyId: loc.companyId })
-        .andWhere('i.location = :location', { location: loc.location })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: loc.location })
         .andWhere('i.due_date < :today', { today })
-        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) != :sentStatus', { sentStatus: 'sent for calibration' })
+        .andWhere('LOWER(TRIM(COALESCE(i.status, \'\'))) NOT IN (:...excludedStatuses)', {
+          excludedStatuses: ['sent for calibration', 'under calibration', 'under_calibration'],
+        })
         .andWhere("COALESCE(LOWER(TRIM(i.item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')")
         .getCount();
 
@@ -104,13 +122,13 @@ export class SummaryReportService {
         .createQueryBuilder('h')
         .innerJoin('h.instrument', 'i')
         .where('i.companyId = :companyId', { companyId: loc.companyId })
-        .andWhere('i.location = :location', { location: loc.location })
+        .andWhere('LOWER(TRIM(i.location)) = LOWER(TRIM(:location))', { location: loc.location })
         .andWhere('h.last_calibration_date >= :thirtyDaysAgo', { thirtyDaysAgo })
         .getCount();
 
       const html = this.buildSummaryEmailHtml({
-        title: `Management Calibration Summary: ${loc.location}`,
-        subtitle: `Location: ${loc.location} | Head: ${loc.headName || 'N/A'} (${loc.headEmail || 'N/A'})`,
+        title: `Management Calibration Summary: ${escapeHtml(loc.location)}`,
+        subtitle: `Location: ${escapeHtml(loc.location)} | Head: ${escapeHtml(loc.headName || 'N/A')} (${escapeHtml(loc.headEmail || 'N/A')})`,
         totalInstruments,
         dueSoonCount,
         ongoingCount,
@@ -139,6 +157,18 @@ export class SummaryReportService {
     for (const setting of settings) {
       const cfg = setting.summaryReportConfig;
       if (!cfg || !cfg.enabled || !(cfg.managementRecipients || []).length) continue;
+
+      // Honor configured frequency (daily, weekly on Mondays, monthly on the 1st)
+      const freq = (cfg.frequency || 'daily').toLowerCase().trim();
+      const dayOfWeek = today.getDay(); // 0 is Sunday, 1 is Monday
+      const dayOfMonth = today.getDate();
+
+      if (freq === 'weekly' && dayOfWeek !== 1) {
+        continue;
+      }
+      if (freq === 'monthly' && dayOfMonth !== 1) {
+        continue;
+      }
 
       const thresholdDays = setting.dueReminderThresholdDays || 15;
       const dueEndDate = new Date(today);

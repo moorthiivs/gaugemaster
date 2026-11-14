@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 
 export const CANONICAL_INSTRUMENT_STATUSES = [
   'OK',
@@ -74,6 +74,7 @@ export class SettingsService {
 
         const updatePayload: any = {
           ...createSettingDto,
+          ...(createSettingDto.dueReminderThresholdDays !== undefined ? { dueReminderThresholdDays: Number(createSettingDto.dueReminderThresholdDays) } : {}),
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
           ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
           ...(mergedSmtpConfig ? { smtpConfig: mergedSmtpConfig } : {}),
@@ -274,30 +275,60 @@ export class SettingsService {
     headName?: string;
     headEmail: string;
     managementEmails?: string[];
-  }): Promise<LocationEmail> {
-    if (payload.id) {
-      const existing = await this.locationEmailRepository.findOne({ where: { id: payload.id } });
+  }, isSuperAdmin: boolean = false): Promise<LocationEmail> {
+    const trimmedLocation = (payload.location || '').trim();
+    if (!trimmedLocation) {
+      throw new BadRequestException('Location cannot be empty');
+    }
+    const cleanPayload = {
+      ...payload,
+      location: trimmedLocation,
+      headName: (payload.headName || '').trim() || undefined,
+      headEmail: (payload.headEmail || '').trim().toLowerCase(),
+      managementEmails: Array.isArray(payload.managementEmails)
+        ? payload.managementEmails.map((e) => (e || '').trim().toLowerCase()).filter((e) => e.length > 0)
+        : [],
+    };
+
+    if (cleanPayload.id) {
+      const existing = await this.locationEmailRepository.findOne({ where: { id: cleanPayload.id } });
       if (existing) {
-        const merged = this.locationEmailRepository.merge(existing, payload);
+        if (!isSuperAdmin && cleanPayload.companyId && existing.companyId !== cleanPayload.companyId) {
+          throw new ForbiddenException('Access denied: Cannot update location mapping of another company');
+        }
+        const merged = this.locationEmailRepository.merge(existing, cleanPayload);
         return await this.locationEmailRepository.save(merged);
       }
     }
 
-    // Check by location and companyId to prevent duplicate
-    const existingByLoc = await this.locationEmailRepository.findOne({
-      where: { companyId: payload.companyId, location: payload.location },
-    });
+    // Check by location and companyId (case-insensitive trimmed) to prevent duplicate
+    const existingByLoc = await this.locationEmailRepository
+      .createQueryBuilder('l')
+      .where('l.companyId = :companyId', { companyId: cleanPayload.companyId })
+      .andWhere('LOWER(TRIM(l.location)) = LOWER(TRIM(:location))', { location: trimmedLocation })
+      .getOne();
 
     if (existingByLoc) {
-      const merged = this.locationEmailRepository.merge(existingByLoc, payload);
+      const merged = this.locationEmailRepository.merge(existingByLoc, cleanPayload);
       return await this.locationEmailRepository.save(merged);
     }
 
-    const created = this.locationEmailRepository.create(payload);
+    const created = this.locationEmailRepository.create(cleanPayload);
     return await this.locationEmailRepository.save(created);
   }
 
-  async deleteLocationEmail(id: string): Promise<{ success: boolean; message: string }> {
+  async deleteLocationEmail(
+    id: string,
+    companyId?: string,
+    isSuperAdmin?: boolean,
+  ): Promise<{ success: boolean; message: string }> {
+    const existing = await this.locationEmailRepository.findOne({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Location mapping not found');
+    }
+    if (!isSuperAdmin && companyId && existing.companyId !== companyId) {
+      throw new ForbiddenException('Access denied: Cannot delete location mapping belonging to another company');
+    }
     await this.locationEmailRepository.delete(id);
     return { success: true, message: 'Location mapping deleted successfully' };
   }

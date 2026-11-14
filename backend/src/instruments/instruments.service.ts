@@ -766,6 +766,8 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 throw new NotFoundException(`Instrument with ID ${id} not found`);
             }
 
+            const previousStatus = instrument.status;
+
             const payload: any = { ...updateInstrumentDto };
 
             if (payload.device_type !== undefined) {
@@ -985,9 +987,12 @@ export class InstrumentsService implements OnApplicationBootstrap {
                 return savedInst;
             });
 
-            // Trigger collection notification to Location Head if instrument was calibrated/updated to OK
+            // Trigger collection notification to Location Head if instrument was calibrated/updated to OK from calibration
+            const prevStatusNormalized = (previousStatus || '').toLowerCase().trim();
+            const wasInLab = prevStatusNormalized.includes('under calibration') || prevStatusNormalized.includes('sent for calibration');
             if (
                 savedInstrument.status === 'OK' &&
+                wasInLab &&
                 (updateInstrumentDto.last_calibration_date || updateInstrumentDto.certificate_file || updateInstrumentDto.due_date)
             ) {
                 this.statusNotificationService.notifyCalibrated(savedInstrument).catch((err) => {
