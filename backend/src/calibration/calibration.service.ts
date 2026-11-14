@@ -1,12 +1,13 @@
-import { Injectable, NotFoundException, BadRequestException, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In, DataSource } from 'typeorm';
+import { Repository, Between, In, DataSource, EntityManager } from 'typeorm';
 import { Calibration } from './calibration.entity';
 import { CalibrationDraft } from './calibration-draft.entity';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
 import { CreateCalibrationDto } from './dto/create-calibration.dto';
 import { SettingsService } from '../settings/settings.service';
 import { InstrumentsService } from '../instruments/instruments.service';
+import { Instrument } from '../instruments/instrument.entity';
 
 /**
  * Handles calibration CRUD, auto-generates certificate and ULR numbers
@@ -681,21 +682,138 @@ export class CalibrationService implements OnModuleInit {
 
   // ── CRUD ─────────────────────────────────────────────────────
 
+  /**
+   * Blocks duplicate calibration records for one instrument:
+   * 1. another calibration is still in the review/approval workflow, or
+   * 2. a non-rejected calibration already exists on the same calibration date.
+   * Rejected records are ignored so the "Recalibrate" flow for rejected calibrations keeps working.
+   */
+  static readonly PENDING_APPROVAL_STATUSES = ['Calibration Completed', 'Pending Review', 'Reviewed', 'Pending Approval'];
+  static readonly EARLY_RECALIBRATION_CODE = 'EARLY_RECALIBRATION_REASON_REQUIRED';
+  private static readonly MIN_EARLY_REASON_LENGTH = 5;
+
+  /**
+   * Tells the wizard (before any data entry) whether a new calibration may be started for an instrument:
+   * - 'pending'  : another calibration is still in review/approval -> blocked
+   * - 'not_due'  : instrument is already calibrated and not due within the reminder window -> needs a reason
+   * - 'ok'       : due soon, overdue, or no schedule -> allowed
+   */
+  async getCalibrationEligibility(instrumentId: string, manager: EntityManager = this.calibrationRepository.manager) {
+    const pending = await manager.getRepository(Calibration).findOne({
+      where: { instrument_id: instrumentId, approval_status: In(CalibrationService.PENDING_APPROVAL_STATUSES) },
+      order: { created_at: 'DESC' },
+    });
+    if (pending) {
+      return {
+        status: 'pending' as const,
+        pending: { id: pending.id, certificate_number: pending.certificate_number, approval_status: pending.approval_status },
+      };
+    }
+
+    const inst = await manager.getRepository(Instrument).findOne({
+      where: { id: instrumentId },
+      select: ['id', 'companyId', 'due_date', 'last_calibration_date'],
+    });
+    if (!inst?.due_date || !inst.last_calibration_date) return { status: 'ok' as const };
+
+    let thresholdDays = 15;
+    try {
+      const setting = await this.settingsService.findRawForAi(inst.companyId);
+      if (setting?.dueReminderThresholdDays && setting.dueReminderThresholdDays > 0) {
+        thresholdDays = setting.dueReminderThresholdDays;
+      }
+    } catch {
+      // fall back to default window
+    }
+
+    // Compare calendar days: due date vs (today + reminder window)
+    const windowEnd = new Date();
+    windowEnd.setHours(0, 0, 0, 0);
+    windowEnd.setDate(windowEnd.getDate() + thresholdDays);
+    const due = new Date(inst.due_date);
+    due.setHours(0, 0, 0, 0);
+
+    if (due > windowEnd) {
+      return {
+        status: 'not_due' as const,
+        dueDate: inst.due_date,
+        lastCalibrationDate: inst.last_calibration_date,
+        thresholdDays,
+      };
+    }
+    return { status: 'ok' as const, dueDate: inst.due_date, thresholdDays };
+  }
+
+  private async assertNoDuplicateCalibration(
+    manager: EntityManager,
+    instrumentId: string | undefined,
+    calibrationDate: string | Date | undefined,
+    options: { earlyRecalibrationReason?: string; recalibrationOfId?: string } = {},
+  ): Promise<void> {
+    if (!instrumentId) return;
+    const repo = manager.getRepository(Calibration);
+
+    const pending = await repo.findOne({
+      where: {
+        instrument_id: instrumentId,
+        approval_status: In(CalibrationService.PENDING_APPROVAL_STATUSES),
+      },
+      order: { created_at: 'DESC' },
+    });
+    if (pending) {
+      throw new ConflictException(
+        `Calibration ${pending.certificate_number || ''} for this instrument is still "${pending.approval_status}". ` +
+          'Approve or reject it before starting a new calibration.',
+      );
+    }
+
+    if (calibrationDate) {
+      const sameDay = await repo
+        .createQueryBuilder('c')
+        .where('c.instrument_id = :instrumentId', { instrumentId })
+        .andWhere('CAST(c.calibration_date AS date) = CAST(:calDate AS date)', { calDate: new Date(calibrationDate) })
+        .andWhere("COALESCE(c.approval_status, '') <> 'Rejected'")
+        .orderBy('c.created_at', 'DESC')
+        .getOne();
+      if (sameDay) {
+        throw new ConflictException(
+          `This instrument already has calibration ${sameDay.certificate_number || ''} on the same calibration date. ` +
+            'Duplicate calibration records are not allowed.',
+        );
+      }
+    }
+
+    // Already calibrated and not yet due: allow only with an explicit, recorded reason.
+    // Recalibration of a rejected record is exempt (that flow replaces a failed calibration).
+    if (!options.recalibrationOfId) {
+      const eligibility = await this.getCalibrationEligibility(instrumentId, manager);
+      const reason = (options.earlyRecalibrationReason || '').trim();
+      if (eligibility.status === 'not_due' && reason.length < CalibrationService.MIN_EARLY_REASON_LENGTH) {
+        const due = new Date(eligibility.dueDate).toISOString().slice(0, 10);
+        throw new ConflictException({
+          statusCode: 409,
+          error: 'Conflict',
+          code: CalibrationService.EARLY_RECALIBRATION_CODE,
+          message:
+            `This instrument is already calibrated and is not due until ${due}. ` +
+            'Confirm early recalibration and enter a reason to continue.',
+          dueDate: eligibility.dueDate,
+          lastCalibrationDate: eligibility.lastCalibrationDate,
+        });
+      }
+    }
+  }
+
   async create(dto: CreateCalibrationDto): Promise<Calibration> {
     const userId = dto.created_by || '';
     const companyId = dto.companyId || '';
 
-    // Auto-generate certificate number (always)
-    const certificate_number = await this.generateCertificateNumber(
-      userId,
-      companyId,
-    );
-
-    // Generate ULR only if enabled
-    let ulr_number: string | undefined = undefined;
-    if (dto.ulr_enabled) {
-      ulr_number = await this.generateUlrNumber(userId, companyId);
-    }
+    // Fast pre-check (no lock) so obvious duplicates are rejected before anything is generated.
+    const guardOptions = {
+      earlyRecalibrationReason: dto.early_recalibration_reason,
+      recalibrationOfId: dto.recalibration_of_id,
+    };
+    await this.assertNoDuplicateCalibration(this.calibrationRepository.manager, dto.instrument_id, dto.calibration_date, guardOptions);
 
     const approval_status = dto.approval_status || 'Calibration Completed';
 
@@ -718,6 +836,22 @@ export class CalibrationService implements OnModuleInit {
     }
 
     return await this.dataSource.transaction(async (manager) => {
+      // Serialize concurrent creates for the same instrument (e.g. a double-click sending two requests).
+      // An advisory lock is used instead of a row lock because instrumentsService.update() runs on a
+      // separate connection inside this transaction and would deadlock on a locked instrument row.
+      if (dto.instrument_id) {
+        await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`calibration-create:${dto.instrument_id}`]);
+        await this.assertNoDuplicateCalibration(manager, dto.instrument_id, dto.calibration_date, guardOptions);
+      }
+
+      // Certificate / ULR numbers are generated only after the duplicate check passes,
+      // so a rejected duplicate never consumes a number from the sequence.
+      const certificate_number = await this.generateCertificateNumber(userId, companyId);
+      let ulr_number: string | undefined = undefined;
+      if (dto.ulr_enabled) {
+        ulr_number = await this.generateUlrNumber(userId, companyId);
+      }
+
       // Auto-resolve signatures if missing or not data:image
       let resolvedCalibratedSig = dto.calibrated_by_signature;
       if (
@@ -939,6 +1073,21 @@ export class CalibrationService implements OnModuleInit {
         } catch (err) {
           console.warn(`Failed to update instrument ${dto.instrument_id} after calibration`, err);
         }
+      }
+
+      // Early recalibration (instrument was not yet due): keep the confirmed reason in the audit trail
+      const earlyReason = (dto.early_recalibration_reason || '').trim();
+      if (earlyReason && !dto.recalibration_of_id) {
+        const earlyLog = manager.create(CalibrationAuditLog, {
+          calibration_id: savedCalibration.id,
+          edited_by_id: userId || undefined,
+          edited_by_name: savedCalibration.calibrated_by || 'Calibration Engineer',
+          changes_summary: [
+            { field: 'early_recalibration', oldValue: 'Not due', newValue: 'Confirmed by user' },
+          ],
+          remarks: `Early recalibration confirmed. Reason: ${earlyReason}`,
+        });
+        await manager.save(CalibrationAuditLog, earlyLog);
       }
 
       // If this calibration is a recalibration/rework of a rejected record, record audit log on the original

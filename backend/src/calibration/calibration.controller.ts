@@ -45,6 +45,11 @@ export class CalibrationController {
     return this.calibrationService.getSignatories(effectiveCompanyId);
   }
 
+  @Get('eligibility/:instrumentId')
+  async getEligibility(@Param('instrumentId') instrumentId: string) {
+    return this.calibrationService.getCalibrationEligibility(instrumentId);
+  }
+
   @Get('latest/:instrumentId')
   async getLatest(@Param('instrumentId') instrumentId: string) {
     return this.calibrationService.getLatestByInstrument(instrumentId);

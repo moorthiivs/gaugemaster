@@ -9,24 +9,35 @@ import { CalibrationTemplate } from '../calibration-templates/entities/calibrati
 import { SettingsService } from '../settings/settings.service';
 import { InstrumentsService } from '../instruments/instruments.service';
 import { DataSource } from 'typeorm';
+import { ConflictException } from '@nestjs/common';
 import { createMockRepository } from '../../test/utils/repository.mock';
+import { Instrument } from '../instruments/instrument.entity';
 
 describe('CalibrationService', () => {
   let service: CalibrationService;
   let mockCalibrationRepo: ReturnType<typeof createMockRepository>;
   let mockDataSource: any;
+  // Repository used by the duplicate-calibration guard (both pre-check and in-transaction check)
+  let guardRepo: ReturnType<typeof createMockRepository>;
+  let mockManager: any;
+  // Instrument lookups made by the early-recalibration check
+  let instrumentRepo: ReturnType<typeof createMockRepository>;
+  const repoFor = (entity: any) => (entity === Instrument ? instrumentRepo : guardRepo);
 
   beforeEach(async () => {
     mockCalibrationRepo = createMockRepository();
+    guardRepo = createMockRepository();
+    instrumentRepo = createMockRepository();
+    (mockCalibrationRepo as any).manager = { getRepository: jest.fn(repoFor) };
+    mockManager = {
+      create: jest.fn((entity, data) => ({ ...data })),
+      save: jest.fn((entity, data) => Promise.resolve({ id: 'cal-uuid-123', ...data })),
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
+      query: jest.fn().mockResolvedValue([]),
+      getRepository: jest.fn(repoFor),
+    };
     mockDataSource = {
-      transaction: jest.fn(async (cb) => {
-        const mockManager = {
-          create: jest.fn((entity, data) => ({ ...data })),
-          save: jest.fn((entity, data) => Promise.resolve({ id: 'cal-uuid-123', ...data })),
-          update: jest.fn().mockResolvedValue({ affected: 1 }),
-        };
-        return await cb(mockManager);
-      }),
+      transaction: jest.fn(async (cb) => cb(mockManager)),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -50,6 +61,7 @@ describe('CalibrationService', () => {
               },
             }),
             create: jest.fn().mockResolvedValue({}),
+            findRawForAi: jest.fn().mockResolvedValue({ dueReminderThresholdDays: 15 }),
           },
         },
         {
@@ -65,6 +77,149 @@ describe('CalibrationService', () => {
     }).compile();
 
     service = module.get<CalibrationService>(CalibrationService);
+    // Certificate numbering uses its own query runner; it is covered elsewhere, so stub it here
+    jest.spyOn(service, 'generateCertificateNumber').mockResolvedValue('CERT/2026/0010');
+  });
+
+  describe('duplicate calibration guard', () => {
+    const baseDto: any = {
+      instrument_id: 'inst-1',
+      calibration_date: '2026-10-30',
+      created_by: 'user-1',
+      companyId: 'comp-1',
+      verdict: 'PASS',
+      approval_status: 'Calibration Completed',
+    };
+
+    it('rejects a new calibration while another one is still pending review/approval', async () => {
+      guardRepo.findOne.mockResolvedValue({
+        id: 'cal-old',
+        certificate_number: 'CAL/CERT/2026/00362',
+        approval_status: 'Pending Review',
+      });
+
+      await expect(service.create(baseDto)).rejects.toThrow(ConflictException);
+      expect(service.generateCertificateNumber).not.toHaveBeenCalled();
+      expect(mockDataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects a second non-rejected calibration on the same calibration date', async () => {
+      guardRepo.createQueryBuilder.mockReturnValue({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue({ id: 'cal-old', certificate_number: 'CAL/CERT/2026/00362' }),
+      } as any);
+
+      await expect(service.create(baseDto)).rejects.toThrow(/same calibration date/);
+      expect(service.generateCertificateNumber).not.toHaveBeenCalled();
+    });
+
+    it('re-checks under an advisory lock inside the transaction and generates the number only after', async () => {
+      const result = await service.create(baseDto);
+
+      expect(mockManager.query).toHaveBeenCalledWith(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        ['calibration-create:inst-1'],
+      );
+      const lockOrder = mockManager.query.mock.invocationCallOrder[0];
+      const certOrder = (service.generateCertificateNumber as jest.Mock).mock.invocationCallOrder[0];
+      expect(lockOrder).toBeLessThan(certOrder);
+      expect(result.certificate_number).toBe('CERT/2026/0010');
+    });
+
+    it('blocks the second of two concurrent requests when the in-transaction check finds the first', async () => {
+      // Pre-check (outside the transaction) sees nothing: both requests raced past it.
+      // The re-check inside the transaction, after the advisory lock, sees the first request's record.
+      const txCalibrationRepo = createMockRepository();
+      txCalibrationRepo.findOne.mockResolvedValue({
+        id: 'cal-first', certificate_number: 'CERT/2026/0010', approval_status: 'Calibration Completed',
+      });
+      mockManager.getRepository = jest.fn((entity: any) => (entity === Instrument ? instrumentRepo : txCalibrationRepo));
+
+      await expect(service.create(baseDto)).rejects.toThrow(ConflictException);
+      expect(service.generateCertificateNumber).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('early recalibration (already calibrated, not yet due)', () => {
+    const daysFromToday = (n: number) => {
+      const d = new Date();
+      d.setDate(d.getDate() + n);
+      return d;
+    };
+    const baseDto: any = {
+      instrument_id: 'inst-1',
+      calibration_date: new Date().toISOString().slice(0, 10),
+      created_by: 'user-1',
+      companyId: 'comp-1',
+      verdict: 'PASS',
+      approval_status: 'Calibration Completed',
+    };
+
+    it('reports "not_due" when the due date is beyond the reminder window', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(200), last_calibration_date: daysFromToday(-165),
+      });
+      const e = await service.getCalibrationEligibility('inst-1');
+      expect(e.status).toBe('not_due');
+    });
+
+    it('reports "ok" when the instrument is due within the window or overdue', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(10), last_calibration_date: daysFromToday(-355),
+      });
+      expect((await service.getCalibrationEligibility('inst-1')).status).toBe('ok');
+
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(-5), last_calibration_date: daysFromToday(-370),
+      });
+      expect((await service.getCalibrationEligibility('inst-1')).status).toBe('ok');
+    });
+
+    it('reports "pending" when a calibration is awaiting review/approval', async () => {
+      guardRepo.findOne.mockResolvedValue({ id: 'c1', certificate_number: 'CAL/1', approval_status: 'Reviewed' });
+      const e: any = await service.getCalibrationEligibility('inst-1');
+      expect(e.status).toBe('pending');
+      expect(e.pending.certificate_number).toBe('CAL/1');
+    });
+
+    it('blocks creating a calibration for a not-due instrument without a reason', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(200), last_calibration_date: daysFromToday(-165),
+      });
+      const err: any = await service.create(baseDto).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse().code).toBe('EARLY_RECALIBRATION_REASON_REQUIRED');
+      expect(service.generateCertificateNumber).not.toHaveBeenCalled();
+    });
+
+    it('rejects a too-short reason', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(200), last_calibration_date: daysFromToday(-165),
+      });
+      await expect(service.create({ ...baseDto, early_recalibration_reason: ' ok ' })).rejects.toThrow(ConflictException);
+    });
+
+    it('allows it with a confirmed reason and records the reason in the audit log', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(200), last_calibration_date: daysFromToday(-165),
+      });
+      const result = await service.create({ ...baseDto, early_recalibration_reason: 'Instrument dropped on floor' });
+      expect(result.id).toBe('cal-uuid-123');
+      const auditCall = mockManager.save.mock.calls.find(
+        ([entity, data]: any[]) => entity === CalibrationAuditLog && String(data?.remarks).includes('Instrument dropped on floor'),
+      );
+      expect(auditCall).toBeDefined();
+    });
+
+    it('does not require a reason when recalibrating a rejected calibration', async () => {
+      instrumentRepo.findOne.mockResolvedValue({
+        id: 'inst-1', companyId: 'comp-1', due_date: daysFromToday(200), last_calibration_date: daysFromToday(-165),
+      });
+      const result = await service.create({ ...baseDto, recalibration_of_id: 'rejected-cal-1' });
+      expect(result.id).toBe('cal-uuid-123');
+    });
   });
 
   it('should be defined', () => {

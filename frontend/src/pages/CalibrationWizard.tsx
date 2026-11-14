@@ -53,6 +53,13 @@ const STEPS = [
   "Certificate",
 ];
 
+// A calibration cannot happen in the future: when a prefilled date (e.g. the previous due date)
+// is later than today, use today instead.
+const clampToToday = (yyyyMmDd: string): string => {
+  const today = format(new Date(), "yyyy-MM-dd");
+  return yyyyMmDd && yyyyMmDd > today ? today : yyyyMmDd;
+};
+
 const toLocalYyyyMmDd = (d?: string | Date | null): string => {
   if (!d) return "";
   try {
@@ -1561,6 +1568,10 @@ export default function CalibrationWizard() {
   const [nextCertNumber, setNextCertNumber] = useState("—");
   const [nextUlrNumber, setNextUlrNumber] = useState("—");
   const [savedCalibrationId, setSavedCalibrationId] = useState<string | null>(null);
+  // Synchronous guard against double submission (state updates are async, a ref is not)
+  const saveInProgressRef = useRef(false);
+  // In-flight auto-save draft request, awaited before drafts are cleaned up after a save
+  const pendingDraftSaveRef = useRef<Promise<unknown> | null>(null);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
 
   const [isEditMode, setIsEditMode] = useState(!!editIdParam);
@@ -1908,9 +1919,9 @@ export default function CalibrationWizard() {
     if (!cal) return;
     isPreloadedFromPreviousRef.current = true;
 
-    // Set Date of Calibration to previous calibration due date if present
+    // Set Date of Calibration to previous calibration due date if present (never later than today)
     if (cal.next_calibration_date) {
-      const prevDueDate = toLocalYyyyMmDd(cal.next_calibration_date);
+      const prevDueDate = clampToToday(toLocalYyyyMmDd(cal.next_calibration_date));
       if (prevDueDate) {
         setCalDate(prevDueDate);
         setCertIssueDate(prevDueDate);
@@ -2743,8 +2754,10 @@ export default function CalibrationWizard() {
 
   // Auto-save Draft
   useEffect(() => {
-    if (isInitializing || !user || savedCalibrationId || editIdParam || recalibrateIdParam || !selectedInstrument) return;
+    // Never auto-save a draft while a calibration save is running (it could outlive the post-save draft cleanup)
+    if (isInitializing || !user || saving || saveInProgressRef.current || savedCalibrationId || editIdParam || recalibrateIdParam || !selectedInstrument) return;
     const timeout = setTimeout(() => {
+      if (saveInProgressRef.current) return;
       const draftData = {
         step,
         selectedInstrument,
@@ -2796,12 +2809,16 @@ export default function CalibrationWizard() {
         certIssueDate,
         nextCalDate,
       };
-      saveDraft(user.id, draftData, draftIdRef.current || undefined).then((saved) => {
+      const draftPromise = saveDraft(user.id, draftData, draftIdRef.current || undefined).then((saved) => {
         if (saved && saved.id && !draftIdRef.current) {
           draftIdRef.current = saved.id;
           setActiveDraftId(saved.id);
         }
       }).catch(console.error);
+      pendingDraftSaveRef.current = draftPromise;
+      draftPromise.finally(() => {
+        if (pendingDraftSaveRef.current === draftPromise) pendingDraftSaveRef.current = null;
+      });
     }, 1500); // 1.5s debounce
     return () => clearTimeout(timeout);
   }, [
@@ -2809,7 +2826,7 @@ export default function CalibrationWizard() {
     receiptCondition, customReceiptCondition,
     calPoints, wizardIsCanvas, wizardLayoutBlocks, selectedTemplateId, wizardDiagramImage, wizardDiagramWidth, wizardDiagramHeight, wizardDiagramAlignment,
     wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, isVerdictManuallyOverridden, remarks, calibratedBy, calibratedByDesignation,
-    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
+    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing, saving
   ]);
 
   // Reusable Draft Restoration Helper
@@ -2929,7 +2946,7 @@ export default function CalibrationWizard() {
             console.warn("Could not check draft for instrument", e);
           }
 
-          proceedWithInstrumentSelect(inst);
+          await checkEligibilityThenSelect(inst);
         })
         .catch(() => {
           toast.error("Failed to load instrument");
@@ -2978,11 +2995,54 @@ export default function CalibrationWizard() {
   const [recentCalDetails, setRecentCalDetails] = useState<{ lastCalDate?: string; dueDate?: string } | null>(null);
   const [pendingSelectedInstrument, setPendingSelectedInstrument] = useState<Instrument | null>(null);
 
+  // Early recalibration (instrument already calibrated and not yet due) needs a confirmed reason
+  const [earlyRecalReason, setEarlyRecalReason] = useState("");
+  const [earlyReasonInput, setEarlyReasonInput] = useState("");
+  const [earlyModalMode, setEarlyModalMode] = useState<"select" | "save">("select");
+  const lastSaveOptionsRef = useRef<{ skipMasterSave?: boolean; saveToMaster?: boolean } | undefined>(undefined);
+  // Another calibration of this instrument is still awaiting review/approval -> blocked
+  const [pendingCalBlock, setPendingCalBlock] = useState<{
+    inst: Instrument;
+    certificate_number?: string;
+    approval_status?: string;
+  } | null>(null);
+
+  // Ask the server (single source of truth) whether this instrument may be calibrated now
+  const checkEligibilityThenSelect = async (inst: Instrument) => {
+    setEarlyRecalReason("");
+    if (!recalibrateIdParam && inst?.id) {
+      try {
+        const res = await httpClient.get(`/calibrations/eligibility/${inst.id}`);
+        const e = res.data;
+        if (e?.status === "pending") {
+          setPendingCalBlock({
+            inst,
+            certificate_number: e.pending?.certificate_number,
+            approval_status: e.pending?.approval_status,
+          });
+          return;
+        }
+        if (e?.status === "not_due") {
+          setRecentCalDetails({ lastCalDate: e.lastCalibrationDate, dueDate: e.dueDate });
+          setPendingSelectedInstrument(inst);
+          setEarlyReasonInput("");
+          setEarlyModalMode("select");
+          setRecentCalModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        // The server re-checks on save, so a failed pre-check must not block the user here
+        console.warn("Could not check calibration eligibility", err);
+      }
+    }
+    proceedWithInstrumentSelect(inst);
+  };
+
   const proceedWithInstrumentSelect = (inst: Instrument) => {
     setSelectedInstrument(inst);
     applyInstrumentCustomParameters(inst);
     if (inst.due_date) {
-      const prevDueDate = toLocalYyyyMmDd(inst.due_date);
+      const prevDueDate = clampToToday(toLocalYyyyMmDd(inst.due_date));
       if (prevDueDate) {
         setCalDate(prevDueDate);
         setCertIssueDate(prevDueDate);
@@ -3021,18 +3081,7 @@ export default function CalibrationWizard() {
       }
     }
 
-    if (inst.last_calibration_date) {
-      const lastCal = new Date(inst.last_calibration_date);
-      const now = new Date();
-      const diffDays = Math.abs((now.getTime() - lastCal.getTime()) / (1000 * 3600 * 24));
-      if (diffDays <= 10) {
-        setRecentCalDetails({ lastCalDate: inst.last_calibration_date, dueDate: inst.due_date });
-        setPendingSelectedInstrument(inst);
-        setRecentCalModalOpen(true);
-        return;
-      }
-    }
-    proceedWithInstrumentSelect(inst);
+    await checkEligibilityThenSelect(inst);
   };
 
   const handleResumeUnfinishedDraft = async () => {
@@ -3067,20 +3116,8 @@ export default function CalibrationWizard() {
       setPendingInstrumentForDraft(null);
 
       if (targetInst) {
-        if (targetInst.last_calibration_date) {
-          const lastCal = new Date(targetInst.last_calibration_date);
-          const now = new Date();
-          const diffDays = Math.abs((now.getTime() - lastCal.getTime()) / (1000 * 3600 * 24));
-          if (diffDays <= 10) {
-            setRecentCalDetails({ lastCalDate: targetInst.last_calibration_date, dueDate: targetInst.due_date });
-            setPendingSelectedInstrument(targetInst);
-            setRecentCalModalOpen(true);
-            toast.success("Previous draft removed. Starting fresh calibration.");
-            return;
-          }
-        }
-        proceedWithInstrumentSelect(targetInst);
         toast.success("Previous draft removed. Starting fresh calibration.");
+        await checkEligibilityThenSelect(targetInst);
       }
     } catch (err) {
       console.error("Failed to discard draft", err);
@@ -3290,7 +3327,7 @@ export default function CalibrationWizard() {
     await executeSaveAndContinue();
   };
 
-  async function executeSaveAndContinue(options?: { skipMasterSave?: boolean; saveToMaster?: boolean }) {
+  async function executeSaveAndContinue(options?: { skipMasterSave?: boolean; saveToMaster?: boolean; earlyReason?: string }) {
     if (!selectedInstrument || !selectedType) return;
     if (isEditMode && !canAccess("calibrations", "edit")) {
       toast.error("You do not have permission to edit calibrations");
@@ -3308,6 +3345,9 @@ export default function CalibrationWizard() {
       toast.error("Cannot proceed: Reference Standard validity has expired!");
       return;
     }
+    // Ignore repeat calls (double-click, popup option clicked during close animation, etc.)
+    if (saveInProgressRef.current) return;
+    saveInProgressRef.current = true;
     setSaving(true);
     try {
       let pointsToSave = calPoints;
@@ -3385,6 +3425,9 @@ export default function CalibrationWizard() {
         approved_by_id: approvedById || undefined,
         ulr_enabled: ulrEnabled,
         next_calibration_date: nextCalDate || undefined,
+        // Only sent when creating; required by the server when the instrument is not yet due
+        early_recalibration_reason:
+          !savedCalibrationId && !isEditMode ? (options?.earlyReason ?? earlyRecalReason) || undefined : undefined,
         recalibration_of_id: recalibrateIdParam || undefined,
         companyId: user?.companyId,
         created_by: user?.id,
@@ -3407,6 +3450,12 @@ export default function CalibrationWizard() {
         setSavedCalibrationId(saved.id);
         setNextCertNumber(saved.certificate_number || nextCertNumber);
         if (saved.ulr_number) setNextUlrNumber(saved.ulr_number);
+
+        // Let any in-flight auto-save finish first, otherwise it can recreate the draft after cleanup
+        if (pendingDraftSaveRef.current) {
+          await pendingDraftSaveRef.current.catch(() => {});
+          pendingDraftSaveRef.current = null;
+        }
 
         if (activeDraftId) {
           await deleteDraft(activeDraftId).catch(console.error);
@@ -3444,8 +3493,20 @@ export default function CalibrationWizard() {
       
       setStep(4); // Move to certificate step
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || "Failed to save calibration");
+      const errData = err?.response?.data;
+      if (errData?.code === "EARLY_RECALIBRATION_REASON_REQUIRED" && selectedInstrument) {
+        // e.g. a resumed draft skipped the selection check: ask for the reason now, then retry the save
+        lastSaveOptionsRef.current = { skipMasterSave: options?.skipMasterSave, saveToMaster: options?.saveToMaster };
+        setRecentCalDetails({ lastCalDate: errData.lastCalibrationDate, dueDate: errData.dueDate });
+        setPendingSelectedInstrument(selectedInstrument);
+        setEarlyReasonInput("");
+        setEarlyModalMode("save");
+        setRecentCalModalOpen(true);
+      } else {
+        toast.error(errData?.message || "Failed to save calibration");
+      }
     } finally {
+      saveInProgressRef.current = false;
       setSaving(false);
     }
   }
@@ -7571,27 +7632,42 @@ export default function CalibrationWizard() {
         isLoading={isDraftActionLoading}
       />
 
-      {/* ═══ Recently Calibrated Warning Alert Modal ═══ */}
-      <Dialog open={recentCalModalOpen} onOpenChange={setRecentCalModalOpen}>
+      {/* ═══ Already Calibrated (not yet due) — Early Recalibration Confirmation ═══ */}
+      <Dialog open={recentCalModalOpen} onOpenChange={(open) => {
+        setRecentCalModalOpen(open);
+        if (!open) setPendingSelectedInstrument(null);
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              Instrument Recently Calibrated
+              Instrument Already Calibrated
             </DialogTitle>
             <DialogDescription className="space-y-3 pt-2 text-sm text-foreground">
               <p>
-                Notice: <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) was already calibrated recently.
+                <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) is already calibrated and is
+                not due yet. Recalibrating early needs your confirmation and a reason, which is saved in the audit log.
               </p>
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-1 text-xs font-medium">
-                <div><span className="text-muted-foreground">Previous Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? formatDisplayDate(recentCalDetails.lastCalDate) : "Recent"}</strong></div>
-                <div><span className="text-muted-foreground">Current Due Date:</span> <strong>{recentCalDetails?.dueDate ? formatDisplayDate(recentCalDetails.dueDate) : "N/A"}</strong></div>
+                <div><span className="text-muted-foreground">Last Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? formatDisplayDate(recentCalDetails.lastCalDate) : "—"}</strong></div>
+                <div><span className="text-muted-foreground">Next Due Date:</span> <strong>{recentCalDetails?.dueDate ? formatDisplayDate(recentCalDetails.dueDate) : "—"}</strong></div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Are you sure you want to perform another calibration for this instrument?
-              </p>
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="earlyRecalReason" className="text-xs font-semibold">
+              Reason for early recalibration *
+            </Label>
+            <Textarea
+              id="earlyRecalReason"
+              value={earlyReasonInput}
+              onChange={(e) => setEarlyReasonInput(e.target.value)}
+              placeholder="e.g. Instrument dropped / damaged, suspected out of tolerance, customer request…"
+              maxLength={500}
+              className="text-sm min-h-[80px]"
+            />
+            <p className="text-[11px] text-muted-foreground">Minimum 5 characters.</p>
+          </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => {
               setRecentCalModalOpen(false);
@@ -7599,13 +7675,60 @@ export default function CalibrationWizard() {
             }}>
               Cancel
             </Button>
-            <Button variant="default" className="bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
-              if (pendingSelectedInstrument) {
-                proceedWithInstrumentSelect(pendingSelectedInstrument);
-              }
-              setRecentCalModalOpen(false);
-            }}>
-              Proceed with Calibration
+            <Button
+              variant="default"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={earlyReasonInput.trim().length < 5 || saving}
+              onClick={() => {
+                const reason = earlyReasonInput.trim();
+                if (reason.length < 5) return;
+                setEarlyRecalReason(reason);
+                setRecentCalModalOpen(false);
+                if (earlyModalMode === "save") {
+                  executeSaveAndContinue({ ...(lastSaveOptionsRef.current || {}), earlyReason: reason });
+                } else if (pendingSelectedInstrument) {
+                  proceedWithInstrumentSelect(pendingSelectedInstrument);
+                }
+                setPendingSelectedInstrument(null);
+              }}
+            >
+              Confirm Early Recalibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Calibration Pending Review/Approval — blocks a new calibration ═══ */}
+      <Dialog open={!!pendingCalBlock} onOpenChange={(open) => { if (!open) setPendingCalBlock(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              Calibration Pending Approval
+            </DialogTitle>
+            <DialogDescription className="space-y-3 pt-2 text-sm text-foreground">
+              <p>
+                <strong>{pendingCalBlock?.inst?.name}</strong> ({pendingCalBlock?.inst?.id_code}) already has calibration{" "}
+                <strong>{pendingCalBlock?.certificate_number || ""}</strong> with status{" "}
+                <strong>"{pendingCalBlock?.approval_status}"</strong>.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Approve or reject that calibration before starting a new one.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPendingCalBlock(null)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                const id = pendingCalBlock?.inst?.id;
+                setPendingCalBlock(null);
+                if (id) navigate(`/calibration/history/${id}`);
+              }}
+            >
+              View Calibration History
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -7977,10 +8100,12 @@ export default function CalibrationWizard() {
             {/* Option 1: Save to Instrument Master */}
             <div
               onClick={() => {
+                if (saving || saveInProgressRef.current) return;
                 setTemplateModifiedModalOpen(false);
                 executeSaveAndContinue({ saveToMaster: true });
               }}
-              className="group p-3 rounded-lg border border-border hover:border-emerald-500/50 hover:bg-emerald-500/5 cursor-pointer transition-all flex items-start gap-3"
+              aria-disabled={saving}
+              className={`group p-3 rounded-lg border border-border hover:border-emerald-500/50 hover:bg-emerald-500/5 cursor-pointer transition-all flex items-start gap-3 ${saving ? "pointer-events-none opacity-60" : ""}`}
             >
               <div className="p-2 rounded-md bg-emerald-500/10 text-emerald-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
                 <Save className="w-4 h-4" />
@@ -8026,10 +8151,12 @@ export default function CalibrationWizard() {
             {/* Option 3: Skip */}
             <div
               onClick={() => {
+                if (saving || saveInProgressRef.current) return;
                 setTemplateModifiedModalOpen(false);
                 executeSaveAndContinue({ skipMasterSave: true });
               }}
-              className="group p-3 rounded-lg border border-border hover:border-amber-500/50 hover:bg-amber-500/5 cursor-pointer transition-all flex items-start gap-3"
+              aria-disabled={saving}
+              className={`group p-3 rounded-lg border border-border hover:border-amber-500/50 hover:bg-amber-500/5 cursor-pointer transition-all flex items-start gap-3 ${saving ? "pointer-events-none opacity-60" : ""}`}
             >
               <div className="p-2 rounded-md bg-amber-500/10 text-amber-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
                 <ArrowRight className="w-4 h-4" />

@@ -1,4 +1,5 @@
 import {
+  MaxLength,
   IsString,
   IsOptional,
   IsBoolean,
@@ -301,6 +302,12 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsDateString()
   next_calibration_date?: string;
+
+  // Reason entered when the user confirms recalibrating an instrument that is not yet due
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  early_recalibration_reason?: string;
 
   // Ownership
   @IsOptional()
