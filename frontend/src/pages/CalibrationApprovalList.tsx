@@ -49,6 +49,7 @@ import {
   X,
   Edit,
   RotateCcw,
+  History,
   LayoutDashboard,
   Loader2,
   Trash2,
@@ -637,6 +638,18 @@ export default function CalibrationApprovalList() {
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Recalibrate</span>
+                </Button>
+              )}
+              {(cal.instrument_id || (cal as any).instrument?.id) && canAccess("calibrations", "view") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5 text-slate-700 hover:text-slate-900 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+                  onClick={() => navigate(`/calibration/history/${cal.instrument_id || (cal as any).instrument?.id}`)}
+                  title="View the full calibration history of this instrument"
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>History</span>
                 </Button>
               )}
               {canAccess("calibrations", "edit") && (
