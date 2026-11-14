@@ -75,6 +75,7 @@ export class SettingsService {
         const updatePayload: any = {
           ...createSettingDto,
           ...(createSettingDto.dueReminderThresholdDays !== undefined ? { dueReminderThresholdDays: Number(createSettingDto.dueReminderThresholdDays) } : {}),
+          ...(createSettingDto.reminderDispatchTime !== undefined ? { reminderDispatchTime: (createSettingDto.reminderDispatchTime || '09:00').trim() } : {}),
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
           ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
           ...(mergedSmtpConfig ? { smtpConfig: mergedSmtpConfig } : {}),

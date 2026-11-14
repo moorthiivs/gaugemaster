@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Edit2, Trash2, MapPin, Mail, BellRing, Save, Search, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
+import { Loader2, Plus, Edit2, Trash2, MapPin, Mail, BellRing, Save, Search, AlertCircle, CheckCircle2, Sparkles, Clock, Send } from "lucide-react";
 
 interface LocationEmailMapping {
   id?: string;
@@ -28,9 +28,11 @@ export default function LocationSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  // Threshold config
+  // Schedule & Threshold config
   const [dueThresholdDays, setDueThresholdDays] = useState<number>(15);
+  const [reminderDispatchTime, setReminderDispatchTime] = useState<string>("09:00");
   const [savingThreshold, setSavingThreshold] = useState(false);
+  const [triggeringTest, setTriggeringTest] = useState(false);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState("");
@@ -72,6 +74,9 @@ export default function LocationSettings() {
       const res = await httpClient.get(`/settings?companyId=${user.companyId}&userId=${user.id}`);
       if (res.data?.dueReminderThresholdDays) {
         setDueThresholdDays(res.data.dueReminderThresholdDays);
+      }
+      if (res.data?.reminderDispatchTime) {
+        setReminderDispatchTime(res.data.reminderDispatchTime);
       }
     } catch (e) {
       console.error(e);
@@ -222,12 +227,32 @@ export default function LocationSettings() {
         companyId: user.companyId,
         userId: user.id,
         dueReminderThresholdDays: Number(dueThresholdDays) || 15,
+        reminderDispatchTime: (reminderDispatchTime || "09:00").trim(),
       });
-      toast({ title: "Saved", description: "Due reminder threshold updated." });
+      toast({ title: "Saved", description: "Reminder schedule and threshold updated." });
     } catch (e: any) {
-      toast({ title: "Error", description: "Failed to save threshold.", variant: "destructive" });
+      toast({ title: "Error", description: "Failed to save schedule settings.", variant: "destructive" });
     } finally {
       setSavingThreshold(false);
+    }
+  };
+
+  const handleTriggerTestReminders = async () => {
+    setTriggeringTest(true);
+    try {
+      const res = await httpClient.post("/reminder/trigger-location-reminders");
+      toast({
+        title: "Test Reminders Triggered",
+        description: res.data?.message || "Reminders processed and sent to Location Heads.",
+      });
+    } catch (e: any) {
+      toast({
+        title: "Error",
+        description: e?.response?.data?.message || "Failed to trigger test reminders.",
+        variant: "destructive",
+      });
+    } finally {
+      setTriggeringTest(false);
     }
   };
 
@@ -275,7 +300,7 @@ export default function LocationSettings() {
         </div>
       )}
 
-      {/* Threshold Configuration Card */}
+      {/* Schedule & Threshold Configuration Card */}
       <Card className="border-primary/10 shadow-md bg-card/60 backdrop-blur-sm rounded-xl">
         <CardHeader className="border-b bg-muted/20 py-4 px-6">
           <div className="flex items-center gap-2.5">
@@ -283,19 +308,20 @@ export default function LocationSettings() {
               <BellRing className="h-4 w-4 text-amber-500" />
             </div>
             <div>
-              <CardTitle className="text-sm font-bold">Due Reminder Threshold Window</CardTitle>
+              <CardTitle className="text-sm font-bold">Location Reminder Schedule & Threshold</CardTitle>
               <CardDescription className="text-xs">
-                Advance window for daily notification emails sent to Location Heads before calibration due date.
+                Configure when and how far in advance daily calibration due and overdue reminders are dispatched to Location Heads.
               </CardDescription>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Label htmlFor="thresholdDays" className="whitespace-nowrap font-medium text-xs">
-              Reminder Window:
-            </Label>
-            <div className="flex items-center gap-2">
+        <CardContent className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+          <div className="flex flex-wrap items-center gap-6">
+            {/* Advance Window */}
+            <div className="flex items-center gap-2.5">
+              <Label htmlFor="thresholdDays" className="whitespace-nowrap font-medium text-xs">
+                Reminder Window:
+              </Label>
               <Input
                 id="thresholdDays"
                 type="number"
@@ -305,13 +331,48 @@ export default function LocationSettings() {
                 onChange={(e) => setDueThresholdDays(Number(e.target.value))}
                 className="w-20 font-bold text-center h-9 text-sm"
               />
-              <span className="text-xs text-muted-foreground">Days before Due Date (Default: 15 Days)</span>
+              <span className="text-xs text-muted-foreground">Days before Due</span>
+            </div>
+
+            {/* Daily Dispatch Time */}
+            <div className="flex items-center gap-2.5">
+              <Label htmlFor="reminderTime" className="whitespace-nowrap font-medium text-xs flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                Dispatch Time (IST):
+              </Label>
+              <Input
+                id="reminderTime"
+                type="time"
+                value={reminderDispatchTime}
+                onChange={(e) => setReminderDispatchTime(e.target.value)}
+                className="w-32 font-bold text-center h-9 text-sm"
+              />
+              <span className="text-xs text-muted-foreground">Daily Schedule</span>
             </div>
           </div>
-          <Button onClick={handleSaveThreshold} disabled={savingThreshold} variant="outline" size="sm" className="gap-2 shrink-0">
-            {savingThreshold ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Save Threshold
-          </Button>
+
+          <div className="flex items-center gap-2 shrink-0 w-full md:w-auto justify-end">
+            <Button
+              onClick={handleTriggerTestReminders}
+              disabled={triggeringTest}
+              variant="outline"
+              size="sm"
+              className="gap-2 text-xs"
+              title="Trigger reminders now for your company to test email delivery"
+            >
+              {triggeringTest ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 text-primary" />}
+              Send Test Now
+            </Button>
+            <Button
+              onClick={handleSaveThreshold}
+              disabled={savingThreshold}
+              size="sm"
+              className="gap-2 shrink-0 text-xs"
+            >
+              {savingThreshold ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save Settings
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

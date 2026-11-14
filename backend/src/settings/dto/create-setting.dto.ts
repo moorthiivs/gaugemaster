@@ -182,6 +182,11 @@ export class CreateSettingDto {
     @IsNumber()
     dueReminderThresholdDays?: number;
 
+    @ApiProperty({ description: 'Daily dispatch time in HH:mm format for location reminders', example: '09:00', required: false })
+    @IsOptional()
+    @IsString()
+    reminderDispatchTime?: string;
+
     @ApiProperty({ description: 'Management summary report configuration', required: false })
     @IsOptional()
     summaryReportConfig?: {

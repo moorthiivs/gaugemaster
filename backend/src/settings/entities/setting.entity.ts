@@ -122,6 +122,12 @@ export class Setting {
     @Column({ type: "integer", default: 15, nullable: true })
     dueReminderThresholdDays: number;
 
+    @Column({ type: "varchar", length: 10, default: "09:00", nullable: true })
+    reminderDispatchTime: string;
+
+    @Column({ type: "varchar", length: 20, nullable: true })
+    lastReminderSentDate: string;
+
     @Column({ type: "jsonb", nullable: true })
     summaryReportConfig: {
         enabled: boolean;

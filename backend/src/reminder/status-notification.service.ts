@@ -34,26 +34,83 @@ export class StatusNotificationService {
   ) {}
 
   /**
-   * Daily Cron at 9:00 AM to process:
-   * 1. 15-day (or configurable) Due Reminders to Location Heads
+   * Minute Cron to check and dispatch company-configured Location Head notifications:
+   * 1. Due Reminders to Location Heads based on configured reminder window
    * 2. Overdue Reminders to Location Heads
-   * 3. 'Sent for Calibration' items are suppressed automatically
+   * Runs at each company's configured `reminderDispatchTime` (default 09:00 AM IST)
    */
-  @Cron('0 9 * * *')
-  async runDailyStatusNotifications() {
-    this.logger.log('🕒 Running daily status-driven calibration notifications...');
+  @Cron(CronExpression.EVERY_MINUTE)
+  async handleScheduledStatusNotifications() {
     try {
-      await this.processDueSoonReminders();
-      await this.processOverdueReminders();
+      const now = new Date();
+      // Format current hour and minute in Asia/Kolkata (IST)
+      const timeFormatter = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const currentTimeStr = timeFormatter.format(now); // e.g. "09:00"
+
+      const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      const todayDateStr = dateFormatter.format(now); // e.g. "2026-11-14"
+
+      const settings = await this.settingRepository.find();
+      for (const setting of settings) {
+        if (!setting.companyId) continue;
+        const targetTime = (setting.reminderDispatchTime || '09:00').trim();
+
+        if (targetTime === currentTimeStr && setting.lastReminderSentDate !== todayDateStr) {
+          this.logger.log(`🕒 Triggering daily location reminders for company ${setting.companyId} at scheduled time ${targetTime} (Date: ${todayDateStr})...`);
+          await this.processDueSoonReminders(setting.companyId);
+          await this.processOverdueReminders(setting.companyId);
+
+          setting.lastReminderSentDate = todayDateStr;
+          await this.settingRepository.update(setting.id, { lastReminderSentDate: todayDateStr });
+        }
+      }
+
+      // Also ensure unconfigured companies with location mappings get default 09:00 dispatch
+      if (currentTimeStr === '09:00') {
+        const configuredCompanyIds = new Set(settings.map((s) => s.companyId).filter(Boolean));
+        const allLocationMappings = await this.locationEmailRepository.find();
+        const unconfiguredCompanies = new Set(
+          allLocationMappings
+            .map((l) => l.companyId)
+            .filter((c) => c && !configuredCompanyIds.has(c)),
+        );
+        for (const unconfiguredCompId of unconfiguredCompanies) {
+          await this.processDueSoonReminders(unconfiguredCompId);
+          await this.processOverdueReminders(unconfiguredCompId);
+        }
+      }
     } catch (err) {
-      this.logger.error(`Error running status notifications: ${err.message}`, err.stack);
+      this.logger.error(`Error in handleScheduledStatusNotifications: ${err.message}`, err.stack);
     }
+  }
+
+  /**
+   * Manually trigger location reminders on-demand (used for testing or immediate trigger)
+   */
+  async triggerManualReminders(companyId: string): Promise<{ dueSent: number; overdueSent: number; message: string }> {
+    const dueSent = await this.processDueSoonReminders(companyId);
+    const overdueSent = await this.processOverdueReminders(companyId);
+    return {
+      dueSent,
+      overdueSent,
+      message: `Location reminders processed: ${dueSent} due soon email(s) and ${overdueSent} overdue email(s) dispatched.`,
+    };
   }
 
   /**
    * 1. 15 Days for Due (or company-configured threshold): Daily reminder to Location Head
    */
-  async processDueSoonReminders() {
+  async processDueSoonReminders(companyId?: string): Promise<number> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -64,12 +121,16 @@ export class StatusNotificationService {
       if (s.companyId) companySettingsMap.set(s.companyId, s);
     });
 
-    const locationMappings = await this.locationEmailRepository.find();
+    let locationMappings = await this.locationEmailRepository.find();
+    if (companyId) {
+      locationMappings = locationMappings.filter((l) => l.companyId === companyId);
+    }
     if (locationMappings.length === 0) {
-      this.logger.debug('No location mappings configured. Skipping location-based due reminders.');
-      return;
+      this.logger.debug(`No location mappings found for due reminders${companyId ? ` (company: ${companyId})` : ''}.`);
+      return 0;
     }
 
+    let sentCount = 0;
     for (const locMap of locationMappings) {
       if (!locMap.headEmail || !locMap.location) continue;
 
@@ -159,23 +220,29 @@ export class StatusNotificationService {
           message: `${filtered.length} instrument(s) at ${locMap.location} are due for calibration within ${thresholdDays} days.`,
         });
 
+        sentCount++;
         this.logger.log(`📧 Due soon reminder sent to ${locMap.headEmail} for ${filtered.length} instruments at ${locMap.location}`);
       } catch (e) {
         this.logger.error(`Failed to send due soon reminder to ${locMap.headEmail}: ${e.message}`);
       }
     }
+    return sentCount;
   }
 
   /**
    * 2. Overdue: Daily reminder to Location Head until status changes
    */
-  async processOverdueReminders() {
+  async processOverdueReminders(companyId?: string): Promise<number> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const locationMappings = await this.locationEmailRepository.find();
-    if (locationMappings.length === 0) return;
+    let locationMappings = await this.locationEmailRepository.find();
+    if (companyId) {
+      locationMappings = locationMappings.filter((l) => l.companyId === companyId);
+    }
+    if (locationMappings.length === 0) return 0;
 
+    let sentCount = 0;
     for (const locMap of locationMappings) {
       if (!locMap.headEmail || !locMap.location) continue;
 
@@ -256,11 +323,13 @@ export class StatusNotificationService {
           message: `${filtered.length} instrument(s) at ${locMap.location} are overdue for calibration.`,
         });
 
+        sentCount++;
         this.logger.log(`📧 Overdue alert sent to ${locMap.headEmail} for ${filtered.length} instruments at ${locMap.location}`);
       } catch (e) {
         this.logger.error(`Failed to send overdue alert to ${locMap.headEmail}: ${e.message}`);
       }
     }
+    return sentCount;
   }
 
   /**

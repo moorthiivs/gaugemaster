@@ -3,11 +3,15 @@ import { AuthGuard } from '@nestjs/passport';
 import { PermissionsGuard } from '../auth/permissions.guard';
 import { RequirePermission } from '../auth/require-permission.decorator';
 import { ReminderService } from './reminder.service';
+import { StatusNotificationService } from './status-notification.service';
 
 @UseGuards(AuthGuard('jwt'), PermissionsGuard)
 @Controller('api/reminder')
 export class ReminderController {
-    constructor(private readonly reminderService: ReminderService) { }
+    constructor(
+        private readonly reminderService: ReminderService,
+        private readonly statusNotificationService: StatusNotificationService,
+    ) { }
 
     @Get('frequencyData')
     async fetchFrequencyData(@Query() query: any, @Req() req: any) {
@@ -46,5 +50,15 @@ export class ReminderController {
     @RequirePermission('settings', 'edit')
     async updateReminder(@Body() payload: any, @Req() req: any) {
         return this.reminderService.updateReminder(payload);
+    }
+
+    @Post('trigger-location-reminders')
+    @RequirePermission('settings', 'edit')
+    async triggerLocationReminders(@Req() req: any) {
+        const user = req.user || {};
+        if (!user.companyId) {
+            throw new ForbiddenException('Company ID is required to trigger reminders');
+        }
+        return this.statusNotificationService.triggerManualReminders(user.companyId);
     }
 }
