@@ -2040,16 +2040,20 @@ export function CertificatePreview({
               <div className="font-bold truncate">{inst?.location || "Permanent Laboratory"}</div>
             </td>
           </tr>
-          {/* Row 3: Part No & Part Name — Conditional for Gauge */}
+          {/* Row 3: Part No & Part Name — Conditional for Gauge (Single Line) */}
           {isGauge && (
             <tr>
               <td colSpan={2} className="w-[56%] p-1 border-r border-black overflow-hidden">
-                <div className="font-bold text-slate-600 text-[8px]">Part No.</div>
-                <div className="font-bold truncate">{inst?.part_no || (inst as any)?.partNo || "-"}</div>
+                <div className="truncate leading-tight">
+                  <span className="font-bold text-slate-600 text-[8px]">Part No : </span>
+                  <span className="font-bold text-black text-[8.5px]">{inst?.part_no || (inst as any)?.partNo || "-"}</span>
+                </div>
               </td>
               <td colSpan={2} className="w-[44%] p-1 overflow-hidden">
-                <div className="font-bold text-slate-600 text-[8px]">Part Name</div>
-                <div className="font-bold truncate">{inst?.part_name || (inst as any)?.partName || "-"}</div>
+                <div className="truncate leading-tight">
+                  <span className="font-bold text-slate-600 text-[8px]">Part Name : </span>
+                  <span className="font-bold text-black text-[8.5px]">{inst?.part_name || (inst as any)?.partName || "-"}</span>
+                </div>
               </td>
             </tr>
           )}
