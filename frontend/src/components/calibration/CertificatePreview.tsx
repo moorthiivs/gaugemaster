@@ -2022,7 +2022,7 @@ export function CertificatePreview({
             </td>
           </tr>
           {/* Row 2: Least Count | ID No | Instrument Cond | Location */}
-          <tr>
+          <tr className={isGauge ? "border-b border-black" : ""}>
             <td className="w-[26%] p-1 border-r border-black overflow-hidden">
               <div className="font-bold text-slate-600 text-[8px]">Least Count</div>
               <div className="font-bold truncate">{inst?.least_count || "-"}</div>
@@ -2040,6 +2040,19 @@ export function CertificatePreview({
               <div className="font-bold truncate">{inst?.location || "Permanent Laboratory"}</div>
             </td>
           </tr>
+          {/* Row 3: Part No & Part Name — Conditional for Gauge */}
+          {isGauge && (
+            <tr>
+              <td colSpan={2} className="w-[56%] p-1 border-r border-black overflow-hidden">
+                <div className="font-bold text-slate-600 text-[8px]">Part No.</div>
+                <div className="font-bold truncate">{inst?.part_no || (inst as any)?.partNo || "-"}</div>
+              </td>
+              <td colSpan={2} className="w-[44%] p-1 overflow-hidden">
+                <div className="font-bold text-slate-600 text-[8px]">Part Name</div>
+                <div className="font-bold truncate">{inst?.part_name || (inst as any)?.partName || "-"}</div>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

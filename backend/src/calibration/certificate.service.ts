@@ -2814,6 +2814,50 @@ export class CertificateService {
                   margin: [1, 0, 1, 0],
                 },
               ],
+              ...(isGauge
+                ? [
+                    [
+                      {
+                        colSpan: 2,
+                        stack: [
+                          {
+                            text: 'Part No.',
+                            bold: true,
+                            fontSize: labelFontSize,
+                            color: '#475569',
+                          },
+                          {
+                            text: inst?.part_no || (inst as any)?.partNo || '-',
+                            fontSize: valueFontSize,
+                            bold: true,
+                            margin: [0, 0.5, 0, 0],
+                          },
+                        ],
+                        margin: [1, 0, 1, 0],
+                      },
+                      {},
+                      {
+                        colSpan: 2,
+                        stack: [
+                          {
+                            text: 'Part Name',
+                            bold: true,
+                            fontSize: labelFontSize,
+                            color: '#475569',
+                          },
+                          {
+                            text: inst?.part_name || (inst as any)?.partName || '-',
+                            fontSize: valueFontSize,
+                            bold: true,
+                            margin: [0, 0.5, 0, 0],
+                          },
+                        ],
+                        margin: [1, 0, 1, 0],
+                      },
+                      {},
+                    ],
+                  ]
+                : []),
             ],
           },
           layout: {
