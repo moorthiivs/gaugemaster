@@ -10,8 +10,8 @@ export default function ProtectedRoute({
   action = "view",
 }: {
   children: ReactNode;
-  module?: string;
-  action?: "create" | "edit" | "view" | "delete";
+  module?: string | string[];
+  action?: "create" | "edit" | "view" | "delete" | ("create" | "edit" | "view" | "delete")[];
 }) {
   const { user, token, loading, isNewCustomer, inspectedCompany } = useAuth();
   const { canAccess } = usePermissions();
@@ -31,7 +31,10 @@ export default function ProtectedRoute({
 
   // Super Admin redirect to platform management if not inspecting a company
   if (user?.isSuperAdmin) {
-    if (!inspectedCompany && (location.pathname === "/dashboard" || location.pathname === "/onboarding")) {
+    const isPlatformRoute =
+      location.pathname.startsWith("/super-admin") ||
+      location.pathname === "/profile";
+    if (!inspectedCompany && !isPlatformRoute) {
       return <Navigate to="/super-admin/companies" replace />;
     }
   } else {
@@ -46,9 +49,14 @@ export default function ProtectedRoute({
     }
   }
 
-  // Module level permission guard
-  if (module && !canAccess(module, action)) {
-    return <Navigate to="/dashboard" replace />;
+  // Module level permission guard (supports single module/action string or array of alternatives)
+  if (module) {
+    const modules = Array.isArray(module) ? module : [module];
+    const actions = Array.isArray(action) ? action : [action];
+    const hasAccess = modules.some((m) => actions.some((a) => canAccess(m, a)));
+    if (!hasAccess) {
+      return <Navigate to="/dashboard" replace />;
+    }
   }
 
   return <>{children}</>;

@@ -12,12 +12,16 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin } from "lucide-react";
-import { listCalibrations, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, getCalibrationAuditLogs, deleteCalibration } from "@/lib/calibrationActions";
+import { PlusCircle, Activity, CheckCircle2, XCircle, FileText, Download, TrendingUp, Clock, Eye, Trash2, Edit, History, Layers, Loader2, Search, X, MoreVertical, Gauge, Thermometer, Ruler, RotateCw, RotateCcw, Zap, Scale, Droplets, AlertTriangle, PlayCircle, ChevronRight, Calendar, Building2, MapPin, CheckCircle, UserCheck, LayoutDashboard, ArchiveRestore } from "lucide-react";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
+import { listCalibrations, getCalibration, getCalibrationStats, downloadCertificate, getAllDrafts, deleteDraft, deleteDraftsByInstrument, getCalibrationAuditLogs, deleteCalibration, getResequencePreview, ResequencePreviewData } from "@/lib/calibrationActions";
 import { listInstruments, getDashboardSummary } from "@/lib/instrumentActions";
 import { CalibrationRecord, CalibrationStats, CALIBRATION_TYPES, CalibrationAuditLog } from "@/types/calibration";
 import { Instrument } from "@/types/instrument";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { PageHeader } from "@/components/common/PageHeader";
 import { format, startOfMonth, endOfMonth } from "date-fns";
 import {
   Dialog,
@@ -32,6 +36,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 const quickLinkIconMap: Record<string, React.ElementType> = {
   Gauge,
@@ -69,7 +78,15 @@ export default function Calibration() {
   const [verdictFilter, setVerdictFilter] = useState("All");
   const [typeFilter, setTypeFilter] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Overdue instruments state
   const [overdueCount, setOverdueCount] = useState<number>(0);
@@ -80,10 +97,24 @@ export default function Calibration() {
   const [viewMode, setViewMode] = useState<"latest" | "all">("latest");
   const [activeTab, setActiveTab] = useState<string>("recent");
 
+  // Dashboard toggle state (persisted, defaults to false for full page table view)
+  const [showDashboard, setShowDashboard] = useState<boolean>(() => {
+    const saved = localStorage.getItem("gaugemaster_calibration_show_dashboard");
+    return saved === "true";
+  });
+
+  useEffect(() => {
+    localStorage.setItem("gaugemaster_calibration_show_dashboard", String(showDashboard));
+  }, [showDashboard]);
+
   // Delete modal state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [calibrationToDelete, setCalibrationToDelete] = useState<CalibrationRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [resequenceChoice, setResequenceChoice] = useState<"resequence" | "keep">("resequence");
+  const [resequencePreview, setResequencePreview] = useState<ResequencePreviewData | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [deleteReason, setDeleteReason] = useState("");
 
   // Audit trail modal state
   const [auditModalOpen, setAuditModalOpen] = useState(false);
@@ -123,6 +154,7 @@ export default function Calibration() {
     const startOfCurrentMonth = startOfMonth(now);
 
     let list = overdueInstruments.filter((inst) => {
+      if (inst.status === "Under Calibration" || inst.status === "UNDER_CALIBRATION") return false;
       const dStr = inst.due_date || inst.next_due_date;
       if (!dStr) return true;
       const d = new Date(dStr);
@@ -134,8 +166,9 @@ export default function Calibration() {
       return true;
     });
 
-    if (overdueSearchQuery.trim()) {
-      const q = overdueSearchQuery.trim().toLowerCase();
+    const activeQuery = searchQuery.trim() || overdueSearchQuery.trim();
+    if (activeQuery) {
+      const q = activeQuery.toLowerCase();
       list = list.filter(
         (inst) =>
           inst.name?.toLowerCase().includes(q) ||
@@ -145,7 +178,58 @@ export default function Calibration() {
       );
     }
     return list;
-  }, [overdueInstruments, overdueSearchQuery, overdueScope]);
+  }, [overdueInstruments, searchQuery, overdueSearchQuery, overdueScope]);
+
+  const paginatedOverdueInstruments = useMemo(() => {
+    return filteredOverdueInstruments.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredOverdueInstruments, page, pageSize]);
+
+  const filteredDrafts = useMemo(() => {
+    // Deduplicate drafts by instrument ID (prioritizing the most recently updated draft)
+    const seenInstruments = new Set<string>();
+    const deduplicatedDrafts: typeof drafts = [];
+
+    const sortedDrafts = [...drafts].sort((a, b) => {
+      const timeA = new Date(a.updated_at || a.created_at || 0).getTime();
+      const timeB = new Date(b.updated_at || b.created_at || 0).getTime();
+      return timeB - timeA;
+    });
+
+    for (const draft of sortedDrafts) {
+      let parsedData = draft.data;
+      if (typeof parsedData === "string") {
+        try {
+          parsedData = JSON.parse(parsedData);
+        } catch (e) {}
+      }
+      const instId = parsedData?.selectedInstrument?.id || parsedData?.selectedInstrument?.id_code;
+      if (instId) {
+        if (seenInstruments.has(instId)) continue;
+        seenInstruments.add(instId);
+      }
+      deduplicatedDrafts.push(draft);
+    }
+
+    if (!searchQuery.trim()) return deduplicatedDrafts;
+    const q = searchQuery.trim().toLowerCase();
+    return deduplicatedDrafts.filter((draft) => {
+      let parsedData = draft.data;
+      if (typeof parsedData === "string") {
+        try { parsedData = JSON.parse(parsedData); } catch (e) {}
+      }
+      const inst = parsedData?.selectedInstrument;
+      const typeLabel = parsedData?.selectedType?.label || "";
+      return (
+        inst?.name?.toLowerCase().includes(q) ||
+        inst?.id_code?.toLowerCase().includes(q) ||
+        typeLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [drafts, searchQuery]);
+
+  const paginatedDrafts = useMemo(() => {
+    return filteredDrafts.slice((page - 1) * pageSize, page * pageSize);
+  }, [filteredDrafts, page, pageSize]);
 
   const currentMonthOverdueCount = useMemo(() => {
     const now = new Date();
@@ -158,7 +242,7 @@ export default function Calibration() {
     }).length;
   }, [overdueInstruments]);
 
-  const activeOverdueCount = overdueScope === "current_month" ? currentMonthOverdueCount : overdueInstruments.length;
+  const activeOverdueCount = overdueScope === "current_month" ? currentMonthOverdueCount : (overdueCount || overdueInstruments.length);
 
   // Pending Certificates state
   const [certStatusFilter, setCertStatusFilter] = useState<"all" | "pending" | "generated">("all");
@@ -181,7 +265,7 @@ export default function Calibration() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
-      fetchData();
+      refreshAll();
       setPendingCertsList((prev) => prev.filter((c) => c.id !== cal.id));
     } catch {
       toast.error("Failed to generate certificate");
@@ -226,46 +310,24 @@ export default function Calibration() {
     }
   }, [pendingCertsModalOpen, user?.id]);
 
-  const fetchData = async () => {
+  const fetchCalibrationsList = async () => {
     if (!user?.id) return;
     setLoading(true);
     try {
-      const now = new Date();
-      const startStr = overdueScope === "current_month" ? format(startOfMonth(now), "yyyy-MM-dd") : undefined;
-      const endStr = overdueScope === "current_month" ? format(endOfMonth(now), "yyyy-MM-dd") : undefined;
-      const isRefParam = overdueScope === "current_month" ? "false" : undefined;
+      const calData = await listCalibrations({
+        userId: user.id,
+        companyId: user.companyId,
+        verdict: verdictFilter !== "All" ? verdictFilter : undefined,
+        calibrationType: typeFilter !== "All" ? typeFilter : undefined,
+        pendingCertsOnly: activeTab === "pending" || certStatusFilter === "pending" ? true : undefined,
+        search: debouncedSearchQuery.trim() ? debouncedSearchQuery.trim() : undefined,
+        latestOnly: viewMode === "latest" && activeTab !== "pending",
+        page,
+        pageSize,
+      });
 
-      const [calData, statsData, draftData, overdueData, summaryData] = await Promise.all([
-        listCalibrations({
-          userId: user.id,
-          companyId: user.companyId,
-          verdict: verdictFilter !== "All" ? verdictFilter : undefined,
-          calibrationType: typeFilter !== "All" ? typeFilter : undefined,
-          pendingCertsOnly: activeTab === "pending" || certStatusFilter === "pending" ? true : undefined,
-          search: searchQuery.trim() ? searchQuery.trim() : undefined,
-          latestOnly: viewMode === "latest" && activeTab !== "pending",
-          page,
-          pageSize,
-        }),
-        getCalibrationStats(user.id),
-        getAllDrafts(user.id).catch(() => []),
-        listInstruments({
-          status: "Overdue",
-          item_status: "Active",
-          pageSize: 500,
-          companyId: user.companyId,
-        }).catch(() => ({ data: [] })),
-        getDashboardSummary(user.id, startStr, endStr, undefined, undefined, undefined, isRefParam, user.companyId).catch(() => ({} as any)),
-      ]);
-
-      setCalibrations(calData.data || []);
-      setDrafts(draftData || []);
-      setTotal(calData.total || 0);
-      setStats(statsData);
-
-      const overdueList = overdueData.data || (Array.isArray(overdueData) ? overdueData : []);
-      setOverdueInstruments(overdueList);
-      setOverdueCount(summaryData?.overdue || overdueList.length || 0);
+      setCalibrations(calData?.data || []);
+      setTotal(calData?.total || 0);
     } catch {
       toast.error("Failed to load calibrations");
     } finally {
@@ -273,19 +335,99 @@ export default function Calibration() {
     }
   };
 
+  const fetchMetadata = async () => {
+    if (!user?.id) return;
+    try {
+      const [statsData, draftData] = await Promise.all([
+        getCalibrationStats(user.id).catch(() => null),
+        getAllDrafts(user.id).catch(() => []),
+      ]);
+      if (statsData) setStats(statsData);
+      if (draftData) setDrafts(draftData);
+    } catch (e) {
+      console.warn("Could not load calibration metadata:", e);
+    }
+  };
+
+  const fetchOverdueData = async () => {
+    if (!user?.id) return;
+    try {
+      const overdueData = await listInstruments({
+        status: "Overdue",
+        item_status: "All",
+        pageSize: 1000,
+        companyId: user.companyId,
+      }).catch(() => ({ data: [], total: 0 }));
+
+      const rawList = overdueData?.data || (Array.isArray(overdueData) ? overdueData : []);
+      const overdueList = rawList.filter(
+        (inst: any) => inst && inst.status !== "Under Calibration" && inst.status !== "UNDER_CALIBRATION"
+      );
+      setOverdueInstruments(overdueList);
+      setOverdueCount(overdueData?.total ?? overdueList.length);
+    } catch (e) {
+      console.warn("Could not load overdue instruments:", e);
+    }
+  };
+
+  const refreshAll = () => {
+    fetchCalibrationsList();
+    fetchMetadata();
+    fetchOverdueData();
+  };
+
+  // Only re-fetch the calibrations table when page, filters, or search change
   useEffect(() => {
-    fetchData();
-  }, [user?.id, page, pageSize, verdictFilter, typeFilter, searchQuery, viewMode, overdueScope, certStatusFilter, activeTab]);
+    if (user?.id) {
+      fetchCalibrationsList();
+    }
+  }, [user?.id, user?.companyId, page, pageSize, verdictFilter, typeFilter, debouncedSearchQuery, viewMode, certStatusFilter, activeTab]);
+
+  // Fetch summary metadata and overdue instruments once on mount or when company/scope changes
+  useEffect(() => {
+    if (user?.id) {
+      fetchMetadata();
+      fetchOverdueData();
+    }
+  }, [user?.id, user?.companyId, overdueScope]);
+
+  const handleOpenDeleteModal = async (cal: CalibrationRecord) => {
+    setCalibrationToDelete(cal);
+    setResequenceChoice("resequence");
+    setResequencePreview(null);
+    setDeleteReason("");
+    setDeleteModalOpen(true);
+    setLoadingPreview(true);
+    try {
+      const data = await getResequencePreview(cal.id);
+      setResequencePreview(data);
+    } catch (err) {
+      console.warn("Could not fetch resequence preview:", err);
+      setResequencePreview(null);
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
 
   const handleConfirmDelete = async () => {
     if (!calibrationToDelete) return;
     setDeleting(true);
     try {
-      await deleteCalibration(calibrationToDelete.id);
-      toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} deleted`);
+      const shouldResequence = (resequencePreview?.canResequence ?? false) && resequenceChoice === "resequence";
+      await deleteCalibration(calibrationToDelete.id, shouldResequence, deleteReason.trim() || undefined);
+      const affectedCount = resequencePreview?.affectedCalibrations?.length || 0;
+      if (shouldResequence && affectedCount > 0) {
+        toast.success(
+          `Calibration ${calibrationToDelete.certificate_number || ""} moved to Trash & ${affectedCount} subsequent certificates renumbered.`
+        );
+      } else {
+        toast.success(`Calibration record ${calibrationToDelete.certificate_number || ""} moved to Trash`);
+      }
       setDeleteModalOpen(false);
       setCalibrationToDelete(null);
-      fetchData();
+      setDeleteReason("");
+      setResequencePreview(null);
+      refreshAll();
     } catch {
       toast.error("Failed to delete calibration record");
     } finally {
@@ -306,7 +448,7 @@ export default function Calibration() {
       a.remove();
       window.URL.revokeObjectURL(url);
       toast.success(`Certificate generated & downloaded for ${cal.certificate_number || cal.id}`);
-      fetchData();
+      refreshAll();
       if (pendingCertsModalOpen) {
         fetchPendingCerts();
       }
@@ -317,13 +459,48 @@ export default function Calibration() {
     }
   };
 
-  const handleDeleteDraft = async (id: string) => {
+  const handleDeleteDraft = async (id: string, instrumentId?: string) => {
     try {
       await deleteDraft(id);
-      setDrafts((prev) => prev.filter((d) => d.id !== id));
+      if (instrumentId) {
+        await deleteDraftsByInstrument(instrumentId).catch(console.error);
+      }
+      setDrafts((prev) =>
+        prev.filter((d) => {
+          if (d.id === id) return false;
+          if (instrumentId) {
+            let p = d.data;
+            if (typeof p === "string") {
+              try {
+                p = JSON.parse(p);
+              } catch {}
+            }
+            if (p?.selectedInstrument?.id === instrumentId || p?.selectedInstrument?.id_code === instrumentId) {
+              return false;
+            }
+          }
+          return true;
+        })
+      );
       toast.success("Draft deleted");
     } catch {
       toast.error("Failed to delete draft");
+    }
+  };
+
+  const [certPreviewModalOpen, setCertPreviewModalOpen] = useState(false);
+  const [previewCalibration, setPreviewCalibration] = useState<CalibrationRecord | null>(null);
+
+  const handleOpenCertPreview = async (cal: CalibrationRecord) => {
+    setPreviewCalibration(cal);
+    setCertPreviewModalOpen(true);
+    if (!cal.calibration_points || (!cal.layout_blocks && cal.is_canvas_template)) {
+      try {
+        const full = await getCalibration(cal.id);
+        if (full) {
+          setPreviewCalibration(full);
+        }
+      } catch (e) {}
     }
   };
 
@@ -336,137 +513,621 @@ export default function Calibration() {
     }
   };
 
-  return (
-    <div className="space-y-6 py-6 px-4 max-w-[1600px] mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Activity className="w-6 h-6 text-primary" />
-            Calibration
-          </h1>
-          <p className="text-sm text-muted-foreground">Calibrate instruments and generate professional certificates</p>
-        </div>
-        {canAccess("calibrations", "create") && (
-          <Button onClick={() => navigate("/calibration/new")} className="gap-2 shadow-lg">
-            <PlusCircle className="w-4 h-4" />
-            New Calibration
-          </Button>
-        )}
-      </div>
+  const recentColumns = useMemo<ColumnDef<CalibrationRecord>[]>(
+    () => [
+      {
+        accessorKey: "certificate_number",
+        header: "Certificate No",
+        cell: ({ row }) => (
+          <button
+            type="button"
+            onClick={() => handleOpenCertPreview(row.original)}
+            className="font-semibold text-primary tabular-nums hover:underline flex items-center gap-1 cursor-pointer text-left"
+            title="Preview Certificate"
+          >
+            <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+            <span>{row.original.certificate_number || row.original.id}</span>
+          </button>
+        ),
+      },
+      {
+        accessorKey: "instrument",
+        header: "Instrument",
+        cell: ({ row }) => {
+          const inst = row.original.instrument;
+          return (
+            <div>
+              <p className="text-[13px] font-semibold text-foreground leading-tight">
+                {inst?.name || "-"}
+              </p>
+              <p className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+                {inst?.id_code || ""}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "calibration_type",
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary"
+          >
+            {row.original.calibration_type || "-"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "calibration_date",
+        header: "Date",
+        cell: ({ row }) => (
+          <span className="text-[13px] whitespace-nowrap font-medium text-muted-foreground tabular-nums">
+            {fmtDate(row.original.calibration_date)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "verdict",
+        header: "Verdict",
+        cell: ({ row }) => <VerdictBadge verdict={row.original.verdict} size="sm" />,
+      },
+      {
+        accessorKey: "approval_status",
+        header: "Status",
+        cell: ({ row }) => {
+          const status = row.original.approval_status || "Calibration Completed";
+          if (status === "Approved") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                Approved
+              </Badge>
+            );
+          }
+          if (status === "Reviewed") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <UserCheck className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                Reviewed
+              </Badge>
+            );
+          }
+          if (status === "Rejected") {
+            const cal = row.original;
+            return (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 cursor-pointer focus:outline-hidden group"
+                    title="Click to view rejection details & rework notes"
+                  >
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 group-hover:bg-rose-200/90 group-hover:border-rose-400 dark:bg-rose-950/40 dark:text-rose-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5 shadow-2xs transition-colors"
+                    >
+                      <XCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                      Rejected
+                    </Badge>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-80 p-3.5 space-y-2.5 text-xs shadow-xl border-rose-200 dark:border-rose-900/60 z-50">
+                  <div className="flex items-center justify-between border-b pb-2">
+                    <span className="font-bold text-rose-700 dark:text-rose-400 flex items-center gap-1.5">
+                      <XCircle className="w-4 h-4 text-rose-600" /> Calibration Rejected
+                    </span>
+                    <Badge variant="outline" className="text-[10px] bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                      Rework Required
+                    </Badge>
+                  </div>
+                  {cal.rejected_by && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Rejected by: <strong className="text-foreground">{cal.rejected_by}</strong>
+                      {cal.rejected_at && (
+                        <span> on {format(new Date(cal.rejected_at), "dd-MMM-yyyy 'at' hh:mm a")}</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="bg-rose-50/70 dark:bg-rose-950/40 p-2.5 rounded-lg border border-rose-200/80 text-slate-800 dark:text-slate-200 space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3 text-rose-600" />
+                      Reason / Corrective Action:
+                    </div>
+                    <div className="whitespace-pre-wrap text-xs leading-relaxed font-medium">
+                      {cal.rejection_reason || "No explicit reason was recorded by the reviewer."}
+                    </div>
+                  </div>
+                  {canAccess("calibrations", "create") && (
+                    <Button
+                      size="sm"
+                      onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                      className="w-full text-xs h-7.5 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs mt-1"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Recalibrate Now
+                    </Button>
+                  )}
+                </PopoverContent>
+              </Popover>
+            );
+          }
+          if (status === "Pending Approval") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                Pending Approval
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="outline"
+              className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+            >
+              <CheckCircle className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+              Calibration Completed
+            </Badge>
+          );
+        },
+      },
+      {
+        accessorKey: "ulr_number",
+        header: "ULR",
+        cell: ({ row }) => (
+          <span className="text-[13px] font-medium text-slate-600 tabular-nums">
+            {row.original.ulr_number || "-"}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                  className="gap-1 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-xs"
+                  title="Recalibrate this rejected instrument"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Recalibrate
+                </Button>
+              )}
 
-      {/* Stats Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 border-blue-200">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/15"><Activity className="w-5 h-5 text-blue-600" /></div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.total}</p>
-                  <p className="text-xs text-muted-foreground">Total Calibrations</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border-emerald-200">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-emerald-500/15"><TrendingUp className="w-5 h-5 text-emerald-600" /></div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.passRate}%</p>
-                  <p className="text-xs text-muted-foreground">Pass Rate</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-red-500/10 to-red-600/5 border-red-200">
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-red-500/15"><XCircle className="w-5 h-5 text-red-600" /></div>
-                <div>
-                  <p className="text-2xl font-bold">{stats.failed}</p>
-                  <p className="text-xs text-muted-foreground">Failed</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card
-            onClick={() => { setActiveTab("pending"); setPage(1); }}
-            className="bg-gradient-to-br from-amber-500/15 via-amber-500/10 to-amber-600/5 border-amber-300/80 hover:border-amber-500 hover:shadow-md transition-all cursor-pointer group"
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)
+                }
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
+                title="View Calibration History"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                View
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenAuditLogs(cal)}
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold text-slate-700 hover:bg-slate-100"
+                title="View Audit Trail"
+              >
+                <History className="w-3.5 h-3.5 text-slate-600" />
+                Audit
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
+                  {cal.approval_status === "Rejected" && canAccess("calibrations", "create") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?recalibrateId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700 font-semibold focus:text-amber-800 focus:bg-amber-50"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                      Recalibrate Record
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    onClick={() => handleOpenCertPreview(cal)}
+                    className="gap-2 cursor-pointer text-primary"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-primary" />
+                    Preview Certificate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => handleDownload(cal)}
+                    className="gap-2 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-emerald-600" />
+                    Download PDF
+                  </DropdownMenuItem>
+                  {canAccess("calibrations", "edit") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700"
+                    >
+                      <Edit className="w-3.5 h-3.5 text-amber-600" />
+                      Edit Calibration
+                    </DropdownMenuItem>
+                  )}
+                  {canAccess("calibrations", "delete") && (
+                    <DropdownMenuItem
+                      onClick={() => handleOpenDeleteModal(cal)}
+                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      Delete Record
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [navigate, canAccess]
+  );
+
+  const pendingColumns = useMemo<ColumnDef<CalibrationRecord>[]>(
+    () => [
+      {
+        accessorKey: "certificate_number",
+        header: "Certificate No",
+        cell: ({ row }) => (
+          <span className="font-semibold text-primary tabular-nums">
+            {row.original.certificate_number || row.original.id}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "instrument",
+        header: "Instrument",
+        cell: ({ row }) => {
+          const inst = row.original.instrument;
+          return (
+            <div>
+              <p className="text-[13px] font-semibold text-foreground leading-tight">
+                {inst?.name || "-"}
+              </p>
+              <p className="text-[11px] text-muted-foreground tracking-tight mt-0.5">
+                {inst?.id_code || ""}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "calibration_type",
+        header: "Type",
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary"
           >
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
-                  <Clock className="w-5 h-5 text-amber-600" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold text-amber-700 dark:text-amber-400">{stats.pendingCerts}</p>
-                    {stats.pendingCerts > 0 && (
-                      <Badge variant="outline" className="text-[9px] px-1.5 py-0 uppercase bg-amber-100 text-amber-800 border-amber-300">
-                        Pending
-                      </Badge>
-                    )}
+            {row.original.calibration_type || "-"}
+          </Badge>
+        ),
+      },
+      {
+        accessorKey: "calibration_date",
+        header: "Calibration Date",
+        cell: ({ row }) => (
+          <span className="text-[13px] whitespace-nowrap font-medium text-muted-foreground tabular-nums">
+            {fmtDate(row.original.calibration_date)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "verdict",
+        header: "Verdict",
+        cell: ({ row }) => <VerdictBadge verdict={row.original.verdict} size="sm" />,
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => {
+          const status = row.original.approval_status || "Calibration Completed";
+          if (status === "Approved") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase font-bold bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/40 dark:text-emerald-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                Approved
+              </Badge>
+            );
+          }
+          if (status === "Reviewed") {
+            return (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase font-bold bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/40 dark:text-purple-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+              >
+                <UserCheck className="w-3 h-3 text-purple-600" />
+                Reviewed
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="outline"
+              className="text-[10px] uppercase font-bold bg-blue-100 text-blue-800 border-blue-300 dark:bg-blue-950/40 dark:text-blue-400 whitespace-nowrap inline-flex items-center gap-1 px-2 py-0.5"
+            >
+              <CheckCircle className="w-3 h-3 text-blue-600" />
+              Calibration Completed
+            </Badge>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Actions",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const cal = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1.5">
+              <Button
+                size="sm"
+                onClick={() => handleGenerateCertificate(cal)}
+                disabled={generatingId === cal.id}
+                className="gap-1.5 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
+                title="Generate and Download Official Certificate PDF"
+              >
+                {generatingId === cal.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5" />
+                )}
+                Generate Certificate
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)
+                }
+                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
+                title="View Calibration History"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                View
+              </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                  >
+                    <MoreVertical className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
+                  <DropdownMenuItem onClick={() => handleOpenAuditLogs(cal)} className="gap-2 cursor-pointer">
+                    <History className="w-3.5 h-3.5 text-slate-600" />
+                    Audit Trail
+                  </DropdownMenuItem>
+                  {canAccess("calibrations", "edit") && (
+                    <DropdownMenuItem
+                      onClick={() => navigate(`/calibration/new?editId=${cal.id}`)}
+                      className="gap-2 cursor-pointer text-amber-700"
+                    >
+                      <Edit className="w-3.5 h-3.5 text-amber-600" />
+                      Edit Calibration
+                    </DropdownMenuItem>
+                  )}
+                  {canAccess("calibrations", "delete") && (
+                    <DropdownMenuItem
+                      onClick={() => handleOpenDeleteModal(cal)}
+                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
+                      Delete Record
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        },
+      },
+    ],
+    [navigate, canAccess, generatingId]
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <PageHeader
+        title="Calibration"
+        description="Calibrate instruments and generate professional certificates"
+        actions={
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant={showDashboard ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setShowDashboard((prev) => !prev)}
+              className="h-8 px-3 text-xs font-semibold gap-1.5 transition-colors shadow-2xs"
+              title={showDashboard ? "Hide dashboard metrics & shortcuts" : "Show dashboard metrics & shortcuts"}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5 text-muted-foreground" />
+              <span>{showDashboard ? "Hide Dashboard" : "Show Dashboard"}</span>
+              {!showDashboard && stats && (
+                <Badge variant="secondary" className="ml-1 text-[10px] font-mono px-1.5 py-0 h-4 bg-muted text-muted-foreground">
+                  {stats.total}
+                </Badge>
+              )}
+            </Button>
+            {canAccess("calibrations", "create") && (
+              <Button
+                size="sm"
+                onClick={() => navigate("/calibration/new")}
+                className="h-8 px-3.5 text-xs font-semibold gap-2 shadow-2xs"
+              >
+                <PlusCircle className="w-4 h-4" />
+                New Calibration
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      {/* Collapsible Dashboard Section */}
+      {showDashboard && (
+        <div className="space-y-4 animate-in fade-in-50 duration-200">
+          {/* Stats Cards */}
+          {stats && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                      <Activity className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.total}</p>
+                      <p className="text-xs text-muted-foreground font-medium">Total Calibrations</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Pending Certificates <ChevronRight className="w-3 h-3 text-amber-500 group-hover:translate-x-0.5 transition-transform" />
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card
-            onClick={() => { setActiveTab("overdue"); setPage(1); }}
-            className="bg-gradient-to-br from-rose-500/15 via-rose-500/10 to-rose-600/5 border-rose-300/80 hover:border-rose-500 hover:shadow-md transition-all cursor-pointer group"
-          >
-            <CardContent className="pt-5 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-rose-500/20 text-rose-600 dark:text-rose-400 group-hover:scale-110 transition-transform">
-                  <AlertTriangle className="w-5 h-5 text-rose-600" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{activeOverdueCount}</p>
-                    {activeOverdueCount > 0 && (
-                      <Badge variant="destructive" className="text-[9px] px-1.5 py-0 uppercase animate-pulse">
-                        Overdue
-                      </Badge>
-                    )}
+                </CardContent>
+              </Card>
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-success/10 text-success">
+                      <TrendingUp className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.passRate}%</p>
+                      <p className="text-xs text-muted-foreground font-medium">Pass Rate</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
-                    Overdue Instruments <ChevronRight className="w-3 h-3 text-rose-500 group-hover:translate-x-0.5 transition-transform" />
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+              <Card className="rounded-xl border border-border bg-card shadow-2xs">
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-destructive/10 text-destructive">
+                      <XCircle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-2xl font-bold tracking-tight tabular-nums">{stats.failed}</p>
+                      <p className="text-xs text-muted-foreground font-medium">Failed</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card
+                onClick={() => { setActiveTab("pending"); setPage(1); }}
+                className="rounded-xl border border-border hover:border-warning/50 bg-card shadow-2xs transition-all cursor-pointer group"
+              >
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-warning/10 text-warning group-hover:scale-105 transition-transform">
+                      <Clock className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{stats.pendingCerts}</p>
+                        {stats.pendingCerts > 0 && (
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 uppercase bg-warning/10 text-warning border-warning/20">
+                            Pending
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                        Pending Certificates <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card
+                onClick={() => { setActiveTab("overdue"); setPage(1); }}
+                className="rounded-xl border border-border hover:border-destructive/50 bg-card shadow-2xs transition-all cursor-pointer group"
+              >
+                <CardContent className="pt-5 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-lg bg-destructive/10 text-destructive group-hover:scale-105 transition-transform">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-2xl font-bold tracking-tight tabular-nums text-foreground">{activeOverdueCount}</p>
+                        {activeOverdueCount > 0 && (
+                          <Badge variant="destructive" className="text-[10px] px-1.5 py-0 uppercase">
+                            Overdue
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground font-medium flex items-center gap-0.5">
+                        Overdue Instruments <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Instrument Type Quick Links */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+            {CALIBRATION_TYPES.map((ct) => {
+              const IconComp = quickLinkIconMap[ct.icon] || Gauge;
+              const style = quickLinkColorMap[ct.type] || quickLinkColorMap.pressure;
+
+              return (
+                <Card
+                  key={ct.type}
+                  onClick={() => navigate(`/calibration/new?type=${ct.type}`)}
+                  className="p-2.5 flex items-center gap-2.5 hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group bg-card"
+                >
+                  <div className={`p-2 rounded-xl border ${style.badge} transition-transform group-hover:scale-110 shadow-2xs`}>
+                    <IconComp className={`w-4 h-4 ${style.icon}`} />
+                  </div>
+                  <span className="text-[11px] font-semibold text-foreground leading-tight group-hover:text-primary transition-colors">{ct.label}</span>
+                </Card>
+              );
+            })}
+          </div>
         </div>
       )}
 
-      {/* Instrument Type Quick Links */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        {CALIBRATION_TYPES.map((ct) => {
-          const IconComp = quickLinkIconMap[ct.icon] || Gauge;
-          const style = quickLinkColorMap[ct.type] || quickLinkColorMap.pressure;
-
-          return (
-            <Card
-              key={ct.type}
-              onClick={() => navigate(`/calibration/new?type=${ct.type}`)}
-              className="p-2.5 flex items-center gap-2.5 hover:shadow-md hover:border-primary/40 transition-all cursor-pointer group bg-card"
-            >
-              <div className={`p-2 rounded-xl border ${style.badge} transition-transform group-hover:scale-110 shadow-2xs`}>
-                <IconComp className={`w-4 h-4 ${style.icon}`} />
-              </div>
-              <span className="text-[11px] font-semibold text-foreground leading-tight group-hover:text-primary transition-colors">{ct.label}</span>
-            </Card>
-          );
-        })}
-      </div>
-
         <Tabs value={activeTab} onValueChange={(val) => { setActiveTab(val); setPage(1); }} className="w-full">
-        <Card>
+        <Card className="rounded-xl border border-border/80 bg-card shadow-xs overflow-hidden">
           <CardHeader className="pb-2 space-y-3">
             {/* Row 1: Full-width Tabs */}
             <TabsList className="w-full justify-start h-11 bg-muted/50 p-1 rounded-xl gap-1">
@@ -631,433 +1292,165 @@ export default function Calibration() {
           </CardHeader>
           <CardContent className="pt-0">
             <TabsContent value="recent" className="mt-0">
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />
-                ))}
-              </div>
-            ) : calibrations.length > 0 ? (
-              <>
-                <div className="overflow-x-auto border rounded-xl shadow-sm">
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow className="hover:bg-transparent border-b">
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Certificate No</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Date</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Verdict</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">ULR</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {calibrations.map((cal) => (
-                        <TableRow key={cal.id} className="hover:bg-muted/20 transition-colors">
-                          <TableCell className="font-mono text-[13px] font-bold text-primary px-4 py-3">{cal.certificate_number}</TableCell>
-                          <TableCell className="px-4 py-3">
-                            <div>
-                              <p className="text-[13px] font-semibold text-foreground leading-tight">{cal.instrument?.name || "-"}</p>
-                              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{cal.instrument?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
-                              {cal.calibration_type || "-"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell className="px-4 py-3"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="text-[13px] font-mono font-medium text-slate-600 px-4 py-3">{cal.ulr_number || "-"}</TableCell>
-                          <TableCell className="text-right px-4 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Default Visible Button 1: View */}
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)} 
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
-                                title="View Calibration History"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View
-                              </Button>
+              <DataTable
+                columns={recentColumns}
+                data={calibrations}
+                loading={loading}
+                pageCount={Math.ceil(total / pageSize) || 1}
+                pageIndex={page}
+                pageSize={pageSize}
+                totalItems={total}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                hideSearch={true}
+                hideColumnToggle={false}
+                emptyTitle="No calibrations found"
+                emptyDescription="We couldn't find any calibration records matching your criteria."
+                emptyAction={
+                  <Button onClick={() => navigate("/calibration/new")} className="gap-2">
+                    <PlusCircle className="w-4 h-4" />
+                    Start First Calibration
+                  </Button>
+                }
+              />
+            </TabsContent>
 
-                              {/* Default Visible Button 2: Audit */}
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleOpenAuditLogs(cal)}
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold text-slate-700 hover:bg-slate-100"
-                                title="View Audit Trail"
-                              >
-                                <History className="w-3.5 h-3.5 text-slate-600" />
-                                Audit
-                              </Button>
-
-                              {/* Dropdown Menu for More Options (PDF, Edit, Delete) */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                                    <MoreVertical className="w-4 h-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
-                                  {cal.certificate_generated ? (
-                                    <DropdownMenuItem onClick={() => handleDownload(cal)} className="gap-2 cursor-pointer">
-                                      <Download className="w-3.5 h-3.5 text-emerald-600" />
-                                      Download PDF
-                                    </DropdownMenuItem>
-                                  ) : (
-                                    <DropdownMenuItem disabled className="gap-2 text-muted-foreground text-[11px]">
-                                      <FileText className="w-3.5 h-3.5" />
-                                      No Certificate
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "edit") && (
-                                    <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
-                                      <Edit className="w-3.5 h-3.5 text-amber-600" />
-                                      Edit Calibration
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "delete") && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        setCalibrationToDelete(cal);
-                                        setDeleteModalOpen(true);
-                                      }}
-                                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                      Delete Record
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Enhanced Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
-                  <div className="flex items-center gap-3">
-                    <span className="text-muted-foreground">
-                      Showing <strong>{total === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, total)}</strong> of <strong>{total}</strong> calibrations
-                    </span>
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <span className="text-muted-foreground">Per page:</span>
-                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
-                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      className="h-7 text-xs"
-                    >
-                      Previous
-                    </Button>
-                    {Array.from({ length: Math.ceil(total / pageSize) || 1 }).map((_, idx) => {
-                      const pNum = idx + 1;
-                      const totalPages = Math.ceil(total / pageSize) || 1;
-                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
-                        return (
-                          <Button
-                            key={pNum}
-                            variant={page === pNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setPage(pNum)}
-                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
-                          >
-                            {pNum}
-                          </Button>
-                        );
-                      }
-                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
-                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
-                      return null;
-                    })}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page * pageSize >= total}
-                      onClick={() => setPage((p) => p + 1)}
-                      className="h-7 text-xs"
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-12">
-                <FileText className="w-12 h-12 mx-auto text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">No calibrations found</p>
-                <Button onClick={() => navigate("/calibration/new")} className="mt-4 gap-2">
-                  <PlusCircle className="w-4 h-4" />
-                  Start First Calibration
-                </Button>
-              </div>
-            )}
-          </TabsContent>
-
-          {/* PENDING CERTIFICATES TAB */}
-          <TabsContent value="pending" className="mt-0">
-            {loading ? (
-              <div className="space-y-3">
-                {[...Array(5)].map((_, i) => (
-                  <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />
-                ))}
-              </div>
-            ) : calibrations.length > 0 ? (
-              <>
-                <div className="overflow-x-auto border rounded-xl shadow-sm">
-                  <Table>
-                    <TableHeader className="bg-amber-50/50 dark:bg-amber-950/20 border-b border-amber-200/40">
-                      <TableRow className="hover:bg-transparent border-b">
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Certificate No</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Calibration Date</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Verdict</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4">Status</TableHead>
-                        <TableHead className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {calibrations.map((cal) => (
-                        <TableRow key={cal.id} className="hover:bg-amber-50/20 dark:hover:bg-amber-950/10 transition-colors">
-                          <TableCell className="font-mono text-[13px] font-bold text-primary px-4 py-3">{cal.certificate_number || cal.id}</TableCell>
-                          <TableCell className="px-4 py-3">
-                            <div>
-                              <p className="text-[13px] font-semibold text-foreground leading-tight">{cal.instrument?.name || "-"}</p>
-                              <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{cal.instrument?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[11px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
-                              {cal.calibration_type || "-"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-[13px] whitespace-nowrap font-medium text-muted-foreground px-4 py-3">{fmtDate(cal.calibration_date)}</TableCell>
-                          <TableCell className="px-4 py-3"><VerdictBadge verdict={cal.verdict} size="sm" /></TableCell>
-                          <TableCell className="px-4 py-3">
-                            <Badge variant="outline" className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400">
-                              Pending Generation
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right px-4 py-3">
-                            <div className="flex items-center justify-end gap-1.5">
-                              {/* Primary Generate Button */}
-                              <Button
-                                size="sm"
-                                onClick={() => handleGenerateCertificate(cal)}
-                                disabled={generatingId === cal.id}
-                                className="gap-1.5 text-xs h-7 px-2.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold shadow-2xs"
-                                title="Generate and Download Official Certificate PDF"
-                              >
-                                {generatingId === cal.id ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <FileText className="w-3.5 h-3.5" />
-                                )}
-                                Generate Certificate
-                              </Button>
-
-                              {/* View Button */}
-                              <Button 
-                                variant="outline" 
-                                size="sm" 
-                                onClick={() => navigate(`/calibration/history/${cal.instrument_id || cal.instrument?.id}`)} 
-                                className="gap-1 text-xs h-7 px-2 bg-background shadow-2xs font-semibold border-primary/30 text-primary hover:bg-primary/5"
-                                title="View Calibration History"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View
-                              </Button>
-
-                              {/* More Options Dropdown */}
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                                    <MoreVertical className="w-4 h-4" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="w-44 text-xs font-medium">
-                                  <DropdownMenuItem onClick={() => handleOpenAuditLogs(cal)} className="gap-2 cursor-pointer">
-                                    <History className="w-3.5 h-3.5 text-slate-600" />
-                                    Audit Trail
-                                  </DropdownMenuItem>
-                                  {canAccess("calibrations", "edit") && (
-                                    <DropdownMenuItem onClick={() => navigate(`/calibration/new?editId=${cal.id}`)} className="gap-2 cursor-pointer text-amber-700">
-                                      <Edit className="w-3.5 h-3.5 text-amber-600" />
-                                      Edit Calibration
-                                    </DropdownMenuItem>
-                                  )}
-                                  {canAccess("calibrations", "delete") && (
-                                    <DropdownMenuItem
-                                      onClick={() => {
-                                        setCalibrationToDelete(cal);
-                                        setDeleteModalOpen(true);
-                                      }}
-                                      className="gap-2 cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5 text-red-600" />
-                                      Delete Record
-                                    </DropdownMenuItem>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Enhanced Pagination Controls */}
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
-                  <div className="flex items-center gap-3">
-                    <span className="text-muted-foreground">
-                      Showing <strong>{total === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, total)}</strong> of <strong>{total}</strong> pending certificates
-                    </span>
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <span className="text-muted-foreground">Per page:</span>
-                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
-                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      className="h-7 text-xs"
-                    >
-                      Previous
-                    </Button>
-                    {Array.from({ length: Math.ceil(total / pageSize) || 1 }).map((_, idx) => {
-                      const pNum = idx + 1;
-                      const totalPages = Math.ceil(total / pageSize) || 1;
-                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
-                        return (
-                          <Button
-                            key={pNum}
-                            variant={page === pNum ? "default" : "outline"}
-                            size="sm"
-                            onClick={() => setPage(pNum)}
-                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
-                          >
-                            {pNum}
-                          </Button>
-                        );
-                      }
-                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
-                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
-                      return null;
-                    })}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page * pageSize >= total}
-                      onClick={() => setPage((p) => p + 1)}
-                      className="h-7 text-xs"
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="text-center py-12 flex flex-col items-center">
-                <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
-                <p className="text-base font-bold text-foreground">All Certificates Generated!</p>
-                <p className="text-xs text-muted-foreground">There are no completed calibrations waiting for certificate generation.</p>
-              </div>
-            )}
-          </TabsContent>
+            <TabsContent value="pending" className="mt-0">
+              <DataTable
+                columns={pendingColumns}
+                data={calibrations}
+                loading={loading}
+                pageCount={Math.ceil(total / pageSize) || 1}
+                pageIndex={page}
+                pageSize={pageSize}
+                totalItems={total}
+                onPageChange={(p) => setPage(p)}
+                onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+                hideSearch={true}
+                hideColumnToggle={false}
+                emptyTitle="All Certificates Generated!"
+                emptyDescription="There are no completed calibrations waiting for certificate generation."
+                emptyIcon={CheckCircle2}
+              />
+            </TabsContent>
 
           {/* OVERDUE INSTRUMENTS TAB */}
           <TabsContent value="overdue" className="mt-4">
             {filteredOverdueInstruments.length > 0 ? (
-              <div className="overflow-x-auto border rounded-xl shadow-2xs">
-                <Table>
-                  <TableHeader className="bg-rose-50/50 dark:bg-rose-950/20 border-b border-rose-100 dark:border-rose-900/40">
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
-                      <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredOverdueInstruments.map((inst) => (
-                      <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
-                        <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="text-xs font-semibold text-foreground">{inst.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {inst.location || "-"}
-                        </TableCell>
-                        <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                          {fmtDate(inst.due_date || inst.next_due_date)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="destructive" className="text-[10px] uppercase font-bold">
-                            Overdue
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            onClick={() => navigate(`/calibration/new/${inst.id}`)}
-                            className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
-                          >
-                            <PlayCircle className="w-3.5 h-3.5" />
-                            Start Calibration
-                          </Button>
-                        </TableCell>
+              <>
+                <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                  <Table>
+                    <TableHeader className="bg-rose-50/90 dark:bg-rose-950/80 border-b border-rose-100 dark:border-rose-900/40 sticky top-0 z-10 backdrop-blur-xs">
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument ID</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Instrument Name</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Location / Dept</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Next Due Date</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3">Status</TableHead>
+                        <TableHead className="font-bold text-xs uppercase tracking-wider text-foreground py-3 text-right">Actions</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedOverdueInstruments.map((inst) => (
+                        <TableRow key={inst.id} className="hover:bg-rose-50/30 dark:hover:bg-rose-950/10 transition-colors">
+                          <TableCell className="font-mono text-xs font-bold text-primary">{inst.id_code}</TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="text-xs font-semibold text-foreground">{inst.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{inst.item_type || inst.module || "-"}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {inst.location || "-"}
+                          </TableCell>
+                          <TableCell className="text-xs font-medium text-rose-600 dark:text-rose-400 whitespace-nowrap">
+                            {fmtDate(inst.due_date || inst.next_due_date)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge variant="destructive" className="text-[10px] uppercase font-bold whitespace-nowrap inline-flex items-center px-2 py-0.5">
+                              Overdue
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              size="sm"
+                              onClick={() => navigate(`/calibration/new/${inst.id}`)}
+                              className="gap-1.5 h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold shadow-sm"
+                            >
+                              <PlayCircle className="w-3.5 h-3.5" />
+                              Start Calibration
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Enhanced Pagination Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground">
+                      Showing <strong>{filteredOverdueInstruments.length === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, filteredOverdueInstruments.length)}</strong> of <strong>{filteredOverdueInstruments.length}</strong> overdue instruments
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-2">
+                      <span className="text-muted-foreground">Per page:</span>
+                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="h-7 text-xs"
+                    >
+                      Previous
+                    </Button>
+                    {Array.from({ length: Math.ceil(filteredOverdueInstruments.length / pageSize) || 1 }).map((_, idx) => {
+                      const pNum = idx + 1;
+                      const totalPages = Math.ceil(filteredOverdueInstruments.length / pageSize) || 1;
+                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
+                        return (
+                          <Button
+                            key={pNum}
+                            variant={page === pNum ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setPage(pNum)}
+                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
+                          >
+                            {pNum}
+                          </Button>
+                        );
+                      }
+                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
+                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
+                      return null;
+                    })}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page * pageSize >= filteredOverdueInstruments.length}
+                      onClick={() => setPage((p) => p + 1)}
+                      className="h-7 text-xs"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="text-center py-12 flex flex-col items-center">
                 <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-3" />
@@ -1069,70 +1462,136 @@ export default function Calibration() {
 
           {/* DRAFTS TAB */}
           <TabsContent value="drafts" className="mt-4">
-            {drafts.length > 0 ? (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Instrument</TableHead>
-                      <TableHead className="text-xs">Type</TableHead>
-                      <TableHead className="text-xs">Last Saved</TableHead>
-                      <TableHead className="text-xs text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {drafts.map((draft) => {
-                      let parsedData = draft.data;
-                      if (typeof parsedData === "string") {
-                        try { parsedData = JSON.parse(parsedData); } catch (e) {}
-                      }
-                      const inst = parsedData?.selectedInstrument;
-                      const typeLabel = parsedData?.selectedType?.label || "-";
-                      
-                      return (
-                        <TableRow key={draft.id}>
-                          <TableCell>
-                            <div>
-                              <p className="text-xs font-medium">{inst?.name || "Unknown Instrument"}</p>
-                              <p className="text-[10px] text-muted-foreground">{inst?.id_code || ""}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="text-[10px] capitalize">
-                              {typeLabel}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs whitespace-nowrap text-muted-foreground">
-                            {draft.updated_at ? format(new Date(draft.updated_at), "dd-MMM-yyyy hh:mm a") : "-"}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <Button 
-                                variant="default" 
-                                size="sm" 
-                                className="h-7 text-xs px-3"
-                                onClick={() => navigate(`/calibration/new?draftId=${draft.id}`)}
-                              >
-                                Resume
-                              </Button>
-                              {canAccess("calibrations", "delete") && (
+            {filteredDrafts.length > 0 ? (
+              <>
+                <div className="overflow-x-auto border rounded-xl shadow-2xs">
+                  <Table>
+                    <TableHeader className="bg-muted/90 backdrop-blur-xs sticky top-0 z-10 border-b">
+                      <TableRow>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Instrument</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Type</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4">Last Saved</TableHead>
+                        <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground py-3 px-4 text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedDrafts.map((draft) => {
+                        let parsedData = draft.data;
+                        if (typeof parsedData === "string") {
+                          try { parsedData = JSON.parse(parsedData); } catch (e) {}
+                        }
+                        const inst = parsedData?.selectedInstrument;
+                        const typeLabel = parsedData?.selectedType?.label || "-";
+                        
+                        return (
+                          <TableRow key={draft.id} className="hover:bg-muted/20 transition-colors">
+                            <TableCell className="px-4 py-3">
+                              <div>
+                                <p className="text-xs font-medium text-foreground">{inst?.name || "Unknown Instrument"}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{inst?.id_code || ""}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="px-4 py-3">
+                              <Badge variant="outline" className="text-[10px] capitalize font-medium border-primary/20 bg-primary/5 text-primary">
+                                {typeLabel}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap text-muted-foreground px-4 py-3">
+                              {draft.updated_at ? format(new Date(draft.updated_at), "dd-MMM-yyyy hh:mm a") : "-"}
+                            </TableCell>
+                            <TableCell className="text-right px-4 py-3">
+                              <div className="flex items-center justify-end gap-2">
                                 <Button 
-                                  variant="ghost" 
-                                  size="icon"
-                                  className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50"
-                                  onClick={() => handleDeleteDraft(draft.id)}
+                                  variant="default" 
+                                  size="sm" 
+                                  className="h-7 text-xs px-3 font-semibold"
+                                  onClick={() => navigate(`/calibration/new?draftId=${draft.id}`)}
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  Resume
                                 </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
+                                {canAccess("calibrations", "delete") && (
+                                  <Button 
+                                    variant="ghost" 
+                                    size="icon"
+                                    className="h-7 w-7 text-red-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                    onClick={() => handleDeleteDraft(draft.id, inst?.id || inst?.id_code)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Enhanced Pagination Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t text-[13px]">
+                  <div className="flex items-center gap-3">
+                    <span className="text-muted-foreground">
+                      Showing <strong>{filteredDrafts.length === 0 ? 0 : (page - 1) * pageSize + 1}</strong> to <strong>{Math.min(page * pageSize, filteredDrafts.length)}</strong> of <strong>{filteredDrafts.length}</strong> unfinished drafts
+                    </span>
+                    <div className="flex items-center gap-1.5 ml-2">
+                      <span className="text-muted-foreground">Per page:</span>
+                      <Select value={String(pageSize)} onValueChange={(val) => { setPageSize(Number(val)); setPage(1); }}>
+                        <SelectTrigger className="w-[70px] h-8 text-[13px] font-mono font-bold rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      className="h-7 text-xs"
+                    >
+                      Previous
+                    </Button>
+                    {Array.from({ length: Math.ceil(filteredDrafts.length / pageSize) || 1 }).map((_, idx) => {
+                      const pNum = idx + 1;
+                      const totalPages = Math.ceil(filteredDrafts.length / pageSize) || 1;
+                      if (pNum === 1 || pNum === totalPages || Math.abs(pNum - page) <= 1) {
+                        return (
+                          <Button
+                            key={pNum}
+                            variant={page === pNum ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setPage(pNum)}
+                            className="h-7 w-7 text-xs p-0 font-mono font-bold"
+                          >
+                            {pNum}
+                          </Button>
+                        );
+                      }
+                      if (pNum === 2 && page > 3) return <span key="dots-left" className="px-1 text-muted-foreground">...</span>;
+                      if (pNum === totalPages - 1 && page < totalPages - 2) return <span key="dots-right" className="px-1 text-muted-foreground">...</span>;
+                      return null;
                     })}
-                  </TableBody>
-                </Table>
-              </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={page * pageSize >= filteredDrafts.length}
+                      onClick={() => setPage((p) => p + 1)}
+                      className="h-7 text-xs"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </>
             ) : (
               <div className="text-center py-12 flex flex-col items-center">
                 <FileText className="w-12 h-12 text-muted-foreground/30 mb-4" />
@@ -1171,7 +1630,7 @@ export default function Calibration() {
                     <div className="flex items-center justify-between border-b pb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px]">
-                          Edited by {log.edited_by_name || log.edited_by?.name || "User"}
+                          Edited by {log.edited_by_name || (typeof log.edited_by === "object" && log.edited_by && "name" in log.edited_by ? String((log.edited_by as any).name) : (typeof log.edited_by === "string" ? log.edited_by : "User"))}
                         </Badge>
                       </div>
                       <span className="text-[10px] text-muted-foreground font-mono">
@@ -1225,27 +1684,262 @@ export default function Calibration() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Modal */}
+      {/* Smart Delete Confirmation Modal with Resequence Options & Preview */}
       <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="w-5 h-5" />
-              Delete Calibration Record
-            </DialogTitle>
-            <DialogDescription className="text-xs pt-1">
-              Are you sure you want to permanently delete calibration record{" "}
-              <strong className="font-mono text-foreground">{calibrationToDelete?.certificate_number || calibrationToDelete?.id}</strong>?
-              This action cannot be undone.
-            </DialogDescription>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="p-4 border-b bg-amber-50/50 dark:bg-amber-950/20">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold text-amber-700 dark:text-amber-400">
+                  Move Calibration to Trash
+                </DialogTitle>
+                <DialogDescription className="text-xs pt-0.5 text-muted-foreground">
+                  Certificate: <strong className="font-mono text-foreground font-bold">{calibrationToDelete?.certificate_number || calibrationToDelete?.id}</strong>
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="flex justify-end gap-2 pt-4">
-            <Button variant="outline" size="sm" onClick={() => setDeleteModalOpen(false)} disabled={deleting}>
+
+          <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+            {loadingPreview ? (
+              <div className="py-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                <p className="text-xs">Analyzing certificate sequence and subsequent records...</p>
+              </div>
+            ) : resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 ? (
+              <div className="space-y-4">
+                <div className="space-y-1">
+                  <p className="font-semibold text-foreground">Sequence Reassignment Options</p>
+                  <p className="text-muted-foreground text-xs">
+                    This calibration is followed by <strong>{resequencePreview.affectedCalibrations.length}</strong> subsequent certificate(s). Select how you would like to handle downstream sequence numbers:
+                  </p>
+                </div>
+
+                {resequencePreview?.isIssuedOrApproved && (
+                  <div className="p-2.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-xs text-amber-900 dark:text-amber-200">
+                    <strong>Super Admin Notice:</strong> This calibration is officially Approved/Issued. Resequencing downstream numbers will alter already-issued certificate numbers.
+                  </div>
+                )}
+
+                {/* Option Choice Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div
+                    onClick={() => setResequenceChoice("resequence")}
+                    className={`cursor-pointer p-3 rounded-xl border-2 transition-all ${
+                      resequenceChoice === "resequence"
+                        ? "border-primary bg-primary/5 shadow-xs"
+                        : "border-border hover:border-primary/40 bg-card"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="radio"
+                        name="resequenceChoice"
+                        checked={resequenceChoice === "resequence"}
+                        onChange={() => setResequenceChoice("resequence")}
+                        className="mt-0.5 cursor-pointer"
+                      />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-1.5">
+                          <p className="font-bold text-foreground">Reassign Sequence</p>
+                          <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20 font-semibold px-1.5 py-0">
+                            Recommended
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          Shifts downstream certificate numbers back by 1 from deleted record to end. Prevents sequence gaps.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setResequenceChoice("keep")}
+                    className={`cursor-pointer p-3 rounded-xl border-2 transition-all ${
+                      resequenceChoice === "keep"
+                        ? "border-amber-500 bg-amber-50/20 dark:bg-amber-950/20 shadow-xs"
+                        : "border-border hover:border-amber-400/40 bg-card"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <input
+                        type="radio"
+                        name="resequenceChoice"
+                        checked={resequenceChoice === "keep"}
+                        onChange={() => setResequenceChoice("keep")}
+                        className="mt-0.5 cursor-pointer"
+                      />
+                      <div className="space-y-1">
+                        <p className="font-bold text-foreground">Keep Existing Numbers</p>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          Leaves downstream certificates as-is. Creates an intentional gap in the certificate number sequence.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Preview Diff Table if resequence selected */}
+                {resequenceChoice === "resequence" ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between">
+                      <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">
+                        Sequence Number Shift Preview ({resequencePreview.affectedCalibrations.length + 1} Records)
+                      </p>
+                      <span className="text-[11px] text-muted-foreground">
+                        Next Counter: <strong className="text-foreground font-mono">{resequencePreview.currentNextSeq}</strong> → <strong className="text-primary font-mono">{resequencePreview.newNextSeq}</strong>
+                      </span>
+                    </div>
+
+                    <div className="border rounded-xl overflow-hidden shadow-2xs">
+                      <Table className="text-xs">
+                        <TableHeader className="bg-muted/70">
+                          <TableRow>
+                            <TableHead className="py-2 font-bold text-foreground">Instrument</TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">Current Cert No</TableHead>
+                            <TableHead className="py-2 w-6 text-center"></TableHead>
+                            <TableHead className="py-2 font-bold text-foreground">Updated Cert No</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {/* Deleted Target Row */}
+                          <TableRow className="bg-red-50/30 dark:bg-red-950/20 border-b">
+                            <TableCell className="py-2 font-medium">
+                              <div>
+                                <p className="font-semibold text-foreground">{resequencePreview.targetCalibration.instrumentName || "Selected Item"}</p>
+                                <p className="text-[10px] text-muted-foreground font-mono">{resequencePreview.targetCalibration.idCode || ""}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2 font-mono font-bold text-red-600">
+                              {resequencePreview.targetCalibration.certificate_number}
+                            </TableCell>
+                            <TableCell className="py-2 text-center text-muted-foreground">→</TableCell>
+                            <TableCell className="py-2">
+                              <Badge variant="destructive" className="text-[10px] font-bold">
+                                DELETED (REMOVED)
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+
+                          {/* Downstream Affected Rows */}
+                          {resequencePreview.affectedCalibrations.map((item) => (
+                            <TableRow key={item.id} className="hover:bg-muted/30 transition-colors">
+                              <TableCell className="py-2 font-medium">
+                                <div>
+                                  <p className="font-semibold text-foreground">{item.instrumentName || "Instrument"}</p>
+                                  <p className="text-[10px] text-muted-foreground font-mono">{item.idCode || ""}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell className="py-2 font-mono text-muted-foreground line-through">
+                                {item.oldCertificateNumber}
+                              </TableCell>
+                              <TableCell className="py-2 text-center text-muted-foreground font-bold">→</TableCell>
+                              <TableCell className="py-2">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-300">
+                                  {item.newCertificateNumber}
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-xs">
+                    <p className="font-semibold">Gap Notice:</p>
+                    <p className="text-[11px] mt-0.5">
+                      Subsequent records will retain current numbers ({resequencePreview.affectedCalibrations.map((c) => c.oldCertificateNumber).join(", ")}). The number <strong>{resequencePreview.targetCalibration.certificate_number}</strong> will be skipped permanently.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-muted-foreground">
+                  Are you sure you want to delete calibration record{" "}
+                  <strong className="font-mono text-foreground font-bold">
+                    {calibrationToDelete?.certificate_number || calibrationToDelete?.id}
+                  </strong>
+                  ?
+                </p>
+                <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300">
+                  This calibration will be moved to the <strong>Trash (Recovery Center)</strong> and can be restored at any time.
+                </div>
+                {resequencePreview?.isIssuedOrApproved && (
+                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-900 dark:text-blue-300 space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4 text-blue-600 shrink-0" />
+                      ISO/IEC 17025 Compliance Protection
+                    </p>
+                    <p className="text-muted-foreground text-[11px]">
+                      This calibration is officially Approved/Issued. Certificate numbers cannot be renumbered to protect certificate integrity and audit compliance. It will be safely voided without altering other certificate numbers.
+                    </p>
+                  </div>
+                )}
+                {resequencePreview && resequencePreview.affectedCalibrations.length === 0 && (
+                  <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-xs space-y-1">
+                    <p className="font-semibold text-primary">Sequence Counter Adjustment</p>
+                    <p className="text-muted-foreground text-[11px]">
+                      This is the latest issued certificate in the current series. Deleting it will adjust the next sequence counter from <strong>{resequencePreview.currentNextSeq}</strong> to <strong>{resequencePreview.newNextSeq}</strong>.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Deletion Reason Input */}
+            <div className="space-y-1.5 p-3 rounded-lg border bg-muted/20">
+              <label htmlFor="cal-delete-reason-main" className="text-xs font-medium text-foreground">
+                Reason for deletion (optional)
+              </label>
+              <Input
+                id="cal-delete-reason-main"
+                placeholder="e.g. Data entry error, replaced calibration, test run"
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                className="text-xs h-8 bg-background"
+              />
+            </div>
+
+            {/* Instrument Master Rollback Notice */}
+            <div className="p-2.5 rounded-lg border border-amber-200 dark:border-amber-800/60 bg-amber-50/60 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 text-[11px] space-y-0.5">
+              <p className="font-bold flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                Automatic Instrument History Rollback
+              </p>
+              <p className="text-muted-foreground text-[10px] leading-relaxed">
+                If this calibration was the instrument's latest record, its last calibration date and due date in Instrument Master will roll back automatically to the prior calibration.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 p-3 border-t bg-muted/30">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteModalOpen(false)}
+              disabled={deleting}
+            >
               Cancel
             </Button>
-            <Button variant="destructive" size="sm" onClick={handleConfirmDelete} disabled={deleting} className="gap-1.5">
-              {deleting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              Delete Record
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+              )}
+              {resequencePreview && resequencePreview.canResequence && resequencePreview.affectedCalibrations.length > 0 && resequenceChoice === "resequence"
+                ? "Move & Reassign Sequence"
+                : "Move Calibration to Trash"}
             </Button>
           </div>
         </DialogContent>
@@ -1445,6 +2139,52 @@ export default function Calibration() {
               <div className="text-center py-10 text-muted-foreground text-xs">
                 <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto mb-2" />
                 No pending certificates found. All completed calibrations have certificates!
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Digital Certificate Preview Modal */}
+      <Dialog open={certPreviewModalOpen} onOpenChange={setCertPreviewModalOpen}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b bg-muted/40 shrink-0">
+            <div>
+              <DialogTitle className="text-base font-bold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                Calibration Certificate Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Certificate: <span className="font-semibold text-primary font-mono">{previewCalibration?.certificate_number || previewCalibration?.id || "-"}</span> — {previewCalibration?.instrument?.name} ({previewCalibration?.instrument?.id_code})
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2 pr-8 shrink-0">
+              {previewCalibration && (
+                <Button
+                  size="sm"
+                  onClick={() => handleDownload(previewCalibration)}
+                  disabled={generatingId === previewCalibration.id}
+                  className="gap-1.5 text-xs font-semibold shadow-2xs"
+                >
+                  {generatingId === previewCalibration.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5" />
+                  )}
+                  Download PDF
+                </Button>
+              )}
+            </div>
+          </div>
+          <div className="w-full flex-1 max-h-[calc(92vh-75px)] overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950 flex justify-center">
+            {previewCalibration ? (
+              <CertificatePreview
+                calibration={previewCalibration}
+                instrumentName={previewCalibration.instrument?.name}
+              />
+            ) : (
+              <div className="p-8 text-center text-muted-foreground text-xs">
+                No calibration certificate selected.
               </div>
             )}
           </div>

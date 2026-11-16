@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { format } from "date-fns";
+import { format, addMonths } from "date-fns";
+import { computeNextDueDate, parseFrequencyMonths } from "@/lib/dateUtils";
 import { Instrument, InstrumentQuery } from "@/types/instrument";
 import { listInstruments, getFilterParams, updateInstrument, deleteInstrument, deleteInstrumentsBulk } from "@/lib/instrumentActions";
+import { normalizeItemStatus, deduplicateItemStatuses } from "@/lib/itemStatus";
 import { useSEO } from "@/hooks/useSEO";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams, useLocation } from "react-router-dom";
 import httpClient, { API_URL } from "@/lib/httpClient";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/lib/auth";
@@ -20,17 +22,30 @@ import ExcelUpload from "@/components/ExcelUpload";
 import { DataTable } from "@/components/DataTable";
 import { ColumnDef, VisibilityState } from "@tanstack/react-table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers } from "lucide-react";
+import { PlusCircle, Upload, FileSpreadsheet, Search, CalendarDays, Activity, Mail, RefreshCw, History, Trash2, Edit, Printer, X, ArrowUp, ArrowDown, Settings2, FileCheck, Check, GripVertical, RotateCcw, ChevronDown, CheckSquare, Layers, FileText, Download, ExternalLink, FileCheck2, MoreVertical } from "lucide-react";
+import { getSecureFileUrl } from "@/lib/tokenStorage";
 import { PrintLabelModal } from "@/components/PrintLabelModal";
 import { LabelPrintHistoryModal } from "@/components/LabelPrintHistoryModal";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import * as XLSX from "xlsx";
+import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { downloadCertificate } from "@/lib/calibrationActions";
 
 import TooltipProv from "@/components/TooltipProv";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InstrumentDateFilter } from "@/components/InstrumentDateFilter";
+import { InstrumentsColumnModal } from "@/components/instruments/InstrumentsColumnModal";
+import { InstrumentsDeleteModals } from "@/components/instruments/InstrumentsDeleteModals";
+import { InstrumentsReviewSelectedModal } from "@/components/instruments/InstrumentsReviewSelectedModal";
+import { InstrumentsHistoryModal } from "@/components/instruments/InstrumentsHistoryModal";
+import { InstrumentsDateUpdateModal } from "@/components/instruments/InstrumentsDateUpdateModal";
+import { InstrumentsSendCalibrationModal } from "@/components/instruments/InstrumentsSendCalibrationModal";
+import { InstrumentsUploadModal } from "@/components/instruments/InstrumentsUploadModal";
+import { InstrumentsBulkUpdateModal } from "@/components/instruments/InstrumentsBulkUpdateModal";
+import { PageHeader } from "@/components/common/PageHeader";
+import { StatusBadge } from "@/components/common/StatusBadge";
 
 export interface ColumnConfig {
   id: string;
@@ -76,6 +91,7 @@ const DEFAULT_INSTRUMENT_COLUMNS: ColumnConfig[] = [
 
 const SESSION_KEY_SELECTED = "gaugemaster_selected_instrument_ids";
 const SESSION_KEY_OBJECTS = "gaugemaster_selected_instrument_objects";
+const SESSION_KEY_LAST_FILTER = "gaugemaster_instruments_last_query";
 
 const getInitialSelected = (): Record<string, boolean> => {
   try {
@@ -103,6 +119,7 @@ export default function Instruments() {
   const { toast } = useToast();
   const { user } = useAuth()
   const navigate = useNavigate();
+  const location = useLocation();
   const { canAccess } = usePermissions();
   const [searchParams] = useSearchParams();
   
@@ -116,7 +133,14 @@ export default function Instruments() {
   const initialCalibratedInRangeStart = searchParams.get("calibrated_in_range_start") || "";
   const initialCalibratedInRangeEnd = searchParams.get("calibrated_in_range_end") || "";
   const initialCalibrationSource = searchParams.get("calibration_source") || "All";
-  const initialItemStatus = searchParams.get("item_status") || "Active";
+  const initialItemStatus =
+    searchParams.get("item_status") ||
+    (searchParams.get("status") ||
+    searchParams.get("due_date_start") ||
+    searchParams.get("due_date") ||
+    searchParams.get("calibrated_in_range_start")
+      ? "All"
+      : "Active");
   const initialLocation = searchParams.get("location") || "All";
   const initialModule = searchParams.get("module") || "All";
   const initialExcludeModules = searchParams.get("exclude_modules") || "";
@@ -203,7 +227,19 @@ export default function Instruments() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const isOverdueStatus = rowItem.status === "Overdue" || rowItem.status === "OVER DUE";
+    const sLower = (rowItem.status || "").toLowerCase().trim();
+    const itemLower = (rowItem.item_status || "").toLowerCase().trim();
+    const isRetired = ["scrapped", "inactive", "lost", "under repair", "rejected"].includes(itemLower);
+
+    // If item is physically retired, scrapped, inactive, or has a custom non-standard status, do not show red overdue highlight
+    const standardStatuses = ["ok", "calibrated", "upcoming calibration (10 days before )", "upcoming calibration", "overdue", "over due", ""];
+    const isCustomStatus = !standardStatuses.includes(sLower);
+
+    if (isRetired || isCustomStatus || sLower.includes("calibration")) {
+      return "hover:bg-muted/30 transition-colors";
+    }
+
+    const isOverdueStatus = sLower === "overdue" || sLower === "over due";
 
     if (isOverdueStatus) {
       return "bg-rose-500/10 hover:bg-rose-500/20 dark:bg-rose-950/25 border-l-4 border-l-rose-500 transition-colors";
@@ -232,6 +268,7 @@ export default function Instruments() {
   const [newDueDate, setNewDueDate] = useState("");
   const [updatingDates, setUpdatingDates] = useState(false);
   const [certificateFile, setCertificateFile] = useState<File | null>(null);
+  const [newCertNo, setNewCertNo] = useState("");
 
 
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -251,6 +288,7 @@ export default function Instruments() {
   const [DeviceTypeFilter, setDeviceTypeFilter] = useState<string[]>([]);
 
   const [isOpenupload, setisOpenupload] = useState(false);
+  const [isOpenBulkUpdate, setIsOpenBulkUpdate] = useState(false);
   const [rejectedFile, setRejectedFile] = useState<Blob | null>(null);
 
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -258,6 +296,70 @@ export default function Instruments() {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [instrumentsToPrint, setInstrumentsToPrint] = useState<Instrument[]>([]);
   const [labelHistoryModalOpen, setLabelHistoryModalOpen] = useState(false);
+
+  // Digital Certificate Preview Modal State
+  const [certPreviewModalOpen, setCertPreviewModalOpen] = useState(false);
+  const [selectedPreviewInstrument, setSelectedPreviewInstrument] = useState<Instrument | null>(null);
+  const [selectedPreviewCalibration, setSelectedPreviewCalibration] = useState<any | null>(null);
+  const [loadingPreviewCal, setLoadingPreviewCal] = useState(false);
+  const [downloadingCert, setDownloadingCert] = useState(false);
+
+  const handleOpenCertificatePreview = async (inst: Instrument, calIdOrCertNo?: string) => {
+    setSelectedPreviewInstrument(inst);
+    setSelectedPreviewCalibration(null);
+    setLoadingPreviewCal(true);
+    setCertPreviewModalOpen(true);
+
+    try {
+      const res = await httpClient.get(`/calibrations/instrument/${inst.id}`);
+      const cals: any[] = res.data || [];
+      if (calIdOrCertNo) {
+        const found = cals.find(
+          (c) => c.id === calIdOrCertNo || c.certificate_number === calIdOrCertNo
+        );
+        setSelectedPreviewCalibration(found || cals[0] || null);
+      } else {
+        setSelectedPreviewCalibration(cals[0] || null);
+      }
+    } catch {
+      toast({
+        title: "Certificate Unavailable",
+        description: "Failed to load calibration certificate details.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingPreviewCal(false);
+    }
+  };
+
+  const handleDownloadPreviewCertificate = async (cal: any) => {
+    if (!cal?.id) return;
+    try {
+      setDownloadingCert(true);
+      const blob = await downloadCertificate(cal.id);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Certificate-${(cal.certificate_number || cal.id).replace(/\//g, "-")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast({
+        title: "Certificate Downloaded",
+        description: `Certificate ${cal.certificate_number || cal.id} downloaded successfully.`,
+        variant: "success",
+      });
+    } catch {
+      toast({
+        title: "Download Failed",
+        description: "Failed to download calibration certificate PDF.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingCert(false);
+    }
+  };
 
   const [columnConfigs, setColumnConfigs] = useState<ColumnConfig[]>(() => {
     try {
@@ -275,21 +377,17 @@ export default function Instruments() {
   });
 
   const [columnModalOpen, setColumnModalOpen] = useState(false);
-  const [tempColumnConfigs, setTempColumnConfigs] = useState<ColumnConfig[]>([]);
-  const [columnSearchQuery, setColumnSearchQuery] = useState("");
 
   const handleOpenColumnModal = () => {
-    setTempColumnConfigs([...columnConfigs]);
-    setColumnSearchQuery("");
     setColumnModalOpen(true);
   };
 
-  const handleSaveColumnConfigs = () => {
-    setColumnConfigs(tempColumnConfigs);
+  const handleSaveColumnConfigs = (newConfigs: ColumnConfig[]) => {
+    setColumnConfigs(newConfigs);
     try {
       localStorage.setItem(
         "gaugemaster_instrument_columns_config",
-        JSON.stringify(tempColumnConfigs)
+        JSON.stringify(newConfigs)
       );
     } catch (e) {
       console.error("Failed to save column config", e);
@@ -302,46 +400,6 @@ export default function Instruments() {
     });
   };
 
-  const [draggedColIndex, setDraggedColIndex] = useState<number | null>(null);
-
-  const handleDragStart = (e: React.DragEvent, index: number) => {
-    setDraggedColIndex(index);
-    e.dataTransfer.effectAllowed = "move";
-  };
-
-  const handleDragOver = (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    if (draggedColIndex === null || draggedColIndex === targetIndex) return;
-
-    setTempColumnConfigs((prev) => {
-      const updated = [...prev];
-      const draggedItem = updated[draggedColIndex];
-      updated.splice(draggedColIndex, 1);
-      updated.splice(targetIndex, 0, draggedItem);
-      return updated;
-    });
-    setDraggedColIndex(targetIndex);
-  };
-
-  const handleDragEnd = () => {
-    setDraggedColIndex(null);
-  };
-
-  const handleMoveColumn = (index: number, direction: "up" | "down") => {
-    const newConfigs = [...tempColumnConfigs];
-    const targetIndex = direction === "up" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= newConfigs.length) return;
-    const temp = newConfigs[index];
-    newConfigs[index] = newConfigs[targetIndex];
-    newConfigs[targetIndex] = temp;
-    setTempColumnConfigs(newConfigs);
-  };
-
-  const handleToggleColumnVisibility = (id: string, checked: boolean) => {
-    setTempColumnConfigs((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, visible: checked } : c))
-    );
-  };
 
   const [isOpenCalibagency, setisOpenCalibagency] = useState(false);
   const [selectedAgency, setSelectedAgency] = useState("");
@@ -409,7 +467,8 @@ export default function Instruments() {
 
       const result = await listInstruments({
         ...filters,
-        createdBy: user.id
+        createdBy: user?.id,
+        companyId: user?.companyId,
       });
 
       setData({
@@ -437,9 +496,9 @@ export default function Instruments() {
   const handleRefresh = async () => {
     try {
       setRefreshing(true);
-      const filterData = await getFilterParams(user.id);
+      const filterData = await getFilterParams(user?.id, user?.companyId);
       setStatusFilter(["All", ...filterData.status]);
-      setItemStatusFilter(["All", ...(filterData.item_status || [])]);
+      setItemStatusFilter(["All", ...deduplicateItemStatuses(filterData.item_status || ["Active", "SPARE", "Inactive", "STOCK"])]);
       setFrequencyFilter(["All", ...filterData.frequency]);
       setLocationFilter(["All", ...filterData.location]);
       setCalibrationSourceFilter(["All", ...(filterData.calibration_source || [])]);
@@ -462,10 +521,112 @@ export default function Instruments() {
     }
   };
 
+  // Session restore on mount if user arrived directly at /instruments without query params
   useEffect(() => {
-    setFilters(f => ({
+    if (!location.search && !location.hash) {
+      try {
+        const saved = sessionStorage.getItem(SESSION_KEY_LAST_FILTER);
+        if (saved) {
+          navigate(`/instruments?${saved}`, { replace: true });
+        }
+      } catch {}
+    }
+  }, []);
+
+  const updateFilter = useCallback((updatedFilters: Partial<InstrumentQuery>) => {
+    setFilters((prev) => {
+      const next = { ...prev, ...updatedFilters };
+      const queryParams = new URLSearchParams();
+      if (next.search) queryParams.set("search", next.search);
+      if (next.status && next.status !== "All") queryParams.set("status", next.status);
+      if (next.item_status && next.item_status !== "All") queryParams.set("item_status", next.item_status);
+      if (next.location && next.location !== "All") queryParams.set("location", next.location);
+      if (next.frequency && next.frequency !== "All") queryParams.set("frequency", next.frequency);
+      if (next.calibration_source && next.calibration_source !== "All") queryParams.set("calibration_source", next.calibration_source);
+      if (next.module && next.module !== "All") queryParams.set("module", next.module);
+      if (next.exclude_modules) queryParams.set("exclude_modules", next.exclude_modules);
+      if (next.due_date) queryParams.set("due_date", next.due_date);
+      if (next.due_date_start) queryParams.set("due_date_start", next.due_date_start);
+      if (next.due_date_end) queryParams.set("due_date_end", next.due_date_end);
+      if (next.last_cal_start) queryParams.set("last_cal_start", next.last_cal_start);
+      if (next.last_cal_end) queryParams.set("last_cal_end", next.last_cal_end);
+      if (next.calibrated_in_range_start) queryParams.set("calibrated_in_range_start", next.calibrated_in_range_start);
+      if (next.calibrated_in_range_end) queryParams.set("calibrated_in_range_end", next.calibrated_in_range_end);
+      if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.set("is_reference_standard", next.is_reference_standard);
+      if (next.device_type && next.device_type !== "All") queryParams.set("device_type", next.device_type);
+      if (next.page && next.page > 1) queryParams.set("page", String(next.page));
+      if (next.pageSize && next.pageSize !== 10) queryParams.set("pageSize", String(next.pageSize));
+      if (next.sortBy && next.sortBy !== "sino") queryParams.set("sortBy", next.sortBy);
+      if (next.sortOrder && next.sortOrder !== "ASC") queryParams.set("sortOrder", next.sortOrder);
+
+      const qs = queryParams.toString();
+      try {
+        if (qs) {
+          sessionStorage.setItem(SESSION_KEY_LAST_FILTER, qs);
+        } else {
+          sessionStorage.removeItem(SESSION_KEY_LAST_FILTER);
+        }
+      } catch {}
+
+      navigate(qs ? `/instruments?${qs}` : "/instruments", { replace: true });
+      return next;
+    });
+  }, [navigate]);
+
+  const handleApplyDateFilter = useCallback((updatedFilters: Partial<InstrumentQuery>) => {
+    updateFilter({ ...updatedFilters, page: 1 });
+  }, [updateFilter]);
+
+  const handleClearDateFilter = useCallback(() => {
+    updateFilter({
+      due_date: "",
+      due_date_start: "",
+      due_date_end: "",
+      last_cal_start: "",
+      last_cal_end: "",
+      page: 1,
+    });
+  }, [updateFilter]);
+
+  const handleResetFilters = useCallback(() => {
+    try {
+      sessionStorage.removeItem(SESSION_KEY_LAST_FILTER);
+    } catch {}
+    setLocalSearch("");
+    setFilters({
+      status: "All",
+      item_status: "Active",
+      location: "All",
+      frequency: "All",
+      calibration_source: "All",
+      module: "All",
+      exclude_modules: "",
+      search: "",
+      due_date: "",
+      due_date_start: "",
+      due_date_end: "",
+      last_cal_start: "",
+      last_cal_end: "",
+      calibrated_in_range_start: "",
+      calibrated_in_range_end: "",
+      is_reference_standard: "All",
+      device_type: "All",
+      page: 1,
+      pageSize: filters.pageSize,
+      limit: 10,
+      sortBy: "sino",
+      sortOrder: "ASC",
+    });
+    navigate("/instruments", { replace: true });
+  }, [navigate, filters.pageSize]);
+
+  useEffect(() => {
+    const urlSearch = searchParams.get("search") || "";
+    setLocalSearch((prev) => (prev !== urlSearch ? urlSearch : prev));
+
+    setFilters((f) => ({
       ...f,
-      search: searchParams.get("search") || "",
+      search: urlSearch,
       due_date: searchParams.get("due_date") || "",
       status: (searchParams.get("status") || "All") as any,
       due_date_start: searchParams.get("due_date_start") || "",
@@ -474,52 +635,26 @@ export default function Instruments() {
       last_cal_end: searchParams.get("last_cal_end") || "",
       calibrated_in_range_start: searchParams.get("calibrated_in_range_start") || "",
       calibrated_in_range_end: searchParams.get("calibrated_in_range_end") || "",
-      item_status: (searchParams.get("item_status") || "Active") as any,
+      item_status: (searchParams.get("item_status") ||
+        (searchParams.get("status") ||
+        searchParams.get("due_date_start") ||
+        searchParams.get("due_date") ||
+        searchParams.get("calibrated_in_range_start")
+          ? "All"
+          : "Active")) as any,
       location: searchParams.get("location") || "All",
       calibration_source: searchParams.get("calibration_source") || "All",
+      frequency: searchParams.get("frequency") || "All",
       module: searchParams.get("module") || "All",
       exclude_modules: searchParams.get("exclude_modules") || "",
       is_reference_standard: searchParams.get("is_reference_standard") || "All",
       device_type: searchParams.get("device_type") || "All",
       sortBy: (searchParams.get("sortBy") as any) || f.sortBy || "sino",
       sortOrder: (searchParams.get("sortOrder") as any) || f.sortOrder || "ASC",
-      page: 1
+      page: searchParams.get("page") ? Number(searchParams.get("page")) : f.page || 1,
+      pageSize: searchParams.get("pageSize") ? Number(searchParams.get("pageSize")) : f.pageSize || pageSize,
     }));
   }, [searchParams]);
-
-  const handleApplyDateFilter = (updatedFilters: Partial<InstrumentQuery>) => {
-    setFilters((prev) => {
-      const next = { ...prev, ...updatedFilters, page: 1 };
-      const queryParams = new URLSearchParams();
-      if (next.search) queryParams.append("search", next.search);
-      if (next.status && next.status !== "All") queryParams.append("status", next.status);
-      if (next.item_status && next.item_status !== "All") queryParams.append("item_status", next.item_status);
-      if (next.location && next.location !== "All") queryParams.append("location", next.location);
-      if (next.frequency && next.frequency !== "All") queryParams.append("frequency", next.frequency);
-      if (next.calibration_source && next.calibration_source !== "All") queryParams.append("calibration_source", next.calibration_source);
-      if (next.module && next.module !== "All") queryParams.append("module", next.module);
-      if (next.due_date) queryParams.append("due_date", next.due_date);
-      if (next.due_date_start) queryParams.append("due_date_start", next.due_date_start);
-      if (next.due_date_end) queryParams.append("due_date_end", next.due_date_end);
-      if (next.last_cal_start) queryParams.append("last_cal_start", next.last_cal_start);
-      if (next.last_cal_end) queryParams.append("last_cal_end", next.last_cal_end);
-      if (next.is_reference_standard && next.is_reference_standard !== "All") queryParams.append("is_reference_standard", next.is_reference_standard);
-      if (next.device_type && next.device_type !== "All") queryParams.append("device_type", next.device_type);
-
-      navigate(`/instruments?${queryParams.toString()}`, { replace: true });
-      return next;
-    });
-  };
-
-  const handleClearDateFilter = () => {
-    handleApplyDateFilter({
-      due_date: "",
-      due_date_start: "",
-      due_date_end: "",
-      last_cal_start: "",
-      last_cal_end: "",
-    });
-  };
 
   useEffect(() => {
     fetchData();
@@ -537,18 +672,17 @@ export default function Instruments() {
 
   useEffect(() => {
     const handler = setTimeout(() => {
-      setFilters((f) => {
-        if (f.search === localSearch) return f;
-        return { ...f, search: localSearch, page: 1 };
-      });
-    }, 500);
+      if ((filters.search || "") !== localSearch) {
+        updateFilter({ search: localSearch, page: 1 });
+      }
+    }, 400);
     return () => clearTimeout(handler);
-  }, [localSearch]);
+  }, [localSearch, filters.search, updateFilter]);
 
   useEffect(() => {
     if (localSearch.trim().length > 0) {
       const handler = setTimeout(() => {
-        listInstruments({ search: localSearch, page: 1, pageSize: 20, createdBy: user.id })
+        listInstruments({ search: localSearch, page: 1, pageSize: 20, createdBy: user?.id, companyId: user?.companyId })
           .then(res => {
             const lowerSearch = localSearch.toLowerCase();
             const results = new Set<string>();
@@ -583,18 +717,18 @@ export default function Instruments() {
     } else {
       setSuggestions([]);
     }
-  }, [localSearch, user.id]);
+  }, [localSearch, user?.id, user?.companyId]);
 
   useEffect(() => {
-    getFilterParams(user.id).then(data => {
+    getFilterParams(user?.id, user?.companyId).then(data => {
       setStatusFilter(["All", ...data.status]);
-      setItemStatusFilter(["All", ...(data.item_status || [])]);
+      setItemStatusFilter(["All", ...deduplicateItemStatuses(data.item_status || ["Active", "SPARE", "Inactive", "STOCK"])]);
       setFrequencyFilter(["All", ...data.frequency]);
       setLocationFilter(["All", ...data.location]);
       setCalibrationSourceFilter(["All", ...(data.calibration_source || [])]);
       setDeviceTypeFilter(data.device_type || []);
     });
-  }, [user]);
+  }, [user?.id, user?.companyId]);
 
   const handleRowSelectionChange = useCallback((
     updaterOrValue: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)
@@ -890,15 +1024,6 @@ export default function Instruments() {
     }
   };
 
-  const parseFrequencyMonths = (freq: string) => {
-    if (!freq) return 0;
-    const match = freq.match(/(\d+)/);
-    if (!match) return 0;
-    let val = parseInt(match[1], 10);
-    if (freq.toLowerCase().includes("year")) val *= 12;
-    return val;
-  };
-
   const handleOpenHistory = async (inst: Instrument) => {
     setHistoryModalOpen(true);
     setLoadingHistory(true);
@@ -916,25 +1041,22 @@ export default function Instruments() {
   const handleOpenDateModal = (inst: Instrument) => {
     setDateUpdateInstrument(inst);
     
-    let baseDate = new Date();
-    if (inst.due_date) {
-      const parsedDue = new Date(inst.due_date);
-      if (!isNaN(parsedDue.getTime())) {
-        baseDate = parsedDue;
+    let calDate = new Date();
+    if (inst.last_calibration_date) {
+      const parsedLast = new Date(inst.last_calibration_date);
+      if (!isNaN(parsedLast.getTime())) {
+        calDate = parsedLast;
       }
     }
     
-    setNewLastCalDate(format(baseDate, 'yyyy-MM-dd'));
+    const calDateStr = format(calDate, 'yyyy-MM-dd');
+    setNewLastCalDate(calDateStr);
+    setNewCertNo(inst.cert_no || "");
     setCertificateFile(null);
 
-    const freqMonths = parseFrequencyMonths(inst.frequency);
-    if (freqMonths > 0) {
-      const due = new Date(baseDate);
-      due.setMonth(due.getMonth() + freqMonths);
-      setNewDueDate(format(due, 'yyyy-MM-dd'));
-    } else {
-      setNewDueDate("");
-    }
+    const calculatedDue = computeNextDueDate(calDateStr, inst.frequency);
+    setNewDueDate(calculatedDue || format(addMonths(calDate, 12), 'yyyy-MM-dd'));
+
     setDateModalOpen(true);
   };
 
@@ -945,7 +1067,9 @@ export default function Instruments() {
       await updateInstrument(dateUpdateInstrument.id, {
         last_calibration_date: new Date(newLastCalDate).toISOString(),
         due_date: new Date(newDueDate).toISOString(),
-        status: "OK"
+        status: "OK",
+        cert_no: newCertNo.trim() || undefined,
+        calibration_source: "External",
       });
 
       if (certificateFile) {
@@ -988,14 +1112,14 @@ export default function Instruments() {
     setDeleteModalOpen(true);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = async (reason?: string) => {
     if (!instrumentToDelete) return;
     try {
       setDeleting(true);
-      await deleteInstrument(instrumentToDelete.id);
+      await deleteInstrument(instrumentToDelete.id, reason);
       toast({
-        title: "Success",
-        description: "Instrument deleted successfully.",
+        title: "Moved to Trash",
+        description: "Instrument and its active calibrations moved to Trash (Recovery Center).",
       });
       setDeleteModalOpen(false);
       fetchData();
@@ -1016,13 +1140,13 @@ export default function Instruments() {
     setBulkDeleteModalOpen(true);
   };
 
-  const confirmBulkDelete = async () => {
+  const confirmBulkDelete = async (reason?: string) => {
     try {
       setDeleting(true);
-      await deleteInstrumentsBulk(selectedIds);
+      await deleteInstrumentsBulk(selectedIds, reason);
       toast({
-        title: "Success",
-        description: "Selected instruments deleted successfully.",
+        title: "Moved to Trash",
+        description: "Selected instruments moved to Trash (Recovery Center).",
       });
       setSelected({});
       setSelectedObjects({});
@@ -1050,10 +1174,8 @@ export default function Instruments() {
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setFilters(f => {
-                const nextOrder = f.sortOrder === 'ASC' ? 'DESC' : 'ASC';
-                return { ...f, sortBy: 'sino', sortOrder: nextOrder, page: 1 };
-              });
+              const nextOrder = (filters.sortOrder || 'ASC') === 'ASC' ? 'DESC' : 'ASC';
+              updateFilter({ sortBy: 'sino', sortOrder: nextOrder, page: 1 });
             }}
           >
             S.No
@@ -1091,44 +1213,45 @@ export default function Instruments() {
       accessorKey: "status",
       header: "Status",
       cell: ({ row }) => {
-        const status = row.original.status;
+        const inst = row.original;
+        let effectiveStatus = inst.status || "OK";
+        const sLower = effectiveStatus.toLowerCase().trim();
+        const standardStatuses = [
+          "ok",
+          "calibrated",
+          "upcoming calibration (10 days before )",
+          "upcoming calibration",
+          "overdue",
+          "over due",
+          "",
+        ];
+        const isStandard = standardStatuses.includes(sLower);
+        const itemLower = (inst.item_status || "").toLowerCase().trim();
+        const isRetired = ["scrapped", "inactive", "lost", "under repair", "rejected"].includes(itemLower);
+
+        // Only standard statuses on active instruments dynamically become Overdue when past due
+        if (isStandard && !isRetired && inst.due_date) {
+          const dueDate = new Date(inst.due_date);
+          dueDate.setHours(0, 0, 0, 0);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          if (dueDate < today) {
+            effectiveStatus = "Overdue";
+          }
+        }
+
         return (
-          <Badge
-            variant={
-              status === "OK"
-                ? "success"
-                : status === "Overdue"
-                  ? "destructive"
-                  : status === "Sent for Calibration"
-                    ? "premium"
-                    : "warning"
-            }
-            className="capitalize"
-          >
-            {status}
-          </Badge>
+          <StatusBadge
+            status={effectiveStatus}
+            subStatus={inst.custom_parameters?.calibration_sub_status}
+          />
         );
       },
     },
     item_status: {
       accessorKey: "item_status",
       header: "Item Status",
-      cell: ({ row }) => {
-        const itemStatus = row.original.item_status || "Active";
-        const isActive = itemStatus === "Active";
-        return (
-          <Badge 
-            variant="outline" 
-            className={`border-0 ${
-              isActive 
-                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
-                : "bg-slate-500/10 text-slate-600 dark:text-slate-400"
-            }`}
-          >
-            {itemStatus}
-          </Badge>
-        );
-      },
+      cell: ({ row }) => <StatusBadge status={row.original.item_status || "Active"} />,
     },
     agency: { accessorKey: "agency", header: "Agency" },
     range: { accessorKey: "range", header: "Range" },
@@ -1170,69 +1293,186 @@ export default function Instruments() {
       header: "Certificate",
       cell: ({ row }) => {
         const certFile = row.original.certificate_file;
+        const certNo = row.original.cert_no;
         const instId = row.original.id;
 
         if (uploadingId === instId) {
           return (
-            <div className="flex items-center gap-2 animate-pulse">
-              <Skeleton className="h-7 w-16" />
-              <Skeleton className="h-7 w-16" />
+            <div className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 animate-pulse shadow-2xs">
+              <Loader2 className="w-4 h-4 animate-spin text-emerald-600" />
             </div>
           );
         }
-        
-        if (!certFile) {
+
+        // 1. If uploaded certificate file exists (External calibration or uploaded scan)
+        if (certFile) {
+          const fileUrl = getSecureFileUrl(certFile);
+          const fileName = certFile.split("/").pop() || "certificate.pdf";
           return (
-            <div className="relative inline-block" onClick={(e) => e.stopPropagation()}>
-              <input 
-                type="file" 
-                accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleDirectUpload(instId, e.target.files[0]);
-                  }
-                }}
-              />
-              <Button variant="outline" size="sm" className="h-7 text-xs flex gap-1">
-                <Upload className="h-3 w-3" />
-                Upload
-              </Button>
-            </div>
-          );
-        }
-        
-        const url = certFile.startsWith("http") ? certFile : `${BASE_URL}${certFile}`;
-        
-        return (
-          <div className="flex items-center gap-2">
-            <a 
-              href={url} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-primary hover:underline flex items-center gap-1 text-xs font-medium"
+            <div
+              className="inline-flex items-center rounded-lg border border-emerald-500/30 dark:border-emerald-500/40 bg-emerald-500/10 dark:bg-emerald-500/15 p-0.5 shadow-2xs group hover:bg-emerald-500/20 transition-all"
               onClick={(e) => e.stopPropagation()}
             >
-              <FileSpreadsheet className="h-3 w-3" />
-              View
-            </a>
-            <div className="relative inline-block ml-1" onClick={(e) => e.stopPropagation()}>
-              <input 
-                type="file" 
-                accept=".xlsx,.xls,.pdf"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                title="Replace Certificate"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    handleDirectUpload(instId, e.target.files[0]);
-                  }
-                }}
-              />
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs flex gap-1 text-muted-foreground hover:text-foreground">
-                <Upload className="h-3 w-3" />
-                Replace
-              </Button>
+              <TooltipProv
+                content={
+                  <div className="space-y-1.5 p-1 text-left max-w-[250px]">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs border-b border-border/50 pb-1 text-emerald-950 dark:text-emerald-200">
+                      <FileCheck2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span>Calibration Certificate</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">Certificate No</span>
+                        <span className="font-mono font-bold text-foreground break-all">{certNo || "Document Attached"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">File</span>
+                        <span className="text-muted-foreground font-mono text-[10px] truncate block">{fileName}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <span className="text-muted-foreground text-[10px] uppercase font-medium">Source</span>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-300">
+                          {row.original.calibration_source || "—"}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="pt-1 border-t border-border/40 text-[10px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-1">
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      <span>Click to view certificate</span>
+                    </div>
+                  </div>
+                }
+              >
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25 transition-colors cursor-pointer"
+                  aria-label={`View Certificate ${certNo || ""}`}
+                >
+                  <FileCheck2 className="h-4 w-4 shrink-0" />
+                </a>
+              </TooltipProv>
+
+              <div className="h-3.5 w-px bg-emerald-500/25 dark:bg-emerald-500/35 mx-0.5 shrink-0" />
+
+              <TooltipProv content="Upload or replace certificate document">
+                <label
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-emerald-700/80 hover:text-emerald-950 hover:bg-emerald-500/25 dark:text-emerald-400 dark:hover:bg-emerald-500/30 cursor-pointer transition-colors"
+                  aria-label="Upload or replace certificate"
+                >
+                  <input 
+                    type="file" 
+                    accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleDirectUpload(instId, e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <Upload className="h-3.5 w-3.5" />
+                </label>
+              </TooltipProv>
             </div>
+          );
+        }
+
+        // 2. If in-house digital certificate number exists on instrument
+        if (certNo) {
+          return (
+            <div
+              className="inline-flex items-center rounded-lg border border-primary/30 dark:border-primary/40 bg-primary/10 dark:bg-primary/15 p-0.5 shadow-2xs group hover:bg-primary/20 transition-all"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <TooltipProv
+                content={
+                  <div className="space-y-1.5 p-1 text-left max-w-[250px]">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs border-b border-border/50 pb-1 text-primary">
+                      <FileText className="w-3.5 h-3.5 text-primary shrink-0" />
+                      <span>Digital Certificate</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      <div>
+                        <span className="text-muted-foreground text-[10px] block uppercase font-medium">Certificate No</span>
+                        <span className="font-mono font-bold text-foreground break-all">{certNo}</span>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <span className="text-muted-foreground text-[10px] uppercase font-medium">Source</span>
+                        <Badge variant="outline" className="text-[9px] px-1.5 py-0 bg-blue-50 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border-blue-300">
+                          In-House
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="pt-1 border-t border-border/40 text-[10px] text-primary font-medium flex items-center gap-1">
+                      <ExternalLink className="w-2.5 h-2.5" />
+                      <span>Click to preview certificate</span>
+                    </div>
+                  </div>
+                }
+              >
+                <button
+                  type="button"
+                  onClick={() => handleOpenCertificatePreview(row.original)}
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-primary hover:bg-primary/25 transition-colors cursor-pointer"
+                  aria-label={`Preview Certificate ${certNo}`}
+                >
+                  <FileText className="h-4 w-4 shrink-0" />
+                </button>
+              </TooltipProv>
+
+              <div className="h-3.5 w-px bg-primary/25 dark:bg-primary/35 mx-0.5 shrink-0" />
+
+              <TooltipProv content="Attach signed scanned document">
+                <label
+                  className="h-7 w-7 rounded-md flex items-center justify-center text-primary/80 hover:text-primary hover:bg-primary/25 cursor-pointer transition-colors"
+                  aria-label="Attach signed scanned document"
+                >
+                  <input 
+                    type="file" 
+                    accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleDirectUpload(instId, e.target.files[0]);
+                      }
+                    }}
+                  />
+                  <Upload className="h-3.5 w-3.5" />
+                </label>
+              </TooltipProv>
+            </div>
+          );
+        }
+        
+        // 3. No certificate file or number: clean icon upload button with tooltip
+        return (
+          <div className="inline-flex items-center" onClick={(e) => e.stopPropagation()}>
+            <TooltipProv
+              content={
+                <div className="p-1.5 text-left max-w-[200px]">
+                  <p className="font-semibold text-xs text-foreground">Attach Certificate</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Click to upload calibration PDF or scanned report</p>
+                </div>
+              }
+            >
+              <label
+                className="h-7 w-7 rounded-lg border border-dashed border-muted-foreground/30 hover:border-emerald-500 hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-700 dark:hover:text-emerald-400 flex items-center justify-center cursor-pointer transition-all shadow-2xs"
+                aria-label="Upload Certificate"
+              >
+                <input 
+                  type="file" 
+                  accept="application/pdf,image/*,.xlsx,.xls,.doc,.docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleDirectUpload(instId, e.target.files[0]);
+                    }
+                  }}
+                />
+                <Upload className="h-3.5 w-3.5" />
+              </label>
+            </TooltipProv>
           </div>
         );
       }
@@ -1242,6 +1482,7 @@ export default function Instruments() {
       header: "Action",
       cell: ({ row }) => {
         const isUploading = uploadingId === row.original.id;
+        const instrumentLabel = row.original.name || row.original.id_code;
         return (
           <div className="flex items-center gap-2">
             {canAccess("calibrations", "create") && (
@@ -1250,6 +1491,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Calibrate instrument ${instrumentLabel}`}
                   className="h-8 w-8 hover:text-primary hover:bg-primary/10 border-primary/20"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1266,6 +1508,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Log external calibration for ${instrumentLabel}`}
                   className="h-8 w-8 hover:text-emerald-600 hover:bg-emerald-50 border-emerald-200"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1281,6 +1524,7 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 disabled={isUploading}
+                aria-label={`View calibration history for ${instrumentLabel}`}
                 className="h-8 w-8"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1295,6 +1539,7 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 disabled={isUploading}
+                aria-label={`Print label for ${instrumentLabel}`}
                 className="h-8 w-8 hover:text-primary"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -1311,6 +1556,7 @@ export default function Instruments() {
                   variant="outline" 
                   size="icon"
                   disabled={isUploading}
+                  aria-label={`Delete instrument ${instrumentLabel}`}
                   className="h-8 w-8 hover:bg-destructive/10 group"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1355,6 +1601,7 @@ export default function Instruments() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    aria-label="Selection options"
                     className="h-5 w-4 p-0 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
                     title="Selection Options"
                   >
@@ -1460,45 +1707,96 @@ export default function Instruments() {
   ]);
 
   const availableDeviceTypes = useMemo(() => {
-    if (DeviceTypeFilter && DeviceTypeFilter.length > 0) {
-      const unique = Array.from(new Set(DeviceTypeFilter.map(d => d?.trim()).filter(Boolean)));
-      if (unique.length > 0) return unique;
+    const standard = [
+      { label: "Instruments", value: "Instrument", isRef: false, isGauge: false, isInst: true },
+      { label: "Gauges", value: "Gauge", isRef: false, isGauge: true, isInst: false },
+      { label: "Reference Standards", value: "Reference Standard", isRef: true, isGauge: false, isInst: false },
+    ];
+
+    const extraTypes: { label: string; value: string; isRef: boolean; isGauge: boolean; isInst: boolean }[] = [];
+    const seen = new Set(["instrument", "instruments", "gauge", "gauges", "reference standard", "reference standards", "master", "masters", "all"]);
+
+    (DeviceTypeFilter || []).forEach((dt) => {
+      if (dt && typeof dt === "string" && dt.trim()) {
+        const trimmed = dt.trim();
+        const lower = trimmed.toLowerCase();
+        if (!seen.has(lower)) {
+          seen.add(lower);
+          extraTypes.push({
+            label: trimmed,
+            value: trimmed,
+            isRef: false,
+            isGauge: false,
+            isInst: false,
+          });
+        }
+      }
+    });
+
+    if (filters.device_type && filters.device_type !== "All") {
+      const trimmed = filters.device_type.trim();
+      const lower = trimmed.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        extraTypes.push({
+          label: trimmed,
+          value: trimmed,
+          isRef: false,
+          isGauge: false,
+          isInst: false,
+        });
+      }
     }
-    return ["Instruments", "Gauges", "Reference Standards"];
-  }, [DeviceTypeFilter]);
+
+    return [...standard, ...extraTypes];
+  }, [DeviceTypeFilter, filters.device_type]);
+
+  const allDeviceTypeOptions = useMemo(() => {
+    const list = ["Instrument", "Gauge", "Reference Standard"];
+    (DeviceTypeFilter || []).forEach((dt) => {
+      if (dt && typeof dt === "string" && dt.trim()) {
+        const trimmed = dt.trim();
+        if (!list.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+          list.push(trimmed);
+        }
+      }
+    });
+    if (filters.device_type && filters.device_type !== "All") {
+      const trimmed = filters.device_type.trim();
+      if (!list.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) {
+        list.push(trimmed);
+      }
+    }
+    return list;
+  }, [DeviceTypeFilter, filters.device_type]);
 
   return (
     <>
-      <div className="space-y-6 max-w-[1600px] mx-auto animate-in fade-in duration-500">
-        {/* ─── Header Banner (Industrial Precision + Subtle Glass) ─── */}
-        <header className="bg-gradient-to-r from-primary/10 via-primary/5 to-background border border-primary/20 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">Instruments Inventory</h1>
-              <Badge variant="outline" className="text-[10px] font-mono font-bold bg-background text-primary border-primary/30">
-                {data.total} Total
-              </Badge>
-            </div>
-            <p className="text-xs sm:text-sm text-muted-foreground font-medium">
-              Manage and track your calibration inventory with precision.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            {canAccess("instruments", "create") && (
+      <div className="space-y-6 animate-in fade-in duration-500">
+        {/* ─── Page Header ─── */}
+        <PageHeader
+          title="Instruments Inventory"
+          badge={
+            <Badge variant="outline" className="text-xs font-mono font-medium">
+              {data.total} Total
+            </Badge>
+          }
+          description="Manage and track your calibration inventory with precision."
+          actions={
+            canAccess("instruments", "create") && (
               <Button 
                 size="sm" 
-                className="h-9 px-4 text-xs font-bold bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl shadow-xs gap-2 w-full sm:w-auto" 
-                onClick={() => navigate("/instruments/new")}
+                className="h-8 px-3.5 text-xs font-semibold gap-2" 
+                onClick={() => navigate("/instruments/new", { state: { returnUrl: location.pathname + location.search } })}
               >
                 <PlusCircle className="h-4 w-4" /> Add Instrument
               </Button>
-            )}
-          </div>
-        </header>
+            )
+          }
+        />
 
         {/* ─── Filter Inventory Section ─── */}
-        <div className="bg-card/90 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-border/70 shadow-xs space-y-4">
+        <div className="bg-card p-4 sm:p-5 rounded-xl border border-border shadow-2xs space-y-4">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b pb-3 border-border/50">
             <div className="flex items-center gap-2">
               <div className="h-5 w-1 bg-primary rounded-full" />
@@ -1508,11 +1806,7 @@ export default function Instruments() {
                   variant="ghost" 
                   size="sm"
                   className="h-7 px-2 text-xs font-semibold text-muted-foreground hover:text-red-600 hover:bg-red-50/50 gap-1 transition-colors"
-                  onClick={() => {
-                    setLocalSearch("");
-                    setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", device_type: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
-                    navigate("/instruments", { replace: true });
-                  }}
+                  onClick={handleResetFilters}
                 >
                   <RotateCcw className="h-3 w-3" /> Reset
                 </Button>
@@ -1522,26 +1816,32 @@ export default function Instruments() {
             <div className="bg-muted p-1 rounded-lg inline-flex flex-wrap items-center gap-1 self-stretch sm:self-auto justify-center">
               <button 
                 type="button"
-                onClick={() => setFilters(f => ({ ...f, device_type: "All", is_reference_standard: "All", page: 1 }))}
+                onClick={() => updateFilter({ device_type: "All", is_reference_standard: "All", page: 1 })}
                 className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${((!filters.device_type || filters.device_type === "All") && (!filters.is_reference_standard || filters.is_reference_standard === "All")) ? 'bg-background shadow-xs text-foreground font-bold' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 All
               </button>
-              {availableDeviceTypes.map((dt) => {
-                const isSelected = filters.device_type === dt || (dt.toLowerCase().includes("reference") && filters.is_reference_standard === "true");
+              {availableDeviceTypes.map((tab) => {
+                const isSelected = tab.isRef
+                  ? (filters.is_reference_standard === "true" || filters.device_type === "Reference Standard" || filters.device_type === "Master")
+                  : tab.isGauge
+                  ? (filters.device_type === "Gauge" && filters.is_reference_standard !== "true")
+                  : tab.isInst
+                  ? (filters.device_type === "Instrument" && filters.is_reference_standard !== "true")
+                  : (filters.device_type?.toLowerCase() === tab.value.toLowerCase());
+
                 return (
                   <button 
-                    key={dt}
+                    key={tab.value}
                     type="button"
-                    onClick={() => setFilters(f => ({
-                      ...f,
-                      device_type: dt,
-                      is_reference_standard: dt.toLowerCase().includes("reference") ? "true" : "All",
+                    onClick={() => updateFilter({
+                      device_type: tab.value,
+                      is_reference_standard: tab.isRef ? "true" : tab.isInst || tab.isGauge ? "false" : "All",
                       page: 1
-                    }))}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all capitalize ${isSelected ? 'bg-primary text-primary-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'}`}
+                    })}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${isSelected ? 'bg-primary text-primary-foreground shadow-xs font-bold' : 'text-muted-foreground hover:text-foreground'}`}
                   >
-                    {dt}
+                    {tab.label}
                   </button>
                 );
               })}
@@ -1578,7 +1878,7 @@ export default function Instruments() {
                           e.preventDefault();
                           e.stopPropagation();
                           setLocalSearch("");
-                          setFilters(f => ({ ...f, search: "", page: 1 }));
+                          updateFilter({ search: "", page: 1 });
                           setShowSuggestions(false);
                         }}
                         className="absolute right-2.5 top-2.5 h-4 w-4 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors focus:outline-none"
@@ -1600,6 +1900,7 @@ export default function Instruments() {
                         className="px-3 py-2 hover:bg-primary/10 cursor-pointer text-xs transition-colors"
                         onClick={() => {
                           setLocalSearch(code);
+                          updateFilter({ search: code, page: 1 });
                           setShowSuggestions(false);
                         }}
                       >
@@ -1618,14 +1919,14 @@ export default function Instruments() {
               </Label>
               <Select
                 value={filters.status as any}
-                onValueChange={(v) => setFilters((f) => ({ ...f, status: v as any, page: 1 }))}
+                onValueChange={(v) => updateFilter({ status: v as any, page: 1 })}
               >
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Status" />
                 </SelectTrigger>
                 <SelectContent>
                   {StatusFillter.filter(s => s && s.trim() !== "").map((status) => (
-                    <SelectItem key={status} value={status}>{status}</SelectItem>
+                    <SelectItem key={status} value={status}>{status === "All" ? "All Status" : status}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1637,8 +1938,12 @@ export default function Instruments() {
                 <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">I</Badge> Item Status
               </Label>
               <Select
-                value={filters.item_status as any}
-                onValueChange={(v) => setFilters((f) => ({ ...f, item_status: v as any, page: 1 }))}
+                value={
+                  ItemStatusFilter.find(
+                    (opt) => opt.toLowerCase() === (filters.item_status || "").toLowerCase()
+                  ) || (filters.item_status as any)
+                }
+                onValueChange={(v) => updateFilter({ item_status: v as any, page: 1 })}
               >
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Item Status" />
@@ -1651,12 +1956,47 @@ export default function Instruments() {
               </Select>
             </div>
 
+            {/* Device Type Filter */}
+            <div className="w-full sm:w-[130px] md:w-[145px]">
+              <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">D</Badge> Device Type
+              </Label>
+              <Select
+                value={
+                  filters.device_type && filters.device_type !== "All"
+                    ? (allDeviceTypeOptions.find(opt => opt.toLowerCase() === filters.device_type?.toLowerCase()) || filters.device_type)
+                    : "All"
+                }
+                onValueChange={(v) => {
+                  if (v === "All") {
+                    updateFilter({ device_type: "All", is_reference_standard: "All", page: 1 });
+                  } else if (v.toLowerCase().includes("reference") || v.toLowerCase().includes("master")) {
+                    updateFilter({ device_type: v, is_reference_standard: "true", page: 1 });
+                  } else if (v.toLowerCase() === "instrument" || v.toLowerCase() === "gauge") {
+                    updateFilter({ device_type: v, is_reference_standard: "false", page: 1 });
+                  } else {
+                    updateFilter({ device_type: v, is_reference_standard: "All", page: 1 });
+                  }
+                }}
+              >
+                <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
+                  <SelectValue placeholder="All Device Types" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="All">All Device Types</SelectItem>
+                  {allDeviceTypeOptions.map((dt) => (
+                    <SelectItem key={dt} value={dt}>{dt}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Frequency Filter */}
             <div className="w-full sm:w-[130px] md:w-[140px]">
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <CalendarDays className="h-3.5 w-3.5 text-primary" /> Frequency
               </Label>
-              <Select value={filters.frequency as any} onValueChange={(v) => setFilters((f) => ({ ...f, frequency: v as any, page: 1 }))}>
+              <Select value={filters.frequency as any} onValueChange={(v) => updateFilter({ frequency: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Frequencies" />
                 </SelectTrigger>
@@ -1673,7 +2013,7 @@ export default function Instruments() {
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <Activity className="h-3.5 w-3.5 text-primary" /> Location
               </Label>
-              <Select value={filters.location as any} onValueChange={(v) => setFilters((f) => ({ ...f, location: v as any, page: 1 }))}>
+              <Select value={filters.location as any} onValueChange={(v) => updateFilter({ location: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Locations" />
                 </SelectTrigger>
@@ -1690,7 +2030,7 @@ export default function Instruments() {
               <Label className="text-xs font-bold text-muted-foreground mb-1.5 flex items-center gap-1.5">
                 <Badge className="h-3.5 w-3.5 p-0 flex items-center justify-center text-[9px]">C</Badge> Source
               </Label>
-              <Select value={filters.calibration_source as any} onValueChange={(v) => setFilters((f) => ({ ...f, calibration_source: v as any, page: 1 }))}>
+              <Select value={filters.calibration_source as any} onValueChange={(v) => updateFilter({ calibration_source: v as any, page: 1 })}>
                 <SelectTrigger className="h-9 text-xs bg-background border-border/70 rounded-lg">
                   <SelectValue placeholder="All Sources" />
                 </SelectTrigger>
@@ -1715,12 +2055,9 @@ export default function Instruments() {
                 variant="outline" 
                 size="icon"
                 title="Reset all filters"
+                aria-label="Reset all filters"
                 className="h-9 w-9 shrink-0 text-muted-foreground hover:text-red-600 hover:bg-red-50/50 border-border/70 rounded-lg transition-all"
-                onClick={() => {
-                  setLocalSearch("");
-                  setFilters({ status: "All", item_status: "Active", location: "All", frequency: "All", calibration_source: "All", search: "", due_date: "", due_date_start: "", due_date_end: "", last_cal_start: "", last_cal_end: "", calibrated_in_range_start: "", calibrated_in_range_end: "", is_reference_standard: "All", page: 1, pageSize: filters.pageSize, limit: 10 });
-                  navigate("/instruments", { replace: true });
-                }}
+                onClick={handleResetFilters}
               >
                 <RotateCcw className="h-4 w-4" />
               </Button>
@@ -1770,10 +2107,7 @@ export default function Instruments() {
               <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30 px-2.5 py-1 text-xs flex gap-2 items-center">
                 <CalendarDays className="h-3.5 w-3.5" />
                 Showing instruments calibrated in range: {filters.calibrated_in_range_start ? new Date(filters.calibrated_in_range_start).toLocaleDateString() : 'Any'} to {filters.calibrated_in_range_end ? new Date(filters.calibrated_in_range_end).toLocaleDateString() : 'Any'}
-                <button onClick={() => {
-                  setFilters(f => ({ ...f, calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 }));
-                  navigate("/instruments", { replace: true });
-                }} className="ml-1 hover:text-emerald-800 focus:outline-none font-bold">×</button>
+                <button onClick={() => updateFilter({ calibrated_in_range_start: "", calibrated_in_range_end: "", page: 1 })} className="ml-1 hover:text-emerald-800 focus:outline-none font-bold">×</button>
               </Badge>
             </div>
           )}
@@ -1826,9 +2160,9 @@ export default function Instruments() {
           pageIndex={filters.page || 1}
           pageSize={filters.pageSize}
           totalItems={data.total}
-          onPageChange={(page) => setFilters((f) => ({ ...f, page }))}
-          onPageSizeChange={(pageSize) => setFilters((f) => ({ ...f, pageSize, page: 1 }))}
-          onRowClick={(row) => canAccess("instruments", "edit") ? navigate(`/instruments/${row.id}/edit`) : undefined}
+          onPageChange={(page) => updateFilter({ page })}
+          onPageSizeChange={(pageSize) => updateFilter({ pageSize, page: 1 })}
+          onRowClick={(row) => canAccess("instruments", "edit") ? navigate(`/instruments/${row.id}/edit`, { state: { returnUrl: location.pathname + location.search } }) : undefined}
           rowSelection={selected}
           onRowSelectionChange={handleRowSelectionChange}
           hideSearch={true}
@@ -1886,16 +2220,37 @@ export default function Instruments() {
                   </DropdownMenuContent>
                 </DropdownMenu>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 text-xs font-semibold gap-1.5"
-                  onClick={() => setLabelHistoryModalOpen(true)}
-                  title="View Label Print & Download History"
-                >
-                  <History className="h-3.5 w-3.5 text-primary" />
-                  <span>Label History</span>
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title="More options"
+                      aria-label="More options"
+                    >
+                      <MoreVertical className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-52">
+                    {canAccess("instruments", "edit") && (
+                      <DropdownMenuItem
+                        onClick={() => setIsOpenBulkUpdate(true)}
+                        className="gap-2 cursor-pointer text-xs"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 text-blue-600" />
+                        <span>Bulk Update</span>
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      onClick={() => setLabelHistoryModalOpen(true)}
+                      className="gap-2 cursor-pointer text-xs"
+                    >
+                      <History className="h-3.5 w-3.5 text-primary" />
+                      <span>Label History</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
 
                 {selectedIds.length > 0 && (
                   <>
@@ -1969,577 +2324,109 @@ export default function Instruments() {
         />
       </div>
 
-      <Dialog open={isOpenupload} onOpenChange={setisOpenupload}>
-        <DialogContent className="max-w-5xl max-h-[95vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileSpreadsheet size={20} className="text-primary" />
-              Bulk Upload Instruments
-            </DialogTitle>
-            <DialogDescription>
-              Upload an Excel file to add multiple instruments at once.
-            </DialogDescription>
-          </DialogHeader>
-          <ExcelUpload
-            endpoint="/instruments/bulk-upload"
-            mapRow={(row) => {
-              const getVal = (aliases: string[]) => {
-                const normAliases = aliases.map(a => a.toLowerCase().replace(/[^a-z0-9]/g, ""));
-                const key = Object.keys(row || {}).find(k => normAliases.includes(k.toLowerCase().replace(/[^a-z0-9]/g, "")));
-                return key !== undefined ? row[key] : undefined;
-              };
+      {/* Extracted Modular Modals (ARCH-01) */}
+      <InstrumentsUploadModal
+        isOpen={isOpenupload}
+        onOpenChange={setisOpenupload}
+        validationRules={validationRules}
+        rejectedFile={rejectedFile}
+        setRejectedFile={setRejectedFile}
+        onRefresh={fetchData}
+        onSwitchToUpdate={() => setIsOpenBulkUpdate(true)}
+      />
 
-              return {
-                // sino is auto-generated by backend — not sent from Excel
-                name: getVal(["Name", "Description", "NAME OF INSTRUMENT", "Instrument Name"]),
-                id_code: getVal(["ID Code", "IMTE", "ID CODE", "Id", "Instrument ID"]),
-                range: getVal(["Range", "RANGE"]),
-                serial_no: getVal(["Serial No", "SERIAL NO", "Items Sl.No / Model", "Serial Number", "Sl.No"]),
-                least_count: getVal(["Least Count", "LEAST COUNT"]),
-                location: getVal(["Location", "Item Location", "LOCATION"]),
-                frequency: getVal(["Frequency", "CALIB. FREQUENCY in month", "CALIBRATION FREQUENCY", "Calib Frequency"]),
-                last_calibration_date: getVal(["Last Calibration Date", "LAST CALIBRATION DATE", "Last Cal. Date", "Last Cal Date"]),
-                due_date: getVal(["Due Date", "DUE DATE", "Next Cal. Date", "Next Cal Date"]),
-                status: (() => {
-                  const s = getVal(["Status", "Calibration Status", "STATUS"]);
-                  if (s && s.toString().trim().toLowerCase() === "active") return "OK";
-                  return s || "OK";
-                })(),
-                item_status: (() => {
-                  const s = getVal(["Item Status", "ITEM STATUS"]);
-                  if (!s || s.toString().trim().toLowerCase() === "ok") return "Active";
-                  return s;
-                })(),
-                make: getVal(["Make", "Item Make"]),
-                item_type: getVal(["Item Type", "Type"]),
-                device_type: (() => {
-                  const val = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device", "Instrument Type", "Instrument / Gauge", "Category"]);
-                  if (val) return val.toString().trim();
-                  const isRef = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (isRef === "yes" || isRef === "true") return "Reference Standard";
-                  return "Instrument";
-                })(),
-                part_no: getVal(["Part No", "PART NO", "Part Number"]),
-                part_name: getVal(["Part Name"]),
-                agency: getVal(["Calibration Agency", "Agency", "CALIBRATION AGENCY AND TC No", "CALIBRATION AGENCY", "Agency Name"]),
-                module: getVal(["Module", "Moudle"]),
-                calibration_source: getVal(["Calibration Source", "Source"]),
-                customer: getVal(["Customer"]),
-                sector: getVal(["Sector"]),
-                criticality_level: getVal(["Criticality Level", "Criticality"]),
-                cert_no: getVal(["Cert. No.", "Cert No", "Certificate No"]),
-                notes: getVal(["Notes", "Note"]),
-                remarks: getVal(["Remarks", "Remark"]),
-                gauge_issue_date: getVal(["Gauge Issue Date", "Issue Date"]),
-                gauges_received_by: getVal(["Gauges Received By", "Received By"]),
-                gauges_issued_by: getVal(["Gauges Issued By", "Gaues Issued By", "Issued By"]),
-                calibration_procedure: getVal(["Calibration Procedure", "Calibration Procedure& Ref Std", "Procedure"]),
-                traceable: getVal(["Traceable", "Traceability"]),
-                is_reference_standard: (() => {
-                  const val = getVal(["Is Reference Standard", "Is Reference Standar", "Reference Standard"])?.toString().toLowerCase();
-                  if (val === "yes" || val === "true") return true;
-                  const devType = getVal(["Device Type", "DEVICE TYPE", "DeviceType", "Type of Device", "Device"])?.toString().toLowerCase();
-                  if (devType && (devType.includes("reference") || devType.includes("master"))) return true;
-                  return false;
-                })(),
-                custom_parameters: (() => {
-                  const params: Record<string, any> = {};
-                  const customRules = validationRules.filter(r => r.isCustom);
-                  customRules.forEach(rule => {
-                    const val = getVal([rule.displayName, rule.fieldName, ...(rule.excelAliases || [])]);
-                    if (val !== undefined && val !== null && val !== "") {
-                      params[rule.fieldName] = val;
-                    }
-                  });
-                  return params;
-                })(),
-              };
-            }}
+      <InstrumentsBulkUpdateModal
+        isOpen={isOpenBulkUpdate}
+        onOpenChange={setIsOpenBulkUpdate}
+        onRefresh={fetchData}
+      />
 
-            rejectedFile={rejectedFile}
-            setRejectedFile={setRejectedFile}
-            onRefresh={fetchData}
-            onComplete={() => {
-              fetchData();
-              setisOpenupload(false);
-            }}
-          />
-        </DialogContent>
-      </Dialog>
+      <InstrumentsSendCalibrationModal
+        isOpen={isOpenCalibagency}
+        onOpenChange={setisOpenCalibagency}
+        selectedAgency={selectedAgency}
+        setSelectedAgency={setSelectedAgency}
+        emailColumns={EMAIL_COLUMNS}
+        selectedEmailColumns={selectedEmailColumns}
+        setSelectedEmailColumns={setSelectedEmailColumns}
+        selected={selected}
+        setSelected={setSelected}
+        dataItems={data.items}
+        description={description}
+        setDescription={setDescription}
+        isSendCalibration={isSendCalibration}
+        onSendMail={handleSendMail}
+      />
 
+      <InstrumentsDateUpdateModal
+        isOpen={dateModalOpen}
+        onOpenChange={setDateModalOpen}
+        instrument={dateUpdateInstrument}
+        newLastCalDate={newLastCalDate}
+        setNewLastCalDate={setNewLastCalDate}
+        newDueDate={newDueDate}
+        setNewDueDate={setNewDueDate}
+        newCertNo={newCertNo}
+        setNewCertNo={setNewCertNo}
+        certificateFile={certificateFile}
+        setCertificateFile={setCertificateFile}
+        updatingDates={updatingDates}
+        onUpdateDates={handleUpdateDates}
+        baseUrl={BASE_URL}
+      />
 
+      <InstrumentsHistoryModal
+        isOpen={historyModalOpen}
+        onOpenChange={setHistoryModalOpen}
+        instrument={dateUpdateInstrument}
+        historyData={historyData}
+        loadingHistory={loadingHistory}
+        onViewCertificate={(calId) => {
+          if (dateUpdateInstrument) {
+            handleOpenCertificatePreview(dateUpdateInstrument, calId);
+          }
+        }}
+        onHistoryDeleted={(deletedId, updatedInstrument) => {
+          setHistoryData((prev) => prev.filter((h) => h.id !== deletedId));
+          if (updatedInstrument) {
+            setDateUpdateInstrument((prev) => (prev ? { ...prev, ...updatedInstrument } : null));
+            setData((prev) => ({
+              ...prev,
+              items: prev.items.map((item) => (item.id === updatedInstrument.id ? { ...item, ...updatedInstrument } : item)),
+            }));
+            setAllData((prev) =>
+              prev.map((item) => (item.id === updatedInstrument.id ? { ...item, ...updatedInstrument } : item))
+            );
+          }
+          fetchData();
+        }}
+      />
 
-      <Dialog open={isOpenCalibagency} onOpenChange={setisOpenCalibagency}>
-        <DialogContent className="max-w-lg space-y-4 max-h-[90vh] overflow-y-auto">
+      <InstrumentsDeleteModals
+        deleteModalOpen={deleteModalOpen}
+        setDeleteModalOpen={setDeleteModalOpen}
+        instrumentToDelete={instrumentToDelete}
+        onConfirmDelete={handleConfirmDelete}
+        bulkDeleteModalOpen={bulkDeleteModalOpen}
+        setBulkDeleteModalOpen={setBulkDeleteModalOpen}
+        selectedCount={selectedIds.length}
+        onConfirmBulkDelete={confirmBulkDelete}
+        isDeleting={deleting}
+      />
 
-          <DialogHeader>
-            <DialogTitle>Send Instruments to Calibration Agency</DialogTitle>
-            <DialogDescription>
-              Enter agency email, review selected instruments and add description.
-            </DialogDescription>
-          </DialogHeader>
+      <InstrumentsReviewSelectedModal
+        isOpen={selectedReviewModalOpen}
+        onOpenChange={setSelectedReviewModalOpen}
+        selectedItemsList={selectedItemsList}
+        onClearAllSelections={handleClearAllSelections}
+        onDeselectItem={handleDeselectItem}
+        onExportSelected={() => handleExportData("selected")}
+        onPrintSelected={() => {
+          setInstrumentsToPrint(selectedItemsList);
+          setPrintModalOpen(true);
+        }}
+      />
 
-          {/* Agency Email Input */}
-          <div className="space-y-2">
-            <Label>Calibration Agency Email</Label>
-            <Input
-              type="email"
-              value={selectedAgency}
-              onChange={(e) => setSelectedAgency(e.target.value)}
-              placeholder="Enter agency email"
-            />
-          </div>
-
-          {/* Columns Selection */}
-          <div className="space-y-2">
-            <Label>Select Columns to Include in Email</Label>
-            <div className="flex flex-wrap gap-4 border p-3 rounded-md max-h-32 overflow-y-auto">
-              {EMAIL_COLUMNS.map(col => (
-                <div key={col.id} className="flex items-center space-x-2">
-                  <Checkbox 
-                    id={`col-${col.id}`} 
-                    checked={selectedEmailColumns.includes(col.id)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setSelectedEmailColumns(prev => [...prev, col.id]);
-                      } else {
-                        setSelectedEmailColumns(prev => prev.filter(c => c !== col.id));
-                      }
-                    }}
-                  />
-                  <label htmlFor={`col-${col.id}`} className="text-sm cursor-pointer">
-                    {col.label}
-                  </label>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Selected Instruments List */}
-          <div className="space-y-2">
-            <Label>Selected Instruments ({Object.keys(selected).filter(id => selected[id]).length})</Label>
-
-            <div className="border rounded-md p-3 max-h-48 overflow-y-auto space-y-2">
-
-              {Object.keys(selected)
-                .filter((id) => selected[id])
-                .map((id) => {
-                  const item = data.items.find((i) => i.id === id);
-                  if (!item) return null;
-
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between bg-muted p-2 rounded-md"
-                    >
-                      <div className="text-sm">
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {item.id_code}
-                        </div>
-                      </div>
-
-                      {/* Remove Button */}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() =>
-                          setSelected((prev) => {
-                            const copy = { ...prev };
-                            delete copy[item.id];
-                            return copy;
-                          })
-                        }
-                      >
-                        ✕
-                      </Button>
-                    </div>
-                  );
-                })}
-
-              {Object.keys(selected).filter((id) => selected[id]).length === 0 && (
-                <p className="text-sm text-muted-foreground">No instruments selected</p>
-              )}
-            </div>
-          </div>
-
-          {/* Description */}
-          <div className="space-y-2">
-            <Label>Description</Label>
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter description for the agency…"
-            />
-          </div>
-
-          <DialogFooter>
-            <Button
-              disabled={isSendCalibration}
-              onClick={handleSendMail}
-            >
-              {isSendCalibration ? 'Mail Sending...' : 'Send Mail'}
-            </Button>
-          </DialogFooter>
-
-        </DialogContent>
-      </Dialog>
-
-
-      <Dialog open={dateModalOpen} onOpenChange={setDateModalOpen}>
-        <DialogContent className="max-w-md space-y-4">
-          <DialogHeader>
-            <DialogTitle>Log External Calibration</DialogTitle>
-            <DialogDescription>
-              Upload certificate and update dates for {dateUpdateInstrument?.name} ({dateUpdateInstrument?.id_code}).
-              {dateUpdateInstrument?.due_date && (
-                <span className="block mt-1 text-xs text-muted-foreground font-medium">
-                  Previous Due Date: {format(new Date(dateUpdateInstrument.due_date), 'dd-MM-yyyy')}
-                </span>
-              )}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Last Calibration Date</Label>
-              <Input
-                type="date"
-                value={newLastCalDate}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setNewLastCalDate(val);
-                  // Auto calculate due date if frequency exists
-                  if (val && dateUpdateInstrument) {
-                    const freqMonths = parseFrequencyMonths(dateUpdateInstrument.frequency);
-                    if (freqMonths > 0) {
-                      const [y, m, d] = val.split('-').map(Number);
-                      const due = new Date(y, m - 1, d);
-                      due.setMonth(due.getMonth() + freqMonths);
-                      setNewDueDate(format(due, 'yyyy-MM-dd'));
-                    }
-                  }
-                }}
-              />
-            </div>
-            
-            {newDueDate && (
-              <div className="space-y-2 p-3 bg-muted/50 rounded-lg border border-border">
-                <Label className="text-xs text-muted-foreground">Next Due Date (Auto-calculated)</Label>
-                <div className="font-medium flex items-center gap-2">
-                  <CalendarDays className="w-4 h-4 text-emerald-600" />
-                  {format(new Date(newDueDate), 'dd-MM-yyyy')}
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1">
-                  Based on instrument frequency: {dateUpdateInstrument?.frequency || "Not set"}
-                </p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label>Attach Certificate (PDF/Image)</Label>
-              <div className="relative">
-                <input
-                  type="file"
-                  id="certificate-upload"
-                  accept=".pdf,image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files && e.target.files.length > 0) {
-                      setCertificateFile(e.target.files[0]);
-                    }
-                  }}
-                />
-                <label
-                  htmlFor="certificate-upload"
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.add("border-primary", "bg-primary/10");
-                  }}
-                  onDragLeave={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
-                    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                      const droppedFile = e.dataTransfer.files[0];
-                      setCertificateFile(droppedFile);
-                    }
-                  }}
-                  className="flex items-center justify-center w-full px-4 py-3 text-sm font-medium transition-all border-2 border-dashed rounded-lg cursor-pointer border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50 text-muted-foreground"
-                >
-                  <Upload className="w-5 h-5 mr-2 text-primary/70" />
-                  {certificateFile ? (
-                    <span className="text-foreground truncate max-w-[200px]">{certificateFile.name}</span>
-                  ) : (
-                    <span>Click to browse or drag and drop</span>
-                  )}
-                </label>
-              </div>
-              {dateUpdateInstrument?.certificate_file && (
-                <div className="flex items-center mt-2 text-sm">
-                  <span className="text-muted-foreground mr-2">Current file:</span>
-                  <a 
-                    href={dateUpdateInstrument.certificate_file.startsWith("http") ? dateUpdateInstrument.certificate_file : `${BASE_URL}${dateUpdateInstrument.certificate_file}`} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="flex items-center text-primary hover:underline font-medium"
-                  >
-                    <FileSpreadsheet className="w-4 h-4 mr-1" />
-                    View Certificate
-                  </a>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDateModalOpen(false)}>Cancel</Button>
-            <Button disabled={updatingDates || !newLastCalDate || !certificateFile} onClick={handleUpdateDates}>
-              {updatingDates ? "Saving..." : "Save External Calibration"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={historyModalOpen} onOpenChange={setHistoryModalOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="w-5 h-5 text-primary" />
-              Calibration History
-            </DialogTitle>
-            <DialogDescription>
-              Audit trail for {dateUpdateInstrument?.name} ({dateUpdateInstrument?.id_code})
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {loadingHistory ? (
-              <div className="space-y-2">
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-                <Skeleton className="h-10 w-full" />
-              </div>
-            ) : historyData.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No history records found for this instrument.
-              </div>
-            ) : (
-              <div className="border rounded-md overflow-hidden">
-                <Table>
-                  <TableHeader className="bg-muted/50">
-                    <TableRow>
-                      <TableHead>Updated On</TableHead>
-                      <TableHead>Last Calibration</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Source</TableHead>
-                      <TableHead>Certificate</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {historyData.map((record) => (
-                      <TableRow key={record.id}>
-                        <TableCell className="font-medium">
-                          {record.created_at ? new Date(record.created_at).toLocaleString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {record.last_calibration_date ? new Date(record.last_calibration_date).toLocaleDateString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {record.due_date ? new Date(record.due_date).toLocaleDateString() : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className={record.calibration_source === 'In-House' ? 'bg-blue-50 text-blue-700' : record.calibration_source === 'External' ? 'bg-amber-50 text-amber-700' : ''}>
-                            {record.calibration_source || 'Unknown'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {record.certificate_file ? (
-                            <a 
-                              href={record.certificate_file.startsWith("http") ? record.certificate_file : `${BASE_URL}${record.certificate_file}`} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="text-primary hover:underline flex items-center text-sm"
-                            >
-                              <FileSpreadsheet className="w-3.5 h-3.5 mr-1" />
-                              View
-                            </a>
-                          ) : (
-                            <span className="text-muted-foreground text-xs">None</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setHistoryModalOpen(false)}>Close</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <Trash2 className="h-5 w-5" />
-              Delete Instrument
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete the instrument <strong>{instrumentToDelete?.name}</strong> ({instrumentToDelete?.id_code})? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setDeleteModalOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleConfirmDelete} disabled={deleting}>
-              {deleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={bulkDeleteModalOpen} onOpenChange={setBulkDeleteModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="text-destructive flex items-center gap-2">
-              <Trash2 className="h-5 w-5" />
-              Delete Instruments
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete <strong>{selectedIds.length}</strong> selected instruments? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setBulkDeleteModalOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={confirmBulkDelete} disabled={deleting}>
-              {deleting ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      
-      {/* ─── Selected Instruments Review & Action Modal ─── */}
-      <Dialog open={selectedReviewModalOpen} onOpenChange={setSelectedReviewModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col space-y-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileCheck className="w-5 h-5 text-primary" />
-                <span>Review Selected Instruments ({selectedItemsList.length})</span>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs text-destructive hover:bg-destructive/10 border-destructive/30 gap-1"
-                onClick={handleClearAllSelections}
-              >
-                <Trash2 className="w-3.5 h-3.5" /> Clear All
-              </Button>
-            </DialogTitle>
-            <DialogDescription>
-              Review all items selected across search & pagination. Deselect any item not required, then print labels or download in XLSX format.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto border rounded-xl max-h-[50vh] scrollbar-thin">
-            <Table>
-              <TableHeader className="bg-muted/50 sticky top-0 z-10">
-                <TableRow>
-                  <TableHead className="w-12 text-center">S.No</TableHead>
-                  <TableHead>ID Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Last Cal. Date</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {selectedItemsList.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-8 text-xs">
-                      No items selected. Select items from the inventory table to review or print.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  selectedItemsList.map((item, idx) => (
-                    <TableRow key={item.id} className="hover:bg-muted/30 text-xs">
-                      <TableCell className="text-center font-mono text-muted-foreground">{idx + 1}</TableCell>
-                      <TableCell className="font-semibold text-foreground">{item.id_code}</TableCell>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.location || "-"}</TableCell>
-                      <TableCell>
-                        {item.last_calibration_date ? format(new Date(item.last_calibration_date), "dd-MM-yyyy") : "-"}
-                      </TableCell>
-                      <TableCell>
-                        {item.due_date ? format(new Date(item.due_date), "dd-MM-yyyy") : "-"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={item.status === "OK" ? "success" : item.status === "Overdue" ? "destructive" : "warning"} className="text-[10px]">
-                          {item.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          title="Deselect this item"
-                          onClick={() => handleDeselectItem(item.id)}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-
-          <DialogFooter className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-            <div className="text-xs text-muted-foreground font-medium">
-              {selectedItemsList.length} item(s) selected
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setSelectedReviewModalOpen(false)}>
-                Close
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={selectedItemsList.length === 0}
-                onClick={() => handleExportData("selected")}
-                className="gap-1.5 text-emerald-600 hover:text-emerald-700 border-emerald-600/30 hover:bg-emerald-50"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span>Download XLSX ({selectedItemsList.length})</span>
-              </Button>
-              <Button
-                disabled={selectedItemsList.length === 0}
-                size="sm"
-                onClick={() => {
-                  setInstrumentsToPrint(selectedItemsList);
-                  setPrintModalOpen(true);
-                }}
-                className="gap-1.5 bg-primary text-primary-foreground"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Print Labels ({selectedItemsList.length})</span>
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <PrintLabelModal 
         open={printModalOpen}
@@ -2553,136 +2440,92 @@ export default function Instruments() {
         onOpenChange={setLabelHistoryModalOpen}
       />
 
-      <Dialog open={columnModalOpen} onOpenChange={setColumnModalOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col space-y-4">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Settings2 className="w-5 h-5 text-primary" />
-              <span>Customize Instrument Columns</span>
-            </DialogTitle>
-            <DialogDescription>
-              Drag & drop columns to re-order, or use the checkboxes to toggle visibility.
-            </DialogDescription>
-          </DialogHeader>
+      <InstrumentsColumnModal
+        isOpen={columnModalOpen}
+        onOpenChange={setColumnModalOpen}
+        columnConfigs={columnConfigs}
+        defaultColumns={DEFAULT_INSTRUMENT_COLUMNS}
+        onSave={handleSaveColumnConfigs}
+      />
 
-          {/* Search & Quick Actions */}
-          <div className="space-y-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search columns..."
-                value={columnSearchQuery}
-                onChange={(e) => setColumnSearchQuery(e.target.value)}
-                className="pl-9 h-9 text-xs"
-              />
+      {/* Digital Certificate Preview Modal */}
+      <Dialog open={certPreviewModalOpen} onOpenChange={setCertPreviewModalOpen}>
+        <DialogContent className="sm:max-w-5xl max-h-[92vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <div className="flex items-center justify-between p-4 border-b bg-muted/40 shrink-0">
+            <div>
+              <DialogTitle className="text-base font-bold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-primary" />
+                Calibration Certificate Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Certificate: <span className="font-semibold text-primary font-mono">{selectedPreviewCalibration?.certificate_number || selectedPreviewInstrument?.cert_no || "-"}</span> — {selectedPreviewInstrument?.name} ({selectedPreviewInstrument?.id_code})
+              </DialogDescription>
             </div>
-
-            <div className="flex items-center justify-between text-xs pt-1">
-              <div className="flex gap-2">
+            <div className="flex items-center gap-2 pr-8 shrink-0">
+              {selectedPreviewCalibration ? (
                 <Button
-                  variant="ghost"
                   size="sm"
-                  className="h-7 text-xs px-2"
-                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: true })))}
+                  onClick={() => handleDownloadPreviewCertificate(selectedPreviewCalibration)}
+                  disabled={downloadingCert}
+                  className="gap-1.5 text-xs font-semibold shadow-2xs"
                 >
-                  Select All
+                  {downloadingCert ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  Download PDF
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 text-xs px-2 text-muted-foreground"
-                  onClick={() => setTempColumnConfigs(prev => prev.map(c => ({ ...c, visible: c.id === "sino" || c.id === "name" || c.id === "id_code" })))}
+              ) : selectedPreviewInstrument?.certificate_file ? (
+                <a
+                  href={getSecureFileUrl(selectedPreviewInstrument.certificate_file)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-md hover:bg-primary/90 shadow-2xs transition-colors"
                 >
-                  Deselect All
-                </Button>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Open Document
+                </a>
+              ) : null}
+            </div>
+          </div>
+          <div className="w-full flex-1 max-h-[calc(92vh-75px)] overflow-y-auto p-4 sm:p-6 bg-slate-100 dark:bg-slate-950 flex justify-center">
+            {loadingPreviewCal ? (
+              <div className="flex flex-col items-center justify-center p-12 text-muted-foreground gap-3">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                <p className="text-xs">Loading Certificate Details...</p>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 text-xs px-2 text-primary font-medium"
-                onClick={() => setTempColumnConfigs([...DEFAULT_INSTRUMENT_COLUMNS])}
-              >
-                Reset Default
-              </Button>
-            </div>
-          </div>
-
-          {/* Drag & Drop Re-orderable & Selectable Columns List */}
-          <div className="flex-1 overflow-y-auto space-y-1.5 border rounded-xl p-2 max-h-[45vh] scrollbar-thin">
-            {tempColumnConfigs
-              .map((col, index) => ({ col, originalIndex: index }))
-              .filter(({ col }) => col.label.toLowerCase().includes(columnSearchQuery.toLowerCase()))
-              .map(({ col, originalIndex }) => (
-                <div
-                  key={col.id}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, originalIndex)}
-                  onDragOver={(e) => handleDragOver(e, originalIndex)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center justify-between p-2.5 rounded-lg border text-xs transition-all duration-150 select-none ${
-                    draggedColIndex === originalIndex
-                      ? "bg-primary/10 border-primary shadow-md scale-[1.01] z-10"
-                      : col.visible
-                      ? "bg-card border-border hover:border-primary/40 shadow-2xs"
-                      : "bg-muted/30 border-transparent opacity-60 hover:opacity-80"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <div
-                      className="cursor-grab active:cursor-grabbing p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                      title="Drag to reorder"
-                    >
-                      <GripVertical className="w-4 h-4" />
-                    </div>
-                    <Checkbox
-                      id={`col-cfg-${col.id}`}
-                      checked={col.visible}
-                      onCheckedChange={(checked) => handleToggleColumnVisibility(col.id, !!checked)}
-                    />
-                    <label htmlFor={`col-cfg-${col.id}`} className="font-medium text-xs truncate cursor-pointer select-none">
-                      {col.label}
-                    </label>
-                  </div>
-
-                  {/* Up / Down Re-order Buttons */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      disabled={originalIndex === 0}
-                      onClick={() => handleMoveColumn(originalIndex, "up")}
-                      title="Move Up"
-                    >
-                      <ArrowUp className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                      disabled={originalIndex === tempColumnConfigs.length - 1}
-                      onClick={() => handleMoveColumn(originalIndex, "down")}
-                      title="Move Down"
-                    >
-                      <ArrowDown className="w-3 h-3" />
-                    </Button>
-                  </div>
+            ) : selectedPreviewCalibration ? (
+              <CertificatePreview
+                calibration={selectedPreviewCalibration}
+                instrumentName={selectedPreviewInstrument?.name}
+              />
+            ) : selectedPreviewInstrument?.certificate_file ? (
+              <div className="flex flex-col items-center justify-center p-10 gap-4 text-center">
+                <FileSpreadsheet className="w-14 h-14 text-primary opacity-80" />
+                <div>
+                  <h4 className="text-base font-semibold">External Calibration Document</h4>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                    This instrument has an uploaded certificate file attached ({selectedPreviewInstrument.cert_no || "Scanned Certificate"}).
+                  </p>
                 </div>
-              ))}
+                <div className="flex items-center gap-3 mt-2">
+                  <a
+                    href={getSecureFileUrl(selectedPreviewInstrument.certificate_file)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center px-4 py-2 text-xs font-semibold text-white bg-primary rounded-md hover:bg-primary/90 shadow-sm gap-2"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Open Certificate in New Tab
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-muted-foreground text-xs">
+                No calibration certificate details found for this instrument.
+              </div>
+            )}
           </div>
-
-          {/* Footer Actions */}
-          <DialogFooter className="flex items-center justify-end gap-2 pt-2 border-t">
-            <Button variant="outline" size="sm" onClick={() => setColumnModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button size="sm" onClick={handleSaveColumnConfigs} className="gap-1.5">
-              <Check className="w-4 h-4" />
-              <span>Save Configuration</span>
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </>
 
   );

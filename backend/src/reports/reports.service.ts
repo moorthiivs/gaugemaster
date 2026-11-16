@@ -9,15 +9,9 @@ import * as ExcelJS from 'exceljs';
 
 import { SettingsService } from '../settings/settings.service';
 import { ReportTemplatesService } from '../report-templates/report-templates.service';
+import { getPdfFonts } from '../lib/pdf-fonts';
 const { JSDOM } = require('jsdom');
-const fonts = {
-    Roboto: {
-        normal: 'src/fonts/Roboto-Regular.ttf',
-        bold: 'src/fonts/Roboto-Medium.ttf',
-        italics: 'src/fonts/Roboto-Italic.ttf',
-        bolditalics: 'src/fonts/Roboto-MediumItalic.ttf',
-    },
-};
+const fonts = getPdfFonts();
 
 
 import { User } from 'src/users/user.entity';
@@ -36,17 +30,90 @@ export class ReportsService {
         private readonly reportTemplatesService: ReportTemplatesService,
     ) { }
 
-    private async getCompanyUserIds(userId?: string): Promise<string[]> {
-        if (!userId) return [];
-        const user = await this.userRepository.findOne({ where: { id: userId } });
-        if (user && user.companyId) {
+    private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {
+        if (companyId) return companyId;
+        if (userId) {
+            const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'companyId'] });
+            if (user?.companyId) return user.companyId;
+        }
+        return undefined;
+    }
+
+    private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+        const targetCompanyId = await this.resolveTargetCompanyId(userId, companyId);
+        if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
-                where: { companyId: user.companyId },
+                where: { companyId: targetCompanyId },
                 select: ['id'],
             });
-            return companyUsers.map(u => u.id);
+            if (companyUsers.length > 0) {
+                return companyUsers.map(u => u.id);
+            }
         }
-        return [userId];
+        return userId ? [userId] : [];
+    }
+
+    private formatReportDate(val: any): string {
+        if (!val) return '-';
+        if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (!trimmed || trimmed === '-') return '-';
+            // Already in DD-MM-YYYY format
+            if (/^\d{2}-\d{2}-\d{4}$/.test(trimmed)) return trimmed;
+            // Match DD/MM/YYYY -> convert to DD-MM-YYYY
+            const dmySlashMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (dmySlashMatch) return `${dmySlashMatch[1]}-${dmySlashMatch[2]}-${dmySlashMatch[3]}`;
+            // Match YYYY-MM-DD or YYYY/MM/DD or ISO string
+            const ymdMatch = trimmed.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+            if (ymdMatch) {
+                return `${ymdMatch[3]}-${ymdMatch[2]}-${ymdMatch[1]}`;
+            }
+        }
+        try {
+            const d = val instanceof Date ? val : new Date(val);
+            if (isNaN(d.getTime())) return typeof val === 'string' ? val : '-';
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            return `${day}-${month}-${year}`;
+        } catch {
+            return typeof val === 'string' ? val : '-';
+        }
+    }
+
+    private resolveEffectiveStatus(inst: Instrument): string {
+        const current = (inst.status || '').trim();
+        const lower = current.toLowerCase();
+
+        const standardStatuses = [
+            'ok',
+            'calibrated',
+            'upcoming calibration (10 days before )',
+            'upcoming calibration',
+            'overdue',
+            'over due',
+            '',
+        ];
+
+        // Preserve custom status or non-standard status
+        if (!standardStatuses.includes(lower)) {
+            return current;
+        }
+
+        const itemLower = (inst.item_status || '').toLowerCase().trim();
+        if (['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(itemLower)) {
+            return current || 'OK';
+        }
+
+        if (inst.due_date) {
+            const dueDate = new Date(inst.due_date);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            if (!isNaN(dueDate.getTime()) && dueDate < today) {
+                return 'Overdue';
+            }
+        }
+        return current || 'OK';
     }
 
     private async generatePdfReport(
@@ -86,6 +153,8 @@ export class ReportsService {
             gauges_issued_by: 'Issued By',
             calibration_procedure: 'Procedure',
             traceable: 'Traceable',
+            device_type: 'Device Type',
+            is_reference_standard: 'Reference Standard',
         };
 
         const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
@@ -98,16 +167,20 @@ export class ReportsService {
             const row = activeColumns.map(col => {
                 let text = '';
                 if (col === 'sino') text = (i + 1).toString();
-                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                     const date = inst[col as keyof Instrument];
-                    text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
+                    text = this.formatReportDate(date);
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
                 } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                    text = (inst[col as keyof Instrument] as string) || '-';
+                    const rawVal = inst[col as keyof Instrument];
+                    text = typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : String(rawVal) || '-';
                 } else {
                     const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                        customVal = this.formatReportDate(customVal);
+                    }
                     text = String(customVal);
                 }
                 return { text, style: 'tableData' };
@@ -257,31 +330,41 @@ export class ReportsService {
             });
         };
 
+        // Precompute static header and footer AST once outside the per-page rendering callbacks
+        const precomputedHeader = (() => {
+            const headerResult = htmlToPdfmake(safeHeaderHtml, { window: domHeader.window });
+            const headerParsed = headerResult.content || headerResult;
+            const headerStack = Array.isArray(headerParsed) ? headerParsed : [headerParsed];
+            fixPdfmakeContent(headerStack);
+            return headerStack;
+        })();
+
+        const precomputedFooter = (() => {
+            if (!safeFooterHtml) return [];
+            const footerResult = htmlToPdfmake(safeFooterHtml, { window: domFooter.window });
+            const footerParsed = footerResult.content || footerResult;
+            const footerStack = Array.isArray(footerParsed) ? footerParsed : [footerParsed];
+            fixPdfmakeContent(footerStack);
+            return footerStack;
+        })();
+
         const docDefinition = {
             pageSize: activeColumns.length > 8 ? 'A3' : 'A4',
             pageOrientation: activeColumns.length > 5 ? 'landscape' : 'portrait',
             pageMargins: [20, 100, 20, 80],
             header: function (currentPage: number, pageCount: number, pageSize: any) {
-                const headerResult = htmlToPdfmake(safeHeaderHtml, { window: domHeader.window });
-                const headerParsed = headerResult.content || headerResult;
-                const headerStack = Array.isArray(headerParsed) ? headerParsed : [headerParsed];
-                fixPdfmakeContent(headerStack);
                 return {
                     margin: [20, 20, 20, 0],
-                    stack: headerStack
+                    stack: precomputedHeader,
                 };
             },
             footer: function (currentPage: number, pageCount: number) {
-                const footerResult = safeFooterHtml ? htmlToPdfmake(safeFooterHtml, { window: domFooter.window }) : [];
-                const footerParsed = footerResult.content || footerResult;
-                const footerStack = Array.isArray(footerParsed) ? footerParsed : [footerParsed];
-                fixPdfmakeContent(footerStack);
                 return {
                     margin: [20, 10, 20, 0],
                     stack: [
-                        ...footerStack,
+                        ...precomputedFooter,
                         { text: `Page ${currentPage} of ${pageCount}`, alignment: 'center', margin: [0, 5, 0, 0], fontSize: 8 }
-                    ]
+                    ],
                 };
             },
             content: [
@@ -343,32 +426,59 @@ export class ReportsService {
         templateId?: string,
         status?: string,
         location?: string,
+        companyId?: string,
+        item_status?: string,
     ): Promise<Buffer> {
-        const userIds = await this.getCompanyUserIds(userid);
-        const targetUserIds = userIds.length > 0 ? userIds : [userid];
-
         const { ILike } = require('typeorm');
         const where: any = {
             due_date: Between(new Date(from), new Date(to)),
-            created_by: { id: In(targetUserIds) },
         };
+
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
+        if (targetCompanyId) {
+            where.companyId = targetCompanyId;
+        } else {
+            const userIds = await this.getCompanyUserIds(userid, companyId);
+            const targetUserIds = userIds.length > 0 ? userIds : [userid];
+            where.created_by = { id: In(targetUserIds) };
+        }
 
         if (status && status !== 'All') {
             where.status = ILike(`%${status}%`);
+        }
+        if (item_status && item_status !== 'All') {
+            where.item_status = ILike(`%${item_status}%`);
         }
         if (location && location !== 'All') {
             where.location = ILike(`%${location}%`);
         }
 
+        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
+        const needsCreatedBy = selectedColumns ? selectedColumns.includes('created_by') : true;
+
+        // Explicitly project all report columns and custom_parameters to minimize V8 heap allocation
+        const exportSelectFields = [
+            'id', 'sino', 'id_code', 'name', 'location', 'frequency', 'last_calibration_date',
+            'due_date', 'agency', 'range', 'serial_no', 'least_count', 'notes', 'status',
+            'item_status', 'make', 'item_type', 'part_no', 'part_name', 'module',
+            'calibration_source', 'customer', 'sector', 'criticality_level', 'cert_no',
+            'remarks', 'gauge_issue_date', 'gauges_received_by', 'gauges_issued_by',
+            'calibration_procedure', 'traceable', 'device_type', 'is_reference_standard',
+            'custom_parameters',
+        ];
+
         const instruments = await this.instrumentRepository.find({
             where,
-            relations: ['created_by'],
+            select: exportSelectFields as any,
+            relations: needsCreatedBy ? ['created_by'] : [],
             order: {
                 due_date: 'ASC',
             },
         });
 
-        const selectedColumns = columnsStr ? columnsStr.split(',') : undefined;
+        instruments.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
+        });
 
         if (format === 'xlsx') {
             const columnMap: Record<string, string> = {
@@ -381,6 +491,7 @@ export class ReportsService {
                 criticality_level: 'Criticality Level', cert_no: 'Certificate No', remarks: 'Remarks',
                 gauge_issue_date: 'Gauge Issue Date', gauges_received_by: 'Gauges Received By',
                 gauges_issued_by: 'Gauges Issued By', calibration_procedure: 'Calibration Procedure', traceable: 'Traceable',
+                device_type: 'Device Type', is_reference_standard: 'Reference Standard',
             };
 
             const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
@@ -493,16 +604,20 @@ export class ReportsService {
                 const rowData: any[] = [];
                 activeColumns.forEach(col => {
                     if (col === 'sino') rowData.push(index + 1);
-                    else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                    else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                         const date = inst[col as keyof Instrument];
-                        rowData.push(date instanceof Date ? date.toISOString().split('T')[0] : '-');
+                        rowData.push(this.formatReportDate(date));
                     } else if (col === 'created_by') {
                         rowData.push(inst.created_by?.name || inst.created_by?.id || '');
                     } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                        rowData.push(inst[col as keyof Instrument] || '');
+                        const rawVal = inst[col as keyof Instrument];
+                        rowData.push(typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : (rawVal || ''));
                     } else {
                         const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                        const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '';
+                        let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '';
+                        if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                            customVal = this.formatReportDate(customVal);
+                        }
                         rowData.push(customVal);
                     }
                 });
@@ -598,6 +713,7 @@ export class ReportsService {
             criticality_level: 'Criticality', cert_no: 'Cert No', remarks: 'Remarks',
             gauge_issue_date: 'Issue Date', gauges_received_by: 'Received By', gauges_issued_by: 'Issued By',
             calibration_procedure: 'Procedure', traceable: 'Traceable',
+            device_type: 'Device Type', is_reference_standard: 'Reference Standard',
         };
         const activeColumns = selectedColumns || ['sino', 'id_code', 'name', 'location', 'due_date', 'status'];
 
@@ -682,16 +798,20 @@ export class ReportsService {
             activeColumns.forEach(col => {
                 let text = '';
                 if (col === 'sino') text = (i + 1).toString();
-                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date') {
+                else if (col === 'last_calibration_date' || col === 'due_date' || col === 'gauge_issue_date' || col.toLowerCase().includes('date')) {
                     const date = inst[col as keyof Instrument];
-                    text = date instanceof Date ? date.toISOString().split('T')[0] : '-';
+                    text = this.formatReportDate(date);
                 } else if (col === 'created_by') {
                     text = inst.created_by?.name || inst.created_by?.id || '-';
                 } else if (inst[col as keyof Instrument] !== undefined && inst[col as keyof Instrument] !== null) {
-                    text = (inst[col as keyof Instrument] as string) || '-';
+                    const rawVal = inst[col as keyof Instrument];
+                    text = typeof rawVal === 'boolean' ? (rawVal ? 'Yes' : 'No') : String(rawVal) || '-';
                 } else {
                     const cleanCol = col.replace(/^custom_param_/, '').replace(/^custom_/, '');
-                    const customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    let customVal = inst.custom_parameters?.[col] ?? inst.custom_parameters?.[cleanCol] ?? '-';
+                    if (cleanCol.toLowerCase().includes('date') && customVal && customVal !== '-') {
+                        customVal = this.formatReportDate(customVal);
+                    }
                     text = String(customVal);
                 }
                 let style = 'border: 1px solid #ddd; padding: 8px; font-size: 12px;';
@@ -752,21 +872,27 @@ export class ReportsService {
         userid: string,
         page: number = 1,
         pageSize: number = 10,
-        filters: Record<string, string | undefined> = {}
+        filters: Record<string, string | undefined> = {},
+        companyId?: string,
     ): Promise<{ items: Instrument[], total: number }> {
-        const userIds = await this.getCompanyUserIds(userid);
-        const targetUserIds = userIds.length > 0 ? userIds : [userid];
-
         const where: any = {
             due_date: Between(new Date(from), new Date(to)),
-            created_by: { id: In(targetUserIds) },
         };
+
+        const targetCompanyId = await this.resolveTargetCompanyId(userid, companyId);
+        if (targetCompanyId) {
+            where.companyId = targetCompanyId;
+        } else {
+            const userIds = await this.getCompanyUserIds(userid, companyId);
+            const targetUserIds = userIds.length > 0 ? userIds : [userid];
+            where.created_by = { id: In(targetUserIds) };
+        }
 
         // Apply dynamic filters
         Object.keys(filters).forEach(key => {
-            if (filters[key]) {
+            if (filters[key] && filters[key] !== 'All') {
                 const val = filters[key];
-                if (key === 'name' || key === 'id_code' || key === 'location' || key === 'agency' || key === 'status') {
+                if (key === 'name' || key === 'id_code' || key === 'location' || key === 'agency' || key === 'status' || key === 'item_status') {
                     const { ILike } = require('typeorm');
                     where[key] = ILike(`%${val}%`);
                 }
@@ -781,6 +907,10 @@ export class ReportsService {
             },
             skip: (page - 1) * pageSize,
             take: pageSize,
+        });
+
+        items.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst);
         });
 
         return { items, total };

@@ -19,8 +19,9 @@ export class CreateCalibrationTemplateDto {
   @IsString()
   instrument_type: string;
 
+  @IsOptional()
   @IsString()
-  calibration_type: string;
+  calibration_type?: string;
 
   @IsOptional()
   @IsString()
@@ -87,7 +88,47 @@ export class CreateCalibrationTemplateDto {
 
   @IsOptional()
   @IsString()
+  procedure_no?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_name?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_date?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_rev?: string;
+
+  @IsOptional()
+  @IsString()
   doc_no?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_date?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_rev?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_doc_no?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_date?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_rev?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_reference?: string;
 
   @IsOptional()
   @IsString()

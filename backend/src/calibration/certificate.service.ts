@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Calibration, CalibrationPoint } from './calibration.entity';
 import PdfPrinter from 'pdfmake';
 import { SettingsService } from '../settings/settings.service';
@@ -8,101 +8,21 @@ const htmlToPdfmake = require('html-to-pdfmake');
 const { JSDOM } = require('jsdom');
 const path = require('path');
 const fs = require('fs');
-const zlib = require('zlib');
-const PNG = require('png-js');
+import {
+  removeWhiteBackground,
+  normalizeDiagramImage,
+  resolvePdfDiagram,
+  ResolvedPdfDiagram,
+} from './utils/png-encoder.util';
+import { getCoveredCells } from './utils/table-span.util';
+import { getPdfFonts } from '../lib/pdf-fonts';
+import {
+  applyVerticalAlignmentToTable,
+  walkAndAlignPdfTables,
+} from './utils/pdf-table-align.util';
+import { evaluateRowMetrology } from './utils/formula-engine.util';
 
-function createCrcTable() {
-  const cTable = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    cTable[n] = c;
-  }
-  return cTable;
-}
-const crcTable = createCrcTable();
-
-function crc32(buf: Buffer): number {
-  let crc = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) {
-    crc = crcTable[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function makeChunk(type: string, data: Buffer): Buffer {
-  const typeBuf = Buffer.from(type);
-  const lenBuf = Buffer.alloc(4);
-  lenBuf.writeUInt32BE(data.length, 0);
-  const crcBuf = Buffer.alloc(4);
-  const typeAndData = Buffer.concat([typeBuf, data]);
-  crcBuf.writeUInt32BE(crc32(typeAndData), 0);
-  return Buffer.concat([lenBuf, typeAndData, crcBuf]);
-}
-
-function encodeRgbaPng(
-  width: number,
-  height: number,
-  rgbaBuffer: Buffer,
-): Buffer {
-  const header = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdrData = Buffer.alloc(13);
-  ihdrData.writeUInt32BE(width, 0);
-  ihdrData.writeUInt32BE(height, 4);
-  ihdrData[8] = 8; // bit depth
-  ihdrData[9] = 6; // color type 6 = RGBA
-  ihdrData[10] = 0;
-  ihdrData[11] = 0;
-  ihdrData[12] = 0;
-  const ihdrChunk = makeChunk('IHDR', ihdrData);
-
-  const scanlineLength = 1 + width * 4;
-  const scanlines = Buffer.alloc(height * scanlineLength);
-  for (let y = 0; y < height; y++) {
-    const offset = y * scanlineLength;
-    scanlines[offset] = 0; // Filter type None
-    const srcOffset = y * width * 4;
-    rgbaBuffer.copy(scanlines, offset + 1, srcOffset, srcOffset + width * 4);
-  }
-
-  const idatChunk = makeChunk('IDAT', zlib.deflateSync(scanlines));
-  const iendChunk = makeChunk('IEND', Buffer.alloc(0));
-
-  return Buffer.concat([header, ihdrChunk, idatChunk, iendChunk]);
-}
-
-async function removeWhiteBackground(fileBuffer: Buffer): Promise<Buffer> {
-  return new Promise((resolve) => {
-    try {
-      const img = new PNG(fileBuffer);
-      img.decode((pixels: Buffer) => {
-        if (!pixels || pixels.length === 0) return resolve(fileBuffer);
-        for (let i = 0; i < pixels.length; i += 4) {
-          const r = pixels[i];
-          const g = pixels[i + 1];
-          const b = pixels[i + 2];
-          if (r > 225 && g > 225 && b > 225) {
-            pixels[i + 3] = 0;
-          }
-        }
-        const transparentPng = encodeRgbaPng(img.width, img.height, pixels);
-        resolve(transparentPng);
-      });
-    } catch (e) {
-      resolve(fileBuffer);
-    }
-  });
-}
-const fonts = {
-  Roboto: {
-    normal: 'src/fonts/Roboto-Regular.ttf',
-    bold: 'src/fonts/Roboto-Medium.ttf',
-    italics: 'src/fonts/Roboto-Italic.ttf',
-    bolditalics: 'src/fonts/Roboto-MediumItalic.ttf',
-  },
-};
+const fonts = getPdfFonts();
 
 /**
  * Generates professional calibration certificate PDFs using pdfmake.
@@ -112,10 +32,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../users/user.entity';
 import { CalibrationTemplate } from '../calibration-templates/entities/calibration-template.entity';
+import { DEFAULT_APPROVAL_SEAL_BASE64 } from '../assets/default-seal';
 
 @Injectable()
 export class CertificateService {
-  private printer = new PdfPrinter(fonts);
+  private readonly logger = new Logger(CertificateService.name);
+
+  private get printer(): PdfPrinter {
+    return new PdfPrinter(getPdfFonts());
+  }
 
   constructor(
     private readonly settingsService: SettingsService,
@@ -147,12 +72,32 @@ export class CertificateService {
       } catch (e) {}
     }
 
-    let approvedSig = calibration.approved_by_signature || calibration.reviewed_by_signature;
-    const approvedName = calibration.approved_by || calibration.reviewed_by;
-    if ((!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {
+    let reviewedSig = calibration.reviewed_by_signature;
+    const reviewedName = calibration.reviewed_by;
+    if ((!reviewedSig || !reviewedSig.startsWith('data:image')) && reviewedName) {
       try {
         const u = await this.userRepository.findOne({
-          where: { name: approvedName },
+          where: { name: reviewedName },
+        });
+        if (u && u.signature && u.signature.startsWith('data:image')) {
+          reviewedSig = u.signature;
+        }
+      } catch (e) {}
+    }
+
+    const isApproved =
+      calibration.approval_status === 'Approved' ||
+      Boolean((calibration as any).approved_at) ||
+      (Boolean(calibration.approved_by) && calibration.approved_by !== 'Pending Approval');
+    let approvedSig = isApproved ? calibration.approved_by_signature : null;
+    const approvedName = isApproved ? calibration.approved_by : null;
+    if (isApproved && (!approvedSig || !approvedSig.startsWith('data:image')) && approvedName) {
+      try {
+        const u = await this.userRepository.findOne({
+          where: [
+            ...(calibration.approved_by_id ? [{ id: calibration.approved_by_id }] : []),
+            ...(approvedName ? [{ name: approvedName }] : []),
+          ],
         });
         if (u && u.signature && u.signature.startsWith('data:image')) {
           approvedSig = u.signature;
@@ -236,6 +181,75 @@ export class CertificateService {
       (latestTemplate as any)?.docNo ||
       (calibration as any).template?.doc_no ||
       (calibration as any).template?.docNo;
+    const docDate =
+      calibration.doc_date ||
+      (calibration as any).docDate ||
+      latestTemplate?.doc_date ||
+      (latestTemplate as any)?.docDate ||
+      (calibration as any).template?.doc_date;
+    const docRev =
+      calibration.doc_rev ||
+      (calibration as any).docRev ||
+      latestTemplate?.doc_rev ||
+      (latestTemplate as any)?.docRev ||
+      (calibration as any).template?.doc_rev;
+
+    const procedureNo =
+      calibration.procedure_no ||
+      (calibration as any).procedureNo ||
+      latestTemplate?.procedure_no ||
+      (latestTemplate as any)?.procedureNo ||
+      calibration.procedure_reference ||
+      (calibration as any).procedureReference ||
+      latestTemplate?.procedure_reference;
+    const procedureName =
+      calibration.procedure_name ||
+      (calibration as any).procedureName ||
+      latestTemplate?.procedure_name ||
+      (latestTemplate as any)?.procedureName;
+    const procedureDate =
+      calibration.procedure_date ||
+      (calibration as any).procedureDate ||
+      latestTemplate?.procedure_date ||
+      (latestTemplate as any)?.procedureDate;
+    const procedureRev =
+      calibration.procedure_rev ||
+      (calibration as any).procedureRev ||
+      latestTemplate?.procedure_rev ||
+      (latestTemplate as any)?.procedureRev;
+
+    const acceptanceCriteriaDocNo =
+      calibration.acceptance_criteria_doc_no ||
+      (calibration as any).acceptanceCriteriaDocNo ||
+      latestTemplate?.acceptance_criteria_doc_no ||
+      (latestTemplate as any)?.acceptanceCriteriaDocNo;
+    const acceptanceCriteriaDate =
+      calibration.acceptance_criteria_date ||
+      (calibration as any).acceptanceCriteriaDate ||
+      latestTemplate?.acceptance_criteria_date ||
+      (latestTemplate as any)?.acceptanceCriteriaDate;
+    const acceptanceCriteriaRev =
+      calibration.acceptance_criteria_rev ||
+      (calibration as any).acceptanceCriteriaRev ||
+      latestTemplate?.acceptance_criteria_rev ||
+      (latestTemplate as any)?.acceptanceCriteriaRev;
+    const acceptanceCriteriaReference =
+      calibration.acceptance_criteria_reference ||
+      (calibration as any).acceptanceCriteriaReference ||
+      latestTemplate?.acceptance_criteria_reference ||
+      (latestTemplate as any)?.acceptanceCriteriaReference;
+
+    let acceptanceCriteriaText = '';
+    if (acceptanceCriteriaReference) {
+      acceptanceCriteriaText = acceptanceCriteriaReference;
+    } else if (acceptanceCriteriaDocNo) {
+      const revPart = acceptanceCriteriaRev
+        ? ` Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, '')}`
+        : '';
+      const datePart = acceptanceCriteriaDate ? ` dated ${acceptanceCriteriaDate}` : '';
+      acceptanceCriteriaText = `AS Per ${acceptanceCriteriaDocNo}${revPart}${datePart}`;
+    }
+
     const headerRightBoxText1 = docNo ? 'Doc. No.' : (certConfig?.headerRightBoxText1 || 'NABL / LAB');
     const headerRightBoxText2 = docNo || certConfig?.headerRightBoxText2 || 'CC - 2632';
     const footerLine1 = certConfig?.footerLine1 || 'CALIBRATION CENTER :';
@@ -249,8 +263,25 @@ export class CertificateService {
     const headerDisplayMode = certConfig?.headerDisplayMode || 'name'; // 'name' | 'logo' | 'both'
     const companyLogoPath = certConfig?.companyLogoPath || null;
 
-    const procedureReference =
-      calibration.procedure_reference || 'AE/CAL-SOP/01';
+    // ── Typography & Font Sizes Configuration (Centralized & Customizable) ──
+    // All certificate font sizes are centralized here and can be overridden via Settings -> Certificate Configuration
+    const titleFontSize = Number((certConfig as any)?.titleFontSize) || 8.0;
+    const tableHeaderFontSize = Number((certConfig as any)?.tableHeaderFontSize) || 7.2;
+    const contentFontSize = Number((certConfig as any)?.contentFontSize) || 6.8;
+    const labelFontSize = Number((certConfig as any)?.labelFontSize) || 7.0;
+    const valueFontSize = Number((certConfig as any)?.valueFontSize) || 7.5;
+    const signatureFontSize = Number((certConfig as any)?.signatureFontSize) || 7.0;
+
+    // ── Signature Dimensions & Table Spacing Configuration ──
+    const signatureImageWidth = Number((certConfig as any)?.signatureImageWidth) || 75;
+    const signatureImageHeight = Number((certConfig as any)?.signatureImageHeight) || 28;
+    const tableGap =
+      (certConfig as any)?.tableGap !== undefined &&
+      (certConfig as any)?.tableGap !== null &&
+      !isNaN(Number((certConfig as any)?.tableGap))
+        ? Number((certConfig as any)?.tableGap)
+        : 2.5;
+
     const standardReference =
       (calibration as any).standard_reference || calibration.remarks || 'Standard calibration per ISO/IEC 17025';
 
@@ -349,13 +380,48 @@ export class CertificateService {
       });
     };
 
-    // ── Build calibration data table ─────────────────────────
-    const hasDiagram = Boolean(
-      calibration.diagram_image ||
-      latestTemplate?.diagram_image ||
-      ((calibration as any).template as any)?.diagram_image,
+    // ── Check for Canvas Template Layout Blocks ──
+    const isCanvasTemplate = Boolean(
+      calibration.is_canvas_template ||
+      (calibration.layout_blocks && calibration.layout_blocks.length > 0) ||
+      (latestTemplate as any)?.is_canvas_template ||
+      ((latestTemplate as any)?.layout_blocks && (latestTemplate as any).layout_blocks.length > 0),
     );
-    const isDense = hasDiagram || points.length > 5;
+
+    const rawCanvasBlocks =
+      calibration.layout_blocks ||
+      (latestTemplate as any)?.layout_blocks ||
+      [];
+    const canvasBlocks = await Promise.all(
+      rawCanvasBlocks.map(async (b: any) => {
+        if ((b.type === 'diagram_block' || b.type === 'diagram') && (b.imageUrl || b.image)) {
+          const rawUrl = b.imageUrl || b.image;
+          const resolved = await resolvePdfDiagram(rawUrl);
+          return { ...b, resolvedDiagram: resolved };
+        }
+        return b;
+      }),
+    );
+
+    // ── Build calibration data table ─────────────────────────
+    let rawDiagramToCheck: string | null = null;
+    if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+      rawDiagramToCheck = calibration.diagram_image;
+    } else if ((calibration as any).instrument?.custom_parameters?.diagram_image !== undefined) {
+      rawDiagramToCheck = (calibration as any).instrument?.custom_parameters?.diagram_image;
+    } else if (latestTemplate?.diagram_image) {
+      rawDiagramToCheck = latestTemplate.diagram_image;
+    } else if (((calibration as any).template as any)?.diagram_image) {
+      rawDiagramToCheck = ((calibration as any).template as any).diagram_image;
+    }
+
+    const hasDiagram = Boolean(
+      rawDiagramToCheck &&
+        typeof rawDiagramToCheck === 'string' &&
+        rawDiagramToCheck.trim() !== '',
+    );
+    // Standard professional certificates adopt compact, space-efficient metrics to guarantee 1-page fit
+    const isDense = true;
     const hasDescription = points.some(
       (pt: any) => pt.description && String(pt.description).trim() !== '',
     );
@@ -730,12 +796,19 @@ export class CertificateService {
     ];
 
     // ── Reference Standard rows ──
+    // Resolve calibration agency from the instrument's agency field (set via Instrument form "Agency & TC No")
+    const instrumentAgency: string = (calibration as any)?.instrument?.agency || '';
+
     let referenceStandards: any[] = [];
     if (
       calibration.reference_standards &&
       calibration.reference_standards.length > 0
     ) {
-      referenceStandards = calibration.reference_standards;
+      // Enrich existing rows: use only the agency stored on the reference standard itself
+      referenceStandards = calibration.reference_standards.map((ref: any) => ({
+        ...ref,
+        agency: (ref.agency && String(ref.agency).trim()) ? String(ref.agency).trim() : '-',
+      }));
     } else {
       referenceStandards = [
         {
@@ -745,7 +818,7 @@ export class CertificateService {
           cert_no: (calibration as any)?.reference_standard_cert_no || (calibration as any)?.reference_standard_traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/101',
           cal_date: calibration.calibration_date,
           validity: (calibration as any)?.reference_standard_validity,
-          agency: (calibration as any)?.reference_standard_agency || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.reference_standard_traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source)) || 'NABL Accredited Lab',
+          agency: ((calibration as any)?.reference_standard_agency && String((calibration as any).reference_standard_agency).trim()) ? String((calibration as any).reference_standard_agency).trim() : '-',
         },
       ];
     }
@@ -778,8 +851,15 @@ export class CertificateService {
     let sealDataUrl: string | null = null;
     const possibleSealPaths = [
       path.join(process.cwd(), 'src', 'assets', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'src', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'dist', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'src', 'assets', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'dist', 'public', 'Approved-seal1.png'),
+      path.join(process.cwd(), 'backend', 'src', 'public', 'Approved-seal1.png'),
       path.join(process.cwd(), 'public', 'Approved-seal1.png'),
       path.join(process.cwd(), '..', 'frontend', 'public', 'Approved-seal1.png'),
+      path.join(__dirname, '..', '..', 'public', 'Approved-seal1.png'),
+      path.join(__dirname, '..', 'public', 'Approved-seal1.png'),
       path.join(__dirname, '..', 'assets', 'Approved-seal1.png'),
       path.join(__dirname, 'assets', 'Approved-seal1.png'),
     ];
@@ -803,44 +883,44 @@ export class CertificateService {
         } catch (e) {}
       }
     }
+    // Fallback to embedded default approval seal base64 if not resolved from filesystem
+    if (!sealDataUrl) {
+      sealDataUrl = DEFAULT_APPROVAL_SEAL_BASE64;
+    }
 
     // ── Resolve Diagram Image to base64 for pdfmake ──
-    const rawDiagram =
-      latestTemplate?.diagram_image ||
-      calibration.diagram_image ||
-      ((calibration as any).template as any)?.diagram_image;
+    let rawDiagram: string | null = null;
+    if (calibration.diagram_image !== undefined && calibration.diagram_image !== null) {
+      rawDiagram = calibration.diagram_image;
+    } else if ((calibration as any).instrument?.custom_parameters?.diagram_image !== undefined) {
+      rawDiagram = (calibration as any).instrument?.custom_parameters?.diagram_image;
+    } else if (latestTemplate?.diagram_image) {
+      rawDiagram = latestTemplate.diagram_image;
+    } else if (((calibration as any).template as any)?.diagram_image) {
+      rawDiagram = ((calibration as any).template as any).diagram_image;
+    }
     const diagramWidth =
-      latestTemplate?.diagram_image_width ||
       calibration.diagram_image_width ||
+      latestTemplate?.diagram_image_width ||
       ((calibration as any).template as any)?.diagram_image_width ||
-      350;
+      (calibration as any).instrument?.custom_parameters?.diagram_image_width ||
+      300;
     const diagramHeight =
-      latestTemplate?.diagram_image_height ||
       calibration.diagram_image_height ||
+      latestTemplate?.diagram_image_height ||
       ((calibration as any).template as any)?.diagram_image_height ||
-      160;
+      (calibration as any).instrument?.custom_parameters?.diagram_image_height ||
+      140;
     const diagramAlignment =
-      latestTemplate?.diagram_image_alignment ||
       calibration.diagram_image_alignment ||
+      latestTemplate?.diagram_image_alignment ||
       ((calibration as any).template as any)?.diagram_image_alignment ||
+      (calibration as any).instrument?.custom_parameters?.diagram_image_alignment ||
       'center';
 
-    let diagramDataUrl: string | null = null;
+    let resolvedDiagram: ResolvedPdfDiagram | null = null;
     if (rawDiagram && typeof rawDiagram === 'string' && rawDiagram.trim()) {
-      if (rawDiagram.startsWith('data:image')) {
-        diagramDataUrl = rawDiagram;
-      } else {
-        try {
-          const diagramAbsPath = rawDiagram.startsWith('/')
-            ? path.join(process.cwd(), rawDiagram.slice(1))
-            : path.join(process.cwd(), rawDiagram);
-          if (fs.existsSync(diagramAbsPath)) {
-            const buf = fs.readFileSync(diagramAbsPath);
-            const mime = rawDiagram.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-            diagramDataUrl = `data:${mime};base64,${buf.toString('base64')}`;
-          }
-        } catch (e) {}
-      }
+      resolvedDiagram = await resolvePdfDiagram(rawDiagram);
     }
 
     const targetDiagramWidth = Math.min(diagramWidth, 545);
@@ -854,12 +934,11 @@ export class CertificateService {
       logoDataUrl &&
       (headerDisplayMode === 'logo' || headerDisplayMode === 'both')
     ) {
-      const logoBadge = {
-        image: logoDataUrl,
-        fit: [36, 32],
-      };
-
       if (headerDisplayMode === 'both') {
+        const logoBadge = {
+          image: logoDataUrl,
+          fit: [65, 36] as [number, number],
+        };
         leftHeaderContent = {
           columns: [
             {
@@ -888,11 +967,15 @@ export class CertificateService {
                     ]
                   : []),
               ],
-              margin: [0, 7, 0, 0],
+              margin: [0, 5, 0, 0],
             },
           ],
         };
       } else {
+        const logoBadge = {
+          image: logoDataUrl,
+          fit: [130, 38] as [number, number],
+        };
         leftHeaderContent = { stack: [logoBadge] };
       }
     } else {
@@ -920,42 +1003,37 @@ export class CertificateService {
       };
     }
 
-    // ── Check for Canvas Template Layout Blocks ──
-    const isCanvasTemplate =
-      calibration.is_canvas_template ||
-      (calibration.layout_blocks && calibration.layout_blocks.length > 0) ||
-      (latestTemplate as any)?.is_canvas_template ||
-      ((latestTemplate as any)?.layout_blocks && (latestTemplate as any).layout_blocks.length > 0);
-
-    const canvasBlocks =
-      calibration.layout_blocks ||
-      (latestTemplate as any)?.layout_blocks ||
-      [];
-
     if (isCanvasTemplate && canvasBlocks.length > 0) {
       const explicitBreaks = canvasBlocks.filter((b: any) => b.type === 'page_break').length;
       if (explicitBreaks > 0) {
         totalPages = 1 + explicitBreaks;
       } else {
         let estH = 0;
-        if (hasDiagram) estH += 180;
+        if (hasDiagram) estH += 140;
         canvasBlocks.forEach((b: any) => {
           if (b.type === 'table_grid') {
-            estH += 32 + (b.rows?.length || 0) * 16;
+            if (b.orientation === 'horizontal') {
+              const displayRows = (b.columns || []).filter(
+                (c: any) => c.id !== 'point_number' && c.id !== 'sl_no' && c.id !== 'sino'
+              ).length || 3;
+              estH += 16 + (displayRows + 1) * 9.5;
+            } else {
+              estH += 18 + (b.rows?.length || 0) * 9.5;
+            }
           } else if (b.type === 'split_row') {
             const maxR = Math.max(
               b.children?.[0]?.rows?.length || 0,
               b.children?.[1]?.rows?.length || 0
             );
-            estH += 32 + maxR * 16;
+            estH += 18 + maxR * 9.5;
           } else if (b.type === 'matrix_table') {
-            estH += 40 + ((b.headers?.length || 1) + (b.rows?.length || 0)) * 16;
+            estH += 16 + ((b.headers?.length || 1) + (b.rows?.length || 0)) * 9.5;
           } else if (b.type === 'text_block') {
-            estH += 25;
+            estH += 12;
           }
         });
-        estH += 85; // signature block
-        const page1Usable = hasDiagram ? 340 : 480;
+        estH += 40; // compact signature block
+        const page1Usable = hasDiagram ? 380 : 540;
         totalPages = estH > page1Usable ? Math.max(2, 1 + Math.ceil((estH - page1Usable) / 600)) : 1;
       }
       sheetNoText = `1 of ${totalPages}`;
@@ -964,129 +1042,355 @@ export class CertificateService {
     const buildPdfCanvasBlocks = (blocks: any[], dense: boolean): any[] => {
       const resultElements: any[] = [];
 
-      const evalRowFormula = (formula: string, row: any, tolerance: number = 0.02): string => {
-        if (!formula) return '-';
-        try {
-          const t1 = parseFloat(row.t1 ?? row.col_1) || 0;
-          const t2 = parseFloat(row.t2 ?? row.col_2) || 0;
-          const t3 = parseFloat(row.t3 ?? row.col_3) || 0;
-          const t4 = parseFloat(row.t4 ?? row.col_4) || 0;
-          const t5 = parseFloat(row.t5 ?? row.col_5) || 0;
-          const nominal = parseFloat(row.nominal) || 0;
-          const reading = parseFloat(row.reading ?? row.ascending_reading ?? row.t1) || 0;
-          const tol = parseFloat(row.tolerance ?? tolerance) || 0.02;
+      const evalRowFormula = (
+        formula: string,
+        row: any,
+        tolerance: number = 0.02,
+        dec: number = 3,
+        col?: any,
+        columns: any[] = [],
+      ): string => {
+        return evaluateRowMetrology(formula, row, tolerance, dec, columns, col);
+      };
 
-          if (/AVERAGE/i.test(formula)) {
-            const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
-              .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-              .map((v) => parseFloat(v))
-              .filter((v) => !isNaN(v));
-            if (trials.length > 0) {
-              const sum = trials.reduce((a, b) => a + b, 0);
-              return (sum / trials.length).toFixed(3);
+      const resolvePdfCellValue = (
+        row: any,
+        col: any,
+        tblTolerance: number = 0.02,
+        tblDec: number = 3,
+        rIdx?: number,
+        columns: any[] = [],
+      ): string => {
+        if (!row || !col) return '-';
+
+        const rawCell = row[col.id];
+        const colIdLower = String(col.id || '').toLowerCase().trim();
+        const colType = String(col.type || '').toLowerCase().trim();
+        const colRole = String(col.role || '').toUpperCase().trim();
+        const colLabelLower = String(col.label || '').toLowerCase().trim();
+
+        const dec =
+          col.decimal_places ??
+          col.decimalPrecision ??
+          tblDec;
+
+        // 1. Point / Serial No (never match general METADATA or custom columns)
+        const isPointNo =
+          colIdLower === 'point_number' ||
+          colIdLower === 'sl_no' ||
+          colIdLower === 'sino' ||
+          colIdLower === 'sr_no' ||
+          colIdLower === 'srno' ||
+          colIdLower === 'pt' ||
+          colIdLower === 'item_no' ||
+          colRole === 'POINT_NUMBER' ||
+          colRole === 'SL_NO' ||
+          /^(sl|sr|item)[\._\s]*no$/i.test(colLabelLower) ||
+          /^(point|pt)[\._\s]*no$/i.test(colLabelLower);
+
+        if (isPointNo) {
+          const pt =
+            rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== ''
+              ? rawCell
+              : row.point_number ??
+                row.sl_no ??
+                (rIdx !== undefined ? rIdx + 1 : undefined);
+          return pt !== undefined && pt !== null && String(pt).trim() !== '' ? String(pt) : '-';
+        }
+
+        // 2. Status / Judgement
+        const isStatusCol =
+          colType === 'status' ||
+          colRole === 'JUDGEMENT' ||
+          /judg|verdict|status|decision|acceptance/i.test(colIdLower) ||
+          /judg|verdict|status/i.test(colLabelLower);
+
+        if (isStatusCol) {
+          if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== '' && !(typeof rawCell === 'string' && rawCell.trim().startsWith('='))) {
+            return String(rawCell).trim();
+          }
+          const fallbackStatus = row.judgement ?? row.status ?? row.verdict ?? row.result;
+          if (fallbackStatus !== undefined && fallbackStatus !== null && String(fallbackStatus).trim() !== '') {
+            return String(fallbackStatus).trim();
+          }
+          const effectiveStatusFormula =
+            (row._cellFormulas && row._cellFormulas[col.id]) ||
+            (row.cellFormulas && row.cellFormulas[col.id]) ||
+            (typeof rawCell === 'string' && rawCell.trim().startsWith('=') ? rawCell : undefined) ||
+            col.customFormula ||
+            col.formula;
+
+          if (effectiveStatusFormula && typeof effectiveStatusFormula === 'string' && effectiveStatusFormula.trim().length > 0) {
+            const fRes = evalRowFormula(effectiveStatusFormula, row, tblTolerance, dec, col, columns);
+            if (fRes !== undefined && fRes !== null && String(fRes).trim() !== '' && fRes !== '-') {
+              return String(fRes).trim();
             }
-            return '-';
           }
-          if (/avg\s*-\s*nominal/i.test(formula)) {
-            if (row.avg === undefined && (row.t1 === undefined || String(row.t1).trim() === "")) return '-';
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (isNaN(avgVal)) return '-';
-            const err = avgVal - nominal;
-            return (err >= 0 ? '+' : '') + err.toFixed(3);
+          return 'OK';
+        }
+
+        // 3. Nominal Specification
+        const isNominalCol =
+          colType === 'nominal' ||
+          colRole === 'SPECIFICATION' ||
+          colIdLower === 'nominal' ||
+          colIdLower === 'nom' ||
+          colIdLower === 'nominal_value' ||
+          colIdLower === 'std_spec' ||
+          colIdLower === 'std_value';
+
+        if (isNominalCol) {
+          const rawNom =
+            rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== ''
+              ? rawCell
+              : row.nominal_value !== undefined && row.nominal_value !== null && String(row.nominal_value).trim() !== ''
+              ? row.nominal_value
+              : row.nominal !== undefined && row.nominal !== null && String(row.nominal).trim() !== '' && row.nominal !== 0 && row.nominal !== '0'
+              ? row.nominal
+              : row.nom ?? row.std_spec ?? row.std_value ?? row.nominal;
+
+          if (rawNom !== undefined && rawNom !== null && String(rawNom).trim() !== '' && rawNom !== '-') {
+            const strNom = String(rawNom).trim();
+            const p = parseFloat(strNom);
+            if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(strNom)) {
+              return dec === 0 ? String(Math.round(p)) : p.toFixed(dec);
+            }
+            return strNom;
           }
-          if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-            const readStr = row.reading ?? row.ascending_reading ?? row.t1;
-            if (readStr === undefined || String(readStr).trim() === "") return '-';
-            const readVal = parseFloat(readStr);
-            if (isNaN(readVal)) return '-';
-            const err = readVal - nominal;
-            return (err >= 0 ? '+' : '') + err.toFixed(3);
-          }
-          if (/PASS.*FAIL/i.test(formula)) {
-            const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
-            if (!hasReading) return '-';
-            const errVal = Math.abs(parseFloat(row.error ?? (reading - nominal)) || 0);
-            return errVal <= tol ? 'PASS' : 'FAIL';
-          }
-          return row[formula] || '-';
-        } catch {
           return '-';
         }
+
+        // 4. Specification / Required Dimension / Text
+        const isSpecCol =
+          colType === 'text' ||
+          colIdLower === 'required_dimension' ||
+          colIdLower === 'specification' ||
+          colIdLower === 'description' ||
+          /spec|dimension/i.test(colLabelLower);
+
+        if (isSpecCol) {
+          const textVal =
+            rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== ''
+              ? rawCell
+              : row.required_dimension || row.specification || row.description;
+          if (textVal !== undefined && textVal !== null && String(textVal).trim() !== '') {
+            return String(textVal);
+          }
+          if (colType === 'text') return '-';
+        }
+
+        // 5. Formula Column (explicit formula, customFormula, cellFormulas, or =prefix)
+        const effectiveFormula =
+          (row._cellFormulas && row._cellFormulas[col.id]) ||
+          (row.cellFormulas && row.cellFormulas[col.id]) ||
+          (typeof rawCell === 'string' && rawCell.trim().startsWith('=') ? rawCell : undefined) ||
+          col.customFormula ||
+          col.formula;
+
+        const hasFormula =
+          colType === 'formula' ||
+          (typeof effectiveFormula === 'string' && effectiveFormula.trim().length > 0);
+
+        if (hasFormula) {
+          if (
+            rawCell !== undefined &&
+            rawCell !== null &&
+            String(rawCell).trim() !== '' &&
+            !(typeof rawCell === 'string' && rawCell.trim().startsWith('='))
+          ) {
+            const strCell = String(rawCell).trim();
+            const p = parseFloat(strCell);
+            if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(strCell)) {
+              return dec === 0 ? String(Math.round(p)) : p.toFixed(dec);
+            }
+            return strCell;
+          }
+          if (effectiveFormula && typeof effectiveFormula === 'string' && effectiveFormula.trim().length > 0) {
+            const fRes = evalRowFormula(effectiveFormula, row, tblTolerance, dec, col, columns);
+            if (fRes !== undefined && fRes !== null && String(fRes).trim() !== '') {
+              return String(fRes).trim();
+            }
+          }
+          return '-';
+        }
+
+        // 6. General Cell Value (Readings, Trials, Numbers, Custom Text)
+        if (rawCell !== undefined && rawCell !== null && String(rawCell).trim() !== '') {
+          const strVal = String(rawCell).trim();
+          if (strVal === '-') return '-';
+          const p = parseFloat(strVal);
+          if (!isNaN(p) && /^[+-]?\d+(\.\d+)?$/.test(strVal)) {
+            return dec === 0 ? String(Math.round(p)) : p.toFixed(dec);
+          }
+          return strVal;
+        }
+
+        if (colIdLower.includes('actual') && row.actual_dimension) return String(row.actual_dimension);
+        if (colIdLower.includes('required') && row.required_dimension) return String(row.required_dimension);
+        if ((colIdLower === 'tolerance' || colIdLower === 'tol') && row.tolerance !== undefined && row.tolerance !== null) return String(row.tolerance);
+
+        return '-';
       };
 
       const buildSingleTableElement = (tbl: any, isHalf: boolean = false): any => {
+        const bodyWidth = isHalf
+          ? ((useLandscape ? 841.89 : 595.28) - 36 - 12) / 2
+          : ((useLandscape ? 841.89 : 595.28) - 36);
+
+        const mapAlign = (align?: string): 'left' | 'center' | 'right' => {
+          if (align === 'left') return 'left';
+          if (align === 'right') return 'right';
+          return 'center';
+        };
+
         if (tbl.orientation === 'horizontal') {
           const displayCols = (tbl.columns || []).filter((c: any) => c.id !== 'point_number' && c.id !== 'sl_no' && c.id !== 'sino');
           const rowCount = (tbl.rows || []).length;
           const numCols = rowCount + 1;
-          const colWidths = ['auto', ...Array(rowCount).fill('*')];
-          const tblBody: any[] = [];
           const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
 
-          // Title Row
-          tblBody.push([
-            {
-              text: `${tbl.title || 'Table'} ${tbl.unit ? `(ALL VALUES ARE IN ${tbl.unit})` : ''}`,
-              style: 'boxHeader',
-              fontSize: dense ? 6.5 : 7.2,
-              colSpan: numCols,
-            },
-            ...Array(numCols - 1).fill({}),
-          ]);
+          const isHighColCount = rowCount > 12;
+          const isVeryHighColCount = rowCount >= 18;
+          const hPadH = isVeryHighColCount ? 0.6 : isHighColCount ? 1.0 : 1.5;
+          const hPadV = 0.8;
+          const labelPadH = 3.0; // clean padding gap for Parameter column matching preview px-1
+          const col0PadTotal = labelPadH * 2;
+          const dataColsPadTotal = rowCount * (hPadH * 2);
+          const cellPadTotal = col0PadTotal + dataColsPadTotal;
+          const vBordersTotal = (numCols + 1) * 0.4;
+          const netBudget = Math.max(50, bodyWidth - cellPadTotal - vBordersTotal - 0.5);
+
+          // Support user-configured first column width or intelligent default so label text never wraps onto multiple lines
+          let labelColWidth: number;
+          if (typeof tbl.firstColWidth === 'number' && tbl.firstColWidth > 0) {
+            labelColWidth = tbl.firstColWidth;
+          } else if (typeof tbl.firstColWidth === 'string' && parseFloat(tbl.firstColWidth) > 0) {
+            labelColWidth = parseFloat(tbl.firstColWidth);
+          } else if (typeof tbl.parameterWidth === 'number' && tbl.parameterWidth > 0) {
+            labelColWidth = tbl.parameterWidth;
+          } else if (typeof tbl.columns?.[0]?.width === 'number' && tbl.columns[0].width > 0) {
+            labelColWidth = tbl.columns[0].width;
+          } else if (typeof tbl.columns?.[0]?.width === 'string' && parseFloat(tbl.columns[0].width) > 0) {
+            labelColWidth = parseFloat(tbl.columns[0].width);
+          } else {
+            // Intelligent default based on rowCount and printable width
+            labelColWidth = isVeryHighColCount ? 102 : rowCount > 12 ? 110 : rowCount > 8 ? 100 : 90;
+          }
+
+          // Bound labelColWidth to prevent starvation of data columns on A4
+          // When rowCount >= 18 (e.g. 21 points), each point needs >= 19.5pt so numbers like "10.000" never wrap!
+          const maxLabelWidthForCols = isVeryHighColCount
+            ? Math.max(85, Math.min(104, bodyWidth - (rowCount * 19.5) - cellPadTotal - vBordersTotal))
+            : bodyWidth * 0.35;
+          labelColWidth = Math.min(labelColWidth, maxLabelWidthForCols);
+
+          const remainingBudget = Math.max(10 * rowCount, netBudget - labelColWidth);
+          const dataColWidth = Math.floor((remainingBudget / Math.max(1, rowCount)) * 100) / 100;
+          const colWidths = [labelColWidth, ...Array(rowCount).fill(dataColWidth)];
+
+          // Distribute any rounding delta onto the label column
+          const currentSum = colWidths.reduce((a, b) => a + b, 0);
+          const delta = Math.round((netBudget - currentSum) * 100) / 100;
+          if (Math.abs(delta) > 0.001) {
+            colWidths[0] = Math.round((colWidths[0] + delta) * 100) / 100;
+          }
+
+          // Respect user-configured certificate font sizes directly (or block-level settings if configured)
+          const effectiveHTableHeaderFontSize = tbl.headerFontSize
+            ? Number(tbl.headerFontSize)
+            : tableHeaderFontSize;
+          const effectiveHContentFontSize = tbl.fontSize
+            ? Number(tbl.fontSize)
+            : contentFontSize;
+          const effectiveHTitleFontSize = tbl.titleFontSize
+            ? Number(tbl.titleFontSize)
+            : titleFontSize;
+
+          // For very high column count tables (>= 18 points), ensure point cells fit 6-character numbers without wrapping
+          const pointCellFontSize = isVeryHighColCount
+            ? Math.min(effectiveHContentFontSize, 5.4)
+            : effectiveHContentFontSize;
+          const pointHeaderFontSize = isVeryHighColCount
+            ? Math.min(effectiveHTableHeaderFontSize, 5.5)
+            : effectiveHTableHeaderFontSize;
+
+          const tblBody: any[] = [];
+
+          // Title Row (only if user provided a title)
+          const hasTitle = Boolean(tbl.title && String(tbl.title).trim() !== '');
+          const unitStr = tbl.unit ? String(tbl.unit).trim() : '';
+
+          if (hasTitle) {
+            const titleText = `${String(tbl.title).trim()}${unitStr ? ` (ALL VALUES ARE IN ${unitStr})` : ''}`;
+            tblBody.push([
+              {
+                text: titleText,
+                style: 'boxHeader',
+                fontSize: effectiveHTitleFontSize,
+                margin: [1, 0.5, 1, 0.5],
+                colSpan: numCols,
+              },
+              ...Array(numCols - 1).fill({}),
+            ]);
+          }
 
           // Header Row: Parameter + Point numbers 1..N
+          const firstColAlign = mapAlign(tbl.columns?.[0]?.align || 'center');
           tblBody.push([
             {
               text: 'Parameter / Sl no',
               style: 'thCell',
-              fontSize: dense ? 5.8 : 6.5,
+              fontSize: effectiveHTableHeaderFontSize,
+              margin: [0, 0.5, 0, 0.5],
               fillColor: '#e2e8f0',
-              alignment: 'left',
+              alignment: firstColAlign,
               bold: true,
+              noWrap: true,
             },
             ...(tbl.rows || []).map((r: any, rIdx: number) => ({
               text: String(r.point_number ?? (rIdx + 1)),
               style: 'thCell',
-              fontSize: dense ? 5.8 : 6.5,
+              fontSize: pointHeaderFontSize,
+              margin: [0, 0.5, 0, 0.5],
               fillColor: '#f1f5f9',
+              alignment: 'center',
               bold: true,
+              noWrap: true,
             })),
           ]);
 
           // Data Rows (one row per parameter)
           displayCols.forEach((col: any) => {
+            const colAlign = mapAlign(col.align || 'center');
             const rowCells: any[] = [
               {
                 text: col.label || col.id,
                 style: 'tdCell',
-                fontSize: dense ? 5.6 : 6.5,
+                fontSize: effectiveHContentFontSize,
+                margin: [0, 0.5, 0, 0.5],
                 fillColor: '#f8fafc',
-                alignment: 'left',
+                alignment: colAlign,
                 bold: true,
+                noWrap: labelColWidth >= 95,
               },
             ];
 
-            (tbl.rows || []).forEach((row: any) => {
-              let val: any = row[col.id];
-              if (col.type === 'nominal') {
-                val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : '-';
-              } else if (col.type === 'text') {
-                val = row.description || row[col.id] || '-';
-              } else if (col.type === 'formula' || col.type === 'status') {
-                val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
-              } else if (val === undefined || val === null || val === '') {
-                val = '-';
-              }
+            (tbl.rows || []).forEach((row: any, rIdx: number) => {
+              const val = resolvePdfCellValue(row, col, tbl.tolerance, dec, rIdx, tbl.columns || []);
 
-              const isPass = String(val).toUpperCase() === 'PASS' || String(val).toUpperCase() === 'OK';
-              const isFail = String(val).toUpperCase() === 'FAIL' || String(val).toUpperCase() === 'REJECT';
+              const valUpper = String(val).toUpperCase().trim();
+              const isPass = valUpper === 'PASS' || valUpper === 'OK' || valUpper === 'NORMAL' || valUpper === 'ACCEPT';
+              const isFail = valUpper === 'FAIL' || valUpper === 'REJECT' || valUpper === 'NOT OK' || valUpper === 'NG';
 
               rowCells.push({
                 text: String(val),
                 style: col.type === 'text' ? 'tdCell' : 'tdCellMono',
-                fontSize: dense ? 5.5 : 6.2,
+                fontSize: pointCellFontSize,
+                alignment: 'center',
+                margin: [0, 0.5, 0, 0.5],
                 color: isPass ? '#15803d' : isFail ? '#b91c1c' : '#000000',
                 bold: isPass || isFail || col.type === 'nominal',
+                noWrap: true,
               });
             });
 
@@ -1099,7 +1403,8 @@ export class CertificateService {
               {
                 text: tbl.footerNote,
                 style: 'tdCell',
-                fontSize: 5.5,
+                fontSize: signatureFontSize,
+                margin: [0, 0.5, 0, 0.5],
                 italics: true,
                 alignment: 'center',
                 fillColor: '#f8fafc',
@@ -1109,77 +1414,279 @@ export class CertificateService {
             ]);
           }
 
-          return {
+          const hTableElement = {
+            unbreakable: true,
             table: {
-              headerRows: 2,
+              dontBreakRows: true,
+              headerRows: hasTitle ? 2 : 1,
               widths: colWidths,
               body: tblBody,
             },
             layout: {
-              hLineWidth: (i: number, node: any) => (i === 0 || i === 1 || i === 2 || i === node.table.body.length ? 0.75 : 0.4),
+              hLineWidth: (i: number, node: any) => (i === 0 || (hasTitle ? i === 1 || i === 2 : i === 1) || i === node.table.body.length ? 0.75 : 0.4),
               vLineWidth: (i: number, node: any) => (i === 0 || i === node.table.widths.length ? 0.75 : 0.4),
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
-              paddingLeft: () => 1.5,
-              paddingRight: () => 1.5,
-              paddingTop: () => (dense ? 1 : 1.5),
-              paddingBottom: () => (dense ? 1 : 1.5),
+              paddingLeft: (i: number) => (i === 0 ? labelPadH : hPadH),
+              paddingRight: (i: number) => (i === 0 ? labelPadH : hPadH),
+              paddingTop: () => hPadV,
+              paddingBottom: () => hPadV,
             },
-            margin: [0, 0, 0, tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 5 : 7)],
+            margin: [
+              0,
+              tbl.marginTop !== undefined ? Number(tbl.marginTop) : 0,
+              0,
+              tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : tableGap,
+            ],
           };
+          return applyVerticalAlignmentToTable(hTableElement, bodyWidth, effectiveHContentFontSize);
         }
 
         const numCols = tbl.columns?.length || 1;
-        const colWidths = tbl.columns?.map(() => '*') || ['*'];
-        const tblBody: any[] = [];
 
-        // Title Row
-        tblBody.push([
-          {
-            text: `${tbl.title || 'Table'} ${tbl.unit ? `(ALL VALUES ARE IN ${tbl.unit})` : ''}`,
-            style: 'boxHeader',
-            fontSize: dense ? 6.8 : 7.5,
-            colSpan: numCols,
-          },
-          ...Array(numCols - 1).fill({}),
-        ]);
+        const padH = numCols > 12 ? 0.8 : numCols > 9 ? 1.0 : 1.5;
+        const cellPadTotal = padH * 2;
+        const vBordersTotal = (numCols + 1) * 0.5;
+        // Strict net budget ensuring table drawn width NEVER exceeds outer border (with 0.5pt safety margin)
+        const netBudget = Math.max(50, bodyWidth - (numCols * cellPadTotal) - vBordersTotal - 0.5);
 
-        // Header Row
-        tblBody.push(
-          tbl.columns.map((col: any) => ({
-            text: col.label || col.id,
-            style: 'thCell',
-            fontSize: dense ? 6 : 7,
-            fillColor: '#f1f5f9',
-          }))
+        // Use user's configured font sizes directly so all tables look consistent, sharp, and match Settings
+        const effectiveHeaderFontSize = tbl.headerFontSize ? Number(tbl.headerFontSize) : tableHeaderFontSize;
+        const effectiveContentFontSize = tbl.fontSize ? Number(tbl.fontSize) : contentFontSize;
+
+        // Extract user configured column widths or fall back to intelligent type-based weights
+        const rawWeights = (tbl.columns || []).map((col: any) => {
+          if (typeof col.width === 'number' && !isNaN(col.width) && col.width > 0) {
+            return col.width;
+          }
+          if (typeof col.width === 'string' && col.width.trim() !== '') {
+            const s = col.width.trim();
+            if (s.endsWith('%')) {
+              const pct = parseFloat(s);
+              if (!isNaN(pct) && pct > 0) return (pct / 100) * netBudget;
+            }
+            const parsed = parseFloat(s);
+            if (!isNaN(parsed) && parsed > 0) return parsed;
+          }
+          const cId = String(col.id || col.key || '').toLowerCase();
+          const cType = String(col.type || '').toLowerCase();
+          if (cId === 'point_number' || cId === 'sl_no' || cId === 'sino' || cId === 'sr_no') return 25;
+          if (cType === 'status' || cId === 'judgement' || cId === 'status') return 35;
+          if (cType === 'text' || cId === 'specification' || cId === 'description' || cId === 'parameter') return 70;
+          if (cId.includes('master')) return 45;
+          return 45;
+        });
+
+        const sumRawWeights = rawWeights.reduce((a: number, b: number) => a + b, 0) || 1;
+
+        // Proportional distribution guaranteeing total table width fits exactly within the page width
+        const colWidths = rawWeights.map((w: number) =>
+          Math.round(((w * netBudget) / sumRawWeights) * 100) / 100
         );
 
+        // Distribute rounding delta onto the widest column
+        const currentSum = colWidths.reduce((a: number, b: number) => a + b, 0);
+        const delta = Math.round((netBudget - currentSum) * 100) / 100;
+        if (Math.abs(delta) > 0.001 && colWidths.length > 0) {
+          let maxIdx = 0;
+          for (let i = 1; i < colWidths.length; i++) {
+            if (colWidths[i] > colWidths[maxIdx]) maxIdx = i;
+          }
+          colWidths[maxIdx] = Math.round((colWidths[maxIdx] + delta) * 100) / 100;
+        }
+
+        const tblBody: any[] = [];
+
+        // Title Row (only if user provided a title)
+        const hasTitle = Boolean(tbl.title && String(tbl.title).trim() !== '');
+        const unitStr = tbl.unit ? String(tbl.unit).trim() : '';
+
+        if (hasTitle) {
+          const titleText = `${String(tbl.title).trim()}${unitStr ? ` (ALL VALUES ARE IN ${unitStr})` : ''}`;
+          tblBody.push([
+            {
+              text: titleText,
+              style: 'boxHeader',
+              fontSize: titleFontSize,
+              margin: [1, 0.5, 1, 0.5],
+              colSpan: numCols,
+            },
+            ...Array(numCols - 1).fill({}),
+          ]);
+        }
+
+        // Header Row (Standard 1-tier or Grouped 2-tier)
+        const hasHeaderGroups = (tbl.columns || []).some(
+          (c: any) => c && c.groupName && String(c.groupName).trim() !== ''
+        );
+
+        let tableHeaderRows = (hasTitle ? 1 : 0) + (hasHeaderGroups ? 2 : 1);
+
+        if (!hasHeaderGroups) {
+          tblBody.push(
+            tbl.columns.map((col: any) => ({
+              text: col.label || col.id,
+              style: 'thCell',
+              fontSize: effectiveHeaderFontSize,
+              margin: [0, 0.5, 0, 0.5],
+              fillColor: '#f1f5f9',
+              alignment: mapAlign(col.align || 'center'),
+            }))
+          );
+        } else {
+          tableHeaderRows = 3;
+          // Row 1 & Row 2 for 2-tier headers in PDFMake
+          const topHeaderCells: any[] = [];
+          const subHeaderCells: any[] = [];
+
+          let colIdx = 0;
+          while (colIdx < tbl.columns.length) {
+            const col = tbl.columns[colIdx];
+            const group = col.groupName ? String(col.groupName).trim() : '';
+
+            if (group) {
+              let groupSpan = 0;
+              while (
+                colIdx + groupSpan < tbl.columns.length &&
+                tbl.columns[colIdx + groupSpan].groupName &&
+                String(tbl.columns[colIdx + groupSpan].groupName).trim() === group
+              ) {
+                groupSpan++;
+              }
+
+              topHeaderCells.push({
+                text: group,
+                style: 'thCell',
+                fontSize: effectiveHeaderFontSize,
+                margin: [0, 0.5, 0, 0.5],
+                fillColor: '#e2e8f0',
+                colSpan: groupSpan,
+                bold: true,
+                alignment: 'center',
+              });
+
+              for (let d = 1; d < groupSpan; d++) {
+                topHeaderCells.push({});
+              }
+
+              for (let d = 0; d < groupSpan; d++) {
+                const subCol = tbl.columns[colIdx + d];
+                subHeaderCells.push({
+                  text: subCol.label || subCol.id,
+                  style: 'thCell',
+                  fontSize: effectiveHeaderFontSize,
+                  margin: [0, 0.5, 0, 0.5],
+                  fillColor: '#f1f5f9',
+                  alignment: mapAlign(subCol.align || 'center'),
+                });
+              }
+
+              colIdx += groupSpan;
+            } else {
+              topHeaderCells.push({
+                text: col.label || col.id,
+                style: 'thCell',
+                fontSize: effectiveHeaderFontSize,
+                margin: [0, 1.5, 0, 0.5],
+                fillColor: '#f1f5f9',
+                rowSpan: 2,
+                alignment: mapAlign(col.align || 'center'),
+              });
+              subHeaderCells.push({});
+              colIdx++;
+            }
+          }
+
+          tblBody.push(topHeaderCells);
+          tblBody.push(subHeaderCells);
+        }
+
         // Data Rows
-        (tbl.rows || []).forEach((row: any) => {
+        const coveredCells = getCoveredCells(tbl.rows || [], tbl.columns || []);
+        (tbl.rows || []).forEach((row: any, rIdx: number) => {
+          if (row.is_merged || row.isMerged) {
+            tblBody.push([
+              {
+                text: row.statement || row.merged_text || row.description || row.required_dimension || 'All the jaws are free from dent and damages',
+                colSpan: numCols,
+                style: 'tdCell',
+                bold: true,
+                fontSize: effectiveContentFontSize,
+                fillColor: '#f8fafc',
+                margin: [2, 0.5, 2, 0.5],
+              },
+              ...Array(numCols - 1).fill({}),
+            ]);
+            return;
+          }
           const rowCells: any[] = [];
           tbl.columns.forEach((col: any) => {
+            if (coveredCells.has(`${rIdx}_${col.id}`)) {
+              rowCells.push({});
+              return;
+            }
+            const spanInfo = row.cellSpans?.[col.id];
+            const span = spanInfo?.colSpan || 1;
+            const rSpan = spanInfo?.rowSpan || 1;
+            const isMerged = span > 1 || rSpan > 1;
+
+            if (isMerged) {
+              const val = (row[col.id] !== undefined && row[col.id] !== '')
+                ? row[col.id]
+                : (col.id === 'nominal' ? row.nominal : '') ?? '';
+              const numLines = String(val).split('\n').length;
+              const extraTextHeight = (numLines - 1) * (effectiveContentFontSize * 1.18);
+              const rowHeight = effectiveContentFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight - extraTextHeight) / 2)
+                : 0.5;
+              rowCells.push({
+                text: String(val),
+                colSpan: span > 1 ? span : undefined,
+                rowSpan: rSpan > 1 ? rSpan : undefined,
+                style: 'tdCell',
+                fontSize: effectiveContentFontSize,
+                margin: [0, topPad, 0, 0.5],
+                alignment: 'center',
+                verticalAlignment: 'middle',
+                bold: true,
+                fillColor: '#f8fafc',
+              });
+              return;
+            }
             const isPointNo = col.id === 'point_number' || col.id === 'sl_no' || col.id === 'sino';
             let val: any = row[col.id];
             if (isPointNo) {
               val = row.point_number ?? row[col.id] ?? (tblBody.length - 1);
-            } else if (col.type === 'nominal') {
-              const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-              val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : '-';
-            } else if (col.type === 'text') {
-              val = row.description || row[col.id] || '-';
-            } else if (col.type === 'formula' || col.type === 'status') {
-              val = row[col.id] ?? evalRowFormula(col.formula || col.id, row, tbl.tolerance);
-            } else if (val === undefined || val === null || val === '') {
-              val = '-';
+              const rowHeight = effectiveContentFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight) / 2)
+                : 0.5;
+              rowCells.push({
+                text: String(val),
+                colSpan: span > 1 ? span : undefined,
+                rowSpan: rSpan > 1 ? rSpan : undefined,
+                style: 'tdCellMono',
+                fontSize: effectiveContentFontSize,
+                margin: [0, topPad, 0, 0.5],
+                alignment: 'center',
+                verticalAlignment: 'middle',
+              });
+              return;
             }
+            const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
+            val = resolvePdfCellValue(row, col, tbl.tolerance, decimals, rIdx, tbl.columns || []);
 
-            const isPass = String(val).toUpperCase() === 'PASS' || String(val).toUpperCase() === 'OK';
-            const isFail = String(val).toUpperCase() === 'FAIL' || String(val).toUpperCase() === 'REJECT';
+            const valUpper = String(val).toUpperCase().trim();
+            const isPass = valUpper === 'PASS' || valUpper === 'OK' || valUpper === 'NORMAL' || valUpper === 'ACCEPT';
+            const isFail = valUpper === 'FAIL' || valUpper === 'REJECT' || valUpper === 'NOT OK' || valUpper === 'NG';
 
             rowCells.push({
               text: String(val),
               style: col.type === 'text' ? 'tdCell' : 'tdCellMono',
-              fontSize: dense ? 5.8 : 6.8,
+              fontSize: effectiveContentFontSize,
+              margin: [0, 0.5, 0, 0.5],
+              alignment: mapAlign(col.align || 'center'),
               color: isPass ? '#15803d' : isFail ? '#b91c1c' : '#000000',
               bold: isPass || isFail || col.type === 'nominal',
             });
@@ -1192,7 +1699,8 @@ export class CertificateService {
           tblBody.push([
             {
               text: tbl.footerNote,
-              fontSize: dense ? 5.5 : 6.5,
+              fontSize: signatureFontSize,
+              margin: [0, 0.5, 0, 0.5],
               italics: true,
               alignment: 'center',
               fillColor: '#f8fafc',
@@ -1202,11 +1710,11 @@ export class CertificateService {
           ]);
         }
 
-        return {
-          unbreakable: (tbl.rows || []).length <= 12,
+        const vTableElement = {
+          unbreakable: (tbl.rows || []).length <= 15,
           table: {
             dontBreakRows: true,
-            headerRows: 2,
+            headerRows: tableHeaderRows,
             widths: colWidths,
             body: tblBody,
           },
@@ -1215,19 +1723,24 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
+            paddingLeft: () => padH,
+            paddingRight: () => padH,
+            paddingTop: () => 0.8,
+            paddingBottom: () => 0.8,
           },
           margin: [
             0,
             tbl.marginTop !== undefined ? Number(tbl.marginTop) : 0,
             0,
-            tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : (dense ? 4 : 6),
+            tbl.marginBottom !== undefined ? Number(tbl.marginBottom) : tableGap,
           ],
         };
+        return applyVerticalAlignmentToTable(vTableElement, bodyWidth, effectiveContentFontSize);
       };
 
       blocks.forEach((block: any) => {
         const mt = block.marginTop !== undefined ? Number(block.marginTop) : 0;
-        const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : (dense ? 4 : 6);
+        const mb = block.marginBottom !== undefined ? Number(block.marginBottom) : tableGap;
 
         if (block.type === 'table_grid') {
           resultElements.push(buildSingleTableElement(block));
@@ -1251,7 +1764,7 @@ export class CertificateService {
                       [
                         {
                           text: child.content,
-                          fontSize: dense ? 6.5 : 7.5,
+                          fontSize: contentFontSize,
                           alignment: 'center',
                           italics: true,
                           margin: [2, 2, 2, 2],
@@ -1289,31 +1802,73 @@ export class CertificateService {
         } else if (block.type === 'matrix_table') {
           const matrixBody: any[] = [];
           
-          // 1. Calculate max columns from rows or headers
-          let matrixCols = block.rows?.[0]?.length || 1;
+          // 1. Calculate max columns from rows or headers taking colSpans into account
+          let matrixCols = 1;
           (block.headers || []).forEach((hRow: any[]) => {
             let rowSpanSum = 0;
-            hRow.forEach((c: any) => {
-              rowSpanSum += (c.colSpan || 1);
+            (hRow || []).forEach((c: any) => {
+              rowSpanSum += (c && typeof c === 'object' && c.colSpan ? Number(c.colSpan) : 1);
             });
             if (rowSpanSum > matrixCols) matrixCols = rowSpanSum;
           });
           (block.rows || []).forEach((r: any[]) => {
-            if (r.length > matrixCols) matrixCols = r.length;
+            let rowSpanSum = 0;
+            (r || []).forEach((c: any) => {
+              rowSpanSum += (c && typeof c === 'object' && c.colSpan ? Number(c.colSpan) : 1);
+            });
+            if (rowSpanSum > matrixCols) matrixCols = rowSpanSum;
           });
 
-          const colWidths = Array(matrixCols).fill('*');
+          const isHalfWidth = block.width === '50%';
+          const matrixPadH = matrixCols > 12 ? 0.8 : matrixCols > 9 ? 1.0 : 1.5;
+          const fullMatrixBodyWidth = (useLandscape ? 841.89 : 595.28) - 36;
+          const matrixBodyWidth = isHalfWidth ? fullMatrixBodyWidth * 0.55 : fullMatrixBodyWidth;
+          const matrixNetBudget = Math.max(50, matrixBodyWidth - (matrixCols * matrixPadH * 2) - ((matrixCols + 1) * 0.5) - 0.5);
 
-          // Title
-          matrixBody.push([
-            {
-              text: block.title || 'Matrix Table',
-              style: 'boxHeader',
-              fontSize: dense ? 6.8 : 7.5,
-              colSpan: matrixCols,
-            },
-            ...Array(matrixCols - 1).fill({}),
-          ]);
+          // Intelligent column width allocation for matrix tables:
+          // Requirement/Specification column in reference tables needs ~52% width so standard sentences do not wrap to 2 lines
+          let colWidths: number[];
+          if (Array.isArray(block.columnWidths) && block.columnWidths.length === matrixCols) {
+            const rawSum = block.columnWidths.reduce((a: number, b: number) => a + Number(b), 0) || 1;
+            colWidths = block.columnWidths.map((w: number) => Math.round(((Number(w) * matrixNetBudget) / rawSum) * 100) / 100);
+          } else if (matrixCols === 3) {
+            // Standard 3-column reference matrix (e.g. IS 2092: Requirement | 0.01 Dial Gauge | 0.002 Dial Gauge)
+            const w0 = Math.round(matrixNetBudget * 0.52 * 100) / 100;
+            const wRemaining = matrixNetBudget - w0;
+            const w1 = Math.round((wRemaining / 2) * 100) / 100;
+            const w2 = Math.round((wRemaining - w1) * 100) / 100;
+            colWidths = [w0, w1, w2];
+          } else if (matrixCols >= 2) {
+            // Multi-column matrix: give first column 45% for labels, divide remainder evenly
+            const w0 = Math.round(matrixNetBudget * 0.45 * 100) / 100;
+            const wOther = Math.round(((matrixNetBudget - w0) / (matrixCols - 1)) * 100) / 100;
+            colWidths = [w0, ...Array(matrixCols - 2).fill(wOther)];
+            const currentSum = colWidths.reduce((a, b) => a + b, 0);
+            colWidths.push(Math.round((matrixNetBudget - currentSum) * 100) / 100);
+          } else {
+            colWidths = Array(matrixCols).fill(Math.round((matrixNetBudget / matrixCols) * 100) / 100);
+          }
+
+          // Balance any rounding delta onto column 0
+          const sumMatrixCols = colWidths.reduce((a, b) => a + b, 0);
+          const matrixDelta = Math.round((matrixNetBudget - sumMatrixCols) * 100) / 100;
+          if (Math.abs(matrixDelta) > 0.001) {
+            colWidths[0] = Math.round((colWidths[0] + matrixDelta) * 100) / 100;
+          }
+
+          // Title (only if user provided a title)
+          const hasMatrixTitle = Boolean(block.title && String(block.title).trim() !== '');
+          if (hasMatrixTitle) {
+            matrixBody.push([
+              {
+                text: String(block.title).trim(),
+                style: 'boxHeader',
+                fontSize: titleFontSize,
+                colSpan: matrixCols,
+              },
+              ...Array(matrixCols - 1).fill({}),
+            ]);
+          }
 
           // Build 2D Header Grid to safely handle multi-row colSpan & rowSpan without undefined cells
           const numHeaderRows = (block.headers || []).length;
@@ -1322,7 +1877,7 @@ export class CertificateService {
           );
 
           (block.headers || []).forEach((hRow: any[], rIdx: number) => {
-            hRow.forEach((cell: any) => {
+            (hRow || []).forEach((rawCell: any) => {
               // Find first empty cell in this row
               let cIdx = 0;
               while (cIdx < matrixCols && headerGrid[rIdx][cIdx] !== null) {
@@ -1330,17 +1885,28 @@ export class CertificateService {
               }
               if (cIdx >= matrixCols) return;
 
-              const cSpan = Math.min(cell.colSpan || 1, matrixCols - cIdx);
-              const rSpan = Math.min(cell.rowSpan || 1, numHeaderRows - rIdx);
+              const cellObj = rawCell && typeof rawCell === 'object' && 'text' in rawCell
+                ? rawCell
+                : { text: String(rawCell ?? '') };
+
+              const cSpan = Math.min(Number(cellObj.colSpan) || 1, matrixCols - cIdx);
+              const rSpan = Math.min(Number(cellObj.rowSpan) || 1, numHeaderRows - rIdx);
+              const rowHeight = tableHeaderFontSize * 1.18 + 3.1;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight) / 2)
+                : 0.5;
 
               // Set the origin cell
               headerGrid[rIdx][cIdx] = {
-                text: cell.text || '',
+                text: cellObj.text || '',
                 style: 'thCell',
-                fontSize: dense ? 5.5 : 6.5,
+                fontSize: tableHeaderFontSize,
                 fillColor: '#f1f5f9',
                 colSpan: cSpan,
                 rowSpan: rSpan,
+                margin: [0, topPad, 0, 0.5],
+                alignment: cellObj.align || 'center',
+                verticalAlignment: 'middle',
               };
 
               // Fill dummy objects for spanned slots
@@ -1368,25 +1934,89 @@ export class CertificateService {
             matrixBody.push(hRow);
           });
 
-          // Data Rows
-          (block.rows || []).forEach((r: any[]) => {
-            const rowCells: any[] = [];
-            for (let c = 0; c < matrixCols; c++) {
-              rowCells.push({
-                text: String(r[c] ?? '-'),
+          // Build 2D Body Grid to safely handle multi-row colSpan, rowSpan, and cell alignments
+          const numBodyRows = (block.rows || []).length;
+          const bodyGrid: any[][] = Array.from({ length: numBodyRows }, () =>
+            Array(matrixCols).fill(null)
+          );
+
+          (block.rows || []).forEach((rRow: any[], rIdx: number) => {
+            const cells = Array.isArray(rRow) ? rRow : [rRow];
+            cells.forEach((rawCell: any) => {
+              // Find first empty cell in this row
+              let cIdx = 0;
+              while (cIdx < matrixCols && bodyGrid[rIdx][cIdx] !== null) {
+                cIdx++;
+              }
+              if (cIdx >= matrixCols) return;
+
+              const cellObj = rawCell && typeof rawCell === 'object' && 'text' in rawCell
+                ? rawCell
+                : { text: String(rawCell ?? '-') };
+
+              const cSpan = Math.min(Number(cellObj.colSpan) || 1, matrixCols - cIdx);
+              const rSpan = Math.min(Number(cellObj.rowSpan) || 1, numBodyRows - rIdx);
+              const rowHeight = contentFontSize * 1.18 + 2.5;
+              const topPad = rSpan > 1
+                ? Math.max(0.5, 0.5 + ((rSpan - 1) * rowHeight) / 2)
+                : 0.5;
+
+              bodyGrid[rIdx][cIdx] = {
+                text: String(cellObj.text ?? '-'),
                 style: 'tdCellMono',
-                fontSize: dense ? 5.5 : 6.5,
-                alignment: 'center',
-              });
-            }
-            matrixBody.push(rowCells);
+                fontSize: contentFontSize,
+                colSpan: cSpan,
+                rowSpan: rSpan,
+                alignment: cellObj.align || 'center',
+                margin: [0, topPad, 0, 0.5],
+              };
+
+              // Fill dummy objects for spanned slots
+              for (let dr = 0; dr < rSpan; dr++) {
+                for (let dc = 0; dc < cSpan; dc++) {
+                  if (dr !== 0 || dc !== 0) {
+                    const targetR = rIdx + dr;
+                    const targetC = cIdx + dc;
+                    if (targetR < numBodyRows && targetC < matrixCols) {
+                      bodyGrid[targetR][targetC] = {};
+                    }
+                  }
+                }
+              }
+            });
           });
 
-          resultElements.push({
+          // Ensure no null entries exist in bodyGrid
+          bodyGrid.forEach((bRow) => {
+            for (let c = 0; c < matrixCols; c++) {
+              if (bRow[c] === null) {
+                bRow[c] = {};
+              }
+            }
+            matrixBody.push(bRow);
+          });
+
+          // If no body rows exist, provide a fallback single row so PDFMake table remains valid
+          if (numBodyRows === 0) {
+            const emptyFallbackRow: any[] = [
+              {
+                text: '-',
+                style: 'tdCellMono',
+                fontSize: contentFontSize,
+                colSpan: matrixCols,
+                alignment: 'center',
+                margin: [0, 0.5, 0, 0.5],
+              },
+              ...Array(Math.max(0, matrixCols - 1)).fill({}),
+            ];
+            matrixBody.push(emptyFallbackRow);
+          }
+
+          const matrixTableElement = {
             unbreakable: true,
             table: {
               dontBreakRows: true,
-              headerRows: 1 + numHeaderRows,
+              headerRows: (hasMatrixTitle ? 1 : 0) + numHeaderRows,
               widths: colWidths,
               body: matrixBody,
             },
@@ -1395,9 +2025,19 @@ export class CertificateService {
               vLineWidth: () => 0.5,
               hLineColor: () => '#000000',
               vLineColor: () => '#000000',
+              paddingLeft: () => matrixPadH,
+              paddingRight: () => matrixPadH,
+              paddingTop: () => 0.8,
+              paddingBottom: () => 0.8,
             },
-            margin: [0, mt, 0, mb],
-          });
+            margin: [
+              isHalfWidth ? (fullMatrixBodyWidth - matrixBodyWidth) / 2 : 0,
+              mt,
+              0,
+              block.marginBottom !== undefined ? Number(block.marginBottom) : mb,
+            ],
+          };
+          resultElements.push(applyVerticalAlignmentToTable(matrixTableElement, matrixBodyWidth, contentFontSize));
         } else if (block.type === 'text_block') {
           resultElements.push({
             unbreakable: true,
@@ -1424,22 +2064,31 @@ export class CertificateService {
             margin: [0, mt, 0, mb],
           });
         } else if (block.type === 'diagram_block' || block.type === 'diagram') {
-          const dImg = block.imageUrl || block.image;
-          if (dImg) {
+          const dResolved: ResolvedPdfDiagram | null = block.resolvedDiagram;
+          if (dResolved) {
+            const blockWidth = block.width ? Math.min(Number(block.width), 360) : 240;
+            const blockAlign = block.alignment || 'center';
+            const cellNode =
+              dResolved.type === 'svg'
+                ? {
+                    svg: dResolved.content,
+                    width: blockWidth,
+                    alignment: blockAlign,
+                    margin: [2, 2, 2, 2],
+                  }
+                : {
+                    image: dResolved.dataUrl,
+                    width: blockWidth,
+                    alignment: blockAlign,
+                    margin: [2, 2, 2, 2],
+                  };
+
             resultElements.push({
+              __isDiagramNode: true,
               unbreakable: true,
               table: {
                 widths: ['*'],
-                body: [
-                  [
-                    {
-                      image: dImg,
-                      width: block.width ? Math.min(Number(block.width), 360) : 240,
-                      alignment: block.alignment || 'center',
-                      margin: [2, 2, 2, 2],
-                    },
-                  ],
-                ],
+                body: [[cellNode]],
               },
               layout: {
                 hLineWidth: () => 0.5,
@@ -1458,17 +2107,29 @@ export class CertificateService {
       return resultElements;
     };
 
+    // Deterministic signature block height calculation to anchor seamlessly on top of footer without border overflow
+    const clampedSigImgHeight = Math.max(18, Math.min(24, signatureImageHeight));
+    const sealImgHeight = Math.max(22, Math.min(26, signatureImageHeight));
+    const sigTableRowHeight = 48;
+    const sigBlockHeight = sigTableRowHeight + 1.5;
+    const bottomMargin = 46 + sigBlockHeight;
+
     // ── PDF Document Definition (NABL Certificate Layout) ──
     const docDefinition = {
       pageSize: 'A4' as const,
-      pageOrientation: (useLandscape ? 'landscape' : 'portrait') as 'portrait' | 'landscape',
-      pageMargins: [20, 48, 20, 48] as [number, number, number, number],
+      pageOrientation: (useLandscape ? 'landscape' : 'portrait') as
+        | 'portrait'
+        | 'landscape',
+      pageMargins: [18, 52, 18, bottomMargin] as [number, number, number, number],
       ...(calibration.approval_status !== 'Approved'
         ? {
             watermark: {
-              text: 'DRAFT - PENDING APPROVAL',
+              text:
+                calibration.approval_status === 'Reviewed' || calibration.approval_status === 'Pending Approval'
+                  ? 'REVIEWED - PENDING FINAL APPROVAL'
+                  : 'DRAFT - PENDING REVIEW',
               color: '#ef4444',
-              opacity: 0.18,
+              opacity: 0.08,
               bold: true,
               italics: false,
             },
@@ -1479,9 +2140,10 @@ export class CertificateService {
       background: (currentPage: number, pageCount: number) => {
         const pageWidth = useLandscape ? 841.89 : 595.28;
         const pageHeight = useLandscape ? 595.28 : 841.89;
+        const headerHeight = 52;
         const footerHeight = 46;
         const footerY = pageHeight - footerHeight;
-        const rectHeight = footerY - 46;
+        const rectHeight = footerY - headerHeight;
 
         return [
           {
@@ -1492,14 +2154,14 @@ export class CertificateService {
                 x: 0,
                 y: 0,
                 w: pageWidth,
-                h: 46,
+                h: headerHeight,
                 color: headerBgColor,
               },
               // Outer border rect surrounding certificate body
               {
                 type: 'rect',
                 x: 18,
-                y: 46,
+                y: headerHeight,
                 w: pageWidth - 36,
                 h: rectHeight,
                 lineWidth: 1,
@@ -1525,10 +2187,10 @@ export class CertificateService {
           headerRightBoxText2.length > 20
             ? 7
             : headerRightBoxText2.length > 15
-            ? 8
-            : headerRightBoxText2.length > 12
-            ? 8.5
-            : 9.5;
+              ? 8
+              : headerRightBoxText2.length > 12
+                ? 8.5
+                : 9.5;
 
         return {
           table: {
@@ -1538,36 +2200,64 @@ export class CertificateService {
                 {
                   ...leftHeaderContent,
                   fillColor: headerBgColor,
-                  margin: [10, 6, 0, 5],
+                  margin: [10, 7, 0, 0],
                 },
                 {
                   text: 'CALIBRATION CERTIFICATE',
                   bold: true,
-                  fontSize: 19,
-                  color: '#000',
+                  fontSize: 17,
+                  color: '#000000',
                   alignment: 'center',
                   fillColor: headerBgColor,
-                  margin: [0, 7, 0, 5],
+                  margin: [0, 14, 0, 0],
                 },
                 {
                   stack: [
-                    {
-                      text: headerRightBoxText1,
-                      fontSize: 7.5,
-                      bold: true,
-                      alignment: 'right',
-                      color: '#000000',
-                      noWrap: true,
-                    },
-                    {
-                      text: headerRightBoxText2,
-                      fontSize: rightTextSize,
-                      bold: true,
-                      alignment: 'right',
-                      color: '#000000',
-                      noWrap: true,
-                      margin: [0, 2, 0, 0],
-                    },
+                    ...(docNo
+                      ? [
+                          {
+                            stack: [
+                              {
+                                text: `Doc.No : ${docNo}`,
+                                fontSize: 8,
+                                bold: true,
+                                alignment: 'right',
+                                color: '#000000',
+                                noWrap: true,
+                              },
+                              {
+                                text: `Date & Rev : ${docDate || '-'} & ${docRev || '-'}`,
+                                fontSize: 8,
+                                bold: true,
+                                alignment: 'right',
+                                color: '#000000',
+                                noWrap: true,
+                                margin: [0, 2, 0, 0],
+                              },
+                            ],
+                            fillColor: headerBgColor,
+                            margin: [0, 0, 0, 0],
+                          },
+                        ]
+                      : [
+                          {
+                            text: headerRightBoxText1,
+                            fontSize: 7.5,
+                            bold: true,
+                            alignment: 'right',
+                            color: '#000000',
+                            noWrap: true,
+                          },
+                          {
+                            text: headerRightBoxText2,
+                            fontSize: rightTextSize,
+                            bold: true,
+                            alignment: 'right',
+                            color: '#000000',
+                            noWrap: true,
+                            margin: [0, 2, 0, 0],
+                          },
+                        ]),
                     ...(pageCount > 1
                       ? [
                           {
@@ -1583,7 +2273,7 @@ export class CertificateService {
                       : []),
                   ],
                   fillColor: headerBgColor,
-                  margin: [0, pageCount > 1 ? 5 : 8, 18, 5],
+                  margin: [0, 13, 8, 0],
                 },
               ],
             ],
@@ -1596,7 +2286,7 @@ export class CertificateService {
         };
       },
 
-      // ── 3. FOOTER (Edge-to-Edge Full Width Banner at Absolute Bottom) ──
+      // ── 3. FOOTER (Edge-to-Edge Banner at Bottom with Signature Table Anchored Directly on Top) ──
       footer: (currentPage: number, pageCount: number) => {
         const pageWidth = useLandscape ? 841.89 : 595.28;
         const footerItems: any[] = [
@@ -1645,28 +2335,210 @@ export class CertificateService {
 
         // Total footer banner height is 46pt. Calculate vertical padding to vertically center content perfectly.
         const lineCount = footerItems.length;
-        const totalTextHeight = lineCount * 8.5;
+        const totalTextHeight = lineCount * 8.0;
         const verticalPad = Math.max(3, Math.round((46 - totalTextHeight) / 2));
 
-        return {
+        const footerBanner = {
+          stack: footerItems,
+          alignment: 'center',
+          margin: [18, verticalPad, 18, 0],
+        };
+
+        // Determine if cells have signature images
+        const hasCalibratedSigImg = !!(
+          calibratedSig && calibratedSig.startsWith('data:image')
+        );
+        const hasReviewedSigImg = !!(
+          reviewedSig && reviewedSig.startsWith('data:image')
+        );
+        const hasApprovedSigImg = !!(
+          approvedSig && approvedSig.startsWith('data:image')
+        );
+
+        // Content height estimation for signature cells:
+        // With image: clampedSigImgHeight (24) + margin (1.5) + Name (8.5) + margin (0.5) + Designation (6.5) = 41 pt
+        // Without image: underline (7) + margin (1.5) + Name (8.5) + margin (0.5) + Designation (6.5) = 24 pt
+        const sigImgContentHeight = clampedSigImgHeight + 17;
+        const sigNoImgContentHeight = 24;
+
+        const calSigTopPad = Math.max(
+          2,
+          Math.round(
+            (sigTableRowHeight -
+              (hasCalibratedSigImg
+                ? sigImgContentHeight
+                : sigNoImgContentHeight)) /
+              2,
+          ),
+        );
+        const revSigTopPad = Math.max(
+          2,
+          Math.round(
+            (sigTableRowHeight -
+              (hasReviewedSigImg
+                ? sigImgContentHeight
+                : sigNoImgContentHeight)) /
+              2,
+          ),
+        );
+        const appSigTopPad = Math.max(
+          2,
+          Math.round(
+            (sigTableRowHeight -
+              (hasApprovedSigImg
+                ? sigImgContentHeight
+                : sigNoImgContentHeight)) /
+              2,
+          ),
+        );
+
+        const signatureBlockNode = {
           table: {
-            widths: [pageWidth],
+            widths: ['*', '*', '*'],
+            heights: [sigTableRowHeight],
             body: [
               [
+                // Column 1: Calibrated By
                 {
-                  stack: footerItems,
-                  fillColor: headerBgColor,
-                  margin: [15, verticalPad, 15, verticalPad],
+                  stack: [
+                    calibratedSig && calibratedSig.startsWith('data:image')
+                      ? {
+                          image: calibratedSig,
+                          fit: [signatureImageWidth, clampedSigImgHeight],
+                          alignment: 'center',
+                        }
+                      : {
+                          text: '________________________',
+                          alignment: 'center',
+                          fontSize: Math.max(5.5, signatureFontSize - 0.5),
+                        },
+                    {
+                      text: calibration.calibrated_by || 'Calibrated By',
+                      alignment: 'center',
+                      bold: true,
+                      fontSize: signatureFontSize,
+                      lineHeight: 1.05,
+                      margin: [0, 1.5, 0, 0],
+                      noWrap: true,
+                    },
+                    {
+                      text:
+                        calibration.calibrated_by_designation ||
+                        'Calibration Engineer',
+                      alignment: 'center',
+                      fontSize: Math.max(5.5, signatureFontSize - 0.8),
+                      color: '#475569',
+                      lineHeight: 1.05,
+                      margin: [0, 0.5, 0, 0],
+                      noWrap: true,
+                    },
+                  ],
+                  margin: [1, calSigTopPad, 1, 0],
+                },
+                // Column 2: Reviewed By
+                {
+                  stack: [
+                    reviewedSig && reviewedSig.startsWith('data:image')
+                      ? {
+                          image: reviewedSig,
+                          fit: [signatureImageWidth, clampedSigImgHeight],
+                          alignment: 'center',
+                        }
+                      : {
+                          text: '________________________',
+                          alignment: 'center',
+                          fontSize: Math.max(5.5, signatureFontSize - 0.5),
+                        },
+                    {
+                      text: calibration.reviewed_by || 'Reviewed By',
+                      alignment: 'center',
+                      bold: true,
+                      fontSize: signatureFontSize,
+                      lineHeight: 1.05,
+                      margin: [0, 1.5, 0, 0],
+                      noWrap: true,
+                    },
+                    {
+                      text:
+                        calibration.reviewed_by_designation ||
+                        'Calibration Reviewer',
+                      alignment: 'center',
+                      fontSize: Math.max(5.5, signatureFontSize - 0.8),
+                      color: '#475569',
+                      lineHeight: 1.05,
+                      margin: [0, 0.5, 0, 0],
+                      noWrap: true,
+                    },
+                  ],
+                  margin: [1, revSigTopPad, 1, 0],
+                },
+                // Column 3: Approved By
+                {
+                  stack: [
+                    approvedSig && approvedSig.startsWith('data:image')
+                      ? {
+                          image: approvedSig,
+                          fit: [signatureImageWidth, clampedSigImgHeight],
+                          alignment: 'center',
+                        }
+                      : {
+                          text: '________________________',
+                          alignment: 'center',
+                          fontSize: Math.max(5.5, signatureFontSize - 0.5),
+                        },
+                    {
+                      text:
+                        isApproved
+                          ? (calibration.approved_by || 'Approved By')
+                          : 'Approved By',
+                      alignment: 'center',
+                      bold: true,
+                      fontSize: signatureFontSize,
+                      lineHeight: 1.05,
+                      margin: [0, 1.5, 0, 0],
+                      noWrap: true,
+                    },
+                    {
+                      text:
+                        calibration.approved_by_designation ||
+                        'Quality Manager / Approver',
+                      alignment: 'center',
+                      fontSize: Math.max(5.5, signatureFontSize - 0.8),
+                      color: '#475569',
+                      lineHeight: 1.05,
+                      margin: [0, 0.5, 0, 0],
+                      noWrap: true,
+                    },
+                  ],
+                  margin: [1, appSigTopPad, 1, 0],
                 },
               ],
             ],
           },
           layout: {
-            hLineWidth: (i: number) => (i === 0 ? 1.5 : 0),
-            vLineWidth: () => 0,
+            hLineWidth: (i: number) => (i === 0 ? 0.5 : 0),
+            vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
+            vLineColor: () => '#000000',
+            paddingLeft: () => 2,
+            paddingRight: () => 2,
+            paddingTop: () => 0.5,
+            paddingBottom: () => 0.5,
           },
-          margin: [0, 0, 0, 0],
+          margin: [18, 0, 18, 0],
+        };
+
+        const isLastPage = currentPage === pageCount;
+        if (isLastPage) {
+          return {
+            stack: [signatureBlockNode, footerBanner],
+            margin: [0, 0, 0, 0],
+          };
+        }
+
+        return {
+          ...footerBanner,
+          margin: [18, sigBlockHeight + verticalPad, 18, 0],
         };
       },
 
@@ -1691,7 +2563,10 @@ export class CertificateService {
                   ],
                   [
                     {
-                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      text:
+                        inst?.calibration_source ||
+                        inst?.location ||
+                        'Permanent Laboratory',
                       style: 'gridTdBold',
                     },
                     {
@@ -1711,7 +2586,10 @@ export class CertificateService {
                       style: 'gridTdBold',
                     },
                     {
-                      text: fmtDate(calibration.certificate_issue_date || calibration.calibration_date),
+                      text: fmtDate(
+                        calibration.certificate_issue_date ||
+                          calibration.calibration_date,
+                      ),
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
@@ -1728,7 +2606,10 @@ export class CertificateService {
                   ],
                   [
                     {
-                      text: inst?.calibration_source || inst?.location || 'Permanent Laboratory',
+                      text:
+                        inst?.calibration_source ||
+                        inst?.location ||
+                        'Permanent Laboratory',
                       style: 'gridTdBold',
                     },
                     {
@@ -1744,7 +2625,10 @@ export class CertificateService {
                       style: 'gridTdBold',
                     },
                     {
-                      text: fmtDate(calibration.certificate_issue_date || calibration.calibration_date),
+                      text: fmtDate(
+                        calibration.certificate_issue_date ||
+                          calibration.calibration_date,
+                      ),
                       style: 'gridTd',
                     },
                     { text: sheetNoText, style: 'gridTd' },
@@ -1756,97 +2640,224 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000',
             vLineColor: () => '#000',
+            paddingLeft: () => 2,
+            paddingRight: () => 2,
+            paddingTop: () => 1.0,
+            paddingBottom: () => 1.0,
           },
-          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+          margin: [0, 0, 0, tableGap] as [
+            number,
+            number,
+            number,
+            number,
+          ],
         },
 
         // Description & Identification Box
-        // Description & Identification Table (3 Columns / Stacked)
+        // Description & Identification Table (4 Columns / 2 Rows)
         {
           table: {
-            widths: ['33%', '34%', '33%'],
+            widths: ['26%', '28%', '24%', '22%'],
             body: [
               [
                 {
                   text: 'Description & Identification',
                   style: 'boxHeader',
-                  colSpan: 3,
+                  alignment: 'center',
+                  fontSize: titleFontSize,
+                  colSpan: 4,
+                  margin: [2, 0.8, 2, 0.8],
                 },
                 {},
                 {},
+                {},
               ],
-              // Row 1
+              // Row 1: Instrument (DUC) | Make | Range | Serial No
               [
                 {
                   stack: [
-                    { text: 'Instrument (UUC)', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.name || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: 'Instrument (DUC)',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.name || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
                 },
                 {
                   stack: [
-                    { text: 'Make', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.make || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: 'Make',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.make || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
                 },
                 {
                   stack: [
-                    { text: 'Model No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: (inst as any)?.model_no || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: rangeLabel,
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.range || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
+                },
+                {
+                  stack: [
+                    {
+                      text: 'Serial No.',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.serial_no || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
+                  ],
+                  margin: [1, 0, 1, 0],
                 },
               ],
-              // Row 2
+              // Row 2: Least Count | ID No | Instrument Cond | Location
               [
                 {
                   stack: [
-                    { text: rangeLabel, bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.range || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: 'Least Count',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.least_count || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
                 },
                 {
                   stack: [
-                    { text: 'Serial No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.serial_no || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: 'ID No.',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.id_code || '-',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
                 },
                 {
                   stack: [
-                    { text: 'Least Count', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.least_count || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
+                    {
+                      text: 'Instrument Cond.',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: 'SATISFACTORY',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
                   ],
-                  margin: [4, 2, 4, 2],
+                  margin: [1, 0, 1, 0],
+                },
+                {
+                  stack: [
+                    {
+                      text: 'Location',
+                      bold: true,
+                      fontSize: labelFontSize,
+                      color: '#475569',
+                    },
+                    {
+                      text: inst?.location || 'Permanent Laboratory',
+                      fontSize: valueFontSize,
+                      bold: true,
+                      margin: [0, 0.5, 0, 0],
+                    },
+                  ],
+                  margin: [1, 0, 1, 0],
                 },
               ],
-              // Row 3
-              [
-                {
-                  stack: [
-                    { text: 'ID No.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.id_code || '-', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
-                  ],
-                  margin: [4, 2, 4, 2],
-                },
-                {
-                  stack: [
-                    { text: 'Instrument Cond.', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: 'SATISFACTORY', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
-                  ],
-                  margin: [4, 2, 4, 2],
-                },
-                {
-                  stack: [
-                    { text: 'Location', bold: true, fontSize: isDense ? 7 : 8, color: '#475569' },
-                    { text: inst?.location || 'Permanent Laboratory', fontSize: isDense ? 7.5 : 8.5, bold: true, margin: [0, 2, 0, 0] }
-                  ],
-                  margin: [4, 2, 4, 2],
-                },
-              ],
+              ...(isGauge
+                ? [
+                    [
+                      {
+                        colSpan: 2,
+                        text: [
+                          {
+                            text: 'Part No : ',
+                            bold: true,
+                            fontSize: labelFontSize,
+                            color: '#475569',
+                          },
+                          {
+                            text: inst?.part_no || (inst as any)?.partNo || '-',
+                            bold: true,
+                            fontSize: valueFontSize,
+                            color: '#000000',
+                          },
+                        ],
+                        margin: [1, 0.5, 1, 0.5],
+                      },
+                      {},
+                      {
+                        colSpan: 2,
+                        text: [
+                          {
+                            text: 'Part Name : ',
+                            bold: true,
+                            fontSize: labelFontSize,
+                            color: '#475569',
+                          },
+                          {
+                            text: inst?.part_name || (inst as any)?.partName || '-',
+                            bold: true,
+                            fontSize: valueFontSize,
+                            color: '#000000',
+                          },
+                        ],
+                        margin: [1, 0.5, 1, 0.5],
+                      },
+                      {},
+                    ],
+                  ]
+                : []),
             ],
           },
           layout: {
@@ -1854,65 +2865,201 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
+            paddingLeft: () => 2.5,
+            paddingRight: () => 2.5,
+            paddingTop: () => 1.2,
+            paddingBottom: () => 1.2,
           },
-          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+          margin: [0, 0, 0, tableGap] as [
+            number,
+            number,
+            number,
+            number,
+          ],
         },
 
-        // Procedure & Environmental Conditions Table (Compact 2-row table)
+        // Procedure & Environmental Conditions Table (3-row table: Header Row, Data Row, Environmental Conditions Row)
         {
           table: {
-            widths: ['24%', '38%', '38%'],
+            widths: ['26%', '28%', '24%', '22%'],
             body: [
-              // Row 1: Headers & Values
+              // Row 1: Header Row
               [
                 {
-                  stack: [
-                    { text: 'Procedure No', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: procedureReference || 'AE/CAL-SOP/01', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
-                  ],
-                  margin: [2, 1, 2, 1],
+                  text: 'Procedure No, Name & Rev-Date',
+                  style: 'gridTh',
+                  fontSize: tableHeaderFontSize,
+                  alignment: 'left',
+                  fillColor: '#f1f5f9',
+                  margin: [1, 0.5, 1, 0.5],
+                  noWrap: true,
                 },
                 {
-                  stack: [
-                    { text: 'Standard Reference', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: standardReference || 'Standard calibration per ISO/IEC 17025', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
-                  ],
-                  margin: [2, 1, 2, 1],
+                  text: 'Acceptance Criteria Doc.No & Rev-Date',
+                  style: 'gridTh',
+                  fontSize: tableHeaderFontSize,
+                  alignment: 'left',
+                  fillColor: '#f1f5f9',
+                  margin: [1, 0.5, 1, 0.5],
+                  noWrap: true,
                 },
                 {
-                  stack: [
-                    { text: 'Discipline', bold: true, fontSize: isDense ? 6.5 : 7.5, color: '#475569' },
-                    { text: (calibration as any).discipline || 'DIMENSION (Basic Measuring Instrument, Gauge etc)', fontSize: isDense ? 7 : 8, margin: [0, 1, 0, 0] }
-                  ],
-                  margin: [2, 1, 2, 1],
+                  text: 'Standard Reference',
+                  style: 'gridTh',
+                  fontSize: tableHeaderFontSize,
+                  alignment: 'left',
+                  fillColor: '#f1f5f9',
+                  margin: [1, 0.5, 1, 0.5],
+                },
+                {
+                  text: 'Discipline',
+                  style: 'gridTh',
+                  fontSize: tableHeaderFontSize,
+                  alignment: 'left',
+                  fillColor: '#f1f5f9',
+                  margin: [1, 0.5, 1, 0.5],
                 },
               ],
-              // Row 2: Environmental Conditions (Full Colspan)
+              // Row 2: Data Row
               [
                 {
-                  colSpan: 3,
+                  stack: [
+                    {
+                      text: procedureName || '-',
+                      bold: true,
+                      fontSize: valueFontSize,
+                      color: '#000000',
+                    },
+                    ...(procedureNo
+                      ? [
+                          {
+                            text: `Proc No: ${procedureNo}`,
+                            bold: true,
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                            margin: [0, 0.5, 0, 0],
+                          },
+                        ]
+                      : []),
+                    ...(procedureRev || procedureDate
+                      ? [
+                          {
+                            text: [
+                              procedureRev
+                                ? `Rev-${procedureRev.replace(/^rev-?/i, '')}`
+                                : '',
+                              procedureDate ? `dated ${procedureDate}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' '),
+                            fontSize: contentFontSize,
+                            color: '#334155',
+                            margin: [0, 0.5, 0, 0],
+                          },
+                        ]
+                      : []),
+                  ],
+                  margin: [1, 0.5, 1, 0.5],
+                },
+                {
+                  stack: [
+                    ...(acceptanceCriteriaDocNo || acceptanceCriteriaReference
+                      ? [
+                          {
+                            text: `Doc.No.: ${acceptanceCriteriaDocNo || acceptanceCriteriaReference}`,
+                            bold: true,
+                            fontSize: valueFontSize,
+                            color: '#000000',
+                          },
+                          ...(acceptanceCriteriaRev || acceptanceCriteriaDate
+                            ? [
+                                {
+                                  text: [
+                                    acceptanceCriteriaRev
+                                      ? `Rev-${acceptanceCriteriaRev.replace(/^rev-?/i, '')}`
+                                      : '',
+                                    acceptanceCriteriaDate
+                                      ? `dated ${acceptanceCriteriaDate}`
+                                      : '',
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' '),
+                                  fontSize: contentFontSize,
+                                  color: '#334155',
+                                  margin: [0, 0.5, 0, 0],
+                                },
+                              ]
+                            : []),
+                        ]
+                      : [
+                          {
+                            text: acceptanceCriteriaText || '-',
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                          },
+                        ]),
+                  ],
+                  margin: [1, 0.5, 1, 0.5],
+                },
+                {
+                  text:
+                    standardReference ||
+                    'Standard calibration per ISO/IEC 17025',
+                  fontSize: contentFontSize,
+                  margin: [1, 0.5, 1, 0.5],
+                },
+                {
+                  text:
+                    (calibration as any).discipline ||
+                    'DIMENSION (Basic Measuring Instrument, Gauge etc)',
+                  fontSize: contentFontSize,
+                  margin: [1, 0.5, 1, 0.5],
+                },
+              ],
+              // Row 3: Environmental Conditions (Full Colspan)
+              [
+                {
+                  colSpan: 4,
                   text: [
                     { text: 'Environmental Conditions : ', bold: true },
-                    { text: `Temperature at ${env.temperature || '-'}° C  RH ${env.humidity || '-'} %` },
-                    ...(env.soaking_time || env.soaking_start_time || env.soaking_end_time
+                    {
+                      text: `Temperature at ${env.temperature || '-'}° C  RH ${env.humidity || '-'} %`,
+                    },
+                    ...(env.soaking_time ||
+                    env.soaking_start_time ||
+                    env.soaking_end_time
                       ? [
                           { text: '   |   ', bold: true },
                           { text: 'Soaking Details : ', bold: true },
                           {
                             text: [
-                              env.soaking_start_time ? `Start: ${env.soaking_start_time}` : null,
-                              env.soaking_end_time ? `End: ${env.soaking_end_time}` : null,
-                              env.soaking_time ? `Soaking Time: ${env.soaking_time}` : null,
+                              env.soaking_start_time
+                                ? `Start: ${env.soaking_start_time}`
+                                : null,
+                              env.soaking_end_time
+                                ? `End: ${env.soaking_end_time}`
+                                : null,
+                              env.soaking_time
+                                ? `Soaking Time: ${env.soaking_time}`
+                                : null,
                             ]
                               .filter(Boolean)
                               .join('  |  '),
                           },
                         ]
                       : []),
+                    ...((env as any).receipt_condition || (calibration as any).receipt_condition
+                      ? [
+                          { text: '   |   ', bold: true },
+                          { text: 'Receipt Condition : ', bold: true },
+                          { text: String((env as any).receipt_condition || (calibration as any).receipt_condition) },
+                        ]
+                      : []),
                   ],
-                  fontSize: isDense ? 7 : 8,
-                  margin: [2, 1, 2, 1],
+                  fontSize: contentFontSize,
+                  margin: [1, 0.5, 1, 0.5],
                 },
+                {},
                 {},
                 {},
               ],
@@ -1923,8 +3070,17 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
+            paddingLeft: () => 2.5,
+            paddingRight: () => 2.5,
+            paddingTop: () => 1.0,
+            paddingBottom: () => 1.0,
           },
-          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+          margin: [0, 0, 0, tableGap] as [
+            number,
+            number,
+            number,
+            number,
+          ],
         },
 
         // Traceability of Master Used
@@ -1934,8 +3090,11 @@ export class CertificateService {
             body: [
               [
                 {
-                  text: 'TRACEABILITY OF MASTER USED :',
+                  text: 'TRACEABILITY OF MASTER USED',
                   style: 'boxHeader',
+                  alignment: 'center',
+                  fontSize: titleFontSize,
+                  margin: [1, 0.5, 1, 0.5],
                   colSpan: 6,
                 },
                 {},
@@ -1945,40 +3104,70 @@ export class CertificateService {
                 {},
               ],
               [
-                { text: 'Instrument Desc.', style: 'thCellDark' },
-                { text: 'Make', style: 'thCellDark' },
-                { text: 'Sr No / Id. No.', style: 'thCellDark' },
-                { text: 'Cert.No.', style: 'thCellDark' },
-                { text: 'Validity', style: 'thCellDark' },
-                { text: 'Cal.Agency', style: 'thCellDark' },
+                { text: 'Instrument Desc.', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
+                { text: 'Make', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
+                { text: 'Sr No / Id. No.', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
+                { text: 'Cert.No.', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
+                { text: 'Validity', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
+                { text: 'Cal.Agency', style: 'thCellDark', fontSize: tableHeaderFontSize, margin: [0, 0.5, 0, 0.5] },
               ],
               ...referenceStandards.map((ref) => [
                 {
-                  text: ref.name || ref.instrument_desc || ref.description || '-',
+                  text:
+                    ref.name || ref.instrument_desc || ref.description || '-',
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
                 {
-                  text: ref.make || ref.manufacturer || ref.brand || (calibration as any)?.instrument?.make || '-',
+                  text:
+                    ref.make ||
+                    ref.manufacturer ||
+                    ref.brand ||
+                    (calibration as any)?.instrument?.make ||
+                    '-',
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
                 {
-                  text: ref.id || ref.id_code || ref.serial_no || ref.sr_no || '-',
+                  text:
+                    ref.id || ref.id_code || ref.serial_no || ref.sr_no || '-',
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
                 {
-                  text: ref.cert_no || ref.certificate_no || ref.cert_number || ref.traceable_to || (calibration as any)?.certificate_number || 'AE/CC/REF/01',
+                  text:
+                    ref.cert_no ||
+                    ref.certificate_no ||
+                    ref.cert_number ||
+                    ref.traceable_to ||
+                    (calibration as any)?.certificate_number ||
+                    'AE/CC/REF/01',
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
                 {
-                  text: fmtDate(ref.validity || ref.due_date || ref.valid_till || (calibration as any)?.reference_standard_validity),
+                  text: fmtDate(
+                    ref.validity ||
+                      ref.due_date ||
+                      ref.valid_till ||
+                      (calibration as any)?.reference_standard_validity,
+                  ),
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
                 {
-                  text: ref.agency || ref.cal_agency || ref.calibration_agency || ref.traceable_to || ref.traceable || (calibration as any)?.calibration_agency || (calibration as any)?.calibration_source || (calibration as any)?.traceable_to || ((calibration as any)?.instrument && ((calibration as any).instrument.calibration_agency || (calibration as any).instrument.calibration_source || (calibration as any).instrument.traceable)) || 'NABL Lab',
+                  text:
+                    (ref.agency && String(ref.agency).trim()) ? String(ref.agency).trim() : '-',
                   style: 'tdCell',
+                  fontSize: contentFontSize,
+                  margin: [0, 0.5, 0, 0.5],
                 },
               ]),
-
             ],
           },
           layout: {
@@ -1986,24 +3175,47 @@ export class CertificateService {
             vLineWidth: () => 0.5,
             hLineColor: () => '#000000',
             vLineColor: () => '#000000',
+            paddingLeft: () => 2,
+            paddingRight: () => 2,
+            paddingTop: () => 1.0,
+            paddingBottom: () => 1.0,
           },
-          margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+          margin: [0, 0, 0, tableGap] as [
+            number,
+            number,
+            number,
+            number,
+          ],
         },
 
         // ── Optional Diagram / Schematic Image (Printed above calibration results) ──
-        ...(diagramDataUrl
+        ...(resolvedDiagram
           ? [
               {
+                __isDiagramNode: true,
                 table: {
                   widths: ['*'],
                   body: [
                     [
-                      {
-                        image: diagramDataUrl,
-                        fit: [targetDiagramWidth, targetDiagramHeight] as [number, number],
-                        alignment: diagramAlignment,
-                        margin: [0, 2, 0, 2],
-                      },
+                      resolvedDiagram.type === 'svg'
+                        ? {
+                            svg: resolvedDiagram.content,
+                            fit: [targetDiagramWidth, targetDiagramHeight] as [
+                              number,
+                              number,
+                            ],
+                            alignment: diagramAlignment,
+                            margin: [0, 2, 0, 2],
+                          }
+                        : {
+                            image: resolvedDiagram.dataUrl,
+                            fit: [targetDiagramWidth, targetDiagramHeight] as [
+                              number,
+                              number,
+                            ],
+                            alignment: diagramAlignment,
+                            margin: [0, 2, 0, 2],
+                          },
                     ],
                   ],
                 },
@@ -2013,7 +3225,12 @@ export class CertificateService {
                   hLineColor: () => '#000000',
                   vLineColor: () => '#000000',
                 },
-                margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+                margin: [0, 0, 0, tableGap] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ],
               },
             ]
           : []),
@@ -2026,7 +3243,8 @@ export class CertificateService {
                 {
                   table: {
                     dontBreakRows: true,
-                    headerRows: (calibration as any).acceptance_criteria?.enabled
+                    headerRows: (calibration as any).acceptance_criteria
+                      ?.enabled
                       ? hasAnyGroups
                         ? 4
                         : 3
@@ -2052,7 +3270,12 @@ export class CertificateService {
                                 bold: true,
                                 alignment: 'center',
                                 fillColor: '#fef3c7',
-                                margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
+                                margin: [
+                                  2,
+                                  isDense ? 1.5 : 3,
+                                  2,
+                                  isDense ? 1.5 : 3,
+                                ],
                                 colSpan: totalCols,
                               },
                               ...Array(totalCols - 1).fill({}),
@@ -2060,12 +3283,18 @@ export class CertificateService {
                           ]
                         : []),
                       ...dataTableBody,
-                      ...(calibration.uncertainty && String(calibration.uncertainty).trim()
+                      ...(calibration.uncertainty &&
+                      String(calibration.uncertainty).trim()
                         ? [
                             [
                               {
                                 text: `Uncertainty of Measurement at coverage factor k = 2 at 95.45 % of confidence Level = ${
-                                  String(calibration.uncertainty).trim().startsWith('±') || /[a-zA-Z]/.test(String(calibration.uncertainty).trim())
+                                  String(calibration.uncertainty)
+                                    .trim()
+                                    .startsWith('±') ||
+                                  /[a-zA-Z]/.test(
+                                    String(calibration.uncertainty).trim(),
+                                  )
                                     ? String(calibration.uncertainty).trim()
                                     : `±${String(calibration.uncertainty).trim()}${unit ? ` ${unit}` : ''}`
                                 }`,
@@ -2073,7 +3302,12 @@ export class CertificateService {
                                 bold: true,
                                 alignment: 'center',
                                 fillColor: '#f8fafc',
-                                margin: [2, isDense ? 1.5 : 3, 2, isDense ? 1.5 : 3],
+                                margin: [
+                                  2,
+                                  isDense ? 1.5 : 3,
+                                  2,
+                                  isDense ? 1.5 : 3,
+                                ],
                                 colSpan: totalCols,
                               },
                               ...Array(totalCols - 1).fill({}),
@@ -2088,7 +3322,8 @@ export class CertificateService {
                         .acceptance_criteria?.enabled
                         ? 2
                         : 1;
-                      const headerEndIdx = headerStartIdx + (hasAnyGroups ? 2 : 1);
+                      const headerEndIdx =
+                        headerStartIdx + (hasAnyGroups ? 2 : 1);
                       if (rowIndex >= headerStartIdx && rowIndex < headerEndIdx)
                         return '#f1f5f9';
                       return null;
@@ -2097,168 +3332,146 @@ export class CertificateService {
                     vLineWidth: () => 0.5,
                     hLineColor: () => '#000000',
                     vLineColor: () => '#000000',
-                    paddingLeft: () => (totalCols > 12 ? 0.8 : totalCols > 9 ? 1.0 : totalCols > 7 ? 1.5 : 2.5),
-                    paddingRight: () => (totalCols > 12 ? 0.8 : totalCols > 9 ? 1.0 : totalCols > 7 ? 1.5 : 2.5),
-                    paddingTop: () => (isDense ? 1.2 : 2.0),
-                    paddingBottom: () => (isDense ? 1.2 : 2.0),
+                    paddingLeft: () =>
+                      totalCols > 12
+                        ? 0.8
+                        : totalCols > 9
+                          ? 1.0
+                          : totalCols > 7
+                            ? 1.5
+                            : 2.5,
+                    paddingRight: () =>
+                      totalCols > 12
+                        ? 0.8
+                        : totalCols > 9
+                          ? 1.0
+                          : totalCols > 7
+                            ? 1.5
+                            : 2.5,
+                    paddingTop: () => 1.0,
+                    paddingBottom: () => 1.0,
                   },
-                  margin: [0, 0, 0, isDense ? 2 : 4] as [number, number, number, number],
+                  margin: [0, 0, 0, tableGap] as [
+                    number,
+                    number,
+                    number,
+                    number,
+                  ],
                 },
               ]
             : []),
 
-        // Signature Block
-        {
-          unbreakable: true,
-          table: {
-            widths: ['*', '*', '*'],
-            body: [
-              [
-                {
-                  stack: [
-                    calibratedSig && calibratedSig.startsWith('data:image')
-                      ? { image: calibratedSig, fit: isDense ? [70, 20] : [80, 26], alignment: 'center' }
-                      : { text: '________________________', alignment: 'center', fontSize: isDense ? 7 : 8 },
-                    {
-                      text: calibration.calibrated_by || 'Calibrated By',
-                      alignment: 'center',
-                      bold: true,
-                      fontSize: isDense ? 7.5 : 8,
-                    },
-                    {
-                      text:
-                        calibration.calibrated_by_designation ||
-                        'Calibration Engineer',
-                      alignment: 'center',
-                      fontSize: isDense ? 6.5 : 7.5,
-                      color: '#475569',
-                    },
+        // Remarks / Notes Section (when provided)
+        ...(calibration.remarks &&
+        typeof calibration.remarks === 'string' &&
+        calibration.remarks.trim()
+          ? [
+              {
+                table: {
+                  widths: ['*'],
+                  body: [
+                    [
+                      {
+                        stack: [
+                          {
+                            text: 'Remarks / Notes:',
+                            bold: true,
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                            margin: [0, 0, 0, 1] as [number, number, number, number],
+                          },
+                          {
+                            text: calibration.remarks.trim(),
+                            fontSize: contentFontSize,
+                            color: '#000000',
+                            lineHeight: 1.15,
+                          },
+                        ],
+                        fillColor: '#f8fafc',
+                        margin: [2, 1, 2, 1] as [number, number, number, number],
+                      },
+                    ],
                   ],
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
                 },
-                {
-                  stack: [
-                    sealDataUrl
-                      ? { image: sealDataUrl, fit: isDense ? [60, 32] : [75, 45], alignment: 'center' }
-                      : {
-                          stack: [
-                            {
-                              text: 'CALIBRATION',
-                              alignment: 'center',
-                              fontSize: isDense ? 6 : 7,
-                              bold: true,
-                              color: '#0369a1',
-                            },
-                            {
-                              text: 'SEAL / STAMP',
-                              alignment: 'center',
-                              fontSize: isDense ? 6 : 7,
-                              bold: true,
-                              color: '#0369a1',
-                            },
-                          ],
-                        },
-                  ],
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
+                layout: {
+                  hLineWidth: () => 0.5,
+                  vLineWidth: () => 0.5,
+                  hLineColor: () => '#000000',
+                  vLineColor: () => '#000000',
                 },
-                {
-                  stack: [
-                    approvedSig && approvedSig.startsWith('data:image')
-                      ? { image: approvedSig, fit: isDense ? [70, 20] : [80, 26], alignment: 'center' }
-                      : { text: '________________________', alignment: 'center', fontSize: isDense ? 7 : 8 },
-                    {
-                      text:
-                        calibration.approved_by ||
-                        calibration.reviewed_by ||
-                        'Authorized By',
-                      alignment: 'center',
-                      bold: true,
-                      fontSize: isDense ? 7.5 : 8,
-                    },
-                    {
-                      text:
-                        calibration.approved_by_designation ||
-                        'Quality Manager',
-                      alignment: 'center',
-                      fontSize: isDense ? 6.5 : 7.5,
-                      color: '#475569',
-                    },
-                  ],
-                  margin: [2, isDense ? 1 : 2, 2, isDense ? 1 : 2],
-                },
-              ],
-            ],
-          },
-          layout: {
-            hLineWidth: () => 0.5,
-            vLineWidth: () => 0.5,
-            hLineColor: () => '#000',
-            vLineColor: () => '#000',
-          },
-          margin: [0, 0, 0, 0],
-        },
+                margin: [0, 0, 0, tableGap] as [
+                  number,
+                  number,
+                  number,
+                  number,
+                ],
+              },
+            ]
+          : []),
+
       ],
 
       styles: {
         gridTh: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: tableHeaderFontSize,
           bold: true,
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         gridTd: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: contentFontSize,
           alignment: 'center' as const,
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         gridTdBold: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: contentFontSize,
           bold: true,
           alignment: 'center' as const,
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         boxHeader: {
-          fontSize: isDense ? 7.8 : 8.5,
+          fontSize: titleFontSize,
           bold: true,
+          alignment: 'center' as const,
           color: '#000',
           fillColor: '#e2e8f0',
-          margin: isDense ? [2, 1, 2, 1] : [2, 2, 2, 2] as [number, number, number, number],
+          margin: [2, 0.8, 2, 0.8] as [number, number, number, number],
         },
         kvPair: {
-          fontSize: isDense ? 7 : 8,
+          fontSize: labelFontSize,
           bold: true,
-          margin: [0, 1, 0, 1] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         subNote: {
-          fontSize: isDense ? 6.8 : 7.5,
+          fontSize: signatureFontSize,
           bold: true,
-          margin: [0, 1, 0, 1] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         thCellDark: {
-          fontSize: tableFontSize,
+          fontSize: tableHeaderFontSize,
           bold: true,
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         thCell: {
-          fontSize: tableFontSize,
+          fontSize: tableHeaderFontSize,
           bold: true,
           color: '#000',
           alignment: 'center' as const,
           fillColor: '#f1f5f9',
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         tdCell: {
-          fontSize: tableFontSize,
+          fontSize: contentFontSize,
           alignment: 'center' as const,
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
         tdCellMono: {
-          fontSize: tableMonoFontSize,
+          fontSize: contentFontSize,
           alignment: 'center' as const,
-          margin: isDense ? [0, 1, 0, 1] : [0, 2, 0, 2] as [number, number, number, number],
+          margin: [0, 0.5, 0, 0.5] as [number, number, number, number],
         },
       },
       defaultStyle: {
@@ -2266,7 +3479,25 @@ export class CertificateService {
       },
     };
 
-    const pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    // Vertically center all table cells across the certificate where row heights vary
+    const printableBodyWidth = (useLandscape ? 841.89 : 595.28) - 36;
+    walkAndAlignPdfTables(docDefinition.content, printableBodyWidth, contentFontSize);
+
+    let pdfDoc: any;
+    try {
+      pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to compile PDF document with image/diagram elements: ${err?.message || err}. Attempting fallback certificate generation...`,
+      );
+      // Remove any diagram table nodes from content to guarantee certificate issuance never fails
+      const fallbackContent = (docDefinition.content as any[]).filter(
+        (node: any) => !node?.__isDiagramNode,
+      );
+      docDefinition.content = fallbackContent;
+      pdfDoc = this.printer.createPdfKitDocument(docDefinition as any);
+    }
+
     const chunks: Buffer[] = [];
 
     return new Promise((resolve, reject) => {

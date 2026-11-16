@@ -47,6 +47,14 @@ export class AuthController {
     return this.authService.refreshToken(refreshTokenDto.refreshToken);
   }
 
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiOperation({ summary: 'Get current user profile and validate access token' })
+  @ApiResponse({ status: 200, description: 'Returns authenticated user info' })
+  async getMe(@Req() req: any) {
+    return this.authService.getMe(req.user.userId || req.user.id);
+  }
+
   @Post('logout')
   @UseGuards(AuthGuard('jwt'))
   @ApiOperation({ summary: 'Logout and clear session' })

@@ -10,11 +10,11 @@ trigger: always_on
 - Use the existing database architecture.
 - Do not change database schema unless required by the task.
 
-## Sequelize
+## TypeORM
 
-- Use Sequelize ORM following existing project conventions.
-- Reuse existing models and associations where possible.
-- Do not create duplicate models for existing tables.
+- Use TypeORM following existing project conventions.
+- Reuse existing entities and associations where possible.
+- Do not create duplicate entities for existing tables.
 
 ## Migrations
 

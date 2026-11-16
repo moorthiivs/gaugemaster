@@ -1,4 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+
+export const CANONICAL_INSTRUMENT_STATUSES = [
+  'OK',
+  'Upcoming Calibration (10 days before )',
+  'Sent for Calibration',
+  'Overdue',
+];
+
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -36,22 +44,98 @@ export class SettingsService {
           ? { ...(existing.certificateConfig || {}), ...createSettingDto.certificateConfig }
           : existing.certificateConfig;
 
-        const updatePayload = {
+        let mergedAiConfig = existing.aiConfig;
+        if (createSettingDto.aiConfig) {
+          const newKey = createSettingDto.aiConfig.apiKey?.trim();
+          // If the new key is omitted or is a masked string, keep the existing key
+          const isMaskedOrEmpty = !newKey || newKey.includes('•') || newKey.includes('*');
+          mergedAiConfig = {
+            ...(existing.aiConfig || {}),
+            ...createSettingDto.aiConfig,
+            apiKey: isMaskedOrEmpty ? existing.aiConfig?.apiKey : newKey,
+          };
+        }
+
+        let mergedSmtpConfig: any = existing.smtpConfig;
+        if (createSettingDto.smtpConfig) {
+          const rawSmtp: any = createSettingDto.smtpConfig;
+          const newPass = (rawSmtp.password || rawSmtp.pass)?.toString().trim();
+          const isMaskedOrEmpty = !newPass || newPass.includes('•') || newPass.includes('*');
+          mergedSmtpConfig = {
+            ...(existing.smtpConfig || {}),
+            ...createSettingDto.smtpConfig,
+            smtpServer: rawSmtp.smtpServer || rawSmtp.host || (existing.smtpConfig as any)?.smtpServer,
+            smtpPort: rawSmtp.smtpPort !== undefined ? Number(rawSmtp.smtpPort) : (rawSmtp.port !== undefined ? Number(rawSmtp.port) : (existing.smtpConfig as any)?.smtpPort),
+            username: rawSmtp.username || rawSmtp.user || (existing.smtpConfig as any)?.username,
+            password: isMaskedOrEmpty ? (existing.smtpConfig as any)?.password : (rawSmtp.password || rawSmtp.pass),
+            encryption: rawSmtp.encryption || (rawSmtp.secure !== undefined ? (rawSmtp.secure ? 'ssl' : 'tls') : (existing.smtpConfig as any)?.encryption),
+          };
+        }
+
+        const updatePayload: any = {
           ...createSettingDto,
+          ...(createSettingDto.dueReminderThresholdDays !== undefined ? { dueReminderThresholdDays: Number(createSettingDto.dueReminderThresholdDays) } : {}),
+          ...(createSettingDto.reminderDispatchTime !== undefined ? { reminderDispatchTime: (createSettingDto.reminderDispatchTime || '09:00').trim() } : {}),
           ...(mergedCertConfig ? { certificateConfig: mergedCertConfig } : {}),
+          ...(mergedAiConfig ? { aiConfig: mergedAiConfig } : {}),
+          ...(mergedSmtpConfig ? { smtpConfig: mergedSmtpConfig } : {}),
         };
 
+        if (createSettingDto.themeSettings && (existing.themeSettings as any)?.userThemes) {
+          updatePayload.themeSettings = {
+            ...createSettingDto.themeSettings,
+            userThemes: {
+              ...((existing.themeSettings as any).userThemes || {}),
+              ...((createSettingDto.themeSettings as any).userThemes || {}),
+              ...(userId ? { [userId]: createSettingDto.themeSettings } : {}),
+            },
+          };
+        }
+
         await this.settingsRepository.update(existing.id, updatePayload);
-        return await this.settingsRepository.findOne({ where: { id: existing.id } });
+        const updated = await this.settingsRepository.findOne({ where: { id: existing.id } });
+        return this.sanitizeSetting(updated);
       }
 
-      const newSetting = this.settingsRepository.create(createSettingDto);
-      const saved = await this.settingsRepository.save(newSetting);
-      return saved;
+      if (createSettingDto.smtpConfig) {
+        const rawSmtp: any = createSettingDto.smtpConfig;
+        createSettingDto.smtpConfig = {
+          ...rawSmtp,
+          smtpServer: rawSmtp.smtpServer || rawSmtp.host,
+          smtpPort: rawSmtp.smtpPort !== undefined ? Number(rawSmtp.smtpPort) : (rawSmtp.port !== undefined ? Number(rawSmtp.port) : 587),
+          username: rawSmtp.username || rawSmtp.user,
+          password: rawSmtp.password || rawSmtp.pass,
+          encryption: rawSmtp.encryption || (rawSmtp.secure !== undefined ? (rawSmtp.secure ? 'ssl' : 'tls') : 'tls'),
+        };
+      }
+      const newSetting = this.settingsRepository.create(createSettingDto as any);
+      const saved = await this.settingsRepository.save(newSetting as any);
+      return this.sanitizeSetting(saved as Setting);
 
     } catch (error) {
       console.log(error);
     }
+  }
+
+  private sanitizeSetting(setting: Setting | null): Setting | null {
+    if (!setting) return null;
+    if (setting.aiConfig?.apiKey) {
+      const raw = setting.aiConfig.apiKey;
+      const masked = raw.length > 8
+        ? `${raw.slice(0, 6)}•••••••••••••••${raw.slice(-4)}`
+        : '••••••••••••••••';
+      setting.aiConfig = {
+        ...setting.aiConfig,
+        apiKey: masked,
+      };
+    }
+    if (setting.smtpConfig?.password) {
+      setting.smtpConfig = {
+        ...setting.smtpConfig,
+        password: '••••••••',
+      };
+    }
+    return setting;
   }
 
   async findOne(userId: string, companyId: string) {
@@ -62,11 +146,112 @@ export class SettingsService {
     if (!setting && userId) {
       setting = await this.settingsRepository.findOne({ where: { userId } });
     }
-    return setting;
+    return this.sanitizeSetting(setting);
   }
 
-  findOneByUserId(userId: string) {
-    return this.settingsRepository.findOne({ where: { userId } });
+  async findOneByUserId(userId: string) {
+    const setting = await this.settingsRepository.findOne({ where: { userId } });
+    return this.sanitizeSetting(setting);
+  }
+
+  async getThemeSettings(userId?: string, companyId?: string) {
+    const defaultTheme = {
+      colorScheme: 'dark',
+      fontSize: 'medium',
+      compactMode: false,
+      animations: true,
+      highContrast: false,
+      reducedMotion: false,
+      fontFamily: 'Geist',
+      baseColor: 'mist',
+      themeColor: 'mist',
+    };
+
+    let setting: Setting | null = null;
+    if (companyId) {
+      setting = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    if (!setting && userId) {
+      setting = await this.settingsRepository.findOne({ where: { userId } });
+    }
+
+    if (!setting || !setting.themeSettings) {
+      return defaultTheme;
+    }
+
+    const companyTheme = { ...setting.themeSettings };
+    const userThemes = (companyTheme as any).userThemes || {};
+    const userSpecific = userId ? userThemes[userId] : null;
+
+    delete (companyTheme as any).userThemes;
+
+    return {
+      ...defaultTheme,
+      ...companyTheme,
+      ...(userSpecific || {}),
+    };
+  }
+
+  async saveThemeSettings(userId?: string, companyId?: string, themeSettings?: any, jwtUser?: any) {
+    if (!companyId && !userId) return null;
+    if (!themeSettings) return null;
+
+    let existing: Setting | null = null;
+    if (companyId) {
+      existing = await this.settingsRepository.findOne({ where: { companyId } });
+    }
+    if (!existing && userId) {
+      existing = await this.settingsRepository.findOne({ where: { userId } });
+    }
+
+    const isAdmin =
+      jwtUser?.isSuperAdmin ||
+      (jwtUser?.role && typeof jwtUser.role === 'object' && jwtUser.role.name?.toLowerCase().includes('admin')) ||
+      (typeof jwtUser?.userRole === 'string' && jwtUser.userRole.toLowerCase().includes('admin'));
+
+    if (!existing) {
+      const newSetting = this.settingsRepository.create({
+        companyId: companyId || userId,
+        userId: userId || companyId,
+        themeSettings: {
+          ...themeSettings,
+          userThemes: userId ? { [userId]: themeSettings } : {},
+        },
+      });
+      const saved = await this.settingsRepository.save(newSetting);
+      const res = { ...saved.themeSettings };
+      delete (res as any).userThemes;
+      return res;
+    }
+
+    const currentThemeSettings = existing.themeSettings || ({} as any);
+    const userThemes = { ...((currentThemeSettings as any).userThemes || {}) };
+
+    if (userId) {
+      userThemes[userId] = themeSettings;
+    }
+
+    const updatedThemeSettings = {
+      ...currentThemeSettings,
+      ...(isAdmin ? themeSettings : {}),
+      userThemes,
+    };
+
+    await this.settingsRepository.update(existing.id, {
+      themeSettings: updatedThemeSettings,
+    });
+
+    const res = { ...updatedThemeSettings };
+    delete (res as any).userThemes;
+    return res;
+  }
+
+  /**
+   * Internal method used exclusively by AiService to retrieve raw (unmasked) API key.
+   */
+  async findRawForAi(companyId: string): Promise<Setting | null> {
+    if (!companyId) return null;
+    return this.settingsRepository.findOne({ where: { companyId } });
   }
 
   // Location-to-Email Mapping methods
@@ -91,32 +276,133 @@ export class SettingsService {
     headName?: string;
     headEmail: string;
     managementEmails?: string[];
-  }): Promise<LocationEmail> {
-    if (payload.id) {
-      const existing = await this.locationEmailRepository.findOne({ where: { id: payload.id } });
+  }, isSuperAdmin: boolean = false): Promise<LocationEmail> {
+    const trimmedLocation = (payload.location || '').trim();
+    if (!trimmedLocation) {
+      throw new BadRequestException('Location cannot be empty');
+    }
+    const cleanPayload = {
+      ...payload,
+      location: trimmedLocation,
+      headName: (payload.headName || '').trim() || undefined,
+      headEmail: (payload.headEmail || '').trim().toLowerCase(),
+      managementEmails: Array.isArray(payload.managementEmails)
+        ? payload.managementEmails.map((e) => (e || '').trim().toLowerCase()).filter((e) => e.length > 0)
+        : [],
+    };
+
+    if (cleanPayload.id) {
+      const existing = await this.locationEmailRepository.findOne({ where: { id: cleanPayload.id } });
       if (existing) {
-        const merged = this.locationEmailRepository.merge(existing, payload);
+        if (!isSuperAdmin && cleanPayload.companyId && existing.companyId !== cleanPayload.companyId) {
+          throw new ForbiddenException('Access denied: Cannot update location mapping of another company');
+        }
+        const merged = this.locationEmailRepository.merge(existing, cleanPayload);
         return await this.locationEmailRepository.save(merged);
       }
     }
 
-    // Check by location and companyId to prevent duplicate
-    const existingByLoc = await this.locationEmailRepository.findOne({
-      where: { companyId: payload.companyId, location: payload.location },
-    });
+    // Check by location and companyId (case-insensitive trimmed) to prevent duplicate
+    const existingByLoc = await this.locationEmailRepository
+      .createQueryBuilder('l')
+      .where('l.companyId = :companyId', { companyId: cleanPayload.companyId })
+      .andWhere('LOWER(TRIM(l.location)) = LOWER(TRIM(:location))', { location: trimmedLocation })
+      .getOne();
 
     if (existingByLoc) {
-      const merged = this.locationEmailRepository.merge(existingByLoc, payload);
+      const merged = this.locationEmailRepository.merge(existingByLoc, cleanPayload);
       return await this.locationEmailRepository.save(merged);
     }
 
-    const created = this.locationEmailRepository.create(payload);
+    const created = this.locationEmailRepository.create(cleanPayload);
     return await this.locationEmailRepository.save(created);
   }
 
-  async deleteLocationEmail(id: string): Promise<{ success: boolean; message: string }> {
+  async deleteLocationEmail(
+    id: string,
+    companyId?: string,
+    isSuperAdmin?: boolean,
+  ): Promise<{ success: boolean; message: string }> {
+    const existing = await this.locationEmailRepository.findOne({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Location mapping not found');
+    }
+    if (!isSuperAdmin && companyId && existing.companyId !== companyId) {
+      throw new ForbiddenException('Access denied: Cannot delete location mapping belonging to another company');
+    }
     await this.locationEmailRepository.delete(id);
     return { success: true, message: 'Location mapping deleted successfully' };
   }
+
+  async getCustomInstrumentStatuses(companyId: string): Promise<string[]> {
+    if (!companyId) return [];
+    const setting = await this.settingsRepository.findOne({ where: { companyId } });
+    const statuses = setting?.customInstrumentStatuses || [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const s of statuses) {
+      if (typeof s === 'string' && s.trim()) {
+        const clean = s.trim();
+        const key = clean.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(clean);
+        }
+      }
+    }
+    return result;
+  }
+
+  async addCustomInstrumentStatus(companyId: string, status: string): Promise<{ success: boolean; status: string; statuses: string[] }> {
+    if (!companyId) {
+      throw new BadRequestException('Company ID is required');
+    }
+    const cleanStatus = (status || '').trim();
+    if (!cleanStatus) {
+      throw new BadRequestException('Status name cannot be empty');
+    }
+
+    // 1. Check against Canonical statuses (case-insensitive)
+    const isCanonicalDuplicate = CANONICAL_INSTRUMENT_STATUSES.some(
+      (c) => c.toLowerCase() === cleanStatus.toLowerCase()
+    );
+    if (isCanonicalDuplicate) {
+      throw new BadRequestException(`Status "${cleanStatus}" already exists as a standard system status.`);
+    }
+
+    // 2. Fetch or create setting record for the company
+    let setting = await this.settingsRepository.findOne({ where: { companyId } });
+    if (!setting) {
+      setting = this.settingsRepository.create({
+        companyId,
+        customInstrumentStatuses: [],
+      });
+      setting = await this.settingsRepository.save(setting);
+    }
+
+    const currentStatuses: string[] = Array.isArray(setting.customInstrumentStatuses)
+      ? setting.customInstrumentStatuses
+      : [];
+
+    // 3. Check against existing custom statuses (case-insensitive)
+    const isCustomDuplicate = currentStatuses.some(
+      (s) => typeof s === 'string' && s.trim().toLowerCase() === cleanStatus.toLowerCase()
+    );
+    if (isCustomDuplicate) {
+      throw new BadRequestException(`Status "${cleanStatus}" already exists.`);
+    }
+
+    const updatedStatuses = [...currentStatuses, cleanStatus];
+    await this.settingsRepository.update(setting.id, {
+      customInstrumentStatuses: updatedStatuses,
+    });
+
+    return {
+      success: true,
+      status: cleanStatus,
+      statuses: updatedStatuses,
+    };
+  }
 }
+
 

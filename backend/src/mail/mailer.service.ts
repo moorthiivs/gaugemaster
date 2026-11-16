@@ -267,7 +267,11 @@ export class MailerService {
         try {
             let smtp: any = null;
             if (customSmtpConfig && customSmtpConfig.smtpServer && customSmtpConfig.username) {
-                smtp = customSmtpConfig;
+                smtp = { ...customSmtpConfig };
+                if (!smtp.password || String(smtp.password).includes('•') || String(smtp.password).includes('*')) {
+                    const saved = await this.getMailConfig(userId);
+                    smtp.password = saved?.smtpConfig?.password;
+                }
             } else {
                 const smtpSetting = await this.getMailConfig(userId);
                 if (!smtpSetting?.smtpConfig) {

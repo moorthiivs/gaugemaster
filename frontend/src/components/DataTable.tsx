@@ -52,14 +52,19 @@ import {
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover"
 
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
   loading?: boolean
+  isLoading?: boolean
   pageCount: number
   pageIndex: number
   pageSize?: number
   totalItems?: number
+  totalCount?: number
   onPageChange: (index: number) => void
   onPageSizeChange?: (size: number) => void
   onRowClick?: (row: TData) => void
@@ -70,21 +75,28 @@ interface DataTableProps<TData, TValue> {
   columnFilters?: ColumnFiltersState
   onColumnFiltersChange?: (filters: ColumnFiltersState) => void
   headerActions?: React.ReactNode
+  searchKey?: string
   searchPlaceholder?: string
   searchTooltip?: string
   hideSearch?: boolean
   hideColumnToggle?: boolean
   getRowClassName?: (row: TData) => string
+  emptyTitle?: string
+  emptyDescription?: string
+  emptyAction?: React.ReactNode
+  emptyIcon?: React.ElementType | React.ReactNode
 }
 
 export function DataTable<TData, TValue>({
   columns,
   data,
-  loading,
+  loading: propLoading,
+  isLoading,
   pageCount,
   pageIndex,
   pageSize = 10,
-  totalItems,
+  totalItems: propTotalItems,
+  totalCount,
   onPageChange,
   onPageSizeChange,
   onRowClick,
@@ -100,7 +112,13 @@ export function DataTable<TData, TValue>({
   hideSearch = false,
   hideColumnToggle = false,
   getRowClassName,
+  emptyTitle = "No records found",
+  emptyDescription = "We couldn't find any records matching your current filters.",
+  emptyAction,
+  emptyIcon: EmptyIcon,
 }: DataTableProps<TData, TValue>) {
+  const loading = propLoading ?? isLoading ?? false;
+  const totalItems = propTotalItems ?? totalCount;
   const [globalFilter, setGlobalFilter] = React.useState("")
   const [localColumnVisibility, setLocalColumnVisibility] = React.useState<VisibilityState>({})
   const [localRowSelection, setLocalRowSelection] = React.useState({})
@@ -112,40 +130,47 @@ export function DataTable<TData, TValue>({
     const lowerFilter = globalFilter.toLowerCase();
     const results = new Set<string>();
     
-    // Use the table columns to ensure we only suggest things that can actually be searched
-    const searchCols = columns.map(c => (c as any).accessorKey || c.id).filter(Boolean);
+    // Filter out non-searchable columns
+    const searchCols = columns
+      .map(c => (c as any).accessorKey || c.id)
+      .filter((k): k is string => Boolean(k) && k !== "select" && k !== "actions");
     
-    data.forEach((row: any) => {
-      searchCols.forEach(colKey => {
-        if (!colKey) return;
+    // Bounded scan: evaluate up to 100 rows or until 6 distinct suggestions are collected
+    const scanLimit = Math.min(data.length, 100);
+    for (let i = 0; i < scanLimit; i++) {
+      const row = data[i] as any;
+      if (!row) continue;
+
+      for (const colKey of searchCols) {
         const val = row[colKey];
-        if (val == null) return;
-        
-        if (typeof val === 'string' && val.length > 0 && val.length < 60) {
+        if (val == null) continue;
+
+        if (typeof val === "string" && val.length > 0 && val.length < 60) {
+          if (UUID_REGEX.test(val)) continue;
+
           let displayVal = val;
-          // Check if it's an ISO date string
-          if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(val)) {
+          if (val.includes("T") && ISO_DATE_REGEX.test(val)) {
             const d = new Date(val);
             if (!isNaN(d.getTime())) {
-              displayVal = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth()+1).padStart(2, '0')}-${d.getFullYear()}`;
+              displayVal = `${String(d.getDate()).padStart(2, "0")}-${String(d.getMonth() + 1).padStart(2, "0")}-${d.getFullYear()}`;
             }
-          } else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val)) {
-            // Exclude UUIDs
-            return;
           }
 
           if (displayVal.toLowerCase().includes(lowerFilter)) {
             results.add(displayVal);
+            if (results.size >= 6) return Array.from(results);
           }
-        } else if (typeof val === 'number') {
-          if (String(val).toLowerCase().includes(lowerFilter)) {
-            results.add(String(val));
+        } else if (typeof val === "number") {
+          const numStr = String(val);
+          if (numStr.includes(lowerFilter)) {
+            results.add(numStr);
+            if (results.size >= 6) return Array.from(results);
           }
         }
-      });
-    });
+      }
+    }
     
-    return Array.from(results).slice(0, 6);
+    return Array.from(results);
   }, [globalFilter, data, columns, hideSearch]);
 
   const columnVisibility = externalColumnVisibility ?? localColumnVisibility
@@ -240,9 +265,10 @@ export function DataTable<TData, TValue>({
                       Suggestions
                     </div>
                     {suggestions.map((suggestion, i) => (
-                      <button
+                      <Button
                         key={i}
-                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-primary/10 focus:bg-primary/10 focus:outline-none transition-colors flex items-center gap-3"
+                        variant="ghost"
+                        className="w-full justify-start px-4 py-2 h-auto text-sm font-normal hover:bg-muted focus:bg-muted transition-colors flex items-center gap-3 rounded-none"
                         onClick={() => {
                           setGlobalFilter(suggestion);
                           setSearchOpen(false);
@@ -250,7 +276,7 @@ export function DataTable<TData, TValue>({
                       >
                         <Search className="h-3.5 w-3.5 text-muted-foreground/70" />
                         <span className="truncate">{suggestion}</span>
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 </PopoverContent>
@@ -279,7 +305,11 @@ export function DataTable<TData, TValue>({
                       checked={column.getIsVisible()}
                       onCheckedChange={(value) => column.toggleVisibility(!!value)}
                     >
-                      {column.id.replace(/_/g, " ")}
+                      {(column.columnDef.meta as any)?.title ||
+                        (column.columnDef.meta as any)?.label ||
+                        (typeof column.columnDef.header === "string"
+                          ? column.columnDef.header
+                          : column.id.replace(/_/g, " "))}
                     </DropdownMenuCheckboxItem>
                   )
                 })}
@@ -291,16 +321,31 @@ export function DataTable<TData, TValue>({
       <div className="glass-card rounded-xl border border-border/60 overflow-hidden transition-all duration-300">
         <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">
           <Table>
-            <TableHeader className="bg-muted/40 backdrop-blur-md">
+            <TableHeader className="bg-muted/70 backdrop-blur-md sticky top-0 z-10 border-b">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="hover:bg-transparent border-b border-muted/20">
                   {headerGroup.headers.map((header, index) => {
                     const isFirst = index === 0;
                     const isLast = index === headerGroup.headers.length - 1;
+                    const colMeta = (header.column.columnDef.meta as any)?.align;
+                    const colId = (header.id || "").toLowerCase();
+                    const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
+                    const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
+                    const justifyClass = align === "center" ? "justify-center" : align === "right" ? "justify-end" : "justify-start";
+                    const isSelect = colId === "select";
+                    const widthStyle: React.CSSProperties = {
+                      width: (header.column.columnDef.meta as any)?.width,
+                      minWidth: (header.column.columnDef.meta as any)?.minWidth,
+                      maxWidth: (header.column.columnDef.meta as any)?.maxWidth,
+                    };
                     return (
-                      <TableHead key={header.id} className={`font-bold text-foreground/80 py-3 px-6 h-auto ${isFirst ? 'text-left' : isLast ? 'text-right' : 'text-center'}`}>
+                      <TableHead
+                        key={header.id}
+                        style={widthStyle}
+                        className={`font-bold text-foreground/80 py-3 ${isSelect ? "w-[48px] px-2 text-center" : "px-4"} h-auto ${textAlignClass}`}
+                      >
                         <div className="flex flex-col gap-2">
-                          <div className={`flex items-center gap-2 group ${isFirst ? 'justify-start' : isLast ? 'justify-end' : 'justify-center'}`}>
+                          <div className={`flex items-center gap-2 group ${justifyClass}`}>
                             {header.isPlaceholder
                               ? null
                               : flexRender(
@@ -398,8 +443,22 @@ export function DataTable<TData, TValue>({
                     {row.getVisibleCells().map((cell, index) => {
                       const isFirst = index === 0;
                       const isLast = index === row.getVisibleCells().length - 1;
+                      const colMeta = (cell.column.columnDef.meta as any)?.align;
+                      const colId = (cell.column.id || "").toLowerCase();
+                      const align = colMeta || (colId === "select" || colId === "sino" || colId === "status" || colId === "item_status" ? "center" : isLast && (colId.includes("action") || colId === "actions") ? "right" : "left");
+                      const textAlignClass = align === "center" ? "text-center" : align === "right" ? "text-right" : "text-left";
+                      const isSelect = colId === "select";
+                      const widthStyle: React.CSSProperties = {
+                        width: (cell.column.columnDef.meta as any)?.width,
+                        minWidth: (cell.column.columnDef.meta as any)?.minWidth,
+                        maxWidth: (cell.column.columnDef.meta as any)?.maxWidth,
+                      };
                       return (
-                        <TableCell key={cell.id} className={`py-4 px-6 text-sm font-medium ${isFirst ? 'text-left' : isLast ? 'text-right' : 'text-center'}`}>
+                        <TableCell
+                          key={cell.id}
+                          style={widthStyle}
+                          className={`py-3.5 ${isSelect ? "w-[48px] px-2 text-center" : "px-4"} text-sm font-medium ${textAlignClass}`}
+                        >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </TableCell>
                       );
@@ -411,15 +470,27 @@ export function DataTable<TData, TValue>({
                   <TableCell colSpan={columns.length} className="h-60 text-center">
                     <div className="flex flex-col items-center justify-center space-y-4 animate-in fade-in zoom-in duration-500">
                       <div className="bg-muted/30 p-6 rounded-full">
-                        <Settings2 className="h-12 w-12 text-muted-foreground/40" />
+                        {React.isValidElement(EmptyIcon) ? (
+                          EmptyIcon
+                        ) : typeof EmptyIcon === "function" || (typeof EmptyIcon === "object" && EmptyIcon !== null) ? (
+                          React.createElement(EmptyIcon as React.ComponentType<{ className?: string }>, {
+                            className: "h-12 w-12 text-muted-foreground/40",
+                          })
+                        ) : (
+                          <Settings2 className="h-12 w-12 text-muted-foreground/40" />
+                        )}
                       </div>
                       <div className="space-y-1">
-                        <p className="text-xl font-semibold text-muted-foreground">No records found</p>
-                        <p className="text-sm text-muted-foreground/60 max-w-[250px] mx-auto">We couldn't find any instruments matching your current filters.</p>
+                        <p className="text-xl font-semibold text-muted-foreground">{emptyTitle}</p>
+                        <p className="text-sm text-muted-foreground/60 max-w-[320px] mx-auto">{emptyDescription}</p>
                       </div>
-                      <Button variant="outline" size="sm" onClick={() => onPageChange(1)}>
-                        Clear all filters
-                      </Button>
+                      {emptyAction ? (
+                        emptyAction
+                      ) : (
+                        <Button variant="outline" size="sm" onClick={() => onPageChange(1)}>
+                          Clear all filters
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -519,7 +590,7 @@ export function DataTable<TData, TValue>({
                   <SelectValue placeholder={pageSize} />
                 </SelectTrigger>
                 <SelectContent side="top">
-                  {[10, 20, 30, 40, 50].map((size) => (
+                  {[10, 20, 30, 40, 50, 100, 250].map((size) => (
                     <SelectItem key={size} value={String(size)}>
                       {size}
                     </SelectItem>

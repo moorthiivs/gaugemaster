@@ -36,17 +36,23 @@ export class AuthService {
   /** Returns which auth features are enabled for this deployment */
   getAuthConfig() {
     const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const regConfig = this.configService.get<string>('ENABLE_REGISTRATION');
+    const registrationEnabled = regConfig !== 'false' && process.env.ENABLE_REGISTRATION !== 'false';
     return {
       googleEnabled: !!clientId,
       googleClientId: clientId || null,
       passwordEnabled: true,
-      registrationEnabled: false, // Admin creates users; no public signup
+      registrationEnabled,
     };
   }
 
   /** Helper to generate Access Token (15m) and Refresh Token (7d) */
   private generateTokens(payload: any) {
-    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const configuredSecret = this.configService.get<string>('JWT_SECRET');
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      throw new Error('SECURITY CONFIGURATION ERROR: JWT_SECRET must be defined in production environment!');
+    }
+    const jwtSecret = configuredSecret || 'gaugemaster';
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
     const accessTokenExpiry = this.configService.get<string>('JWT_EXPIRES_IN') || '15m';
     const refreshTokenExpiry = this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
@@ -86,10 +92,15 @@ export class AuthService {
   }
 
   async register(createUserDto: CreateUserDto) {
+    const config = this.getAuthConfig();
+    if (!config.registrationEnabled) {
+      throw new ForbiddenException('Public user registration is disabled. Users must be created by an administrator.');
+    }
     const user = await this.usersService.create(createUserDto);
     const roleName = user.role?.name || user.roleId || 'Admin';
     const payload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -114,16 +125,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Super Admin bypass — no company access check needed
+    // Super Admin bypass — no company access check needed, global platform authority
     if (user.isSuperAdmin) {
       const payload = {
         sub: user.id,
+        id: user.id,
         email: user.email,
         name: user.name,
         role: 'SuperAdmin',
+        userRole: null,
         isSuperAdmin: true,
         onboarded: true,
-        companyId: user.companyId || null,
+        companyId: null,
+        companyAccess: null,
       };
       return this.generateTokens(payload);
     }
@@ -163,6 +177,7 @@ export class AuthService {
     const roleName = userRole?.name || user.roleId || 'Admin';
     const payload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -247,6 +262,7 @@ export class AuthService {
     const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
     const jwtPayload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
       role: roleName,
@@ -267,7 +283,11 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token is required');
     }
 
-    const jwtSecret = this.configService.get<string>('JWT_SECRET') || 'gaugemaster';
+    const configuredSecret = this.configService.get<string>('JWT_SECRET');
+    if (!configuredSecret && process.env.NODE_ENV === 'production') {
+      throw new Error('SECURITY CONFIGURATION ERROR: JWT_SECRET must be defined in production environment!');
+    }
+    const jwtSecret = configuredSecret || 'gaugemaster';
     const refreshSecret = this.configService.get<string>('JWT_REFRESH_SECRET') || `${jwtSecret}_refresh`;
 
     let decoded: any;
@@ -302,16 +322,33 @@ export class AuthService {
       }
     }
 
-    const roleName = user.role?.name || user.roleId || (user.isSuperAdmin ? 'SuperAdmin' : 'Admin');
+    if (user.isSuperAdmin) {
+      const newPayload = {
+        sub: user.id,
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: 'SuperAdmin',
+        userRole: null,
+        onboarded: true,
+        companyId: null,
+        isSuperAdmin: true,
+        companyAccess: null,
+      };
+      return this.generateTokens(newPayload);
+    }
+
+    const roleName = user.role?.name || user.roleId || 'Admin';
     const newPayload = {
       sub: user.id,
+      id: user.id,
       email: user.email,
       name: user.name,
-      role: user.isSuperAdmin ? 'SuperAdmin' : roleName,
+      role: roleName,
       userRole: user.role,
       onboarded: user.onboarded,
       companyId: user.companyId || null,
-      isSuperAdmin: user.isSuperAdmin || false,
+      isSuperAdmin: false,
       companyAccess: user.company ? {
         status: user.company.accessStatus,
         startDate: user.company.accessStartDate,
@@ -320,5 +357,69 @@ export class AuthService {
     };
 
     return this.generateTokens(newPayload);
+  }
+
+  /**
+   * Fetches current authenticated user profile and verifies access token validity.
+   */
+  async getMe(userId: string) {
+    const user = await this.usersService.findOne(userId);
+    if (!user) {
+      throw new UnauthorizedException('User not found or account no longer active');
+    }
+
+    if (user.companyId && !user.isSuperAdmin && user.company) {
+      if (user.company.accessStatus === 'disabled') {
+        throw new ForbiddenException('Your company access has been disabled. Contact administrator.');
+      }
+      if (user.company.accessStatus === 'time_limited') {
+        const now = new Date();
+        if (user.company.accessStartDate && now < user.company.accessStartDate) {
+          throw new ForbiddenException('Your company access has not started yet. Contact administrator.');
+        }
+        if (user.company.accessExpiryDate && now > user.company.accessExpiryDate) {
+          throw new ForbiddenException('Your company access has expired. Contact administrator.');
+        }
+      }
+    }
+
+    if (user.isSuperAdmin) {
+      return {
+        sub: user.id,
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: 'SuperAdmin',
+        userRole: null,
+        onboarded: true,
+        companyId: null,
+        isSuperAdmin: true,
+        designation: user.designation,
+        signature: user.signature,
+        avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+        companyAccess: null,
+      };
+    }
+
+    const roleName = user.role?.name || user.roleId || 'Admin';
+    return {
+      sub: user.id,
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: roleName,
+      userRole: user.role,
+      onboarded: user.onboarded,
+      companyId: user.companyId || null,
+      isSuperAdmin: false,
+      designation: user.designation,
+      signature: user.signature,
+      avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name)}`,
+      companyAccess: user.company ? {
+        status: user.company.accessStatus,
+        startDate: user.company.accessStartDate,
+        expiryDate: user.company.accessExpiryDate,
+      } : null,
+    };
   }
 }

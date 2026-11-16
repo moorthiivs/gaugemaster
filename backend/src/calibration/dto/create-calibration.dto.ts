@@ -1,4 +1,5 @@
 import {
+  MaxLength,
   IsString,
   IsOptional,
   IsBoolean,
@@ -64,6 +65,10 @@ export class CreateCalibrationDto {
     soaking_start_time?: string;
     soaking_end_time?: string;
   };
+
+  @IsOptional()
+  @IsString()
+  receipt_condition?: string;
 
   // Calibration Data Points & Canvas Layout
   @IsOptional()
@@ -136,6 +141,22 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calculated_verdict?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  is_verdict_overridden?: boolean;
+
+  @IsOptional()
+  @IsString()
+  verdict_override_reason?: string;
+
+  @IsOptional()
+  @IsString()
+  template_version_id?: string;
+
+  @IsOptional()
+  @IsString()
   remarks?: string;
 
   @IsOptional()
@@ -156,7 +177,47 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  procedure_no?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_name?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_date?: string;
+
+  @IsOptional()
+  @IsString()
+  procedure_rev?: string;
+
+  @IsOptional()
+  @IsString()
   doc_no?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_date?: string;
+
+  @IsOptional()
+  @IsString()
+  doc_rev?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_doc_no?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_date?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_rev?: string;
+
+  @IsOptional()
+  @IsString()
+  acceptance_criteria_reference?: string;
 
   // Approval Workflow
   @IsOptional()
@@ -179,6 +240,10 @@ export class CreateCalibrationDto {
   @IsString()
   rejection_reason?: string;
 
+  @IsOptional()
+  @IsString()
+  recalibration_of_id?: string;
+
   // Signatories
   @IsOptional()
   @IsString()
@@ -194,7 +259,15 @@ export class CreateCalibrationDto {
 
   @IsOptional()
   @IsString()
+  calibrated_by_id?: string;
+
+  @IsOptional()
+  @IsString()
   reviewed_by?: string;
+
+  @IsOptional()
+  @IsString()
+  reviewed_by_id?: string;
 
   @IsOptional()
   @IsString()
@@ -207,6 +280,10 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsString()
   approved_by?: string;
+
+  @IsOptional()
+  @IsString()
+  approved_by_id?: string;
 
   @IsOptional()
   @IsString()
@@ -225,6 +302,12 @@ export class CreateCalibrationDto {
   @IsOptional()
   @IsDateString()
   next_calibration_date?: string;
+
+  // Reason entered when the user confirms recalibrating an instrument that is not yet due
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  early_recalibration_reason?: string;
 
   // Ownership
   @IsOptional()

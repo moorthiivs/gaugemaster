@@ -34,13 +34,14 @@ export async function updateTemplate(
   return res.data;
 }
 
-export async function deleteTemplate(id: string): Promise<void> {
-  await httpClient.delete(`/calibration-templates/${id}`);
+export async function deleteTemplate(id: string, reason?: string): Promise<void> {
+  await httpClient.delete(`/calibration-templates/${id}`, { params: { reason } });
 }
 
 export async function bulkDeleteTemplates(
   ids: string[],
   force?: boolean,
+  reason?: string,
 ): Promise<{
   success: boolean;
   deletedCount: number;
@@ -50,6 +51,7 @@ export async function bulkDeleteTemplates(
   const res = await httpClient.post("/calibration-templates/bulk-delete", {
     ids,
     force,
+    reason,
   });
   return res.data;
 }

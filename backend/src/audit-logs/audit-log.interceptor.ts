@@ -97,17 +97,47 @@ export class AuditLogInterceptor implements NestInterceptor {
         error,
       );
 
-      // Sanitize request body for privacy / security
-      const safeBody = body ? { ...body } : {};
-      if (safeBody.password) delete safeBody.password;
-      if (safeBody.currentPassword) delete safeBody.currentPassword;
-      if (safeBody.newPassword) delete safeBody.newPassword;
-      if (safeBody.token) delete safeBody.token;
-      if (safeBody.signature && safeBody.signature.length > 200) {
-        safeBody.signature = '[Base64 Signature Data]';
-      }
-      if (safeBody.fileBase64) {
-        safeBody.fileBase64 = '[Base64 File Data]';
+      // Sanitize request body for privacy, security, and storage efficiency
+      let safeBody: any = body;
+      if (Array.isArray(body)) {
+        safeBody = {
+          _type: 'array',
+          itemCount: body.length,
+          preview: body.slice(0, 3).map(item => (typeof item === 'object' && item !== null ? { id: item.id || item.id_code || item.name } : item)),
+        };
+      } else if (body && typeof body === 'object') {
+        safeBody = { ...body };
+        if (safeBody.password) delete safeBody.password;
+        if (safeBody.currentPassword) delete safeBody.currentPassword;
+        if (safeBody.newPassword) delete safeBody.newPassword;
+        if (safeBody.token) delete safeBody.token;
+        if (safeBody.signature && safeBody.signature.length > 200) {
+          safeBody.signature = '[Base64 Signature Data]';
+        }
+        if (safeBody.fileBase64) {
+          safeBody.fileBase64 = '[Base64 File Data]';
+        }
+        // Truncate large embedded arrays or long strings to protect database TOAST tables
+        for (const key of Object.keys(safeBody)) {
+          if (Array.isArray(safeBody[key]) && safeBody[key].length > 5) {
+            safeBody[key] = `[Array of ${safeBody[key].length} items]`;
+          } else if (typeof safeBody[key] === 'string' && safeBody[key].length > 1000) {
+            safeBody[key] = safeBody[key].substring(0, 1000) + '... [truncated]';
+          }
+        }
+        try {
+          const bodyStr = JSON.stringify(safeBody);
+          if (bodyStr.length > 2048) {
+            safeBody = {
+              _truncated: true,
+              sizeBytes: bodyStr.length,
+              keys: Object.keys(safeBody),
+              preview: bodyStr.substring(0, 1024) + '... [truncated to prevent database bloat]',
+            };
+          }
+        } catch {
+          safeBody = '[Unserializable Payload]';
+        }
       }
 
       await this.auditLogsService.createLog({

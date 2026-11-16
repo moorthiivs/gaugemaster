@@ -7,7 +7,9 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
+  ForbiddenException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesService } from './roles.service';
@@ -21,8 +23,10 @@ export class RolesController {
   constructor(private readonly rolesService: RolesService) {}
 
   @Get()
-  async findAll(@Query('companyId') companyId?: string) {
-    return this.rolesService.findAll(companyId);
+  async findAll(@Query('companyId') queryCompanyId?: string, @Req() req?: any) {
+    const user = req?.user || {};
+    const effectiveCompanyId = user.isSuperAdmin ? (queryCompanyId || user.companyId) : user.companyId;
+    return this.rolesService.findAll(effectiveCompanyId);
   }
 
   @Get(':id')
@@ -40,8 +44,14 @@ export class RolesController {
       permissions: RolePermissions;
       companyId?: string;
     },
+    @Req() req: any,
   ) {
-    return this.rolesService.create(body);
+    const user = req.user || {};
+    const effectiveCompanyId = user.isSuperAdmin ? (body.companyId || user.companyId) : user.companyId;
+    return this.rolesService.create({
+      ...body,
+      companyId: effectiveCompanyId,
+    });
   }
 
   @Patch(':id')
@@ -55,13 +65,28 @@ export class RolesController {
       permissions?: RolePermissions;
       companyId?: string;
     },
+    @Req() req: any,
   ) {
-    return this.rolesService.update(id, body);
+    const existing = await this.rolesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && existing.companyId && user.companyId && existing.companyId !== user.companyId) {
+      throw new ForbiddenException('Cannot modify role outside your company');
+    }
+    const effectiveCompanyId = user.isSuperAdmin ? (body.companyId || existing.companyId) : user.companyId;
+    return this.rolesService.update(id, {
+      ...body,
+      companyId: effectiveCompanyId,
+    });
   }
 
   @Delete(':id')
   @RequirePermission('users', 'delete')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const existing = await this.rolesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && existing.companyId && user.companyId && existing.companyId !== user.companyId) {
+      throw new ForbiddenException('Cannot delete role outside your company');
+    }
     return this.rolesService.remove(id);
   }
 }

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useReactToPrint } from "react-to-print";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,28 +12,38 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, ArrowRight, Check, Search, Loader2, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, Sparkles, Table } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, XCircle, Search, Loader2, Plus, PlusCircle, Trash2, CalendarIcon, ChevronsUpDown, X, Layers, FileCheck, ChevronDown, AlertTriangle, AlertCircle, Sparkles, Table, Save, Copy, Upload, ImageIcon, AlignLeft, AlignCenter, AlignRight, Eye, ClipboardPaste, Merge, RotateCcw, Gauge, Pencil, Filter, ExternalLink } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import { CalibrationPoint, CALIBRATION_TYPES, CalibrationTypeConfig } from "@/types/calibration";
-import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getCalibration, updateCalibration } from "@/lib/calibrationActions";
+import { createCalibration, getNextNumbers, generateCertificate, getDraft, saveDraft, deleteDraft, getDraftByInstrument, deleteDraftsByInstrument, getCalibration, updateCalibration } from "@/lib/calibrationActions";
 import { getTemplates, getTemplate } from "@/lib/templateActions";
+import { UnfinishedDraftModal } from "@/components/calibration/UnfinishedDraftModal";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalibrationTemplate } from "@/types/template";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols } from "@/lib/matrixTableUtils";
+import { evaluateCanvasRowFormulas, evaluateAllCanvasBlocks, ensureTableKeys, buildGlobalTablesContext } from "@/lib/formulaEngine";
+import { parseSpecification } from "@/lib/specificationParser";
+import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
 import { getInstrument } from "@/lib/instrumentActions";
+import { formatNominalDisplay } from "@/components/calibration/CanvasTemplateEditor";
 import { InstrumentTypeSelector } from "@/components/calibration/InstrumentTypeSelector";
 import { CalibrationDataGrid, CustomColumn } from "@/components/calibration/CalibrationDataGrid";
-import { CertificatePreview } from "@/components/calibration/CertificatePreview";
+import { CertificatePreview, CanvasBlocksRenderer } from "@/components/calibration/CertificatePreview";
 import { UlrGate } from "@/components/calibration/UlrGate";
 import { VerdictBadge } from "@/components/calibration/VerdictBadge";
+import { JudgementCellControl } from "@/components/calibration/JudgementCellControl";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { CalendarPicker } from "@/components/ui/calendar";
-import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
+import { YearMonthDatePicker, parseFlexibleDate } from "@/components/ui/year-month-date-picker";
 import { TimePicker, DurationPicker } from "@/components/ui/time-picker";
 import { format, addMonths, parseISO } from "date-fns";
 import { cn, getRoleName } from "@/lib/utils";
+import { computeNextDueDate, parseFrequencyMonths } from "@/lib/dateUtils";
+import { getStatusVerdict } from "@/lib/statusVerdict";
 
 const STEPS = [
   "Select Instrument",
@@ -42,16 +53,11 @@ const STEPS = [
   "Certificate",
 ];
 
-const parseFrequencyMonths = (freq?: string): number => {
-  if (!freq) return 6;
-  const normalized = freq.trim().toLowerCase();
-  const match = normalized.match(/(\d+)/);
-  if (!match) return 6;
-  let val = parseInt(match[1], 10);
-  if (normalized.includes("year")) {
-    val *= 12;
-  }
-  return val > 0 ? val : 6;
+// A calibration cannot happen in the future: when a prefilled date (e.g. the previous due date)
+// is later than today, use today instead.
+const clampToToday = (yyyyMmDd: string): string => {
+  const today = format(new Date(), "yyyy-MM-dd");
+  return yyyyMmDd && yyyyMmDd > today ? today : yyyyMmDd;
 };
 
 const toLocalYyyyMmDd = (d?: string | Date | null): string => {
@@ -65,6 +71,8 @@ const toLocalYyyyMmDd = (d?: string | Date | null): string => {
   }
 };
 
+export { getStatusVerdict };
+
 const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-yyyy"): string => {
   if (!d) return "-";
   try {
@@ -76,16 +84,416 @@ const formatDisplayDate = (d?: string | Date | null, pattern: string = "dd-MMM-y
   }
 };
 
-const computeNextDueDate = (baseDateStr: string, frequencyStr?: string): string => {
-  if (!baseDateStr) return "";
-  const baseDate = parseISO(baseDateStr.includes("T") ? baseDateStr.split("T")[0] : baseDateStr);
-  if (isNaN(baseDate.getTime())) return "";
-  
-  const monthsToAdd = parseFrequencyMonths(frequencyStr);
-  const nextDate = addMonths(baseDate, monthsToAdd);
-  
-  return format(nextDate, "yyyy-MM-dd");
+export interface ValidityCheckResult {
+  status: "valid" | "warning" | "expired" | "empty";
+  daysRemaining: number | null;
+  formattedDate: string;
+  isExpired: boolean;
+  isWarning: boolean;
+  message: string;
+}
+
+export const checkReferenceStandardValidity = (
+  validityStr?: string | Date | null
+): ValidityCheckResult => {
+  if (!validityStr) {
+    return {
+      status: "empty",
+      daysRemaining: null,
+      formattedDate: "",
+      isExpired: false,
+      isWarning: false,
+      message: "",
+    };
+  }
+
+  const valDate = parseFlexibleDate(validityStr);
+  if (!valDate || isNaN(valDate.getTime())) {
+    return {
+      status: "empty",
+      daysRemaining: null,
+      formattedDate: "",
+      isExpired: false,
+      isWarning: false,
+      message: "",
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const targetDate = new Date(valDate.getFullYear(), valDate.getMonth(), valDate.getDate());
+  targetDate.setHours(0, 0, 0, 0);
+
+  const diffMs = targetDate.getTime() - today.getTime();
+  const daysRemaining = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const formattedDate = formatDisplayDate(targetDate);
+
+  // Expired relative to today
+  if (daysRemaining < 0) {
+    const absDays = Math.abs(daysRemaining);
+    return {
+      status: "expired",
+      daysRemaining,
+      formattedDate,
+      isExpired: true,
+      isWarning: false,
+      message: `Expired ${absDays === 1 ? "1 day ago" : `${absDays} days ago`} (${formattedDate})`,
+    };
+  }
+
+  // Expiring within 15 days (0 <= daysRemaining <= 15)
+  if (daysRemaining <= 15) {
+    return {
+      status: "warning",
+      daysRemaining,
+      formattedDate,
+      isExpired: false,
+      isWarning: true,
+      message:
+        daysRemaining === 0
+          ? `Expires today (${formattedDate})`
+          : `Expires in ${daysRemaining} day${daysRemaining > 1 ? "s" : ""} (${formattedDate})`,
+    };
+  }
+
+  return {
+    status: "valid",
+    daysRemaining,
+    formattedDate,
+    isExpired: false,
+    isWarning: false,
+    message: `Valid until ${formattedDate} (${daysRemaining} days remaining)`,
+  };
 };
+
+interface MasterStandardSelectProps {
+  masterStandards: Instrument[];
+  selectedMasterId: string;
+  onSelect: (master: Instrument) => void;
+  onClear?: () => void;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  filterMode?: "all" | "valid" | "warning" | "expired";
+  onFilterModeChange?: (mode: "all" | "valid" | "warning" | "expired") => void;
+}
+
+function MasterStandardSelect({
+  masterStandards,
+  selectedMasterId,
+  onSelect,
+  onClear,
+  isOpen,
+  onOpenChange,
+  filterMode,
+  onFilterModeChange,
+}: MasterStandardSelectProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isOpen !== undefined ? isOpen : internalOpen;
+  const setOpen = (val: boolean) => {
+    setInternalOpen(val);
+    onOpenChange?.(val);
+  };
+
+  const [internalFilter, setInternalFilter] = useState<"all" | "valid" | "warning" | "expired">("all");
+  const activeFilter = filterMode !== undefined ? filterMode : internalFilter;
+  const setFilter = (mode: "all" | "valid" | "warning" | "expired") => {
+    setInternalFilter(mode);
+    onFilterModeChange?.(mode);
+  };
+
+  const [search, setSearch] = useState("");
+
+  const selectedMaster = masterStandards.find(
+    (m) =>
+      m.id === selectedMasterId ||
+      m.id_code === selectedMasterId ||
+      (selectedMasterId && m.name?.toLowerCase() === selectedMasterId?.toLowerCase())
+  );
+
+  const counts = useMemo(() => {
+    let valid = 0;
+    let warning = 0;
+    let expired = 0;
+    masterStandards.forEach((m) => {
+      if (!m.due_date) {
+        valid++;
+        return;
+      }
+      const v = checkReferenceStandardValidity(m.due_date);
+      if (v.isExpired) expired++;
+      else if (v.isWarning) warning++;
+      else valid++;
+    });
+    return { all: masterStandards.length, valid, warning, expired };
+  }, [masterStandards]);
+
+  const filteredMasters = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return masterStandards.filter((m) => {
+      if (q) {
+        const nameMatch = (m.name || "").toLowerCase().includes(q);
+        const codeMatch = (m.id_code || "").toLowerCase().includes(q);
+        const makeMatch = (m.make || "").toLowerCase().includes(q);
+        if (!nameMatch && !codeMatch && !makeMatch) return false;
+      }
+      if (activeFilter === "all") return true;
+      const v = m.due_date ? checkReferenceStandardValidity(m.due_date) : { isExpired: false, isWarning: false };
+      if (activeFilter === "valid") return !v.isExpired;
+      if (activeFilter === "warning") return v.isWarning;
+      if (activeFilter === "expired") return v.isExpired;
+      return true;
+    });
+  }, [masterStandards, search, activeFilter]);
+
+  const selectedMasterCheck = selectedMaster?.due_date
+    ? checkReferenceStandardValidity(selectedMaster.due_date)
+    : null;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className={cn(
+            "w-full justify-between font-normal bg-primary/5 hover:bg-primary/10 border-input text-left h-10 px-3 shadow-2xs",
+            selectedMasterCheck?.isExpired && "border-destructive/60 bg-destructive/5 hover:bg-destructive/10",
+            selectedMasterCheck?.isWarning && "border-amber-500/60 bg-amber-500/5 hover:bg-amber-500/10"
+          )}
+        >
+          <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+            {selectedMaster ? (
+              <div className="flex items-center gap-2 truncate flex-wrap sm:flex-nowrap">
+                <span className="font-semibold text-foreground text-xs truncate">
+                  {selectedMaster.name}
+                </span>
+                <span className="font-mono text-[11px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded shrink-0">
+                  {selectedMaster.id_code}
+                </span>
+                {selectedMasterCheck?.isExpired && (
+                  <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-4 shrink-0 font-bold gap-1">
+                    <AlertCircle className="w-2.5 h-2.5" />
+                    Expired ({selectedMasterCheck.formattedDate})
+                  </Badge>
+                )}
+                {selectedMasterCheck?.isWarning && (
+                  <Badge className="text-[9px] py-0 px-1.5 h-4 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 shrink-0 font-bold gap-1">
+                    <AlertTriangle className="w-2.5 h-2.5 text-amber-600 dark:text-amber-400" />
+                    Due Soon ({selectedMasterCheck.daysRemaining === 0 ? "Today" : `${selectedMasterCheck.daysRemaining}d`})
+                  </Badge>
+                )}
+                {selectedMasterCheck?.status === "valid" && (
+                  <Badge variant="outline" className="text-[9px] py-0 px-1.5 h-4 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10 shrink-0 gap-1">
+                    <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                    Valid
+                  </Badge>
+                )}
+              </div>
+            ) : (
+              <span className="text-muted-foreground text-xs">
+                -- Select a Master Instrument to auto-fill --
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {selectedMaster && onClear && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.stopPropagation();
+                    onClear();
+                  }
+                }}
+                className="p-1 rounded-sm hover:bg-muted text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
+                title="Clear selection"
+              >
+                <X className="h-3.5 w-3.5" />
+              </span>
+            )}
+            <ChevronsUpDown className="h-4 w-4 opacity-50" />
+          </div>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[--radix-popover-trigger-width] min-w-[360px] max-w-2xl p-0 shadow-xl rounded-xl z-50 bg-popover border"
+        align="start"
+      >
+        <div className="p-2 border-b bg-muted/20 space-y-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search by ID number, name, make..."
+              className="pl-8 pr-7 h-8 text-xs bg-background"
+              autoFocus
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          {/* Filter Pills for Instrument Master list */}
+          <div className="flex items-center gap-1.5 overflow-x-auto text-[11px] pt-0.5 no-scrollbar">
+            <button
+              type="button"
+              onClick={() => setFilter("all")}
+              className={cn(
+                "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap",
+                activeFilter === "all"
+                  ? "bg-primary text-primary-foreground shadow-2xs"
+                  : "bg-muted/70 text-muted-foreground hover:bg-muted"
+              )}
+            >
+              All ({counts.all})
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter("valid")}
+              className={cn(
+                "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                activeFilter === "valid"
+                  ? "bg-emerald-600 text-white shadow-2xs"
+                  : "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-500/20"
+              )}
+            >
+              <CheckCircle2 className="w-3 h-3" />
+              Valid Only ({counts.valid})
+            </button>
+            {counts.warning > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilter("warning")}
+                className={cn(
+                  "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                  activeFilter === "warning"
+                    ? "bg-amber-600 text-white shadow-2xs"
+                    : "bg-amber-500/10 text-amber-800 dark:text-amber-300 hover:bg-amber-500/20"
+                )}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                Due Soon ({counts.warning})
+              </button>
+            )}
+            {counts.expired > 0 && (
+              <button
+                type="button"
+                onClick={() => setFilter("expired")}
+                className={cn(
+                  "px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap flex items-center gap-1",
+                  activeFilter === "expired"
+                    ? "bg-destructive text-destructive-foreground shadow-2xs"
+                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                )}
+              >
+                <AlertCircle className="w-3 h-3" />
+                Expired ({counts.expired})
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="max-h-60 overflow-y-auto p-1 divide-y divide-border/40">
+          {filteredMasters.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground space-y-1">
+              <p className="font-semibold text-foreground">No matching master instruments found</p>
+              <p className="text-[11px]">
+                {activeFilter !== "all"
+                  ? `Try switching from "${activeFilter}" filter to "All".`
+                  : "Try clearing your search keyword."}
+              </p>
+            </div>
+          ) : (
+            filteredMasters.map((m) => {
+              const isSelected = selectedMaster?.id === m.id;
+              const vCheck = m.due_date ? checkReferenceStandardValidity(m.due_date) : null;
+              return (
+                <div
+                  key={m.id}
+                  onClick={() => {
+                    onSelect(m);
+                    setOpen(false);
+                    setSearch("");
+                  }}
+                  className={cn(
+                    "flex items-center justify-between p-2 rounded-lg cursor-pointer transition-colors text-xs hover:bg-accent",
+                    isSelected && "bg-primary/10 font-semibold"
+                  )}
+                >
+                  <div className="flex flex-col min-w-0 pr-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-foreground font-medium truncate">
+                        {m.name}
+                      </span>
+                      {vCheck?.isExpired && (
+                        <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-4 shrink-0 font-bold">
+                          Expired
+                        </Badge>
+                      )}
+                      {vCheck?.isWarning && (
+                        <Badge className="text-[9px] py-0 px-1.5 h-4 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 shrink-0 font-bold">
+                          Due Soon
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground flex-wrap">
+                      <span className="font-mono font-semibold text-primary/80">
+                        {m.id_code}
+                      </span>
+                      {m.make && <span>• {m.make}</span>}
+                      {m.range && <span>• {m.range}</span>}
+                      {m.due_date && (
+                        <span
+                          className={cn(
+                            "text-[10px]",
+                            vCheck?.isExpired && "text-destructive font-semibold",
+                            vCheck?.isWarning && "text-amber-600 dark:text-amber-400 font-semibold"
+                          )}
+                        >
+                          • Due: {formatDisplayDate(m.due_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isSelected && (
+                    <Check className="h-4 w-4 text-primary shrink-0" />
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div className="p-2 border-t bg-muted/10 text-[11px] text-muted-foreground flex items-center justify-between gap-2">
+          <span>Showing {filteredMasters.length} of {masterStandards.length} master standards</span>
+          <a
+            href="/instruments?device_type=Reference Standard"
+            target="_blank"
+            rel="noreferrer"
+            className="text-primary hover:underline font-semibold flex items-center gap-1 text-[11px]"
+            title="Open Instrument Master in a new tab"
+          >
+            <span>Instrument Master</span>
+            <ArrowRight className="w-3 h-3" />
+          </a>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export default function CalibrationWizard() {
   useSEO({ title: "New Calibration — GaugeMaster", description: "Perform instrument calibration" });
@@ -110,6 +518,11 @@ export default function CalibrationWizard() {
     { name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }
   ]);
   const [masterStandards, setMasterStandards] = useState<Instrument[]>([]);
+  const [expiredRefStandardsModalOpen, setExpiredRefStandardsModalOpen] = useState(false);
+  const [expiredStandardsList, setExpiredStandardsList] = useState<any[]>([]);
+  const [warningRefStandardsModalOpen, setWarningRefStandardsModalOpen] = useState(false);
+  const [warningStandardsList, setWarningStandardsList] = useState<any[]>([]);
+  const [acknowledgedRefStandardWarning, setAcknowledgedRefStandardWarning] = useState(false);
 
   // Step 3 — Environmental + Data
   const [envTemp, setEnvTemp] = useState("");
@@ -118,6 +531,8 @@ export default function CalibrationWizard() {
   const [envSoakingStartTime, setEnvSoakingStartTime] = useState("");
   const [envSoakingEndTime, setEnvSoakingEndTime] = useState("");
   const [docNo, setDocNo] = useState("");
+  const [docDate, setDocDate] = useState("");
+  const [docRev, setDocRev] = useState("");
 
   // Helper to calculate soaking duration from Start and End times
   const calculateSoakingDuration = (startTimeStr: string, endTimeStr: string): string => {
@@ -158,7 +573,372 @@ export default function CalibrationWizard() {
     }
   };
   const [procedureReference, setProcedureReference] = useState("");
+  const [procedureNo, setProcedureNo] = useState("");
+  const [procedureName, setProcedureName] = useState("");
+  const [procedureDate, setProcedureDate] = useState("");
+  const [procedureRev, setProcedureRev] = useState("");
+  const [acceptanceCriteriaDocNo, setAcceptanceCriteriaDocNo] = useState("");
+  const [acceptanceCriteriaDate, setAcceptanceCriteriaDate] = useState("");
+  const [acceptanceCriteriaRev, setAcceptanceCriteriaRev] = useState("");
+  const [acceptanceCriteriaReference, setAcceptanceCriteriaReference] = useState("");
   const [standardReference, setStandardReference] = useState("Standard calibration per ISO/IEC 17025");
+  const [receiptCondition, setReceiptCondition] = useState<string>("NO DENT & DAMAGE (OK)");
+  const [customReceiptCondition, setCustomReceiptCondition] = useState<string>("");
+  const effectiveReceiptCondition = receiptCondition === "CUSTOM" ? customReceiptCondition.trim() : receiptCondition;
+
+  // Helper: check if a text string is a receipt condition / visual damage note rather than a calibration measurement specification
+  const isReceiptRow = (text: string, row?: any) => {
+    if (row && (row.is_merged || row.isMerged)) return false;
+    const t = (text || "").trim().toLowerCase();
+    if (!t) return false;
+    // Only match legacy exact receipt condition values or explicit receipt condition headers
+    if (
+      t === "no dent & damage (ok)" ||
+      t === "no dent & damage" ||
+      t === "no dent and damage" ||
+      t === "dent & damage observed" ||
+      t === "satisfactory"
+    ) {
+      return true;
+    }
+    if (
+      t.startsWith("receipt condition") ||
+      t.startsWith("receipt inspection") ||
+      t.startsWith("instrument receipt condition") ||
+      t.includes("receipt condition:") ||
+      t.includes("receipt condition :")
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper: flatten all table_grid blocks, including nested child tables within split_row blocks
+  const getAllCanvasTables = (blocks: any[]): any[] => {
+    const tables: any[] = [];
+    if (!Array.isArray(blocks)) return tables;
+    blocks.forEach((b: any) => {
+      if (!b) return;
+      if (b.type === "table_grid") {
+        tables.push(b);
+      } else if (b.type === "split_row" && Array.isArray(b.children)) {
+        b.children.forEach((c: any) => {
+          if (c && c.type === "table_grid") {
+            tables.push(c);
+          }
+        });
+      }
+    });
+    return tables;
+  };
+
+  // Helper: extract standardized CalibrationPoint array from Canvas layout blocks for fallback & consistency
+  const syncCalPointsFromCanvas = (blocks: any[]): CalibrationPoint[] => {
+    const allTables = getAllCanvasTables(blocks);
+    const synced: CalibrationPoint[] = [];
+    allTables.forEach((tbl, tIdx) => {
+      if (Array.isArray(tbl.rows)) {
+        tbl.rows.forEach((r: any, rIdx: number) => {
+          if (!r.is_merged && !r.isMerged) {
+            const rawStatus = String(r.status || r.judgement || r.result || r.verdict || "PASS").trim().toUpperCase();
+            synced.push({
+              point_number: r.point_number ?? (synced.length + 1),
+              description: r.description || r.specification || r.required_dimension || `Point ${synced.length + 1}`,
+              nominal: typeof r.nominal === "number" ? r.nominal : parseFloat(String(r.nominal ?? r.nominal_value ?? 0)) || 0,
+              unit: r.unit || tbl.unit || calUnit || "mm",
+              tolerance: typeof r.tolerance === "number" ? r.tolerance : parseFloat(String(r.tolerance ?? tbl.tolerance ?? 0.02)) || 0.02,
+              ascending_reading: typeof r.reading === "number" ? r.reading : parseFloat(String(r.reading ?? r.ascending_reading ?? r.actual ?? r.t1 ?? 0)) || 0,
+              error: r.error !== undefined ? (typeof r.error === "number" ? r.error : parseFloat(String(r.error)) || 0) : undefined,
+              status: rawStatus === "FAIL" || rawStatus === "REJECT" || rawStatus === "NG" ? "FAIL" : "PASS",
+            });
+          }
+        });
+      }
+    });
+    return synced;
+  };
+
+  // Helper: synchronize template column formulas and row cellFormulas into existing calibration blocks
+  const syncFormulasFromTemplate = (
+    calibrationBlocks: any[],
+    templateBlocks: any[],
+    options?: { preserveExistingFormulas?: boolean }
+  ): any[] => {
+    if (!Array.isArray(calibrationBlocks) || !Array.isArray(templateBlocks)) return calibrationBlocks;
+
+    const calTables = getAllCanvasTables(calibrationBlocks);
+    const tplTables = getAllCanvasTables(templateBlocks);
+
+    calTables.forEach((calTbl, tIdx) => {
+      const tplTbl =
+        tplTables.find((t) => t.id && calTbl.id && t.id === calTbl.id) ||
+        tplTables.find((t) => t.tableKey && calTbl.tableKey && t.tableKey === calTbl.tableKey) ||
+        tplTables[tIdx];
+
+      if (!tplTbl) return;
+
+      // Ensure tableKey from template is preserved
+      if (tplTbl.tableKey) calTbl.tableKey = tplTbl.tableKey;
+
+      // Sync column formulas & dependency metadata
+      if (Array.isArray(calTbl.columns) && Array.isArray(tplTbl.columns)) {
+        calTbl.columns.forEach((cCol: any) => {
+          const tCol = tplTbl.columns.find((t: any) => t && t.id === cCol.id);
+          if (tCol) {
+            if (options?.preserveExistingFormulas && cCol.formula) {
+              // Preserve existing calibration formula
+            } else if (tCol.formula !== undefined) {
+              cCol.formula = tCol.formula;
+            }
+            if (tCol.dependsOn !== undefined) cCol.dependsOn = tCol.dependsOn;
+            if (tCol.formulaType !== undefined) cCol.formulaType = tCol.formulaType;
+          }
+        });
+      }
+
+      // Sync row-level cellFormulas and formula_observed_error
+      if (Array.isArray(calTbl.rows) && Array.isArray(tplTbl.rows)) {
+        const isCriteriaOrAcceptance =
+          /acceptance|criteria|permissible/i.test(calTbl.title || "") ||
+          /acceptance|criteria|permissible/i.test(tplTbl.title || "");
+
+        calTbl.rows.forEach((cRow: any, rIdx: number) => {
+          const tRow =
+            tplTbl.rows.find(
+              (r: any) =>
+                r &&
+                cRow &&
+                ((r.parameter && cRow.parameter && r.parameter === cRow.parameter) ||
+                  (r.actual_measured && cRow.actual_measured && r.actual_measured === cRow.actual_measured) ||
+                  (r.required_dimension && cRow.required_dimension && r.required_dimension === cRow.required_dimension))
+            ) || tplTbl.rows[rIdx];
+
+          if (tRow) {
+            if (options?.preserveExistingFormulas && cRow.cellFormulas && Object.keys(cRow.cellFormulas).length > 0) {
+              // Preserve existing row cellFormulas
+            } else if (tRow.cellFormulas && typeof tRow.cellFormulas === "object" && Object.keys(tRow.cellFormulas).length > 0) {
+              cRow.cellFormulas = { ...tRow.cellFormulas };
+            } else if (!options?.preserveExistingFormulas) {
+              delete cRow.cellFormulas;
+            }
+
+            if (options?.preserveExistingFormulas && cRow.formula_observed_error) {
+              // Preserve existing formula_observed_error
+            } else if (tRow.formula_observed_error) {
+              cRow.formula_observed_error = tRow.formula_observed_error;
+            } else if (!options?.preserveExistingFormulas) {
+              delete cRow.formula_observed_error;
+            }
+
+            // Restore template-authored criteria/tolerance values if missing, wiped, or 0 in calibration/draft row
+            if (Array.isArray(tplTbl.columns)) {
+              tplTbl.columns.forEach((tCol: any) => {
+                if (tCol && tCol.id && tRow[tCol.id] !== undefined && tRow[tCol.id] !== null && tRow[tCol.id] !== "") {
+                  const currVal = cRow[tCol.id];
+                  const isMissingOrWiped =
+                    currVal === undefined ||
+                    currVal === null ||
+                    currVal === "" ||
+                    currVal === "-" ||
+                    (currVal === 0 && typeof tRow[tCol.id] === "string") ||
+                    (isCriteriaOrAcceptance && (currVal === 0 || currVal === "0"));
+                  if (isMissingOrWiped) {
+                    cRow[tCol.id] = tRow[tCol.id];
+                    if (tCol.id === "error") {
+                      cRow.error = tRow[tCol.id];
+                    }
+                  }
+                }
+              });
+            }
+          }
+        });
+      }
+    });
+
+    return calibrationBlocks;
+  };
+
+  // Helper: bind specifications to canvas tables respecting multi-table boundaries
+  const bindSpecificationsToCanvasTables = (
+    tables: any[],
+    specs: any[],
+    defaultTolerance: number,
+    defaultDecimalPlaces: number,
+    defaultUnit: string = "mm"
+  ) => {
+    if (!tables || tables.length === 0 || !specs || specs.length === 0) return;
+    const validTables = tables.filter((b: any) => {
+      const title = (b.title || "").toLowerCase();
+      return (
+        !title.includes("receipt condition") &&
+        !title.includes("acceptance") &&
+        !title.includes("criteria") &&
+        !title.includes("permissible")
+      );
+    });
+    if (validTables.length === 0) return;
+
+        const mergeSpecIntoRow = (existingRow: any, s: any, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
+      if (!s) return evaluateCanvasRowFormulas(existingRow, columns, tol, dec, tableNominal);
+
+      const finalDesc = s.description ?? existingRow.description ?? "";
+      const finalReqDim = s.required_dimension ?? existingRow.required_dimension ?? s.specification ?? existingRow.specification ?? "";
+      const finalSpec = s.specification ?? existingRow.specification ?? s.required_dimension ?? existingRow.required_dimension ?? "";
+      const specText = finalReqDim || finalSpec || finalDesc || "";
+      const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+      const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit || existingRow?.isMaxLimit);
+      const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit || existingRow?.isMinLimit);
+
+      const mergedRow: any = {
+        ...existingRow,
+        ...s,
+        cellSpans: existingRow.cellSpans || s.cellSpans,
+        point_number: existingRow.point_number ?? s.point_number,
+        required_dimension: finalReqDim || specText,
+        description: finalDesc,
+        specification: finalSpec || specText,
+        nominal: isMaxLimit
+          ? 0
+          : ((s.nominal !== undefined && s.nominal !== 0 && s.nominal !== "0" && s.nominal !== "")
+            ? s.nominal
+            : (existingRow.nominal !== undefined ? existingRow.nominal : (parsed?.isValid ? parsed.nominal : 0))),
+        lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : (existingRow.lower_tolerance ?? parsed?.lowerTolerance),
+        upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : (existingRow.upper_tolerance ?? parsed?.upperTolerance),
+        lower_limit: s.lower_limit !== undefined ? s.lower_limit : (existingRow.lower_limit ?? parsed?.lowerLimit),
+        upper_limit: s.upper_limit !== undefined ? s.upper_limit : (existingRow.upper_limit ?? parsed?.upperLimit),
+        tolerance: isMaxLimit && parsed?.upperTolerance !== undefined
+          ? parsed.upperTolerance
+          : (s.tolerance !== undefined ? s.tolerance : (existingRow.tolerance ?? tol)),
+        isMaxLimit,
+        isMinLimit,
+        unit: s.unit || existingRow.unit || tableUnit || defaultUnit,
+        actual: (s.actual !== undefined && s.actual !== "") ? s.actual : (existingRow.actual ?? ""),
+        // INVARIANT: Template formulas always take precedence over instrument custom parameter specs!
+        cellFormulas: (() => {
+          const formulas = (existingRow.cellFormulas && Object.keys(existingRow.cellFormulas).length > 0)
+            ? existingRow.cellFormulas
+            : (s.cellFormulas || existingRow.cellFormulas);
+          if (formulas && typeof formulas === "object") {
+            const clean = { ...formulas };
+            for (const [k, v] of Object.entries(clean)) {
+              if (typeof v === "string" && /^=?avg\(\s*t1\.error\s*\)$/i.test(v.trim())) {
+                clean[k] = "=SUM((t1.error)+(t2.error))";
+              }
+            }
+            return clean;
+          }
+          return formulas;
+        })(),
+        formula_observed_error: existingRow.formula_observed_error || s.formula_observed_error,
+      };
+
+      // Ensure all custom column values from existingRow are preserved if not provided in s
+      if (Array.isArray(columns)) {
+        columns.forEach((col: any) => {
+          if (existingRow[col.id] !== undefined && (mergedRow[col.id] === undefined || mergedRow[col.id] === "")) {
+            mergedRow[col.id] = existingRow[col.id];
+          }
+        });
+      }
+
+      return evaluateCanvasRowFormulas(mergedRow, columns, tol, dec, tableNominal);
+    };
+
+    const createNewRowFromSpec = (s: any, idx: number, columns: any[], tol: number, dec: number, tableUnit: string, tableNominal?: number | string) => {
+      const finalDesc = s.description || s.parameter_name || "";
+      const finalReqDim = s.required_dimension || s.specification || "";
+      const finalSpec = s.specification || s.required_dimension || "";
+      const specText = finalReqDim || finalSpec || finalDesc || "";
+      const parsed = specText ? parseSpecification(specText, s.unit || tableUnit || defaultUnit, tol, dec) : null;
+      const isMaxLimit = Boolean(parsed?.isMaxLimit || s?.isMaxLimit);
+      const isMinLimit = Boolean(parsed?.isMinLimit || s?.isMinLimit);
+      const rowObj: any = {
+        ...s,
+        point_number: s.point_number || idx + 1,
+        required_dimension: finalReqDim,
+        description: finalDesc,
+        specification: finalSpec,
+        cellSpans: s.cellSpans,
+        nominal: isMaxLimit ? 0 : (s.nominal !== undefined ? s.nominal : (parsed?.isValid ? parsed.nominal : 0)),
+        lower_tolerance: s.lower_tolerance !== undefined ? s.lower_tolerance : parsed?.lowerTolerance,
+        upper_tolerance: s.upper_tolerance !== undefined ? s.upper_tolerance : parsed?.upperTolerance,
+        lower_limit: s.lower_limit !== undefined ? s.lower_limit : parsed?.lowerLimit,
+        upper_limit: s.upper_limit !== undefined ? s.upper_limit : parsed?.upperLimit,
+        tolerance: isMaxLimit && parsed?.upperTolerance !== undefined ? parsed.upperTolerance : (s.tolerance !== undefined ? s.tolerance : tol),
+        isMaxLimit,
+        isMinLimit,
+        unit: s.unit || tableUnit || defaultUnit,
+        actual: s.actual ?? "",
+      };
+      return evaluateCanvasRowFormulas(rowObj, columns, tol, dec, tableNominal);
+    };
+
+    if (validTables.length === 1) {
+      // Single table template: bind specs directly to primary table preserving template authoring & cellSpans
+      const primaryTable = validTables[0];
+      const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
+      const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
+      const existingRows = Array.isArray(primaryTable.rows) ? primaryTable.rows : [];
+
+      if (existingRows.length > 0) {
+        primaryTable.rows = existingRows.map((existingRow: any, idx: number) => {
+          const s = specs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || specs[idx];
+                    return mergeSpecIntoRow(existingRow, s, primaryTable.columns, tol, dec, primaryTable.unit, primaryTable.nominal);
+        });
+      } else {
+        primaryTable.rows = specs.map((s: any, idx: number) =>
+          createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit, primaryTable.nominal)
+        );
+      }
+    } else {
+      // Multi-table template: check if specifications carry table identifiers
+      const specsHaveTableMarkers = specs.some((s: any) =>
+        s.table_index !== undefined || s.table_id !== undefined || (s.table_title && String(s.table_title).trim().length > 0)
+      );
+
+      if (specsHaveTableMarkers) {
+        validTables.forEach((tbl: any, tblIdx: number) => {
+          const matchingSpecs = specs.filter((s: any) => {
+            if (s.table_index !== undefined) return Number(s.table_index) === tblIdx;
+            if (s.table_id && tbl.id) return s.table_id === tbl.id;
+            if (s.table_title && tbl.title) return String(s.table_title).trim().toLowerCase() === String(tbl.title).trim().toLowerCase();
+            return false;
+          });
+
+          if (matchingSpecs.length > 0) {
+            const dec = tbl.decimal_places ?? defaultDecimalPlaces ?? 3;
+            const tol = tbl.tolerance ?? defaultTolerance ?? 0.02;
+            const existingRows = Array.isArray(tbl.rows) ? tbl.rows : [];
+
+            if (existingRows.length > 0) {
+              tbl.rows = existingRows.map((existingRow: any, idx: number) => {
+                const s = matchingSpecs.find((sp: any) => sp.point_number === existingRow.point_number || sp.point_number === (idx + 1)) || matchingSpecs[idx];
+                                return mergeSpecIntoRow(existingRow, s, tbl.columns, tol, dec, tbl.unit, tbl.nominal);
+              });
+            } else {
+              tbl.rows = matchingSpecs.map((s: any, idx: number) =>
+                createNewRowFromSpec(s, idx, tbl.columns, tol, dec, tbl.unit, tbl.nominal)
+              );
+            }
+          }
+        });
+      } else {
+        // Legacy flat specs without table markers:
+        const templateHasRows = validTables.some((t: any) => Array.isArray(t.rows) && t.rows.length > 0);
+        if (!templateHasRows) {
+          const primaryTable = validTables[0];
+          const dec = primaryTable.decimal_places ?? defaultDecimalPlaces ?? 3;
+          const tol = primaryTable.tolerance ?? defaultTolerance ?? 0.02;
+          primaryTable.rows = specs.map((s: any, idx: number) =>
+            createNewRowFromSpec(s, idx, primaryTable.columns, tol, dec, primaryTable.unit)
+          );
+        }
+      }
+      evaluateAllCanvasBlocks(tables);
+    }
+  };
+
   const [calPoints, setCalPoints] = useState<CalibrationPoint[]>([]);
   const [calUnit, setCalUnit] = useState("");
   const [calTolerance, setCalTolerance] = useState(0);
@@ -168,66 +948,630 @@ export default function CalibrationWizard() {
   // Step 4 — Results
   const [uncertainty, setUncertainty] = useState("");
   const [verdict, setVerdict] = useState<"PASS" | "FAIL" | "CONDITIONAL">("PASS");
+  const [isVerdictManuallyOverridden, setIsVerdictManuallyOverridden] = useState<boolean>(false);
+  const [autoVerdict, setAutoVerdict] = useState<"PASS" | "FAIL" | "CONDITIONAL">("PASS");
+  const [verdictStats, setVerdictStats] = useState<{ total: number; pass: number; fail: number; conditional: number }>({ total: 0, pass: 0, fail: 0, conditional: 0 });
   const [remarks, setRemarks] = useState("");
   const [calibratedBy, setCalibratedBy] = useState("");
   const [calibratedByDesignation, setCalibratedByDesignation] = useState("");
   const [calibratedBySignature, setCalibratedBySignature] = useState("");
+  const [calibratedById, setCalibratedById] = useState("");
   const [reviewedBy, setReviewedBy] = useState("");
   const [reviewedByDesignation, setReviewedByDesignation] = useState("");
   const [reviewedBySignature, setReviewedBySignature] = useState("");
+  const [reviewedById, setReviewedById] = useState("");
   const [approvedBy, setApprovedBy] = useState("");
   const [approvedByDesignation, setApprovedByDesignation] = useState("");
   const [approvedBySignature, setApprovedBySignature] = useState("");
+  const [approvedById, setApprovedById] = useState("");
   const [calDate, setCalDate] = useState(toLocalYyyyMmDd(new Date()));
   const [certIssueDate, setCertIssueDate] = useState(toLocalYyyyMmDd(new Date()));
   const [nextCalDate, setNextCalDate] = useState("");
+  const lastCalDateRef = useRef<string | null>(null);
+  const lastInstrumentIdRef = useRef<string | null>(null);
   const [systemUsers, setSystemUsers] = useState<any[]>([]);
+
+  // Template Variant & Instrument Master Custom Parameters State
+  const [savingInstrumentCustom, setSavingInstrumentCustom] = useState(false);
+  const [deletingMasterTemplate, setDeletingMasterTemplate] = useState(false);
+  const [confirmDeleteMasterTemplateOpen, setConfirmDeleteMasterTemplateOpen] = useState(false);
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
+  const [showCertPreviewModal, setShowCertPreviewModal] = useState(false);
+  const [isDragOverDiagram, setIsDragOverDiagram] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState("");
+  const [newTemplateDescription, setNewTemplateDescription] = useState("");
+  const [savingTemplateVariant, setSavingTemplateVariant] = useState(false);
+
+  // Reference Standard Master Select Controlled State
+  const [activeMasterSelectIndex, setActiveMasterSelectIndex] = useState<number | null>(null);
+  const [masterSelectFilter, setMasterSelectFilter] = useState<"all" | "valid" | "warning" | "expired">("all");
+
+  const hasMasterSavedTemplate = Boolean(
+    (selectedInstrument?.custom_parameters?.specifications && Array.isArray(selectedInstrument.custom_parameters.specifications) && selectedInstrument.custom_parameters.specifications.length > 0) ||
+    Boolean(selectedInstrument?.custom_parameters?.diagram_image)
+  );
+
+  // Normalizes pasted or uploaded images using an offscreen canvas:
+  // 1. Decodes any interlaced PNG formats (Adam7) into standard scanlines
+  // 2. Fills transparent alpha with solid white background to guarantee pristine PDF rendering
+  // 3. Produces standard non-interlaced 32-bit RGBA PNG DataURL
+  const cleanImageToDataUrl = (dataUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return resolve(dataUrl);
+
+          // Fill solid white background so transparent PNGs print crisp without black artifacts
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+
+          resolve(canvas.toDataURL("image/png"));
+        } catch {
+          resolve(dataUrl);
+        }
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  };
+
+  // Copy diagram image base64 to system clipboard
+  const handleCopyImageToClipboard = async () => {
+    if (!wizardDiagramImage) return;
+    try {
+      const res = await fetch(wizardDiagramImage);
+      const blob = await res.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      toast.success("Diagram image copied to clipboard");
+    } catch (err) {
+      console.error("Failed to copy image to clipboard", err);
+      toast.error("Could not copy image to clipboard");
+    }
+  };
+
+  // Paste image from system clipboard via Navigator Clipboard API
+  const handlePasteFromClipboard = async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find(t => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const reader = new FileReader();
+          reader.onload = async (e) => {
+            const base64 = e.target?.result as string;
+            if (base64) {
+              const clean = await cleanImageToDataUrl(base64);
+              setWizardDiagramImage(clean);
+              toast.success("Gauge Diagram pasted from clipboard");
+            }
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+      toast.info("No image found in clipboard. Press Ctrl+V anywhere to paste.");
+    } catch (err) {
+      toast.info("Press Ctrl+V anywhere on the page to paste image");
+    }
+  };
+
+  // Process uploaded or dropped image file
+  const processImageFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload a valid image file (PNG, JPG, WEBP, SVG)");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File size must be under 5MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        const clean = await cleanImageToDataUrl(base64);
+        setWizardDiagramImage(clean);
+        toast.success("Diagram image attached");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Merge Instrument Custom Parameters (gauge drawing, specific specifications, doc properties, env defaults)
+  const applyInstrumentCustomParameters = (instr: Instrument) => {
+    if (!instr || !instr.custom_parameters) return;
+    const cp = instr.custom_parameters;
+
+    // 1. Diagram Image
+    if (cp.diagram_image !== undefined) {
+      setWizardDiagramImage(cp.diagram_image || null);
+      if (cp.diagram_image_width) setWizardDiagramWidth(cp.diagram_image_width);
+      if (cp.diagram_image_height) setWizardDiagramHeight(cp.diagram_image_height);
+      if (cp.diagram_image_alignment) setWizardDiagramAlignment(cp.diagram_image_alignment);
+    }
+
+    // 2. Doc Properties
+    if (cp.doc_properties) {
+      if (cp.doc_properties.doc_no) setDocNo(cp.doc_properties.doc_no);
+      if (cp.doc_properties.doc_date) setDocDate(cp.doc_properties.doc_date);
+      if (cp.doc_properties.doc_rev) setDocRev(cp.doc_properties.doc_rev);
+      const loadedProcNo = cp.doc_properties.procedure_no || cp.doc_properties.procedure_reference || "";
+      if (loadedProcNo) {
+        setProcedureNo(loadedProcNo);
+        setProcedureReference(loadedProcNo);
+      }
+      if (cp.doc_properties.procedure_name) setProcedureName(cp.doc_properties.procedure_name);
+      if (cp.doc_properties.procedure_date) setProcedureDate(cp.doc_properties.procedure_date);
+      if (cp.doc_properties.procedure_rev) setProcedureRev(cp.doc_properties.procedure_rev);
+      if (cp.doc_properties.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(cp.doc_properties.acceptance_criteria_doc_no);
+      if (cp.doc_properties.acceptance_criteria_date) setAcceptanceCriteriaDate(cp.doc_properties.acceptance_criteria_date);
+      if (cp.doc_properties.acceptance_criteria_rev) setAcceptanceCriteriaRev(cp.doc_properties.acceptance_criteria_rev);
+      if (cp.doc_properties.acceptance_criteria_reference) setAcceptanceCriteriaReference(cp.doc_properties.acceptance_criteria_reference);
+    }
+
+    // 3. Environmental Defaults & Receipt Condition
+    if (cp.environmental_defaults) {
+      if (cp.environmental_defaults.temperature) setEnvTemp(cp.environmental_defaults.temperature);
+      if (cp.environmental_defaults.humidity) setEnvHumidity(cp.environmental_defaults.humidity);
+      if (cp.environmental_defaults.soaking_time) setEnvSoakingTime(cp.environmental_defaults.soaking_time);
+      if (cp.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(cp.environmental_defaults.soaking_start_time);
+      if (cp.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(cp.environmental_defaults.soaking_end_time);
+    }
+    const savedReceipt = cp.receipt_condition || cp.environmental_defaults?.receipt_condition;
+    if (savedReceipt) {
+      if (["NO DENT & DAMAGE (OK)", "SATISFACTORY", "DENT & DAMAGE OBSERVED"].includes(savedReceipt)) {
+        setReceiptCondition(savedReceipt);
+      } else {
+        setReceiptCondition("CUSTOM");
+        setCustomReceiptCondition(savedReceipt);
+      }
+    }
+
+    // 4. Specifications auto-merge into calPoints and wizardLayoutBlocks (strictly exclude receipt condition notes)
+    if (cp.specifications && Array.isArray(cp.specifications)) {
+      const validSpecs = cp.specifications.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s));
+      if (validSpecs.length > 0) {
+        const mergedPoints: CalibrationPoint[] = validSpecs.map((spec: any, idx: number) => ({
+          point_number: spec.point_number || idx + 1,
+          description: spec.description || spec.required_dimension || `Point ${idx + 1}`,
+          nominal: spec.nominal !== undefined ? Number(spec.nominal) : 0,
+          ascending_reading: spec.ascending_reading !== undefined ? Number(spec.ascending_reading) : (spec.nominal !== undefined ? Number(spec.nominal) : 0),
+          descending_reading: spec.descending_reading !== undefined ? Number(spec.descending_reading) : undefined,
+          error: spec.error !== undefined ? Number(spec.error) : 0,
+          unit: spec.unit || calUnit || "mm",
+          tolerance: spec.tolerance !== undefined ? Number(spec.tolerance) : calTolerance,
+          status: spec.status || "PASS",
+          customFields: spec.customFields || {},
+        }));
+        setCalPoints(mergedPoints);
+
+        // Also merge into active canvas blocks if in canvas mode
+        setWizardLayoutBlocks((prevBlocks: any[]) => {
+          if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
+          const newBlocks = JSON.parse(JSON.stringify(prevBlocks));
+          const allTables = getAllCanvasTables(newBlocks);
+          bindSpecificationsToCanvasTables(
+            allTables,
+            validSpecs,
+            calTolerance || 0.02,
+            wizardDecimalPlaces ?? 3,
+            calUnit || "mm"
+          );
+          if (selectedTemplateId && selectedTemplateId !== "none") {
+            const currentTpl = availableTemplates.find((t) => t.id === selectedTemplateId);
+            if (currentTpl?.layout_blocks) {
+              syncFormulasFromTemplate(newBlocks, currentTpl.layout_blocks);
+            }
+          }
+          newBlocks.forEach((b: any) => {
+            const sweepRows = (rows: any[]) => {
+              rows?.forEach((r: any) => {
+                if (r.cellFormulas && typeof r.cellFormulas === "object") {
+                  for (const [k, v] of Object.entries(r.cellFormulas)) {
+                    if (typeof v === "string" && /^=?avg\(\s*t1\.error\s*\)$/i.test(v.trim())) {
+                      r.cellFormulas[k] = "=SUM((t1.error)+(t2.error))";
+                    }
+                  }
+                }
+              });
+            };
+            if (b.type === "table_grid") sweepRows(b.rows);
+            if (b.type === "split_row" && Array.isArray(b.children)) {
+              b.children.forEach((c: any) => sweepRows(c?.rows));
+            }
+          });
+          return evaluateAllCanvasBlocks(ensureTableKeys(newBlocks), { forceFull: true });
+        });
+      }
+    }
+  };
+
+  // Clipboard Paste Listener for Diagram Image (Ctrl+V)
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (step !== 2 && step !== 3) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith("image/")) {
+          const file = items[i].getAsFile();
+          if (file) {
+            e.preventDefault();
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+              const base64 = event.target?.result as string;
+              if (base64) {
+                const clean = await cleanImageToDataUrl(base64);
+                setWizardDiagramImage(clean);
+                toast.success("Gauge Diagram pasted from clipboard (Ctrl+V)");
+              }
+            };
+            reader.readAsDataURL(file);
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [step]);
+
+  // Diagram Image File Upload
+  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please upload a valid image file (PNG, JPG, WEBP)");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      const base64 = evt.target?.result as string;
+      if (base64) {
+        const clean = await cleanImageToDataUrl(base64);
+        setWizardDiagramImage(clean);
+        toast.success("Diagram image uploaded");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Extract all current specifications, diagram image, and document properties for Item-level Instrument Master persistence
+  const getCustomParametersPayload = () => {
+    if (!selectedInstrument) return null;
+    let gaugeSpecs: any[] = [];
+    if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+      const allTables = getAllCanvasTables(wizardLayoutBlocks);
+      const validTables = allTables.filter((b: any) => !((b.title || "").toLowerCase().includes("receipt condition")));
+      validTables.forEach((tbl: any, tblIdx: number) => {
+        if (Array.isArray(tbl.rows)) {
+          tbl.rows
+            .filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r))
+            .forEach((r: any) => {
+              gaugeSpecs.push({
+                ...r,
+                table_index: tblIdx,
+                table_id: tbl.id || `table_${tblIdx}`,
+                table_title: tbl.title || "",
+                point_number: r.point_number ?? (gaugeSpecs.length + 1),
+                required_dimension: r.required_dimension || r.specification || "",
+                description: r.description || "",
+                specification: r.specification || r.required_dimension || "",
+                cellSpans: r.cellSpans,
+                nominal: r.nominal,
+                tolerance: r.tolerance ?? tbl.tolerance,
+                lower_tolerance: r.lower_tolerance,
+                upper_tolerance: r.upper_tolerance,
+                lower_limit: r.lower_limit,
+                upper_limit: r.upper_limit,
+                unit: r.unit || tbl.unit || calUnit || "mm",
+                actual: r.actual,
+              });
+            });
+        }
+      });
+    } else {
+      gaugeSpecs = calPoints
+        .filter(p => ((p as any).is_merged || (p as any).isMerged) ? true : !isReceiptRow(p.description || "", p))
+        .map(p => ({
+          point_number: p.point_number,
+          description: p.description,
+          nominal: p.nominal,
+          unit: p.unit,
+          tolerance: p.tolerance,
+          customFields: p.customFields,
+        }));
+    }
+
+    return {
+      ...(selectedInstrument.custom_parameters || {}),
+      diagram_image: wizardDiagramImage ? wizardDiagramImage : null,
+      diagram_image_width: wizardDiagramWidth,
+      diagram_image_height: wizardDiagramHeight,
+      diagram_image_alignment: wizardDiagramAlignment,
+      doc_properties: {
+        doc_no: docNo || undefined,
+        doc_date: docDate || undefined,
+        doc_rev: docRev || undefined,
+        procedure_no: procedureNo || undefined,
+        procedure_name: procedureName || undefined,
+        procedure_date: procedureDate || undefined,
+        procedure_rev: procedureRev || undefined,
+        procedure_reference: procedureNo || procedureReference || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
+      },
+      environmental_defaults: {
+        temperature: envTemp || undefined,
+        humidity: envHumidity || undefined,
+        soaking_time: envSoakingTime || undefined,
+        soaking_start_time: envSoakingStartTime || undefined,
+        soaking_end_time: envSoakingEndTime || undefined,
+      },
+      receipt_condition: effectiveReceiptCondition,
+      specifications: gaugeSpecs.length > 0 ? gaugeSpecs : (selectedInstrument.custom_parameters?.specifications || []),
+    };
+  };
+
+  // Save current diagram, specifications, doc info to Instrument Master
+  const handleSaveToInstrumentMaster = async () => {
+    if (!selectedInstrument) {
+      toast.error("No instrument selected");
+      return;
+    }
+    const updatedCustomParams = getCustomParametersPayload();
+    if (!updatedCustomParams) return;
+    setSavingInstrumentCustom(true);
+    try {
+      await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+        custom_parameters: updatedCustomParams,
+      });
+
+      setSelectedInstrument({
+        ...selectedInstrument,
+        custom_parameters: updatedCustomParams,
+      });
+
+      toast.success(`Saved specifications & diagram to Instrument Master (${selectedInstrument.id_code})`);
+    } catch (err: any) {
+      console.error("Failed to save to Instrument Master", err);
+      toast.error(err.response?.data?.message || "Failed to update Instrument Master");
+    } finally {
+      setSavingInstrumentCustom(false);
+    }
+  };
+
+  // Delete saved specifications and diagram template from Instrument Master
+  const handleDeleteTemplateFromMaster = async () => {
+    if (!selectedInstrument) {
+      toast.error("No instrument selected");
+      return;
+    }
+    setDeletingMasterTemplate(true);
+    try {
+      const cleanedCustomParams = {
+        ...(selectedInstrument.custom_parameters || {}),
+      };
+      delete cleanedCustomParams.specifications;
+      delete cleanedCustomParams.diagram_image;
+      delete cleanedCustomParams.diagram_image_width;
+      delete cleanedCustomParams.diagram_image_height;
+      delete cleanedCustomParams.diagram_image_alignment;
+      delete cleanedCustomParams.doc_properties;
+      delete cleanedCustomParams.environmental_defaults;
+
+      await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+        custom_parameters: cleanedCustomParams,
+      });
+
+      const updatedInstrument = {
+        ...selectedInstrument,
+        custom_parameters: cleanedCustomParams,
+      };
+      setSelectedInstrument(updatedInstrument);
+
+      // Re-apply current template or fallback without master specifications
+      const targetTplId = (selectedTemplateId && selectedTemplateId !== "none" && selectedTemplateId !== "master_saved")
+        ? selectedTemplateId
+        : (availableTemplates.length > 0 ? availableTemplates[0].id : null);
+
+      if (targetTplId) {
+        const tpl = availableTemplates.find((t) => t.id === targetTplId);
+        if (tpl) {
+          applyTemplateObject(tpl, false, undefined, updatedInstrument);
+        } else {
+          handleApplyTemplate(targetTplId);
+        }
+      } else {
+        handleClearTemplate();
+      }
+
+      setConfirmDeleteMasterTemplateOpen(false);
+      toast.success(`Deleted template specifications from Instrument Master (${selectedInstrument.id_code})`);
+    } catch (err: any) {
+      console.error("Failed to delete template from Instrument Master", err);
+      toast.error(err.response?.data?.message || "Failed to delete template from Instrument Master");
+    } finally {
+      setDeletingMasterTemplate(false);
+    }
+  };
+
+  // Save current configuration as a new standalone Calibration Template Variant
+  const handleSaveAsNewTemplate = async () => {
+    if (!newTemplateName.trim()) {
+      toast.error("Please enter a Template Variant Name");
+      return;
+    }
+    setSavingTemplateVariant(true);
+    try {
+      const payload = {
+        name: newTemplateName.trim(),
+        description: newTemplateDescription.trim() || undefined,
+        category: selectedInstrument?.category || "General",
+        instrument_type: selectedInstrument?.item_type || selectedInstrument?.name || selectedType?.type || "General",
+        calibration_type: selectedType?.type || (selectedInstrument as any)?.calibration_type || "dimensional",
+        default_unit: calUnit || "mm",
+        default_tolerance: calTolerance || 0,
+        is_active: true,
+        doc_no: docNo || undefined,
+        doc_date: docDate || undefined,
+        doc_rev: docRev || undefined,
+        procedure_no: procedureNo || undefined,
+        procedure_name: procedureName || undefined,
+        procedure_date: procedureDate || undefined,
+        procedure_rev: procedureRev || undefined,
+        procedure_reference: procedureNo || procedureReference || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
+        standard_reference: standardReference || undefined,
+        environmental_defaults: {
+          temperature: envTemp || undefined,
+          humidity: envHumidity || undefined,
+          soaking_time: envSoakingTime || undefined,
+          soaking_start_time: envSoakingStartTime || undefined,
+          soaking_end_time: envSoakingEndTime || undefined,
+        },
+        is_canvas_template: wizardIsCanvas,
+        layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
+        custom_columns: wizardCustomColumns,
+        standard_columns_config: wizardStandardColumnConfigs,
+        column_order: wizardColumnOrder,
+        hidden_columns: wizardHiddenColumns,
+        decimal_places: wizardDecimalPlaces,
+        acceptance_criteria: wizardAcceptanceCriteria,
+        diagram_image: wizardDiagramImage || undefined,
+        diagram_image_width: wizardDiagramWidth,
+        diagram_image_height: wizardDiagramHeight,
+        diagram_image_alignment: wizardDiagramAlignment,
+        calibration_points: calPoints.map((p, idx) => ({
+          point_number: p.point_number || idx + 1,
+          description: p.description || `Point ${idx + 1}`,
+          nominal: p.nominal,
+          unit: p.unit || calUnit || "mm",
+          tolerance: p.tolerance,
+          customFields: p.customFields,
+        })),
+      };
+
+      const res = await httpClient.post("/calibration-templates", payload);
+      const createdTpl = res.data;
+      setAvailableTemplates(prev => [createdTpl, ...prev]);
+      setSelectedTemplateId(createdTpl.id);
+      setSaveTemplateModalOpen(false);
+      setNewTemplateName("");
+      setNewTemplateDescription("");
+      toast.success(`Saved new template variant "${createdTpl.name}"`);
+      if (proceedAfterTemplateVariantRef.current) {
+        proceedAfterTemplateVariantRef.current = false;
+        executeSaveAndContinue({ skipMasterSave: true });
+      }
+    } catch (err: any) {
+      console.error("Failed to save template variant", err);
+      toast.error(err.response?.data?.message || "Failed to create template variant");
+    } finally {
+      setSavingTemplateVariant(false);
+    }
+  };
 
   useEffect(() => {
     const fetchSystemUsers = async () => {
       try {
-        const res = await httpClient.get(`/users?companyId=${user?.companyId || ""}`);
-        const list = Array.isArray(res.data) ? res.data : [];
+        const res = await httpClient.get(`/calibrations/signatories${user?.companyId ? `?companyId=${user.companyId}` : ""}`);
+        let list = Array.isArray(res.data) ? res.data : [];
+        if (list.length === 0 && user?.companyId) {
+          try {
+            const uRes = await httpClient.get(`/users?companyId=${user.companyId}`);
+            if (Array.isArray(uRes.data)) list = uRes.data;
+          } catch {}
+        }
         if (user?.name && !list.some((u: any) => u.name === user.name || u.id === user.id)) {
-          list.unshift({ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name });
+          list.unshift({ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || "" });
         }
         setSystemUsers(list);
       } catch (err) {
         console.error("Failed to load users for signatories", err);
         if (user?.name) {
-          setSystemUsers([{ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || user.name }]);
+          setSystemUsers([{ id: user.id, name: user.name, designation: getRoleName(user.role) || "Calibration Engineer", signature: (user as any).signature || "" }]);
         }
       }
     };
     fetchSystemUsers();
   }, [user]);
 
-  // Draft & Edit state params
+  // Draft, Edit & Recalibrate state params
   const [searchParams] = useSearchParams();
   const draftIdParam = searchParams.get("draftId");
   const editIdParam = searchParams.get("editId");
+  const recalibrateIdParam = searchParams.get("recalibrateId") || searchParams.get("recalibration_of_id");
   const typeParam = searchParams.get("type");
+
+  const [rejectionNotice, setRejectionNotice] = useState<{
+    rejectedBy?: string;
+    rejectedAt?: string;
+    reason?: string;
+    certificateNumber?: string;
+    originalCalDate?: string;
+  } | null>(null);
+
+  const draftIdRef = useRef<string | null>(draftIdParam || null);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [editLoading, setEditLoading] = useState(!!editIdParam || !!recalibrateIdParam);
 
   // Sync certIssueDate to calDate by default (for new calibrations)
   useEffect(() => {
-    if (calDate && !editIdParam && !draftIdParam) {
+    if (calDate && !editIdParam && !recalibrateIdParam && !draftIdParam) {
       setCertIssueDate(calDate);
     }
-  }, [calDate, editIdParam, draftIdParam]);
+  }, [calDate, editIdParam, recalibrateIdParam, draftIdParam]);
 
   // Auto-calculate Next Calibration Due Date based on Instrument Frequency
   useEffect(() => {
-    if (calDate && selectedInstrument) {
-      const computed = computeNextDueDate(calDate, selectedInstrument.frequency);
-      setNextCalDate(computed);
+    if (isInitializing || editLoading) return;
+    if (!calDate || !selectedInstrument) return;
+
+    // In edit or draft mode, do not overwrite the loaded next_calibration_date unless the user actually changed calDate or instrument
+    if (editIdParam || draftIdParam) {
+      const instrumentChanged = lastInstrumentIdRef.current !== null && lastInstrumentIdRef.current !== selectedInstrument.id;
+      const calDateChanged = lastCalDateRef.current !== null && lastCalDateRef.current !== calDate;
+
+      if (!instrumentChanged && !calDateChanged) {
+        lastInstrumentIdRef.current = selectedInstrument.id;
+        lastCalDateRef.current = calDate;
+        return; // Retain loaded / custom nextCalDate!
+      }
     }
-  }, [calDate, selectedInstrument]);
+
+    lastInstrumentIdRef.current = selectedInstrument.id;
+    lastCalDateRef.current = calDate;
+    const computed = computeNextDueDate(calDate, selectedInstrument.frequency);
+    setNextCalDate(computed);
+  }, [calDate, selectedInstrument, isInitializing, editLoading, editIdParam, draftIdParam]);
 
   // Step 5 — ULR & Certificate
   const [ulrEnabled, setUlrEnabled] = useState(false);
   const [nextCertNumber, setNextCertNumber] = useState("—");
   const [nextUlrNumber, setNextUlrNumber] = useState("—");
   const [savedCalibrationId, setSavedCalibrationId] = useState<string | null>(null);
+  // Synchronous guard against double submission (state updates are async, a ref is not)
+  const saveInProgressRef = useRef(false);
+  // In-flight auto-save draft request, awaited before drafts are cleaned up after a save
+  const pendingDraftSaveRef = useRef<Promise<unknown> | null>(null);
   const [certificateGenerated, setCertificateGenerated] = useState(false);
 
   const [isEditMode, setIsEditMode] = useState(!!editIdParam);
@@ -236,10 +1580,19 @@ export default function CalibrationWizard() {
   const [templateSearchQuery, setTemplateSearchQuery] = useState("");
   const [templatePopoverOpen, setTemplatePopoverOpen] = useState(false);
 
-  const draftIdRef = useRef<string | null>(draftIdParam || null);
-  const [activeDraftId, setActiveDraftId] = useState<string | null>(draftIdParam || null);
-  const [isInitializing, setIsInitializing] = useState(true);
-  const [editLoading, setEditLoading] = useState(!!editIdParam);
+  const { canAccess } = usePermissions();
+
+  // Enforce module RBAC permissions for edit vs create mode
+  useEffect(() => {
+    if (!user) return;
+    if (isEditMode && !canAccess("calibrations", "edit")) {
+      toast.error("You do not have permission to edit calibrations");
+      navigate("/calibration", { replace: true });
+    } else if (!isEditMode && !canAccess("calibrations", "create")) {
+      toast.error("You do not have permission to create calibrations");
+      navigate("/calibration", { replace: true });
+    }
+  }, [user, isEditMode, canAccess, navigate]);
 
   // Auto-select logged-in user as default Calibrated By
   useEffect(() => {
@@ -255,24 +1608,24 @@ export default function CalibrationWizard() {
   // Auto-resolve signatures from systemUsers if missing
   useEffect(() => {
     if (systemUsers.length > 0) {
-      if (calibratedBy && !calibratedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy);
-        if (u?.signature) setCalibratedBySignature(u.signature);
+      if (calibratedBy && (!calibratedBySignature || !calibratedBySignature.startsWith("data:image"))) {
+        const u = systemUsers.find((userItem) => userItem.name === calibratedBy || userItem.id === calibratedBy || (calibratedById && userItem.id === calibratedById));
+        if (u?.signature && u.signature.startsWith("data:image")) setCalibratedBySignature(u.signature);
       }
-      if (reviewedBy && !reviewedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy);
-        if (u?.signature) setReviewedBySignature(u.signature);
+      if (reviewedBy && (!reviewedBySignature || !reviewedBySignature.startsWith("data:image"))) {
+        const u = systemUsers.find((userItem) => userItem.name === reviewedBy || userItem.id === reviewedBy || (reviewedById && userItem.id === reviewedById));
+        if (u?.signature && u.signature.startsWith("data:image")) setReviewedBySignature(u.signature);
       }
-      if (approvedBy && !approvedBySignature) {
-        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy);
-        if (u?.signature) setApprovedBySignature(u.signature);
+      if (approvedBy && (!approvedBySignature || !approvedBySignature.startsWith("data:image"))) {
+        const u = systemUsers.find((userItem) => userItem.name === approvedBy || userItem.id === approvedBy || (approvedById && userItem.id === approvedById));
+        if (u?.signature && u.signature.startsWith("data:image")) setApprovedBySignature(u.signature);
       }
     }
-  }, [systemUsers, calibratedBy, reviewedBy, approvedBy, calibratedBySignature, reviewedBySignature, approvedBySignature]);
+  }, [systemUsers, calibratedBy, calibratedById, reviewedBy, reviewedById, approvedBy, approvedById, calibratedBySignature, reviewedBySignature, approvedBySignature]);
 
   // Pre-select calibration type if type URL parameter is present
   useEffect(() => {
-    if (typeParam && !editIdParam && !draftIdParam) {
+    if (typeParam && !editIdParam && !recalibrateIdParam && !draftIdParam) {
       const match = CALIBRATION_TYPES.find(
         (t) =>
           t.type.toLowerCase() === typeParam.toLowerCase() ||
@@ -285,7 +1638,7 @@ export default function CalibrationWizard() {
         }
       }
     }
-  }, [typeParam, editIdParam, draftIdParam]);
+  }, [typeParam, editIdParam, recalibrateIdParam, draftIdParam]);
 
   // Fetch templates for selected Calibration Type (with fallback to all company templates)
   useEffect(() => {
@@ -293,12 +1646,29 @@ export default function CalibrationWizard() {
     const typeStr = selectedType?.type || "";
     getTemplates({ userId: user.id, companyId: user.companyId, calibrationType: typeStr })
       .then(async (tpls) => {
-        if (tpls && tpls.length > 0) {
-          setAvailableTemplates(tpls);
-        } else {
+        let finalTpls = tpls;
+        if (!finalTpls || finalTpls.length === 0) {
           // Fallback to fetch all company templates
-          const allTpls = await getTemplates({ userId: user.id, companyId: user.companyId });
-          setAvailableTemplates(allTpls || []);
+          finalTpls = await getTemplates({ userId: user.id, companyId: user.companyId });
+        }
+        setAvailableTemplates(finalTpls || []);
+
+        if (!isEditMode && !editIdParam && selectedTemplateId && selectedTemplateId !== "none" && finalTpls && finalTpls.length > 0) {
+          const activeTpl = finalTpls.find((t) => t.id === selectedTemplateId);
+          if (activeTpl?.layout_blocks) {
+            setWizardLayoutBlocks((prev) => {
+              if (!prev || prev.length === 0) return prev;
+              const cloned = JSON.parse(JSON.stringify(prev));
+              syncFormulasFromTemplate(cloned, activeTpl.layout_blocks);
+              return evaluateAllCanvasBlocks(ensureTableKeys(cloned), { forceFull: true });
+            });
+          }
+          if (activeTpl) {
+            if (activeTpl.diagram_image) setWizardDiagramImage(activeTpl.diagram_image);
+            if (activeTpl.diagram_image_width) setWizardDiagramWidth(activeTpl.diagram_image_width);
+            if (activeTpl.diagram_image_height) setWizardDiagramHeight(activeTpl.diagram_image_height);
+            if (activeTpl.diagram_image_alignment) setWizardDiagramAlignment(activeTpl.diagram_image_alignment as "center" | "left" | "right");
+          }
         }
       })
       .catch((err) => {
@@ -320,12 +1690,227 @@ export default function CalibrationWizard() {
     type?: "percentage" | "absolute";
   }>({});
   const [wizardDiagramImage, setWizardDiagramImage] = useState<string | null>(null);
-  const [wizardDiagramWidth, setWizardDiagramWidth] = useState<number>(240);
+  const [wizardDiagramWidth, setWizardDiagramWidth] = useState<number>(300);
   const [wizardDiagramHeight, setWizardDiagramHeight] = useState<number>(140);
   const [wizardDiagramAlignment, setWizardDiagramAlignment] = useState<"center" | "left" | "right">("center");
   const [step1Collapsed, setStep1Collapsed] = useState(true);
   const [step2Collapsed, setStep2Collapsed] = useState(true);
   const [step3Collapsed, setStep3Collapsed] = useState(true);
+  const [metadataCollapsed, setMetadataCollapsed] = useState(true);
+  const [diagramCollapsed, setDiagramCollapsed] = useState(true);
+
+  // Template modification detection & dialog state
+  const originalTemplateSnapshotRef = useRef<{
+    templateId: string;
+    templateName: string;
+    diagramImage: string | null;
+    blocks: any[];
+    points: any[];
+  } | null>(null);
+  const [templateModifiedModalOpen, setTemplateModifiedModalOpen] = useState(false);
+  const proceedAfterTemplateVariantRef = useRef<boolean>(false);
+
+  // Helper to determine if a column is purely for readings or calculated results (NOT a template specification)
+  const isReadingOrCalculatedColumn = (col: any): boolean => {
+    if (!col) return false;
+    const id = String(col.id || "").toLowerCase();
+    const type = String(col.type || "").toLowerCase();
+    const role = String(col.role || "").toUpperCase();
+
+    if (type === "reading" || type === "trial" || type === "formula" || type === "calc" || type === "status" || type === "judgement") {
+      return true;
+    }
+    if (role === "READING" || role === "CALCULATED" || role === "JUDGEMENT") {
+      return true;
+    }
+    if (Boolean(col.formula && String(col.formula).trim())) {
+      return true;
+    }
+    if (id === "remarks" || id === "remark" || id === "observation" || id === "observations" || id === "notes") {
+      return true;
+    }
+    // Pattern matches trial/reading/result columns: trial_1, t1, reading, actual, error, deviation, avg, status, etc.
+    if (/^(?:trial|t|reading|r|actual|observed|measuring_value|error|deviation|status|judgement|result|avg|average)(?:_\d+|\d+)?$/i.test(id)) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to normalize values for structural equality comparison
+  const normalizeStructuralVal = (val: any): string | number => {
+    if (val === undefined || val === null) return "";
+    if (typeof val === "number") return val;
+    const trimmed = String(val).trim();
+    const num = Number(trimmed);
+    if (!isNaN(num) && trimmed !== "") return num;
+    return trimmed;
+  };
+
+  // Helper to extract table_grid blocks from canvas layout
+  const extractCanvasTables = (blocks: any[]): any[] => {
+    const tables: any[] = [];
+    if (!Array.isArray(blocks)) return tables;
+    for (const b of blocks) {
+      if (!b) continue;
+      if (b.type === "table_grid") {
+        tables.push(b);
+      } else if (b.type === "split_row" && Array.isArray(b.children)) {
+        for (const c of b.children) {
+          if (c && c.type === "table_grid") {
+            tables.push(c);
+          }
+        }
+      }
+    }
+    return tables;
+  };
+
+  // Checks whether the user modified specifications, added/deleted rows, or altered diagram from the baseline
+  const checkIsTemplateModified = (): boolean => {
+    if (!originalTemplateSnapshotRef.current) return false;
+    if (!selectedTemplateId || selectedTemplateId === "none") return false;
+
+    const snapshot = originalTemplateSnapshotRef.current;
+    if (snapshot.templateId !== selectedTemplateId) return false;
+
+    // 1. Diagram Drawing / Image check
+    const currentDiagram = wizardDiagramImage || null;
+    const snapDiagram = snapshot.diagramImage || null;
+    if (snapDiagram !== currentDiagram) {
+      return true;
+    }
+
+    // 2. Specifications & Rows check (Canvas Mode)
+    if (wizardIsCanvas) {
+      const currentTables = extractCanvasTables(wizardLayoutBlocks || []);
+      const snapTables = extractCanvasTables(snapshot.blocks || []);
+
+      // If table count changed (e.g. table added or removed)
+      if (currentTables.length !== snapTables.length) {
+        return true;
+      }
+
+      for (let t = 0; t < currentTables.length; t++) {
+        const curTbl = currentTables[t];
+        const snpTbl = snapTables[t];
+        const curRows = Array.isArray(curTbl.rows) ? curTbl.rows : [];
+        const snpRows = Array.isArray(snpTbl.rows) ? snpTbl.rows : [];
+
+        // Additional row added or row deleted!
+        if (curRows.length !== snpRows.length) {
+          return true;
+        }
+
+        // Columns structure modified (column added, removed, or ID changed)
+        const curCols = Array.isArray(curTbl.columns) ? curTbl.columns : [];
+        const snpCols = Array.isArray(snpTbl.columns) ? snpTbl.columns : [];
+        if (curCols.length !== snpCols.length) {
+          return true;
+        }
+        for (let c = 0; c < curCols.length; c++) {
+          if (curCols[c]?.id !== snpCols[c]?.id || curCols[c]?.type !== snpCols[c]?.type) {
+            return true;
+          }
+        }
+
+        // Identify specification / metadata columns (excluding reading, trial, formula, and status columns)
+        const specCols = curCols.filter((col) => !isReadingOrCalculatedColumn(col));
+
+        // Check each row for structural modifications
+        for (let r = 0; r < curRows.length; r++) {
+          const cr = curRows[r];
+          const sr = snpRows[r];
+          if (!cr || !sr) return true;
+
+          // Check if statement / merged row status changed
+          const curMerged = Boolean(cr.is_merged || cr.isMerged || cr.is_statement || cr.isStatement);
+          const snpMerged = Boolean(sr.is_merged || sr.isMerged || sr.is_statement || sr.isStatement);
+          if (curMerged !== snpMerged) return true;
+          if (curMerged) {
+            const curText = normalizeStructuralVal(cr.text || cr.merged_text || cr.statement_text || "");
+            const snpText = normalizeStructuralVal(sr.text || sr.merged_text || sr.statement_text || "");
+            if (curText !== snpText) return true;
+            continue;
+          }
+
+          // Check specification columns (nominal, vernier_reading, tolerance, max_permissible_error, etc.)
+          for (const col of specCols) {
+            if (normalizeStructuralVal(cr[col.id]) !== normalizeStructuralVal(sr[col.id])) {
+              return true;
+            }
+          }
+
+          // Check standard specification properties: nominal, tolerance, limits, required_dimension, unit
+          const curNom = cr.nominal !== undefined ? cr.nominal : cr.nom;
+          const snpNom = sr.nominal !== undefined ? sr.nominal : sr.nom;
+          if (normalizeStructuralVal(curNom) !== normalizeStructuralVal(snpNom)) {
+            return true;
+          }
+
+          if (normalizeStructuralVal(cr.tolerance) !== normalizeStructuralVal(sr.tolerance)) {
+            return true;
+          }
+
+          const curLTol = cr.lower_tolerance !== undefined ? cr.lower_tolerance : cr.lowerTolerance;
+          const snpLTol = sr.lower_tolerance !== undefined ? sr.lower_tolerance : sr.lowerTolerance;
+          if (normalizeStructuralVal(curLTol) !== normalizeStructuralVal(snpLTol)) {
+            return true;
+          }
+
+          const curUTol = cr.upper_tolerance !== undefined ? cr.upper_tolerance : cr.upperTolerance;
+          const snpUTol = sr.upper_tolerance !== undefined ? sr.upper_tolerance : sr.upperTolerance;
+          if (normalizeStructuralVal(curUTol) !== normalizeStructuralVal(snpUTol)) {
+            return true;
+          }
+
+          const curReq = cr.required_dimension || cr.description || cr.specification;
+          const snpReq = sr.required_dimension || sr.description || sr.specification;
+          if (normalizeStructuralVal(curReq) !== normalizeStructuralVal(snpReq)) {
+            return true;
+          }
+
+          if (normalizeStructuralVal(cr.unit) !== normalizeStructuralVal(sr.unit)) {
+            return true;
+          }
+        }
+      }
+    } else {
+      // 3. Specifications & Rows check (Standard Points Mode)
+      const currentPoints = calPoints || [];
+      const snapPoints = snapshot.points || [];
+
+      // Additional row added or row deleted!
+      if (currentPoints.length !== snapPoints.length) {
+        return true;
+      }
+
+      for (let i = 0; i < currentPoints.length; i++) {
+        const cp = currentPoints[i];
+        const sp = snapPoints[i];
+        if (!cp || !sp) return true;
+
+        const curReq = cp.description || (cp as any).required_dimension;
+        const snpReq = sp.description || (sp as any).required_dimension;
+        if (normalizeStructuralVal(curReq) !== normalizeStructuralVal(snpReq)) {
+          return true;
+        }
+
+        if (normalizeStructuralVal(cp.nominal) !== normalizeStructuralVal(sp.nominal)) {
+          return true;
+        }
+
+        if (normalizeStructuralVal(cp.tolerance) !== normalizeStructuralVal(sp.tolerance)) {
+          return true;
+        }
+
+        if (normalizeStructuralVal(cp.unit) !== normalizeStructuralVal(sp.unit)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
 
   const isPreloadedFromPreviousRef = useRef<boolean>(false);
 
@@ -334,9 +1919,9 @@ export default function CalibrationWizard() {
     if (!cal) return;
     isPreloadedFromPreviousRef.current = true;
 
-    // Set Date of Calibration to previous calibration due date if present
+    // Set Date of Calibration to previous calibration due date if present (never later than today)
     if (cal.next_calibration_date) {
-      const prevDueDate = toLocalYyyyMmDd(cal.next_calibration_date);
+      const prevDueDate = clampToToday(toLocalYyyyMmDd(cal.next_calibration_date));
       if (prevDueDate) {
         setCalDate(prevDueDate);
         setCertIssueDate(prevDueDate);
@@ -368,9 +1953,22 @@ export default function CalibrationWizard() {
       if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
     }
     if (cal.doc_no) setDocNo(cal.doc_no);
+    if (cal.doc_date) setDocDate(cal.doc_date);
+    if (cal.doc_rev) setDocRev(cal.doc_rev);
 
     // 3. SOP & Standard Reference
-    if (cal.procedure_reference) setProcedureReference(cal.procedure_reference);
+    const loadedProcNo = (cal as any).procedure_no || cal.procedure_reference || "";
+    if (loadedProcNo) {
+      setProcedureNo(loadedProcNo);
+      setProcedureReference(loadedProcNo);
+    }
+    if (cal.procedure_name) setProcedureName(cal.procedure_name);
+    if (cal.procedure_date) setProcedureDate(cal.procedure_date);
+    if (cal.procedure_rev) setProcedureRev(cal.procedure_rev);
+    if (cal.acceptance_criteria_doc_no) setAcceptanceCriteriaDocNo(cal.acceptance_criteria_doc_no);
+    if (cal.acceptance_criteria_date) setAcceptanceCriteriaDate(cal.acceptance_criteria_date);
+    if (cal.acceptance_criteria_rev) setAcceptanceCriteriaRev(cal.acceptance_criteria_rev);
+    if (cal.acceptance_criteria_reference) setAcceptanceCriteriaReference(cal.acceptance_criteria_reference);
     if (cal.standard_reference) setStandardReference(cal.standard_reference);
     else if (cal.remarks) setStandardReference(cal.remarks);
 
@@ -381,7 +1979,8 @@ export default function CalibrationWizard() {
     // 5. Custom grid schema & columns & canvas layout
     if (cal.is_canvas_template || (cal.layout_blocks && cal.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
-      setWizardLayoutBlocks(cal.layout_blocks || []);
+      const blocksWithKeys = ensureTableKeys(cal.layout_blocks || []);
+      setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys));
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
@@ -392,10 +1991,18 @@ export default function CalibrationWizard() {
     if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
     if (cal.decimal_places !== undefined) setWizardDecimalPlaces(cal.decimal_places);
     if (cal.acceptance_criteria) setWizardAcceptanceCriteria(cal.acceptance_criteria);
-    if (cal.diagram_image) setWizardDiagramImage(cal.diagram_image);
-    if (cal.diagram_image_width) setWizardDiagramWidth(cal.diagram_image_width);
-    if (cal.diagram_image_height) setWizardDiagramHeight(cal.diagram_image_height);
-    if (cal.diagram_image_alignment) setWizardDiagramAlignment(cal.diagram_image_alignment);
+    const activeTpl = availableTemplates.find(t => t.id === selectedTemplateId || t.id === cal.template_id);
+    if (activeTpl?.diagram_image) {
+      setWizardDiagramImage(activeTpl.diagram_image);
+      setWizardDiagramWidth(activeTpl.diagram_image_width || 300);
+      setWizardDiagramHeight(activeTpl.diagram_image_height || 140);
+      setWizardDiagramAlignment((activeTpl.diagram_image_alignment as any) || "center");
+    } else {
+      if (cal.diagram_image) setWizardDiagramImage(cal.diagram_image);
+      if (cal.diagram_image_width) setWizardDiagramWidth(cal.diagram_image_width);
+      if (cal.diagram_image_height) setWizardDiagramHeight(cal.diagram_image_height);
+      if (cal.diagram_image_alignment) setWizardDiagramAlignment(cal.diagram_image_alignment);
+    }
 
     // 6. Calibration Points & Tolerance / Unit
     if (cal.calibration_points && cal.calibration_points.length > 0) {
@@ -446,6 +2053,7 @@ export default function CalibrationWizard() {
   };
 
   const handleClearTemplate = () => {
+    originalTemplateSnapshotRef.current = null;
     setSelectedTemplateId("none");
     setWizardIsCanvas(false);
     setWizardLayoutBlocks([]);
@@ -457,56 +2065,258 @@ export default function CalibrationWizard() {
     setWizardAcceptanceCriteria({});
     setWizardDiagramImage(null);
     setDocNo("");
+    setDocDate("");
+    setDocRev("");
+    setProcedureNo("");
+    setProcedureReference("");
+    setProcedureName("");
+    setProcedureDate("");
+    setProcedureRev("");
+    setAcceptanceCriteriaDocNo("");
+    setAcceptanceCriteriaDate("");
+    setAcceptanceCriteriaRev("");
+    setAcceptanceCriteriaReference("");
     toast.info("Cleared template selection (Custom Grid)");
   };
 
   // Apply Calibration Template Object helper
-  const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[]) => {
+  const applyTemplateObject = (tpl: CalibrationTemplate, isEdit: boolean = false, existingPoints?: any[], overrideInstrument?: Instrument | null) => {
     if (!tpl) return;
+
+    const currentInst = overrideInstrument !== undefined ? overrideInstrument : selectedInstrument;
 
     setSelectedTemplateId(tpl.id);
     if (tpl.default_unit) setCalUnit(tpl.default_unit);
     if (tpl.default_tolerance !== undefined) setCalTolerance(tpl.default_tolerance);
+    const instEnv = currentInst?.custom_parameters?.environmental_defaults;
     if (tpl.environmental_defaults) {
       if (tpl.environmental_defaults.temperature) setEnvTemp(tpl.environmental_defaults.temperature);
       if (tpl.environmental_defaults.humidity) setEnvHumidity(tpl.environmental_defaults.humidity);
       if (tpl.environmental_defaults.soaking_time) setEnvSoakingTime(tpl.environmental_defaults.soaking_time);
       if (tpl.environmental_defaults.soaking_start_time) setEnvSoakingStartTime(tpl.environmental_defaults.soaking_start_time);
       if (tpl.environmental_defaults.soaking_end_time) setEnvSoakingEndTime(tpl.environmental_defaults.soaking_end_time);
+    } else if (instEnv && !isEdit) {
+      if (instEnv.temperature) setEnvTemp(instEnv.temperature);
+      if (instEnv.humidity) setEnvHumidity(instEnv.humidity);
+      if (instEnv.soaking_time) setEnvSoakingTime(instEnv.soaking_time);
+      if (instEnv.soaking_start_time) setEnvSoakingStartTime(instEnv.soaking_start_time);
+      if (instEnv.soaking_end_time) setEnvSoakingEndTime(instEnv.soaking_end_time);
     }
-    setDocNo((tpl as any).doc_no || (tpl as any).docNo || "");
+
+    const instDocProps = currentInst?.custom_parameters?.doc_properties;
+
+    const tplDocNo = (tpl as any).doc_no || (tpl as any).docNo;
+    if (tplDocNo) {
+      setDocNo(tplDocNo);
+    } else if (instDocProps?.doc_no) {
+      setDocNo(instDocProps.doc_no);
+    } else if (!isEdit) {
+      setDocNo("");
+    }
+
+    const tplDocDate = tpl.doc_date;
+    if (tplDocDate) {
+      setDocDate(tplDocDate);
+    } else if (instDocProps?.doc_date) {
+      setDocDate(instDocProps.doc_date);
+    } else if (!isEdit) {
+      setDocDate("");
+    }
+
+    const tplDocRev = tpl.doc_rev;
+    if (tplDocRev) {
+      setDocRev(tplDocRev);
+    } else if (instDocProps?.doc_rev) {
+      setDocRev(instDocProps.doc_rev);
+    } else if (!isEdit) {
+      setDocRev("");
+    }
+
     if (tpl.remarks) setRemarks(tpl.remarks);
     if ((tpl as any).standard_reference || tpl.remarks) setStandardReference((tpl as any).standard_reference || tpl.remarks);
-    if (tpl.procedure_reference) setProcedureReference(tpl.procedure_reference);
+
+    const loadedTplProcNo = (tpl as any).procedure_no || tpl.procedure_reference;
+    if (loadedTplProcNo) {
+      setProcedureNo(loadedTplProcNo);
+      setProcedureReference(loadedTplProcNo);
+    } else if (instDocProps?.procedure_no || instDocProps?.procedure_reference) {
+      const p = instDocProps.procedure_no || instDocProps.procedure_reference;
+      setProcedureNo(p);
+      setProcedureReference(p);
+    } else if (!isEdit) {
+      setProcedureNo("");
+      setProcedureReference("");
+    }
+
+    const tplProcName = tpl.procedure_name;
+    if (tplProcName) {
+      setProcedureName(tplProcName);
+    } else if (instDocProps?.procedure_name) {
+      setProcedureName(instDocProps.procedure_name);
+    } else if (!isEdit) {
+      setProcedureName("");
+    }
+
+    const tplProcDate = tpl.procedure_date;
+    if (tplProcDate) {
+      setProcedureDate(tplProcDate);
+    } else if (instDocProps?.procedure_date) {
+      setProcedureDate(instDocProps.procedure_date);
+    } else if (!isEdit) {
+      setProcedureDate("");
+    }
+
+    const tplProcRev = tpl.procedure_rev;
+    if (tplProcRev) {
+      setProcedureRev(tplProcRev);
+    } else if (instDocProps?.procedure_rev) {
+      setProcedureRev(instDocProps.procedure_rev);
+    } else if (!isEdit) {
+      setProcedureRev("");
+    }
+
+    const tplCritDocNo = tpl.acceptance_criteria_doc_no;
+    if (tplCritDocNo) {
+      setAcceptanceCriteriaDocNo(tplCritDocNo);
+    } else if (instDocProps?.acceptance_criteria_doc_no) {
+      setAcceptanceCriteriaDocNo(instDocProps.acceptance_criteria_doc_no);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaDocNo("");
+    }
+
+    const tplCritDate = tpl.acceptance_criteria_date;
+    if (tplCritDate) {
+      setAcceptanceCriteriaDate(tplCritDate);
+    } else if (instDocProps?.acceptance_criteria_date) {
+      setAcceptanceCriteriaDate(instDocProps.acceptance_criteria_date);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaDate("");
+    }
+
+    const tplCritRev = tpl.acceptance_criteria_rev;
+    if (tplCritRev) {
+      setAcceptanceCriteriaRev(tplCritRev);
+    } else if (instDocProps?.acceptance_criteria_rev) {
+      setAcceptanceCriteriaRev(instDocProps.acceptance_criteria_rev);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaRev("");
+    }
+
+    const tplCritRef = tpl.acceptance_criteria_reference;
+    if (tplCritRef) {
+      setAcceptanceCriteriaReference(tplCritRef);
+    } else if (instDocProps?.acceptance_criteria_reference) {
+      setAcceptanceCriteriaReference(instDocProps.acceptance_criteria_reference);
+    } else if (!isEdit) {
+      setAcceptanceCriteriaReference("");
+    }
+
     if (tpl.status_rule_type) setStatusRuleType(tpl.status_rule_type as "default" | "custom_formula");
     if (tpl.status_formula) setStatusFormula(tpl.status_formula);
 
+    // SMART BINDING: Check if the selected instrument has its own saved specifications
+    const rawInstSpecs = currentInst?.custom_parameters?.specifications;
+    const validInstSpecs = Array.isArray(rawInstSpecs)
+      ? rawInstSpecs.filter((s: any) => (s.is_merged || s.isMerged) ? true : !isReceiptRow(s.required_dimension || s.description || s.parameter_name || "", s))
+      : [];
+
+    let initialSanitizedBlocks: any[] = [];
     // Check if canvas template
     if (tpl.is_canvas_template || (tpl.layout_blocks && tpl.layout_blocks.length > 0)) {
       setWizardIsCanvas(true);
-      setWizardLayoutBlocks(JSON.parse(JSON.stringify(tpl.layout_blocks || [])));
+      const clonedBlocks = JSON.parse(JSON.stringify(tpl.layout_blocks || []));
+
+      // Only ignore the table of INSTRUMENT RECEIPT CONDITION from canvas layout blocks (not all tables)
+      const sanitizedBlocks = clonedBlocks.filter((b: any) => {
+        const title = (b.title || b.content || "").toLowerCase();
+        return !title.includes("receipt condition");
+      });
+
+      if (!isEdit && validInstSpecs.length > 0) {
+        const allTables = getAllCanvasTables(sanitizedBlocks);
+        bindSpecificationsToCanvasTables(
+          allTables,
+          validInstSpecs,
+          tpl.default_tolerance ?? 0.02,
+          tpl.decimal_places ?? 3,
+          tpl.default_unit || "mm"
+        );
+      }
+      if (tpl.layout_blocks && tpl.layout_blocks.length > 0) {
+        syncFormulasFromTemplate(sanitizedBlocks, tpl.layout_blocks);
+      }
+
+      // Ensure no obsolete receipt condition rows remain inside sanitizedBlocks, and evaluate formulas across all tables
+      sanitizedBlocks.forEach((b: any) => {
+        if (b.type === "table_grid" && Array.isArray(b.rows)) {
+          b.rows = b.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r));
+        } else if (b.type === "split_row" && Array.isArray(b.children)) {
+          b.children.forEach((c: any) => {
+            if (c && c.type === "table_grid" && Array.isArray(c.rows)) {
+              c.rows = c.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r));
+            }
+          });
+        }
+      });
+
+      ensureTableKeys(sanitizedBlocks);
+      const evaluatedBlocks = evaluateAllCanvasBlocks(sanitizedBlocks, { forceFull: true });
+      initialSanitizedBlocks = evaluatedBlocks;
+      setWizardLayoutBlocks(evaluatedBlocks);
+      const synced = syncCalPointsFromCanvas(evaluatedBlocks);
+      if (synced.length > 0) {
+        setCalPoints(synced);
+      }
     } else {
       setWizardIsCanvas(false);
       setWizardLayoutBlocks([]);
     }
 
-    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria, diagram from template
+    // Always set custom columns, column order, hidden columns, decimal places, acceptance criteria
     setWizardCustomColumns((tpl as any).custom_columns || []);
     setWizardStandardColumnConfigs((tpl as any).standard_columns_config || {});
     setWizardColumnOrder((tpl as any).column_order || []);
     setWizardHiddenColumns((tpl as any).hidden_columns || []);
     setWizardDecimalPlaces(tpl.decimal_places ?? 4);
     setWizardAcceptanceCriteria((tpl as any).acceptance_criteria || {});
-    if (tpl.diagram_image) setWizardDiagramImage(tpl.diagram_image);
-    else setWizardDiagramImage(null);
-    if (tpl.diagram_image_width) setWizardDiagramWidth(tpl.diagram_image_width);
-    if (tpl.diagram_image_height) setWizardDiagramHeight(tpl.diagram_image_height);
-    if (tpl.diagram_image_alignment) setWizardDiagramAlignment(tpl.diagram_image_alignment);
 
+    // Diagram Image & Sizing resolution:
+    // When a template is loaded or re-applied, its diagram image and dimensions represent the template design.
+    // Priority: Template diagram & sizing > Instrument custom_parameters diagram & sizing > defaults
+    const instCustomDiagram = currentInst?.custom_parameters?.diagram_image;
+    const diagramImgToUse = tpl.diagram_image || instCustomDiagram || null;
+    const diagramWidthToUse = tpl.diagram_image_width || currentInst?.custom_parameters?.diagram_image_width || 300;
+    const diagramHeightToUse = tpl.diagram_image_height || currentInst?.custom_parameters?.diagram_image_height || 140;
+    const diagramAlignToUse = (tpl.diagram_image_alignment as "left" | "center" | "right") || 
+      (currentInst?.custom_parameters?.diagram_image_alignment as "left" | "center" | "right") || 
+      "center";
+
+    setWizardDiagramImage(diagramImgToUse);
+    setWizardDiagramWidth(diagramWidthToUse);
+    setWizardDiagramHeight(diagramHeightToUse);
+    setWizardDiagramAlignment(diagramAlignToUse);
+    const initialDiagram = diagramImgToUse;
+
+    let initialPoints: CalibrationPoint[] = [];
     if (isEdit && existingPoints && existingPoints.length > 0) {
+      initialPoints = existingPoints;
       setCalPoints(existingPoints);
+    } else if (!isEdit && validInstSpecs.length > 0) {
+      initialPoints = validInstSpecs.map((s: any, idx) => ({
+        point_number: s.point_number || idx + 1,
+        description: s.description || s.required_dimension || `Point ${idx + 1}`,
+        nominal: s.nominal !== undefined ? Number(s.nominal) : 0,
+        ascending_reading: s.ascending_reading !== undefined ? Number(s.ascending_reading) : (s.nominal !== undefined ? Number(s.nominal) : 0),
+        descending_reading: s.descending_reading !== undefined ? Number(s.descending_reading) : undefined,
+        error: s.error !== undefined ? Number(s.error) : 0,
+        unit: s.unit || tpl.default_unit || calUnit || "mm",
+        tolerance: s.tolerance !== undefined ? Number(s.tolerance) : (tpl.default_tolerance !== undefined ? Number(tpl.default_tolerance) : calTolerance),
+        status: s.status || "PASS",
+        customFields: s.customFields || {},
+      }));
+      setCalPoints(initialPoints);
     } else if (tpl.calibration_points && tpl.calibration_points.length > 0) {
-      const formattedPoints: CalibrationPoint[] = tpl.calibration_points.map((pt: any, idx) => ({
+      initialPoints = tpl.calibration_points.map((pt: any, idx) => ({
         point_number: pt.point_number || idx + 1,
         description: pt.description || `Point ${idx + 1}`,
         nominal: pt.nominal !== undefined ? Number(pt.nominal) : 0,
@@ -518,14 +2328,44 @@ export default function CalibrationWizard() {
         status: pt.status || "PASS",
         customFields: pt.customFields || {},
       }));
-      setCalPoints(formattedPoints);
+      setCalPoints(initialPoints);
     }
+
+    // Record baseline snapshot of initialized template definition for modification detection
+    originalTemplateSnapshotRef.current = {
+      templateId: tpl.id,
+      templateName: tpl.name,
+      diagramImage: initialDiagram,
+      blocks: JSON.parse(JSON.stringify(initialSanitizedBlocks || [])),
+      points: JSON.parse(JSON.stringify(initialPoints || [])),
+    };
+  };
+
+  // Apply Standard Preset helper
+  const applyPresetAsTemplate = (preset: CanvasTemplatePreset) => {
+    const fakeTpl: any = {
+      id: preset.id,
+      name: preset.name,
+      description: preset.description,
+      instrument_type: preset.instrumentType,
+      default_unit: preset.defaultUnit,
+      default_tolerance: preset.defaultTolerance,
+      is_canvas_template: true,
+      layout_blocks: preset.blocks,
+    };
+    applyTemplateObject(fakeTpl, false);
   };
 
   // Apply Calibration Template helper
   const handleApplyTemplate = (tplId: string) => {
     if (tplId === "none") {
       handleClearTemplate();
+      return;
+    }
+    const presetMatch = CANVAS_PRESETS.find((p) => p.id === tplId);
+    if (presetMatch) {
+      applyPresetAsTemplate(presetMatch);
+      toast.success(`Applied standard preset "${presetMatch.name}"`);
       return;
     }
     const tpl = availableTemplates.find((t) => t.id === tplId);
@@ -563,21 +2403,54 @@ export default function CalibrationWizard() {
         if ((match as any).doc_no || (match as any).docNo) {
           setDocNo((match as any).doc_no || (match as any).docNo);
         }
+        if (match.diagram_image) {
+          setWizardDiagramImage(match.diagram_image);
+        }
+        if (match.diagram_image_width) {
+          setWizardDiagramWidth(match.diagram_image_width);
+        }
+        if (match.diagram_image_height) {
+          setWizardDiagramHeight(match.diagram_image_height);
+        }
+        if (match.diagram_image_alignment) {
+          setWizardDiagramAlignment(match.diagram_image_alignment as "center" | "left" | "right");
+        }
+        originalTemplateSnapshotRef.current = {
+          templateId: match.id,
+          templateName: match.name,
+          diagramImage: match.diagram_image || wizardDiagramImage || null,
+          blocks: JSON.parse(JSON.stringify(wizardLayoutBlocks || [])),
+          points: JSON.parse(JSON.stringify(calPoints || [])),
+        };
       } else {
         handleApplyTemplate(match.id);
       }
     }
   }, [availableTemplates, selectedInstrument, selectedTemplateId, isEditMode, draftIdParam]);
 
-  // Load existing calibration if in Edit mode
+  // Load existing calibration if in Edit or Recalibration mode
   useEffect(() => {
-    if (!user || !editIdParam) return;
-    setIsEditMode(true);
+    const targetCalId = editIdParam || recalibrateIdParam;
+    if (!user || !targetCalId) return;
+
+    const isRecalibration = !!recalibrateIdParam && !editIdParam;
+    setIsEditMode(!isRecalibration);
     setEditLoading(true);
 
-    getCalibration(editIdParam)
+    getCalibration(targetCalId)
       .then(async (cal) => {
-        setSavedCalibrationId(cal.id);
+        if (!isRecalibration) {
+          setSavedCalibrationId(cal.id);
+        } else {
+          setSavedCalibrationId(null);
+          setRejectionNotice({
+            rejectedBy: cal.rejected_by || (cal as any).rejected_by_user?.name || "Reviewer / Approver",
+            rejectedAt: cal.rejected_at || cal.updated_at || "",
+            reason: cal.rejection_reason || (cal as any).approver_remarks || (cal as any).reviewer_remarks || "Calibration was rejected during review/approval.",
+            certificateNumber: cal.certificate_number || "",
+            originalCalDate: cal.calibration_date ? toLocalYyyyMmDd(cal.calibration_date) : "",
+          });
+        }
         setSelectedInstrument(cal.instrument);
         const typeMatch =
           CALIBRATION_TYPES.find((t) => t.type === cal.calibration_type) ||
@@ -647,12 +2520,77 @@ export default function CalibrationWizard() {
           if (cal.environmental_conditions.soaking_start_time) setEnvSoakingStartTime(cal.environmental_conditions.soaking_start_time);
           if (cal.environmental_conditions.soaking_end_time) setEnvSoakingEndTime(cal.environmental_conditions.soaking_end_time);
         }
-        if (cal.doc_no) {
-          setDocNo(cal.doc_no);
+        const instEnv = cal.instrument?.custom_parameters?.environmental_defaults;
+        if (instEnv) {
+          if (!cal.environmental_conditions?.temperature && instEnv.temperature) setEnvTemp(instEnv.temperature);
+          if (!cal.environmental_conditions?.humidity && instEnv.humidity) setEnvHumidity(instEnv.humidity);
+          if (!cal.environmental_conditions?.soaking_time && instEnv.soaking_time) setEnvSoakingTime(instEnv.soaking_time);
+          if (!cal.environmental_conditions?.soaking_start_time && instEnv.soaking_start_time) setEnvSoakingStartTime(instEnv.soaking_start_time);
+          if (!cal.environmental_conditions?.soaking_end_time && instEnv.soaking_end_time) setEnvSoakingEndTime(instEnv.soaking_end_time);
         }
-        if ((cal as any).procedure_reference) {
-          setProcedureReference((cal as any).procedure_reference);
+
+        const savedReceipt = (cal.environmental_conditions as any)?.receipt_condition || (cal as any).receipt_condition || cal.instrument?.custom_parameters?.receipt_condition || cal.instrument?.custom_parameters?.environmental_defaults?.receipt_condition;
+        if (savedReceipt) {
+          if (["NO DENT & DAMAGE (OK)", "SATISFACTORY", "DENT & DAMAGE OBSERVED"].includes(savedReceipt)) {
+            setReceiptCondition(savedReceipt);
+          } else {
+            setReceiptCondition("CUSTOM");
+            setCustomReceiptCondition(savedReceipt);
+          }
+        } else {
+          setReceiptCondition("NO DENT & DAMAGE (OK)");
         }
+
+        const instDocProps = cal.instrument?.custom_parameters?.doc_properties;
+
+        // 1. Doc Number
+        const loadedDocNo = cal.doc_no || instDocProps?.doc_no;
+        if (loadedDocNo) setDocNo(loadedDocNo);
+
+        // 2. Doc Date
+        const loadedDocDate = cal.doc_date || instDocProps?.doc_date;
+        if (loadedDocDate) setDocDate(loadedDocDate);
+
+        // 3. Doc Rev
+        const loadedDocRev = cal.doc_rev || instDocProps?.doc_rev;
+        if (loadedDocRev) setDocRev(loadedDocRev);
+
+        // 4. Procedure No & Reference
+        const calProcNo = (cal as any).procedure_no || (cal as any).procedure_reference || instDocProps?.procedure_no || instDocProps?.procedure_reference;
+        if (calProcNo) {
+          setProcedureNo(calProcNo);
+          setProcedureReference(calProcNo);
+        }
+
+        // 5. Procedure Name
+        const calProcName = (cal as any).procedure_name || instDocProps?.procedure_name;
+        if (calProcName) setProcedureName(calProcName);
+
+        // 6. Procedure Date
+        const calProcDate = (cal as any).procedure_date || instDocProps?.procedure_date;
+        if (calProcDate) setProcedureDate(calProcDate);
+
+        // 7. Procedure Rev
+        const calProcRev = (cal as any).procedure_rev || instDocProps?.procedure_rev;
+        if (calProcRev) setProcedureRev(calProcRev);
+
+        // 8. Acceptance Criteria Doc No
+        const calCritDocNo = (cal as any).acceptance_criteria_doc_no || instDocProps?.acceptance_criteria_doc_no;
+        if (calCritDocNo) setAcceptanceCriteriaDocNo(calCritDocNo);
+
+        // 9. Acceptance Criteria Date
+        const calCritDate = (cal as any).acceptance_criteria_date || instDocProps?.acceptance_criteria_date;
+        if (calCritDate) setAcceptanceCriteriaDate(calCritDate);
+
+        // 10. Acceptance Criteria Rev
+        const calCritRev = (cal as any).acceptance_criteria_rev || instDocProps?.acceptance_criteria_rev;
+        if (calCritRev) setAcceptanceCriteriaRev(calCritRev);
+
+        // 11. Acceptance Criteria Reference
+        const calCritRef = (cal as any).acceptance_criteria_reference || instDocProps?.acceptance_criteria_reference;
+        if (calCritRef) setAcceptanceCriteriaReference(calCritRef);
+
+        // 12. Standard Reference
         if ((cal as any).standard_reference) {
           setStandardReference((cal as any).standard_reference);
         } else if (cal.remarks) {
@@ -671,7 +2609,7 @@ export default function CalibrationWizard() {
           if ((cal as any).status_formula) setStatusFormula((cal as any).status_formula);
         }
 
-        if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns);
+        if (cal.custom_columns && cal.custom_columns.length > 0) setWizardCustomColumns(cal.custom_columns as unknown as CustomColumn[]);
         if ((cal as any).standard_columns_config) setWizardStandardColumnConfigs((cal as any).standard_columns_config);
         if (cal.column_order && cal.column_order.length > 0) setWizardColumnOrder(cal.column_order);
         if (cal.hidden_columns && cal.hidden_columns.length > 0) setWizardHiddenColumns(cal.hidden_columns);
@@ -680,57 +2618,146 @@ export default function CalibrationWizard() {
 
         if ((cal as any).is_canvas_template || ((cal as any).layout_blocks && (cal as any).layout_blocks.length > 0)) {
           setWizardIsCanvas(true);
-          setWizardLayoutBlocks((cal as any).layout_blocks || []);
+          const rawBlocks = (cal as any).layout_blocks || [];
+          const sanitizedBlocks = rawBlocks
+            .filter((b: any) => {
+              const title = (b.title || b.content || "").toLowerCase();
+              return !title.includes("receipt condition");
+            })
+            .map((b: any) => {
+              if (b.type === "table_grid" && Array.isArray(b.rows)) {
+                return {
+                  ...b,
+                  rows: b.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r)),
+                };
+              }
+              if (b.type === "split_row" && Array.isArray(b.children)) {
+                return {
+                  ...b,
+                  children: b.children.map((c: any) => {
+                    if (c && c.type === "table_grid" && Array.isArray(c.rows)) {
+                      return {
+                        ...c,
+                        rows: c.rows.filter((r: any) => (r.is_merged || r.isMerged) ? true : !isReceiptRow(r.required_dimension || r.description || "", r)),
+                      };
+                    }
+                    return c;
+                  }),
+                };
+              }
+              return b;
+            });
+          const isApprovedOrCompleted =
+            cal.approval_status === "Approved" ||
+            cal.certificate_generated ||
+            (cal as any).status === "completed";
+
+          if (!isApprovedOrCompleted && targetTpl && targetTpl.layout_blocks && targetTpl.layout_blocks.length > 0) {
+            syncFormulasFromTemplate(sanitizedBlocks, targetTpl.layout_blocks, { preserveExistingFormulas: true });
+          }
+          const blocksWithKeys = ensureTableKeys(sanitizedBlocks);
+          const evaluatedBlocks = evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true });
+          setWizardLayoutBlocks(evaluatedBlocks);
+          const synced = syncCalPointsFromCanvas(evaluatedBlocks);
+          if (synced.length > 0) {
+            setCalPoints(synced);
+          }
         }
+
+        const calDiagram = ((cal as any).diagram_image !== undefined && (cal as any).diagram_image !== null)
+          ? (cal as any).diagram_image
+          : (targetTpl?.diagram_image || null);
+        setWizardDiagramImage(calDiagram);
+
+        const calWidth = (cal as any).diagram_image_width || targetTpl?.diagram_image_width || 300;
+        setWizardDiagramWidth(calWidth);
+
+        const calHeight = (cal as any).diagram_image_height || targetTpl?.diagram_image_height || 140;
+        setWizardDiagramHeight(calHeight);
+
+        const calAlign = (cal as any).diagram_image_alignment || targetTpl?.diagram_image_alignment || "center";
+        setWizardDiagramAlignment(calAlign as "center" | "left" | "right");
 
         setUncertainty(cal.uncertainty || "");
         setVerdict((cal.verdict as any) || "PASS");
+        const loadedOverridden = Boolean(
+          (cal as any).is_verdict_manually_overridden ??
+          (cal as any).standard_columns_config?.is_verdict_manually_overridden
+        );
+        setIsVerdictManuallyOverridden(loadedOverridden);
         if (cal.remarks) setRemarks(cal.remarks);
         setCalibratedBy(cal.calibrated_by || "");
         setCalibratedByDesignation(cal.calibrated_by_designation || "");
         setCalibratedBySignature((cal as any).calibrated_by_signature || "");
+        setCalibratedById((cal as any).calibrated_by_id || (cal as any).created_by?.id || "");
         setReviewedBy(cal.reviewed_by || "");
         setReviewedByDesignation(cal.reviewed_by_designation || "");
         setReviewedBySignature((cal as any).reviewed_by_signature || "");
+        setReviewedById((cal as any).reviewed_by_id || "");
         setApprovedBy(cal.approved_by || "");
         setApprovedByDesignation(cal.approved_by_designation || "");
         setApprovedBySignature((cal as any).approved_by_signature || "");
-        setCalDate(
-          toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date())
-        );
-        setCertIssueDate(
-          toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
-            toLocalYyyyMmDd(cal.calibration_date) ||
-            toLocalYyyyMmDd(new Date())
-        );
-        setNextCalDate(
-          toLocalYyyyMmDd(cal.next_calibration_date)
-        );
-        setNextCertNumber(cal.certificate_number || "");
-        if (cal.ulr_number) {
-          setUlrEnabled(true);
-          setNextUlrNumber(cal.ulr_number);
-        } else if ((cal as any).ulr_enabled) {
-          setUlrEnabled(true);
+        setApprovedById((cal as any).approved_by_id || "");
+        
+        if (!isRecalibration) {
+          const loadedCalDate = toLocalYyyyMmDd(cal.calibration_date) || toLocalYyyyMmDd(new Date());
+          setCalDate(loadedCalDate);
+          lastCalDateRef.current = loadedCalDate;
+          lastInstrumentIdRef.current = cal.instrument?.id || (cal as any).instrument_id || null;
+          setCertIssueDate(
+            toLocalYyyyMmDd((cal as any).certificate_issue_date) ||
+              toLocalYyyyMmDd(cal.calibration_date) ||
+              toLocalYyyyMmDd(new Date())
+          );
+          setNextCalDate(
+            toLocalYyyyMmDd(cal.next_calibration_date)
+          );
+          setNextCertNumber(cal.certificate_number || "");
+          if (cal.ulr_number) {
+            setUlrEnabled(true);
+            setNextUlrNumber(cal.ulr_number);
+          } else if ((cal as any).ulr_enabled) {
+            setUlrEnabled(true);
+          }
+        } else {
+          const todayStr = toLocalYyyyMmDd(new Date());
+          setCalDate(todayStr);
+          setCertIssueDate(todayStr);
+          if (cal.instrument?.frequency) {
+            setNextCalDate(computeNextDueDate(todayStr, cal.instrument.frequency));
+          } else {
+            setNextCalDate("");
+          }
+          setNextCertNumber("—");
+          if (cal.ulr_number || (cal as any).ulr_enabled) {
+            setUlrEnabled(true);
+            setNextUlrNumber("—");
+          }
         }
 
         // Reopen workflow starting from Step 2 (Calibration Entry)
         setStep(2);
-        toast.info(`Editing calibration ${cal.certificate_number}`);
+        if (isRecalibration) {
+          toast.info(`Starting re-calibration for rejected certificate ${cal.certificate_number}`);
+        } else {
+          toast.info(`Editing calibration ${cal.certificate_number}`);
+        }
       })
       .catch((err) => {
-        toast.error("Failed to load calibration for editing");
+        toast.error(isRecalibration ? "Failed to load rejected calibration" : "Failed to load calibration for editing");
       })
       .finally(() => {
         setIsInitializing(false);
         setEditLoading(false);
       });
-  }, [user, editIdParam]);
+  }, [user, editIdParam, recalibrateIdParam]);
 
   // Auto-save Draft
   useEffect(() => {
-    if (isInitializing || !user || savedCalibrationId) return;
+    // Never auto-save a draft while a calibration save is running (it could outlive the post-save draft cleanup)
+    if (isInitializing || !user || saving || saveInProgressRef.current || savedCalibrationId || editIdParam || recalibrateIdParam || !selectedInstrument) return;
     const timeout = setTimeout(() => {
+      if (saveInProgressRef.current) return;
       const draftData = {
         step,
         selectedInstrument,
@@ -742,8 +2769,21 @@ export default function CalibrationWizard() {
         envSoakingStartTime,
         envSoakingEndTime,
         docNo,
+        procedureNo,
+        procedureName,
+        procedureDate,
+        procedureRev,
         procedureReference,
+        receiptCondition,
+        customReceiptCondition,
         calPoints,
+        wizardIsCanvas,
+        wizardLayoutBlocks,
+        selectedTemplateId,
+        wizardDiagramImage,
+        wizardDiagramWidth,
+        wizardDiagramHeight,
+        wizardDiagramAlignment,
         wizardCustomColumns,
         wizardStandardColumnConfigs,
         wizardColumnOrder,
@@ -752,116 +2792,167 @@ export default function CalibrationWizard() {
         wizardAcceptanceCriteria,
         calUnit,
         calTolerance,
-        uncertainty,
+                uncertainty,
         verdict,
+        isVerdictManuallyOverridden,
         remarks,
         calibratedBy,
         calibratedByDesignation,
+        calibratedById,
         reviewedBy,
         reviewedByDesignation,
+        reviewedById,
         approvedBy,
         approvedByDesignation,
+        approvedById,
         calDate,
         certIssueDate,
         nextCalDate,
       };
-      saveDraft(user.id, draftData, draftIdRef.current || undefined).then((saved) => {
+      const draftPromise = saveDraft(user.id, draftData, draftIdRef.current || undefined).then((saved) => {
         if (saved && saved.id && !draftIdRef.current) {
           draftIdRef.current = saved.id;
           setActiveDraftId(saved.id);
         }
       }).catch(console.error);
+      pendingDraftSaveRef.current = draftPromise;
+      draftPromise.finally(() => {
+        if (pendingDraftSaveRef.current === draftPromise) pendingDraftSaveRef.current = null;
+      });
     }, 1500); // 1.5s debounce
     return () => clearTimeout(timeout);
   }, [
     step, selectedInstrument, selectedType, referenceStandards, envTemp, envHumidity, envSoakingTime, envSoakingStartTime, envSoakingEndTime, docNo, procedureReference,
-    calPoints, wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, remarks, calibratedBy, calibratedByDesignation,
-    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing
+    receiptCondition, customReceiptCondition,
+    calPoints, wizardIsCanvas, wizardLayoutBlocks, selectedTemplateId, wizardDiagramImage, wizardDiagramWidth, wizardDiagramHeight, wizardDiagramAlignment,
+    wizardCustomColumns, wizardColumnOrder, wizardHiddenColumns, calUnit, calTolerance, uncertainty, verdict, isVerdictManuallyOverridden, remarks, calibratedBy, calibratedByDesignation,
+    reviewedBy, reviewedByDesignation, approvedBy, approvedByDesignation, calDate, certIssueDate, nextCalDate, user, savedCalibrationId, isInitializing, saving
   ]);
+
+  // Reusable Draft Restoration Helper
+  const restoreDraftData = async (draft: any) => {
+    if (!draft || !draft.data) return;
+    let d = draft.data;
+    if (typeof d === "string") {
+      try {
+        d = JSON.parse(d);
+      } catch (e) {
+        console.error("Failed to parse draft", e);
+      }
+    }
+    draftIdRef.current = draft.id;
+    setActiveDraftId(draft.id);
+    setStep(d.step || 0);
+    setSelectedInstrument(d.selectedInstrument || null);
+    setSelectedType(d.selectedType || null);
+    setReferenceStandards(
+      d.referenceStandards || [{ name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }]
+    );
+    setEnvTemp(d.envTemp || "");
+    setEnvHumidity(d.envHumidity || "");
+    setEnvSoakingTime(d.envSoakingTime || "");
+    setEnvSoakingStartTime(d.envSoakingStartTime || "");
+    setEnvSoakingEndTime(d.envSoakingEndTime || "");
+    setDocNo(d.docNo || "");
+    const draftProcNo = d.procedureNo || d.procedureReference || "";
+    setProcedureNo(draftProcNo);
+    setProcedureReference(draftProcNo);
+    if (d.procedureName) setProcedureName(d.procedureName);
+    if (d.procedureDate) setProcedureDate(d.procedureDate);
+    if (d.procedureRev) setProcedureRev(d.procedureRev);
+    if (d.receiptCondition) setReceiptCondition(d.receiptCondition);
+    if (d.customReceiptCondition) setCustomReceiptCondition(d.customReceiptCondition);
+    setCalPoints(d.calPoints || []);
+    if (d.wizardDiagramImage !== undefined) setWizardDiagramImage(d.wizardDiagramImage);
+    if (d.wizardDiagramWidth) setWizardDiagramWidth(d.wizardDiagramWidth);
+    if (d.wizardDiagramHeight) setWizardDiagramHeight(d.wizardDiagramHeight);
+    if (d.wizardDiagramAlignment) setWizardDiagramAlignment(d.wizardDiagramAlignment);
+    if (d.wizardIsCanvas !== undefined) setWizardIsCanvas(d.wizardIsCanvas);
+    if (d.wizardLayoutBlocks) {
+      let draftTpl = availableTemplates?.find((t) => t.id === d.selectedTemplateId);
+      if (!draftTpl && d.selectedTemplateId) {
+        try {
+          draftTpl = await getTemplate(d.selectedTemplateId);
+        } catch (e) {}
+      }
+      if (draftTpl && draftTpl.layout_blocks) {
+        syncFormulasFromTemplate(d.wizardLayoutBlocks, draftTpl.layout_blocks);
+      }
+      const blocksWithKeys = ensureTableKeys(d.wizardLayoutBlocks);
+      setWizardLayoutBlocks(evaluateAllCanvasBlocks(blocksWithKeys, { forceFull: true }));
+    }
+    if (d.selectedTemplateId) setSelectedTemplateId(d.selectedTemplateId);
+    setWizardCustomColumns(d.wizardCustomColumns || []);
+    setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
+    setWizardColumnOrder(d.wizardColumnOrder || []);
+    setWizardHiddenColumns(d.wizardHiddenColumns || []);
+    setWizardDecimalPlaces(d.wizardDecimalPlaces ?? 4);
+    setWizardAcceptanceCriteria(d.wizardAcceptanceCriteria || {});
+    setCalUnit(d.calUnit || "");
+    setCalTolerance(d.calTolerance || 0);
+    setUncertainty(d.uncertainty || "");
+    setVerdict(d.verdict || "PASS");
+    setIsVerdictManuallyOverridden(Boolean(d.isVerdictManuallyOverridden));
+    setRemarks(d.remarks || "");
+    setCalibratedBy(d.calibratedBy || "");
+    setCalibratedByDesignation(d.calibratedByDesignation || "");
+    setCalibratedById(d.calibratedById || "");
+    setReviewedBy(d.reviewedBy || "");
+    setReviewedByDesignation(d.reviewedByDesignation || "");
+    setReviewedById(d.reviewedById || "");
+    setApprovedBy(d.approvedBy || "");
+    setApprovedByDesignation(d.approvedByDesignation || "");
+    setApprovedById(d.approvedById || "");
+    const restoredCalDate = d.calDate || new Date().toISOString().split("T")[0];
+    setCalDate(restoredCalDate);
+    lastCalDateRef.current = restoredCalDate;
+    lastInstrumentIdRef.current = d.selectedInstrument?.id || null;
+    setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
+    setNextCalDate(d.nextCalDate || "");
+  };
 
   // Load specific draft on mount
   useEffect(() => {
     if (!user) return;
     if (draftIdParam) {
-      getDraft(draftIdParam).then((draft) => {
-        if (draft && draft.data) {
-          let d = draft.data;
-          if (typeof d === "string") {
-            try { d = JSON.parse(d); } catch (e) { console.error("Failed to parse draft", e); }
+      getDraft(draftIdParam)
+        .then(async (draft) => {
+          if (draft) {
+            await restoreDraftData(draft);
           }
-          setStep(d.step || 0);
-          setSelectedInstrument(d.selectedInstrument || null);
-          setSelectedType(d.selectedType || null);
-          setReferenceStandards(d.referenceStandards || [{ name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }]);
-          setEnvTemp(d.envTemp || "");
-          setEnvHumidity(d.envHumidity || "");
-          setEnvSoakingTime(d.envSoakingTime || "");
-          setEnvSoakingStartTime(d.envSoakingStartTime || "");
-          setEnvSoakingEndTime(d.envSoakingEndTime || "");
-          setDocNo(d.docNo || "");
-          setProcedureReference(d.procedureReference || "");
-          setCalPoints(d.calPoints || []);
-          setWizardCustomColumns(d.wizardCustomColumns || []);
-          setWizardStandardColumnConfigs(d.wizardStandardColumnConfigs || {});
-          setWizardColumnOrder(d.wizardColumnOrder || []);
-          setWizardHiddenColumns(d.wizardHiddenColumns || []);
-          setWizardDecimalPlaces(d.wizardDecimalPlaces ?? 4);
-          setWizardAcceptanceCriteria(d.wizardAcceptanceCriteria || {});
-          setCalUnit(d.calUnit || "");
-          setCalTolerance(d.calTolerance || 0);
-          setUncertainty(d.uncertainty || "");
-          setVerdict(d.verdict || "PASS");
-          setRemarks(d.remarks || "");
-          setCalibratedBy(d.calibratedBy || "");
-          setCalibratedByDesignation(d.calibratedByDesignation || "");
-          setReviewedBy(d.reviewedBy || "");
-          setReviewedByDesignation(d.reviewedByDesignation || "");
-          setApprovedBy(d.approvedBy || "");
-          setApprovedByDesignation(d.approvedByDesignation || "");
-          setCalDate(d.calDate || new Date().toISOString().split("T")[0]);
-          setCertIssueDate(d.certIssueDate || d.calDate || new Date().toISOString().split("T")[0]);
-          setNextCalDate(d.nextCalDate || "");
-        }
-        setIsInitializing(false);
-      }).catch(() => setIsInitializing(false));
+          setIsInitializing(false);
+        })
+        .catch(() => setIsInitializing(false));
     } else {
       setIsInitializing(false);
     }
   }, [user, draftIdParam]);
 
-  // Load instrument if coming from instruments page
+  // Load instrument if coming from instruments page with query param
   useEffect(() => {
-    if (instrumentId) {
-      getInstrument(instrumentId).then((inst) => {
-        setSelectedInstrument(inst);
-        if (inst.due_date) {
-          const prevDueDate = toLocalYyyyMmDd(inst.due_date);
-          if (prevDueDate) {
-            setCalDate(prevDueDate);
-            setCertIssueDate(prevDueDate);
+    if (instrumentId && !draftIdParam) {
+      getInstrument(instrumentId)
+        .then(async (inst) => {
+          // Check if an unfinished draft exists for this instrument
+          try {
+            const draft = await getDraftByInstrument(inst.id);
+            if (draft && draft.id) {
+              setDetectedDraft(draft);
+              setPendingInstrumentForDraft(inst);
+              setUnfinishedDraftModalOpen(true);
+              return;
+            }
+          } catch (e) {
+            console.warn("Could not check draft for instrument", e);
           }
-        }
-        // Try to auto-detect type from item_type
-        const typeMatch = CALIBRATION_TYPES.find(
-          (t) => inst.item_type?.toLowerCase().includes(t.type) || inst.name?.toLowerCase().includes(t.type)
-        );
-        if (typeMatch) {
-          setSelectedType(typeMatch);
-          setCalUnit(typeMatch.defaultUnit);
-        }
-        
-        // Auto-fill from latest calibration
-        httpClient.get(`/calibrations/latest/${instrumentId}`).then((res) => {
-          if (res.data) {
-            applyPreviousCalibrationData(res.data, typeMatch);
-            toast.success("Auto-filled data from previous calibration");
-          }
-        }).catch(() => {});
-      }).catch(() => {
-        toast.error("Failed to load instrument");
-      });
+
+          await checkEligibilityThenSelect(inst);
+        })
+        .catch(() => {
+          toast.error("Failed to load instrument");
+        });
     }
-  }, [instrumentId]);
+  }, [instrumentId, draftIdParam]);
 
   // Fetch Master Standards for Step 2
   useEffect(() => {
@@ -893,15 +2984,65 @@ export default function CalibrationWizard() {
     return () => clearTimeout(delayDebounceFn);
   }, [searchQuery, user]);
 
+  // Unfinished Draft Found Modal State
+  const [unfinishedDraftModalOpen, setUnfinishedDraftModalOpen] = useState(false);
+  const [detectedDraft, setDetectedDraft] = useState<any | null>(null);
+  const [pendingInstrumentForDraft, setPendingInstrumentForDraft] = useState<Instrument | null>(null);
+  const [isDraftActionLoading, setIsDraftActionLoading] = useState(false);
+
   // Recently Calibrated Alert modal state
   const [recentCalModalOpen, setRecentCalModalOpen] = useState(false);
   const [recentCalDetails, setRecentCalDetails] = useState<{ lastCalDate?: string; dueDate?: string } | null>(null);
   const [pendingSelectedInstrument, setPendingSelectedInstrument] = useState<Instrument | null>(null);
 
+  // Early recalibration (instrument already calibrated and not yet due) needs a confirmed reason
+  const [earlyRecalReason, setEarlyRecalReason] = useState("");
+  const [earlyReasonInput, setEarlyReasonInput] = useState("");
+  const [earlyModalMode, setEarlyModalMode] = useState<"select" | "save">("select");
+  const lastSaveOptionsRef = useRef<{ skipMasterSave?: boolean; saveToMaster?: boolean } | undefined>(undefined);
+  // Another calibration of this instrument is still awaiting review/approval -> blocked
+  const [pendingCalBlock, setPendingCalBlock] = useState<{
+    inst: Instrument;
+    certificate_number?: string;
+    approval_status?: string;
+  } | null>(null);
+
+  // Ask the server (single source of truth) whether this instrument may be calibrated now
+  const checkEligibilityThenSelect = async (inst: Instrument) => {
+    setEarlyRecalReason("");
+    if (!recalibrateIdParam && inst?.id) {
+      try {
+        const res = await httpClient.get(`/calibrations/eligibility/${inst.id}`);
+        const e = res.data;
+        if (e?.status === "pending") {
+          setPendingCalBlock({
+            inst,
+            certificate_number: e.pending?.certificate_number,
+            approval_status: e.pending?.approval_status,
+          });
+          return;
+        }
+        if (e?.status === "not_due") {
+          setRecentCalDetails({ lastCalDate: e.lastCalibrationDate, dueDate: e.dueDate });
+          setPendingSelectedInstrument(inst);
+          setEarlyReasonInput("");
+          setEarlyModalMode("select");
+          setRecentCalModalOpen(true);
+          return;
+        }
+      } catch (err) {
+        // The server re-checks on save, so a failed pre-check must not block the user here
+        console.warn("Could not check calibration eligibility", err);
+      }
+    }
+    proceedWithInstrumentSelect(inst);
+  };
+
   const proceedWithInstrumentSelect = (inst: Instrument) => {
     setSelectedInstrument(inst);
+    applyInstrumentCustomParameters(inst);
     if (inst.due_date) {
-      const prevDueDate = toLocalYyyyMmDd(inst.due_date);
+      const prevDueDate = clampToToday(toLocalYyyyMmDd(inst.due_date));
       if (prevDueDate) {
         setCalDate(prevDueDate);
         setCertIssueDate(prevDueDate);
@@ -924,56 +3065,237 @@ export default function CalibrationWizard() {
     }).catch(() => {});
   };
 
-  const handleInstrumentSelect = (inst: Instrument) => {
-    if (inst.last_calibration_date) {
-      const lastCal = new Date(inst.last_calibration_date);
-      const now = new Date();
-      const diffDays = Math.abs((now.getTime() - lastCal.getTime()) / (1000 * 3600 * 24));
-      if (diffDays <= 10) {
-        setRecentCalDetails({ lastCalDate: inst.last_calibration_date, dueDate: inst.due_date });
-        setPendingSelectedInstrument(inst);
-        setRecentCalModalOpen(true);
+  const handleInstrumentSelect = async (inst: Instrument) => {
+    // Check if an unfinished draft exists for this instrument
+    if (!draftIdParam) {
+      try {
+        const draft = await getDraftByInstrument(inst.id);
+        if (draft && draft.id) {
+          setDetectedDraft(draft);
+          setPendingInstrumentForDraft(inst);
+          setUnfinishedDraftModalOpen(true);
+          return;
+        }
+      } catch (e) {
+        console.warn("Could not check draft for instrument", e);
+      }
+    }
+
+    await checkEligibilityThenSelect(inst);
+  };
+
+  const handleResumeUnfinishedDraft = async () => {
+    if (!detectedDraft) return;
+    setIsDraftActionLoading(true);
+    try {
+      await restoreDraftData(detectedDraft);
+      setUnfinishedDraftModalOpen(false);
+      setPendingInstrumentForDraft(null);
+      toast.info("Resumed unfinished draft calibration session");
+    } catch (err) {
+      console.error("Failed to resume draft", err);
+      toast.error("Failed to resume draft session");
+    } finally {
+      setIsDraftActionLoading(false);
+    }
+  };
+
+  const handleStartScratchFromDraft = async () => {
+    if (!detectedDraft) return;
+    setIsDraftActionLoading(true);
+    try {
+      await deleteDraft(detectedDraft.id).catch(console.error);
+      const targetInst = pendingInstrumentForDraft;
+      if (targetInst?.id) {
+        await deleteDraftsByInstrument(targetInst.id).catch(console.error);
+      }
+      draftIdRef.current = null;
+      setActiveDraftId(null);
+      setDetectedDraft(null);
+      setUnfinishedDraftModalOpen(false);
+      setPendingInstrumentForDraft(null);
+
+      if (targetInst) {
+        toast.success("Previous draft removed. Starting fresh calibration.");
+        await checkEligibilityThenSelect(targetInst);
+      }
+    } catch (err) {
+      console.error("Failed to discard draft", err);
+      toast.error("Failed to discard draft");
+    } finally {
+      setIsDraftActionLoading(false);
+    }
+  };
+
+  const handleCancelDraftModal = () => {
+    setUnfinishedDraftModalOpen(false);
+    setDetectedDraft(null);
+    setPendingInstrumentForDraft(null);
+  };
+
+  // Auto-determine verdict from points or canvas blocks with full telemetry
+  useEffect(() => {
+    let computed: "PASS" | "FAIL" | "CONDITIONAL" = "PASS";
+    let totalPts = 0;
+    let passPts = 0;
+    let failPts = 0;
+    let condPts = 0;
+
+    if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+      const allTables = getAllCanvasTables(wizardLayoutBlocks);
+      const nonMergedRows: any[] = [];
+      allTables.forEach((tbl) => {
+        if (Array.isArray(tbl.rows)) {
+          tbl.rows.forEach((r: any) => {
+            if (!r.is_merged && !r.isMerged) {
+              nonMergedRows.push(r);
+            }
+          });
+        }
+      });
+
+      if (nonMergedRows.length > 0) {
+        nonMergedRows.forEach((r) => {
+          const rawStatus = String(
+            r.status || r.judgement || r.result || r.verdict || r.decision || r.acceptance || ""
+          ).trim().toUpperCase();
+
+          if (rawStatus === "FAIL" || rawStatus === "REJECT" || rawStatus === "NG" || rawStatus === "NOT OK") {
+            failPts++;
+            totalPts++;
+          } else if (
+            rawStatus === "PASS" ||
+            rawStatus === "OK" ||
+            rawStatus === "ACCEPT" ||
+            rawStatus === "ACCEPTED" ||
+            rawStatus === "NORMAL" ||
+            (rawStatus !== "" && !rawStatus.includes("FAIL") && !rawStatus.includes("NOT") && !rawStatus.includes("REJECT") && !rawStatus.includes("NG"))
+          ) {
+            passPts++;
+            totalPts++;
+          } else if (rawStatus === "CONDITIONAL" || rawStatus === "HOLD" || rawStatus === "DERATED") {
+            condPts++;
+            totalPts++;
+          } else if (typeof r.reading === "number" && typeof r.nominal === "number") {
+            // Fallback numeric tolerance check if no explicit status text column
+            const tol = typeof r.tolerance === "number" ? r.tolerance : 0;
+            const dev = Math.abs(r.reading - r.nominal);
+            totalPts++;
+            if (tol > 0 && dev > tol) {
+              failPts++;
+            } else {
+              passPts++;
+            }
+          }
+        });
+
+        if (failPts > 0) {
+          computed = "FAIL";
+        } else if (condPts > 0) {
+          computed = "CONDITIONAL";
+        } else if (passPts > 0) {
+          computed = "PASS";
+        }
+      }
+    } else if (calPoints.length > 0) {
+      totalPts = calPoints.length;
+      calPoints.forEach((p) => {
+        const st = String(p.status || "").trim().toUpperCase();
+        if (st === "FAIL" || st === "REJECT") failPts++;
+        else if (st === "CONDITIONAL") condPts++;
+        else passPts++;
+      });
+
+      if (failPts > 0) computed = "FAIL";
+      else if (condPts > 0) computed = "CONDITIONAL";
+      else computed = "PASS";
+    }
+
+    setAutoVerdict(computed);
+    setVerdictStats({ total: totalPts, pass: passPts, fail: failPts, conditional: condPts });
+
+    // Only auto-update verdict if user has not manually overridden it
+    if (!isVerdictManuallyOverridden) {
+      setVerdict(computed);
+    }
+  }, [wizardIsCanvas, wizardLayoutBlocks, calPoints, calTolerance, isVerdictManuallyOverridden]);
+
+  // Validate all reference standards for expired validity (blocking) or due within 15 days (warning)
+  const validateReferenceStandards = () => {
+    const expiredItems: any[] = [];
+    const warningItems: any[] = [];
+
+    referenceStandards.forEach((ref, idx) => {
+      const hasData = !!(ref.name?.trim() || ref.id?.trim() || ref.validity?.trim());
+      if (!hasData) return;
+
+      if (ref.validity) {
+        const check = checkReferenceStandardValidity(ref.validity);
+        if (check.isExpired) {
+          expiredItems.push({
+            index: idx + 1,
+            name: ref.name || `Reference Standard ${idx + 1}`,
+            id: ref.id || "N/A",
+            traceable_to: ref.traceable_to || ref.cert_no || "N/A",
+            validity: ref.validity,
+            formattedDate: check.formattedDate,
+            daysAgo: Math.abs(check.daysRemaining ?? 0),
+            message: check.message,
+          });
+        } else if (check.isWarning) {
+          warningItems.push({
+            index: idx + 1,
+            name: ref.name || `Reference Standard ${idx + 1}`,
+            id: ref.id || "N/A",
+            traceable_to: ref.traceable_to || ref.cert_no || "N/A",
+            validity: ref.validity,
+            formattedDate: check.formattedDate,
+            daysRemaining: check.daysRemaining ?? 0,
+            message: check.message,
+          });
+        }
+      }
+    });
+
+    return {
+      hasExpired: expiredItems.length > 0,
+      hasWarning: warningItems.length > 0,
+      expiredItems,
+      warningItems,
+    };
+  };
+
+  const handleNextStep = () => {
+    // When leaving Step 2 (Reference Standard) to Step 3
+    if (step === 1) {
+      const { hasExpired, hasWarning, expiredItems, warningItems } = validateReferenceStandards();
+
+      if (hasExpired) {
+        setExpiredStandardsList(expiredItems);
+        setExpiredRefStandardsModalOpen(true);
+        toast.error("Calibration Blocked: Reference Standard validity has expired!");
+        return;
+      }
+
+      if (hasWarning && !acknowledgedRefStandardWarning) {
+        setWarningStandardsList(warningItems);
+        setWarningRefStandardsModalOpen(true);
         return;
       }
     }
-    proceedWithInstrumentSelect(inst);
-  };
 
-  // Auto-determine verdict from points
-  useEffect(() => {
-    if (calPoints.length > 0 && calTolerance > 0) {
-      const allPass = calPoints.every((p) => p.status === "PASS");
-      const anyFail = calPoints.some((p) => p.status === "FAIL");
-      if (allPass) setVerdict("PASS");
-      else if (anyFail) setVerdict("FAIL");
-      else setVerdict("CONDITIONAL");
-    }
-  }, [calPoints, calTolerance]);
-
-  // Auto-calculate next calibration due date based on frequency
-  useEffect(() => {
-    if (calDate && selectedInstrument?.frequency) {
-      const match = selectedInstrument.frequency.match(/(\d+)\s*(MONTH|YEAR|DAY)S?/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const unit = match[2].toUpperCase();
-        
-        try {
-          let newDate = parseISO(calDate);
-          if (unit === "MONTH") {
-            newDate = addMonths(newDate, num);
-          } else if (unit === "YEAR") {
-            newDate = addMonths(newDate, num * 12);
-          }
-          // Note: DAYS could be added if date-fns addDays is imported, but typically it's MONTH/YEAR
-          
-          setNextCalDate(format(newDate, "yyyy-MM-dd"));
-        } catch (e) {
-          console.error("Error parsing date", e);
-        }
+    // When leaving Step 3 (Calibration Data) to Step 4
+    if (step === 2 && wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+      const evaluated = evaluateAllCanvasBlocks(wizardLayoutBlocks, { forceFull: true });
+      setWizardLayoutBlocks(evaluated);
+      const synced = syncCalPointsFromCanvas(evaluated);
+      if (synced.length > 0) {
+        setCalPoints(synced);
       }
     }
-  }, [calDate, selectedInstrument?.frequency]);
+
+    setStep(step + 1);
+  };
 
   // Save calibration and move to certificate step
   const handleSaveAndContinue = async () => {
@@ -982,8 +3304,61 @@ export default function CalibrationWizard() {
       return;
     }
 
+    const { hasExpired, expiredItems } = validateReferenceStandards();
+    if (hasExpired) {
+      setExpiredStandardsList(expiredItems);
+      setExpiredRefStandardsModalOpen(true);
+      toast.error("Calibration Blocked: Reference Standard validity has expired!");
+      return;
+    }
+
+    if (!effectiveReceiptCondition) {
+      toast.error("Gauge Receipt Condition is mandatory. Please select or enter a condition.");
+      return;
+    }
+
+    // Prompt user to save as a new template variant ONLY IF original template was modified
+    if (checkIsTemplateModified()) {
+      setTemplateModifiedModalOpen(true);
+      return;
+    }
+
+    // Otherwise proceed directly without asking ("default save instrument master don't ask")
+    await executeSaveAndContinue();
+  };
+
+  async function executeSaveAndContinue(options?: { skipMasterSave?: boolean; saveToMaster?: boolean; earlyReason?: string }) {
+    if (!selectedInstrument || !selectedType) return;
+    if (isEditMode && !canAccess("calibrations", "edit")) {
+      toast.error("You do not have permission to edit calibrations");
+      return;
+    }
+    if (!isEditMode && !canAccess("calibrations", "create")) {
+      toast.error("You do not have permission to create calibrations");
+      return;
+    }
+
+    const { hasExpired, expiredItems } = validateReferenceStandards();
+    if (hasExpired) {
+      setExpiredStandardsList(expiredItems);
+      setExpiredRefStandardsModalOpen(true);
+      toast.error("Cannot proceed: Reference Standard validity has expired!");
+      return;
+    }
+    // Ignore repeat calls (double-click, popup option clicked during close animation, etc.)
+    if (saveInProgressRef.current) return;
+    saveInProgressRef.current = true;
     setSaving(true);
     try {
+      let pointsToSave = calPoints;
+      if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+        const synced = syncCalPointsFromCanvas(wizardLayoutBlocks);
+        if (synced.length > 0) {
+          pointsToSave = synced;
+          setCalPoints(synced);
+        }
+      }
+
       const data = {
         instrument_id: selectedInstrument.id,
         calibration_date: calDate,
@@ -996,15 +3371,31 @@ export default function CalibrationWizard() {
           soaking_time: envSoakingTime || undefined,
           soaking_start_time: envSoakingStartTime || undefined,
           soaking_end_time: envSoakingEndTime || undefined,
+          receipt_condition: effectiveReceiptCondition,
         },
+        receipt_condition: effectiveReceiptCondition,
         doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
-        procedure_reference: procedureReference || undefined,
+        doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+        doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
+        procedure_reference: procedureNo || procedureReference || undefined,
+        procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
+        procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+        procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+        procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+        acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+        acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+        acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+        acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
         standard_reference: standardReference || remarks || undefined,
         is_canvas_template: wizardIsCanvas,
         layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
-        calibration_points: calPoints,
+        calibration_points: pointsToSave,
         custom_columns: wizardCustomColumns,
-        standard_columns_config: wizardStandardColumnConfigs,
+        standard_columns_config: {
+          ...(wizardStandardColumnConfigs || {}),
+          is_verdict_manually_overridden: isVerdictManuallyOverridden,
+        },
+        is_verdict_manually_overridden: isVerdictManuallyOverridden,
         column_order: wizardColumnOrder,
         hidden_columns: wizardHiddenColumns,
         template_id: selectedTemplateId && selectedTemplateId !== "none" ? selectedTemplateId : undefined,
@@ -1023,26 +3414,35 @@ export default function CalibrationWizard() {
         calibrated_by: calibratedBy,
         calibrated_by_designation: calibratedByDesignation,
         calibrated_by_signature: calibratedBySignature,
+        calibrated_by_id: calibratedById || undefined,
         reviewed_by: reviewedBy,
         reviewed_by_designation: reviewedByDesignation,
         reviewed_by_signature: reviewedBySignature,
+        reviewed_by_id: reviewedById || undefined,
         approved_by: approvedBy,
         approved_by_designation: approvedByDesignation,
         approved_by_signature: approvedBySignature,
+        approved_by_id: approvedById || undefined,
         ulr_enabled: ulrEnabled,
         next_calibration_date: nextCalDate || undefined,
+        // Only sent when creating; required by the server when the instrument is not yet due
+        early_recalibration_reason:
+          !savedCalibrationId && !isEditMode ? (options?.earlyReason ?? earlyRecalReason) || undefined : undefined,
+        recalibration_of_id: recalibrateIdParam || undefined,
         companyId: user?.companyId,
         created_by: user?.id,
       };
 
       let savedId = savedCalibrationId;
-      if (isEditMode && savedCalibrationId) {
+      if (savedCalibrationId) {
         const updated = await updateCalibration(
           savedCalibrationId,
           data as any,
           user?.id,
           user?.name || user?.email || "User",
         );
+        if (updated?.certificate_number) setNextCertNumber(updated.certificate_number);
+        if (updated?.ulr_number) setNextUlrNumber(updated.ulr_number);
         toast.success("Calibration updated & certificate regenerated!");
       } else {
         const saved = await createCalibration(data as any);
@@ -1051,13 +3451,37 @@ export default function CalibrationWizard() {
         setNextCertNumber(saved.certificate_number || nextCertNumber);
         if (saved.ulr_number) setNextUlrNumber(saved.ulr_number);
 
+        // Let any in-flight auto-save finish first, otherwise it can recreate the draft after cleanup
+        if (pendingDraftSaveRef.current) {
+          await pendingDraftSaveRef.current.catch(() => {});
+          pendingDraftSaveRef.current = null;
+        }
+
         if (activeDraftId) {
           await deleteDraft(activeDraftId).catch(console.error);
           setActiveDraftId(null);
           draftIdRef.current = null;
         }
+        if (selectedInstrument?.id) {
+          await deleteDraftsByInstrument(selectedInstrument.id).catch(console.error);
+        }
 
         toast.success("Calibration saved successfully!");
+      }
+
+      // Auto-persist specifications, diagram, doc info & env to Instrument Master only when intended (not skipped)
+      if (!options?.skipMasterSave && (options?.saveToMaster || (!checkIsTemplateModified() && hasMasterSavedTemplate))) {
+        const updatedCustomParams = getCustomParametersPayload();
+        if (selectedInstrument && updatedCustomParams) {
+          await httpClient.patch(`/instruments/${selectedInstrument.id}`, {
+            custom_parameters: updatedCustomParams,
+          }).catch(console.error);
+
+          setSelectedInstrument(prev => prev ? {
+            ...prev,
+            custom_parameters: updatedCustomParams,
+          } : prev);
+        }
       }
 
       setCertificateGenerated(false);
@@ -1069,11 +3493,23 @@ export default function CalibrationWizard() {
       
       setStep(4); // Move to certificate step
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || "Failed to save calibration");
+      const errData = err?.response?.data;
+      if (errData?.code === "EARLY_RECALIBRATION_REASON_REQUIRED" && selectedInstrument) {
+        // e.g. a resumed draft skipped the selection check: ask for the reason now, then retry the save
+        lastSaveOptionsRef.current = { skipMasterSave: options?.skipMasterSave, saveToMaster: options?.saveToMaster };
+        setRecentCalDetails({ lastCalDate: errData.lastCalibrationDate, dueDate: errData.dueDate });
+        setPendingSelectedInstrument(selectedInstrument);
+        setEarlyReasonInput("");
+        setEarlyModalMode("save");
+        setRecentCalModalOpen(true);
+      } else {
+        toast.error(errData?.message || "Failed to save calibration");
+      }
     } finally {
+      saveInProgressRef.current = false;
       setSaving(false);
     }
-  };
+  }
 
   // Generate certificate
   const handleGenerateCertificate = async () => {
@@ -1126,77 +3562,310 @@ export default function CalibrationWizard() {
 
     if (!targetTbl || !targetTbl.rows) return;
 
-    const row = { ...targetTbl.rows[rowIndex], [colId]: val };
-    const tol = parseFloat(row.tolerance ?? targetTbl.tolerance ?? 0.02);
-    const nominal = parseFloat(row.nominal) || 0;
+    const row = {
+      ...targetTbl.rows[rowIndex],
+      [colId]: val,
+      ...(/judg|status|verdict/i.test(colId) ? { status: val, judgement: val } : {}),
+      ...(colId === "required_dimensions" || colId === "required_dimension" ? { required_dimensions: val, required_dimension: val } : {}),
+    };
+
+    const isTolCol =
+      colId === "tolerance" ||
+      colId === "tol" ||
+      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && (c.type === "tolerance" || /tolerance|tol/i.test(c.label || c.id || ""))));
+
+    if (isTolCol) {
+      const parsedTol = val !== "" && !isNaN(Number(val)) ? parseFloat(String(val)) : val;
+      row.tolerance = parsedTol;
+      row.tol = parsedTol;
+    }
+
+    const tol = typeof row.tolerance === "number" ? row.tolerance : (parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? 0.02)) || 0.02);
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (wizardDecimalPlaces || 3);
 
-    // Recalculate formulas for all columns in this table
-    targetTbl.columns.forEach((col: any) => {
-      if (col.type === "formula" || col.type === "status") {
-        const formula = col.formula || "";
-        
-        // 1. AVERAGE
-        if (/AVERAGE/i.test(formula)) {
-          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3, row.col_4, row.col_5]
-            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-            .map((v) => parseFloat(v))
-            .filter((v) => !isNaN(v));
-          if (trials.length > 0) {
-            const sum = trials.reduce((a, b) => a + b, 0);
-            const avgVal = parseFloat((sum / trials.length).toFixed(dec));
-            row[col.id] = avgVal.toFixed(dec);
-            row.avg = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.avg = undefined;
-          }
-        }
-        // 2. Error (avg - nominal or reading - nominal)
-        else if (/avg\s*-\s*nominal/i.test(formula)) {
-          if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (!isNaN(avgVal)) {
-              const err = parseFloat((avgVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          } else {
-            row[col.id] = "-";
-            row.error = undefined;
-          }
-        } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-          const readStr = row.reading ?? row.ascending_reading ?? row.t1;
-          if (readStr !== undefined && String(readStr).trim() !== "") {
-            const readVal = parseFloat(readStr);
-            if (!isNaN(readVal)) {
-              const err = parseFloat((readVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          } else {
-            row[col.id] = "-";
-            row.error = undefined;
-          }
-        }
-        // 3. Status
-        else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
-          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "") || (row.t1 !== undefined && String(row.t1).trim() !== "");
-          if (hasReading) {
-            const readVal = parseFloat(row.avg ?? row.reading ?? row.ascending_reading ?? row.t1 ?? nominal);
-            const errVal = Math.abs(parseFloat(row.error !== undefined ? Number(row.error).toFixed(dec) : (readVal - nominal).toFixed(dec)) || 0);
-            row[col.id] = errVal <= tol ? "PASS" : "FAIL";
-            row.status = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.status = "-";
-          }
+    // If editing a specification / required_dimension / nominal, dynamically parse nominal & tolerance limits
+    const isSpecCol =
+      colId === "required_dimension" ||
+      colId === "specification" ||
+      colId === "spec" ||
+      colId === "description" ||
+      colId === "nominal" ||
+      colId === "nominal_value" ||
+      colId === "std_spec" ||
+      colId === "std_value" ||
+      /spec|dimension|nominal/i.test(colId) ||
+      Boolean(targetTbl.columns?.some((c: any) => c && c.id === colId && (c.type === "nominal" || /spec|dimension|nominal/i.test(c.label || c.id || ""))));
+
+    if (isSpecCol) {
+      const specText = String(val ?? "").trim();
+      const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
+      if (parsed.isValid) {
+        row.nominal = parsed.nominal;
+        row.nom = parsed.nominal;
+        row.lower_tolerance = parsed.lowerTolerance;
+        row.upper_tolerance = parsed.upperTolerance;
+        row.lower_limit = parsed.lowerLimit;
+        row.upper_limit = parsed.upperLimit;
+        row.lowerLimit = parsed.lowerLimit;
+        row.upperLimit = parsed.upperLimit;
+      } else {
+        const num = parseFloat(specText);
+        if (!isNaN(num)) {
+          row.nominal = num;
+          row.nom = num;
         }
       }
+    }
+
+    // Clean stale sibling aliases if editing a trial/reading column
+    const trialMatch = String(colId).match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        row[a] = val;
+      });
+    }
+
+    // Clean phantom reading fields if not in table columns
+    if (!targetTbl.columns.some((c: any) => c.id === "actual")) delete row.actual;
+    if (!targetTbl.columns.some((c: any) => c.id === "actual_dimension")) delete row.actual_dimension;
+    if (!targetTbl.columns.some((c: any) => c.id === "reading")) delete row.reading;
+
+    // Pre-evaluate the edited row so error/deviation/avg are immediately calculated before cross-table passes
+    const globalContext = buildGlobalTablesContext(updatedBlocks);
+    const evaluatedRow = evaluateCanvasRowFormulas(
+      row,
+      targetTbl.columns,
+      tol,
+      dec,
+      targetTbl.nominal,
+      globalContext,
+      targetTbl.rows,
+      rowIndex
+    );
+    evaluatedRow[colId] = val;
+    if (colId === "error") {
+      evaluatedRow.error = val;
+    }
+    if (/judg|status|verdict/i.test(colId)) {
+      evaluatedRow.status = val;
+      evaluatedRow.judgement = val;
+    }
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        evaluatedRow[a] = val;
+      });
+    }
+
+    targetTbl.rows[rowIndex] = evaluatedRow;
+
+    // If cell is merged across rows (rowSpan > 1), sync value and specification parsing to all sibling rows in the span
+    const spanInfo = targetTbl.rows[rowIndex]?.cellSpans?.[colId];
+    const rSpan = spanInfo?.rowSpan || 1;
+    if (rSpan > 1) {
+      for (let r = rowIndex + 1; r < Math.min(targetTbl.rows.length, rowIndex + rSpan); r++) {
+        const siblingRow = {
+          ...targetTbl.rows[r],
+          [colId]: val,
+          ...(colId === "required_dimensions" || colId === "required_dimension" ? { required_dimensions: val, required_dimension: val } : {}),
+        };
+        if (isSpecCol) {
+          const specText = String(val ?? "").trim();
+          const parsed = parseSpecification(specText, targetTbl.unit || "mm", tol, dec);
+          if (parsed.isValid) {
+            siblingRow.nominal = parsed.nominal;
+            siblingRow.nom = parsed.nominal;
+            siblingRow.lower_tolerance = parsed.lowerTolerance;
+            siblingRow.upper_tolerance = parsed.upperTolerance;
+            siblingRow.lower_limit = parsed.lowerLimit;
+            siblingRow.upper_limit = parsed.upperLimit;
+            siblingRow.lowerLimit = parsed.lowerLimit;
+            siblingRow.upperLimit = parsed.upperLimit;
+          } else {
+            const num = parseFloat(specText);
+            if (!isNaN(num)) {
+              siblingRow.nominal = num;
+              siblingRow.nom = num;
+            }
+          }
+        }
+        targetTbl.rows[r] = siblingRow;
+      }
+    }
+
+    // Fully re-evaluate canvas blocks with targeted cross-table dependency resolution
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks, {
+      changedBlockIndex: blockIndex,
+      changedChildIndex: isSplit ? childIndex : undefined,
+      changedRowIndex: rowIndex,
+      forceFull: true,
+    });
+    setWizardLayoutBlocks(evaluatedBlocks);
+  };
+
+  const handleWizardCanvasAddRow = (
+    blockIndex: number,
+    isSplit: boolean = false,
+    childIndex: number = 0
+  ) => {
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[blockIndex]?.children?.[childIndex];
+    } else {
+      targetTbl = updatedBlocks[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows) return;
+
+    const newPointNum = targetTbl.rows.length + 1;
+    const newRow: any = {
+      point_number: newPointNum,
+      required_dimension: "",
+      description: `Point ${newPointNum}`,
+      nominal: 0,
+      unit: targetTbl.unit || calUnit || "mm",
+      tolerance: targetTbl.tolerance ?? calTolerance ?? 0.02,
+      actual: "",
+      reading: "",
+      deviation: "-",
+      error: undefined,
+      status: "-",
+      judgement: "-",
+    };
+
+    targetTbl.rows.push(newRow);
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks);
+    setWizardLayoutBlocks(evaluatedBlocks);
+    toast.success(`Added parameter row ${newPointNum}`);
+  };
+
+  const handleWizardCanvasAddStatementRow = (
+    blockIndex: number,
+    isSplit: boolean = false,
+    childIndex: number = 0
+  ) => {
+    setWizardLayoutBlocks((prevBlocks: any[]) => {
+      if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
+      const updatedBlocks = JSON.parse(JSON.stringify(prevBlocks));
+      const targetTbl = isSplit
+        ? updatedBlocks[blockIndex]?.children?.[childIndex]
+        : updatedBlocks[blockIndex];
+      if (!targetTbl) return prevBlocks;
+      if (!targetTbl.rows) targetTbl.rows = [];
+
+      const newPointNum = targetTbl.rows.length + 1;
+      const newRow: any = {
+        point_number: newPointNum,
+        is_merged: true,
+        isMerged: true,
+        statement: "All the jaws are free from dent and damages",
+        merged_text: "All the jaws are free from dent and damages",
+        description: "All the jaws are free from dent and damages",
+      };
+      targetTbl.rows.push(newRow);
+      return evaluateAllCanvasBlocks(updatedBlocks);
+    });
+    toast.success("Added statement row");
+  };
+
+  const handleWizardCanvasStatementChange = (
+    blockIndex: number,
+    isSplit: boolean,
+    childIndex: number,
+    rowIndex: number,
+    text: string
+  ) => {
+    setWizardLayoutBlocks((prevBlocks: any[]) => {
+      if (!prevBlocks || prevBlocks.length === 0) return prevBlocks;
+      const updatedBlocks = JSON.parse(JSON.stringify(prevBlocks));
+      const targetTbl = isSplit
+        ? updatedBlocks[blockIndex]?.children?.[childIndex]
+        : updatedBlocks[blockIndex];
+      if (!targetTbl || !targetTbl.rows || !targetTbl.rows[rowIndex]) return prevBlocks;
+
+      const row = targetTbl.rows[rowIndex];
+      row.statement = text;
+      row.merged_text = text;
+      row.description = text;
+      row.required_dimension = text;
+      return evaluateAllCanvasBlocks(updatedBlocks);
+    });
+  };
+
+  const handleWizardCanvasDeleteRow = (
+    blockIndex: number,
+    isSplit: boolean = false,
+    childIndex: number = 0,
+    rowIndex: number = 0
+  ) => {
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[blockIndex]?.children?.[childIndex];
+    } else {
+      targetTbl = updatedBlocks[blockIndex];
+    }
+    if (!targetTbl || !targetTbl.rows || targetTbl.rows.length <= 1) {
+      toast.error("Table must have at least 1 specification row");
+      return;
+    }
+
+    targetTbl.rows.splice(rowIndex, 1);
+    targetTbl.rows.forEach((r: any, idx: number) => {
+      r.point_number = idx + 1;
     });
 
-    targetTbl.rows[rowIndex] = row;
-    setWizardLayoutBlocks(updatedBlocks);
+    const evaluatedBlocks = evaluateAllCanvasBlocks(updatedBlocks);
+    setWizardLayoutBlocks(evaluatedBlocks);
+    toast.info(`Deleted row ${rowIndex + 1}`);
+  };
+
+  const handleWizardUpdateTableNominal = (
+    bIdx: number,
+    isSplit: boolean,
+    cIdx: number,
+    newNominalStr: string,
+  ) => {
+    const rawVal = newNominalStr.trim();
+    let parsedNom: string | undefined = undefined;
+    if (rawVal !== "") {
+      const cleanNumMatch = rawVal.match(/^[+-]?\d+(?:\.\d+)?/);
+      if (cleanNumMatch) {
+        parsedNom = cleanNumMatch[0];
+      } else {
+        parsedNom = rawVal;
+      }
+    }
+
+    const updatedBlocks = JSON.parse(JSON.stringify(wizardLayoutBlocks));
+    let targetTbl: any;
+    if (isSplit) {
+      targetTbl = updatedBlocks[bIdx]?.children?.[cIdx];
+    } else {
+      targetTbl = updatedBlocks[bIdx];
+    }
+    if (!targetTbl || !Array.isArray(targetTbl.rows) || !Array.isArray(targetTbl.columns)) return;
+
+    targetTbl.nominal = parsedNom;
+    const tol = parseFloat(String(targetTbl.tolerance ?? 0.02)) || 0.02;
+    const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : 3;
+
+    targetTbl.rows = targetTbl.rows.map((r: any) =>
+      evaluateCanvasRowFormulas(r, targetTbl.columns, tol, dec, parsedNom)
+    );
+
+    const fullyEvaluated = evaluateAllCanvasBlocks(updatedBlocks, { forceFull: true });
+    setWizardLayoutBlocks(fullyEvaluated);
+    toast.success(`Updated Table Nominal to ${parsedNom || "Not Set"} and recalculated points`);
   };
 
   const renderWizardTableGrid = (tbl: any, bIdx: number, isSplit: boolean = false, cIdx: number = 0) => {
@@ -1205,6 +3874,16 @@ export default function CalibrationWizard() {
       const displayCols = tbl.columns.filter((c: any) => c.id !== "point_number" && c.id !== "sl_no" && c.id !== "sino");
       const dec = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
 
+      const rawFirstWidth = typeof tbl.firstColWidth === "number"
+        ? tbl.firstColWidth
+        : parseInt(String(tbl.firstColWidth || tbl.parameterWidth || 150)) || 150;
+      const wizardFirstColWidth = Math.max(150, rawFirstWidth);
+      const firstColWidthVal = `${wizardFirstColWidth}px`;
+
+      const dataColWidthVal = typeof tbl.dataColWidth === "number"
+        ? `${tbl.dataColWidth}px`
+        : tbl.dataColWidth || "65px";
+
       return (
         <div key={tbl.id || `${bIdx}_${cIdx}`} className="border rounded-lg overflow-hidden bg-card shadow-xs">
           <div className="bg-muted/70 px-3 py-1.5 border-b flex items-center justify-between">
@@ -1212,19 +3891,85 @@ export default function CalibrationWizard() {
               <Table className="w-3.5 h-3.5 text-primary" />
               {tbl.title}
             </span>
-            <span className="text-[10px] text-muted-foreground font-mono">
-              Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
-            </span>
+                        <div className="flex items-center gap-2">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border cursor-pointer bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-500/20 transition-colors shadow-2xs"
+                    title="Click to set or change master Nominal value for this table"
+                  >
+                    <span>Nominal: {(() => {
+                      const formatted = formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3);
+                      return formatted ? `${formatted} ${tbl.unit || "mm"}` : "Not Set";
+                    })()}</span>
+                    <Pencil className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="center" className="w-60 p-2.5 shadow-lg z-50">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-foreground">Table Nominal Value</span>
+                      <span className="text-2xs text-muted-foreground font-mono">{tbl.unit || "mm"}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      Dynamically updates baseline nominal for all pin measurement points without altering template.
+                    </p>
+                    <div className="flex items-center gap-1.5 pt-1">
+                      <Input
+                        type="text"
+                        defaultValue={formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3)}
+                        id={`wizard-nom-input-h-${tbl.id || `${bIdx}_${cIdx}`}`}
+                        className="h-7 text-xs font-mono"
+                        placeholder="e.g. 10.0000"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const val = (e.currentTarget as HTMLInputElement).value;
+                            handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, val);
+                            document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                          }
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        className="h-7 px-2.5 text-xs font-bold"
+                        onClick={() => {
+                          const input = document.getElementById(`wizard-nom-input-h-${tbl.id || `${bIdx}_${cIdx}`}`) as HTMLInputElement;
+                          if (input) {
+                            handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, input.value);
+                          }
+                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                        }}
+                      >
+                        Set
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <span className="text-[10px] text-muted-foreground font-mono">
+                Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.005"}
+              </span>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs text-center border-collapse">
               <thead className="bg-muted/95 z-10">
                 <tr className="bg-muted/40 font-bold border-b divide-x text-[10.5px]">
-                  <th className="py-1 px-2 text-left w-48 min-w-[150px] bg-muted/60 sticky left-0 z-20">
-                    Parameter / Sl no
+                  <th
+                    style={{ width: firstColWidthVal, minWidth: firstColWidthVal, maxWidth: firstColWidthVal }}
+                    className={`py-1.5 px-2.5 bg-slate-200 dark:bg-slate-700 font-bold sticky left-0 z-20 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.15)] border-r-2 border-slate-300 dark:border-slate-600 select-none overflow-hidden ${
+                      tbl.columns?.[0]?.align === "left" ? "text-left" : tbl.columns?.[0]?.align === "right" ? "text-right" : "text-center"
+                    }`}
+                  >
+                    <span className="whitespace-nowrap">Parameter / Sl no</span>
                   </th>
                   {tbl.rows.map((r: any, rIdx: number) => (
-                    <th key={rIdx} className="py-1 px-1.5 min-w-[50px] font-bold text-foreground">
+                    <th
+                      key={rIdx}
+                      style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                      className="py-1 px-1.5 font-bold text-foreground text-center"
+                    >
                       {r.point_number ?? (rIdx + 1)}
                     </th>
                   ))}
@@ -1233,83 +3978,300 @@ export default function CalibrationWizard() {
               <tbody className="divide-y font-mono text-xs">
                 {displayCols.map((col: any) => (
                   <tr key={col.id} className="divide-x hover:bg-muted/20">
-                    <td className="py-1 px-2 text-left font-bold text-foreground bg-muted/30 sticky left-0 z-10 whitespace-nowrap text-[11px]">
-                      {col.label}
+                    <td
+                      style={{ width: firstColWidthVal, minWidth: firstColWidthVal, maxWidth: firstColWidthVal }}
+                      className={`py-1.5 px-2.5 font-bold text-foreground bg-card dark:bg-slate-800 sticky left-0 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.12)] border-r-2 border-slate-200 dark:border-slate-700 text-[11px] overflow-hidden ${
+                        col.align === "left" ? "text-left" : col.align === "right" ? "text-right" : "text-center"
+                      }`}
+                    >
+                      <span className="truncate block" title={col.label}>
+                        {col.label}
+                      </span>
                     </td>
-                    {tbl.rows.map((row: any, rIdx: number) => {
-                      if (col.type === "nominal") {
-                        const val = row.nominal !== undefined ? Number(row.nominal).toFixed(dec) : "-";
+                    {(() => {
+                      const isToleranceCol =
+                        col.type === "tolerance" ||
+                        col.role === "TOLERANCE" ||
+                        col.semanticRole === "TOLERANCE" ||
+                        /^(?:tolerance|tol)$/i.test(col.id || "") ||
+                        /^(?:tolerance|tol)$/i.test(col.label || "");
+
+                      const isNominalCol =
+                        col.type === "nominal" ||
+                        col.role === "NOMINAL" ||
+                        col.semanticRole === "NOMINAL" ||
+                        /^(?:nominal|nom)$/i.test(col.id || "");
+
+                      const isReadingCol =
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.role === "READING" ||
+                        col.semanticRole === "READING" ||
+                        col.semanticRole === "TRIAL" ||
+                        /^(?:reading|trial|observed|actual)(?:_\d+|\d+)?$/i.test(col.id || "");
+
+                      const isJudgementCol =
+                        !isToleranceCol &&
+                        !isNominalCol &&
+                        !isReadingCol &&
+                        col.type !== "text" &&
+                        col.type !== "nominal" &&
+                        (col.type === "status" ||
+                          col.type === "judgement" ||
+                          col.role === "JUDGEMENT" ||
+                          col.semanticRole === "JUDGEMENT" ||
+                          Boolean(col.isPassFail) ||
+                          /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || "") ||
+                          (typeof col.label === "string" &&
+                            /judg|verdict/i.test(col.label) &&
+                            !/tol|reading|trial|nominal|dimension/i.test(col.label)));
+
+                      return tbl.rows.map((row: any, rIdx: number) => {
+                        const colDec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? 3;
+                        const cellFormula = row.cellFormulas?.[col.id];
+                        const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                        const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                        const isFormulaCell = hasCellFormula || hasColFormula;
+
+                        if (isFormulaCell) {
+                          const val = row[col.id] ?? "-";
+                          const verdict = getStatusVerdict(val);
+                          const isJudgementLike = isJudgementCol || verdict !== null;
+
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5 text-center"
+                            >
+                              <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                                <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded shrink-0">fx</span>
+                                {isJudgementLike ? (
+                                  <Badge
+                                    variant="outline"
+                                    className={`text-[9px] font-bold py-0 px-1.5 ${
+                                      verdict === "pass"
+                                        ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                        : verdict === "fail"
+                                          ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                          : "border-border text-muted-foreground bg-muted"
+                                    }`}
+                                  >
+                                    {val !== undefined && val !== null && val !== "" ? String(val) : "-"}
+                                  </Badge>
+                                ) : (
+                                  <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        }
+
+                        if (col.type === "nominal") {
+                          const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                            ? row[col.id]
+                            : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
+                            ? row.nominal_value
+                            : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
+                          const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
+                            ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
+                            : "-";
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-bold text-foreground text-[11px]"
+                            >
+                              {val}
+                            </td>
+                          );
+                        }
+                        if (col.type === "text") {
+                          const cellVal =
+                            col.id === "description"
+                              ? (row.description ?? row[col.id] ?? "")
+                              : (row[col.id] ?? (col.id === "required_dimension" ? row.required_dimension : "") ?? "");
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 font-medium text-[11px]"
+                            >
+                              {cellVal || "-"}
+                            </td>
+                          );
+                        }
+
+                        const cellRaw = isJudgementCol
+                          ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
+                          : (row[col.id] ?? "-");
+
+                        if (isJudgementCol) {
+                          const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
+                          const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+
+                          if (isManualJudge) {
+                            const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
+                            return (
+                              <td
+                                key={rIdx}
+                                style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                                className="py-0.5 px-1 text-center"
+                              >
+                                <JudgementCellControl
+                                  value={currentVal}
+                                  onChange={(newVal) => {
+                                    handleWizardCanvasCellChange(
+                                      bIdx,
+                                      false,
+                                      0,
+                                      rIdx,
+                                      col.id,
+                                      newVal,
+                                    );
+                                  }}
+                                />
+                              </td>
+                            );
+                          }
+
+                          const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
+                          const verdict = getStatusVerdict(st);
+                          const isPass = verdict === "pass";
+                          const isFail = verdict === "fail";
+                          return (
+                            <td
+                              key={rIdx}
+                              style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                              className="py-0.5 px-1 text-center"
+                            >
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] font-bold py-0 px-1.5 ${
+                                  isPass
+                                    ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                    : isFail
+                                      ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                      : "border-border text-muted-foreground bg-muted"
+                                }`}
+                              >
+                                {st}
+                              </Badge>
+                            </td>
+                          );
+                        }
+                      // Editable cell: reading, trial, tolerance, nominal, number, measurement, or non-formula row in a formula column
+                      const isEditable =
+                        !col.readOnly &&
+                        (col.editable === true ||
+                          isToleranceCol ||
+                          col.type === "trial" ||
+                          col.type === "reading" ||
+                          col.type === "tolerance" ||
+                          col.type === "nominal" ||
+                          col.type === "number" ||
+                          col.type === "formula" ||
+                          col.role === "READING" ||
+                          col.role === "TOLERANCE" ||
+                          col.role === "NOMINAL" ||
+                          col.dataType === "MEASUREMENT" ||
+                          (col.role as string) === "MEASUREMENT" ||
+                          col.semanticRole === "READING" ||
+                          col.semanticRole === "TRIAL" ||
+                          /actual|reading|trial|observed|error|val|tol|tolerance|nom|dimension/i.test(col.id) ||
+                          /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
+
+                      if (isEditable) {
+                        const isAcceptanceTable = Boolean(tbl?.title && /acceptance|criteria|permissible/i.test(tbl.title));
+                        const cellVal =
+                          row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                            ? row[col.id]
+                            : (col.id === "error" && row.error !== undefined && row.error !== null && row.error !== ""
+                              ? row.error
+                              : (col.type === "nominal" || col.id === "nominal"
+                                ? (row.nominal ?? row.nom ?? "")
+                                : (isToleranceCol || col.type === "tolerance" || col.id === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "")
+                                  ? (row.tolerance ?? "")
+                                  : "")));
+
                         return (
-                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
-                            {val}
-                          </td>
-                        );
-                      }
-                      if (col.type === "text") {
-                        return (
-                          <td key={rIdx} className="py-0.5 px-1 font-medium text-[11px]">
-                            {row.description || row[col.id] || "-"}
-                          </td>
-                        );
-                      }
-                      if (col.type === "trial" || col.type === "reading") {
-                        return (
-                          <td key={rIdx} className="p-0.5 min-w-[52px]">
+                          <td
+                            key={rIdx}
+                            style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                            className="p-0.5 min-w-[52px]"
+                          >
                             <Input
-                              type="number"
-                              step="any"
-                              value={row[col.id] ?? ""}
-                              onChange={(e) =>
-                                handleWizardCanvasCellChange(
-                                  bIdx,
-                                  isSplit,
-                                  cIdx,
-                                  rIdx,
-                                  col.id,
-                                  e.target.value
-                                )
+                              type="text"
+                              inputMode={
+                                col.type === "text" ||
+                                col.role === "TOLERANCE" ||
+                                col.type === "tolerance" ||
+                                isToleranceCol ||
+                                isAcceptanceTable ||
+                                /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
+                                  ? undefined
+                                  : "decimal"
                               }
+                              value={cellVal}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                const isTextAllowed =
+                                  col.type === "text" ||
+                                  col.role === "TOLERANCE" ||
+                                  col.type === "tolerance" ||
+                                  isToleranceCol ||
+                                  isAcceptanceTable ||
+                                  /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
+                                  /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
+                                if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v) || /^[<>=≤≥±~]/.test(v)) {
+                                  handleWizardCanvasCellChange(
+                                    bIdx,
+                                    isSplit,
+                                    cIdx,
+                                    rIdx,
+                                    col.id,
+                                    v
+                                  );
+                                }
+                              }}
+                              onBlur={(e) => {
+                                const raw = e.target.value.trim();
+                                if (
+                                  raw === "" ||
+                                  raw === "-" ||
+                                  raw === "+" ||
+                                  raw === "." ||
+                                  /^[<>=≤≥±~]/.test(raw) ||
+                                  isAcceptanceTable
+                                ) {
+                                  return;
+                                }
+                                const parsed = parseFloat(raw);
+                                if (!isNaN(parsed)) {
+                                  const formatted = raw.startsWith("+")
+                                    ? "+" + (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec))
+                                    : (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec));
+                                  handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                }
+                              }}
                               className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1 w-full min-w-[48px]"
-                              placeholder="0.000"
+                              placeholder={isToleranceCol || col.type === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "") ? "±Tol" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
                             />
                           </td>
                         );
                       }
-                      if (col.type === "formula") {
-                        const val = row[col.id] ?? "-";
-                        return (
-                          <td key={rIdx} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
-                            {val}
-                          </td>
-                        );
-                      }
-                      if (col.type === "status") {
-                        const st = row[col.id] || row.status || "-";
-                        const isPass = st === "PASS" || st === "OK";
-                        const isFail = st === "FAIL" || st === "REJECT";
-                        return (
-                          <td key={rIdx} className="py-0.5 px-1">
-                            <Badge
-                              variant="outline"
-                              className={`text-[9px] font-bold py-0 px-1 ${
-                                isPass
-                                  ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                  : isFail
-                                    ? "border-red-500 text-red-600 bg-red-500/10"
-                                    : "border-border text-muted-foreground bg-muted"
-                              }`}
-                            >
-                              {st}
-                            </Badge>
-                          </td>
-                        );
-                      }
+
                       return (
-                        <td key={rIdx} className="py-0.5 px-1 text-[11px]">
-                          {row[col.id] || "-"}
+                        <td
+                          key={rIdx}
+                          style={{ width: dataColWidthVal, minWidth: dataColWidthVal }}
+                          className="py-0.5 px-1 text-[11px]"
+                        >
+                          {row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}
                         </td>
                       );
-                    })}
+                    });
+                  })()}
                   </tr>
                 ))}
               </tbody>
@@ -1331,36 +4293,519 @@ export default function CalibrationWizard() {
             <Table className="w-3.5 h-3.5 text-primary" />
             {tbl.title}
           </span>
-          <span className="text-[10px] text-muted-foreground font-mono">
-            Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
-          </span>
+                    <div className="flex items-center gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border cursor-pointer bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-800 hover:bg-amber-500/20 transition-colors shadow-2xs"
+                  title="Click to set or change master Nominal value for this table"
+                >
+                  <span>Nominal: {(() => {
+                    const formatted = formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3);
+                    return formatted ? `${formatted} ${tbl.unit || "mm"}` : "Not Set";
+                  })()}</span>
+                  <Pencil className="w-2.5 h-2.5 opacity-60 ml-0.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="center" className="w-60 p-2.5 shadow-lg z-50">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground">Table Nominal Value</span>
+                    <span className="text-2xs text-muted-foreground font-mono">{tbl.unit || "mm"}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-tight">
+                    Dynamically updates baseline nominal for all pin measurement points without altering template.
+                  </p>
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <Input
+                      type="text"
+                      defaultValue={formatNominalDisplay(tbl.nominal, tbl.decimal_places ?? 3)}
+                      id={`wizard-nom-input-v-${tbl.id || `${bIdx}_${cIdx}`}`}
+                      className="h-7 text-xs font-mono"
+                      placeholder="e.g. 10.0000"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const val = (e.currentTarget as HTMLInputElement).value;
+                          handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, val);
+                          document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 px-2.5 text-xs font-bold"
+                      onClick={() => {
+                        const input = document.getElementById(`wizard-nom-input-v-${tbl.id || `${bIdx}_${cIdx}`}`) as HTMLInputElement;
+                        if (input) {
+                          handleWizardUpdateTableNominal(bIdx, isSplit, cIdx, input.value);
+                        }
+                        document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+                      }}
+                    >
+                      Set
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <span className="text-[10px] text-muted-foreground font-mono">
+              Unit: {tbl.unit || "mm"} • Tol: ±{tbl.tolerance ?? "0.02"}
+            </span>
+          </div>
         </div>
         <div className="overflow-x-auto max-h-[540px] overflow-y-auto">
           <table className="w-full text-xs text-center border-collapse">
             <thead className="sticky top-0 bg-muted/95 z-10 backdrop-blur-xs">
-              <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
-                {tbl.columns.map((col: any) => (
-                  <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
-                    {col.label}
-                  </th>
-                ))}
-              </tr>
+              {(() => {
+                const headerGroups = computeHeaderGroups(tbl.columns || []);
+                if (!headerGroups.hasGroups) {
+                  return (
+                    <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
+                      {tbl.columns.map((col: any) => (
+                        <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                          {col.label}
+                        </th>
+                      ))}
+                      <th className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground">Action</th>
+                    </tr>
+                  );
+                }
+
+                return (
+                  <>
+                    <tr className="bg-muted/50 font-bold border-b divide-x text-[10.5px]">
+                      {headerGroups.topRow.map((topItem, topIdx) => {
+                        if (topItem.type === "group") {
+                          return (
+                            <th
+                              key={`grp_${topIdx}`}
+                              colSpan={topItem.colSpan}
+                              className="py-1 px-1.5 text-center font-bold uppercase tracking-wider bg-muted/70 text-foreground border-b"
+                            >
+                              {topItem.groupName}
+                            </th>
+                          );
+                        }
+                        const col = topItem.columns[0];
+                        return (
+                          <th
+                            key={col.id}
+                            rowSpan={2}
+                            style={{ width: col.width }}
+                            className="py-1 px-1.5 font-semibold align-middle"
+                          >
+                            {col.label}
+                          </th>
+                        );
+                      })}
+                      <th rowSpan={2} className="w-9 py-1 px-1 text-center font-semibold text-muted-foreground align-middle">Action</th>
+                    </tr>
+                    <tr className="bg-muted/30 font-semibold border-b divide-x text-[10px]">
+                      {headerGroups.subRowColumns.map((col: any) => (
+                        <th key={col.id} style={{ width: col.width }} className="py-1 px-1.5">
+                          {col.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </>
+                );
+              })()}
             </thead>
             <tbody className="divide-y font-mono text-xs">
-              {tbl.rows.map((row: any, rIdx: number) => (
-                <tr key={rIdx} className="divide-x hover:bg-muted/20">
-                  {tbl.columns.map((col: any) => {
+              {(() => {
+                const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                return tbl.rows.map((row: any, rIdx: number) => {
+                if (row.is_merged || row.isMerged) {
+                  const statementVal =
+                    row.statement ??
+                    row.merged_text ??
+                    row.description ??
+                    row.required_dimension ??
+                    "All the jaws are free from dent and damages";
+                  return (
+                    <tr
+                      key={rIdx}
+                      className="divide-x bg-amber-50/50 dark:bg-amber-950/20 hover:bg-amber-100/30"
+                    >
+                      <td className="py-1 px-1 font-semibold text-muted-foreground text-[11px] bg-amber-100/40 dark:bg-amber-950/40 text-center">
+                        {row.point_number ?? rIdx + 1}
+                      </td>
+                      <td
+                        colSpan={Math.max(1, tbl.columns.length - 1)}
+                        className="py-1 px-2 text-left"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className="text-[9px] py-0 px-1 font-bold bg-amber-100 text-amber-900 border-amber-300 shrink-0"
+                          >
+                            Statement
+                          </Badge>
+                          <Input
+                            type="text"
+                            value={statementVal}
+                            onChange={(e) =>
+                              handleWizardCanvasStatementChange(
+                                bIdx,
+                                isSplit,
+                                cIdx,
+                                rIdx,
+                                e.target.value,
+                              )
+                            }
+                            className="h-6 text-[11px] font-medium bg-background px-2 w-full"
+                          />
+                        </div>
+                      </td>
+                      <td className="p-0.5 text-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            handleWizardCanvasDeleteRow(
+                              bIdx,
+                              isSplit,
+                              cIdx,
+                              rIdx,
+                            )
+                          }
+                          title="Delete row"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return (
+                  <tr key={rIdx} className="divide-x hover:bg-muted/20">
+                  {tbl.columns.map((col: any, colIdx: number) => {
+                    if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                      return null;
+                    }
+                    const spanInfo = row.cellSpans?.[col.id];
+                    const span = spanInfo?.colSpan || 1;
+                    const rSpan = spanInfo?.rowSpan || 1;
+                    const isMerged = span > 1 || rSpan > 1;
+
                     const isPointNo = col.id === "point_number" || col.id === "sl_no" || col.id === "sino";
                     if (isPointNo) {
                       return (
-                        <td key={col.id} className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]">
+                        <td
+                          key={col.id}
+                          colSpan={span > 1 ? span : undefined}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          className="py-0.5 px-1 font-semibold text-muted-foreground text-[11px]"
+                        >
                           {row.point_number ?? row[col.id] ?? (rIdx + 1)}
                         </td>
                       );
                     }
-                    if (col.type === "nominal") {
-                      const decimals = tbl.decimal_places !== undefined ? tbl.decimal_places : 3;
-                      const val = row.nominal !== undefined ? Number(row.nominal).toFixed(decimals) : (row[col.id] ?? "-");
+                    // MERGED CELL (span > 1 || rSpan > 1) across parameter columns
+                    if (isMerged) {
+                      const cellVal = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                        ? row[col.id]
+                        : (col.id === "nominal"
+                          ? row.nominal
+                          : (col.id === "required_dimensions" || col.id === "required_dimension"
+                            ? (row.required_dimensions ?? row.required_dimension ?? row.specification ?? "")
+                            : "")) ?? "";
+                      const isReadingOrTrial =
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.role === "READING" ||
+                        col.dataType === "MEASUREMENT" ||
+                        /actual|reading|trial|observed/i.test(col.id) ||
+                        /actual|reading|trial|observed/i.test(col.label || "");
+
+                      const isFormulaCol = col.type === "formula" || Boolean(row.cellFormulas?.[col.id]);
+                      const isJudgementCol =
+                        !isFormulaCol &&
+                        (col.type === "status" ||
+                          col.type === "judgement" ||
+                          col.role === "JUDGEMENT" ||
+                          col.semanticRole === "JUDGEMENT" ||
+                          Boolean(col.isPassFail) ||
+                          /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || ""));
+
+                      const isDescCol = col.id === "description";
+                      const isReqDimCol = col.id === "required_dimension" || col.id === "required_dimensions" || /dimension/i.test(col.label || "") || /dimension/i.test(col.id || "");
+                      const isSpecCol = isReqDimCol || isDescCol || col.id === "specification" || col.id === "spec" || /spec/i.test(col.label || "") || /spec/i.test(col.id || "");
+
+                      const isEditableMergedText =
+                        !col.readOnly &&
+                        !isFormulaCol &&
+                        !isJudgementCol &&
+                        (col.type === "text" ||
+                          col.type === "nominal" ||
+                          col.type === "tolerance" ||
+                          col.type === "number" ||
+                          isSpecCol ||
+                          col.editable === true ||
+                          (!col.readOnly && col.type !== "formula"));
+
+                      return (
+                        <td
+                          key={col.id}
+                          colSpan={span > 1 ? span : undefined}
+                          rowSpan={rSpan > 1 ? rSpan : undefined}
+                          className="py-1 px-1.5 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs align-middle"
+                        >
+                          {isReadingOrTrial ? (
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="shrink-0 text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row[col.id] ?? ""}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        v
+                                      );
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                    const parsed = parseFloat(raw);
+                                    if (!isNaN(parsed)) {
+                                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                                      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                      handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                    }
+                                  }}
+                                  className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1.5 w-full"
+                                  placeholder="0.000"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 w-full justify-center">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="shrink-0 text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                <Input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={row[col.id] ?? ""}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        v
+                                      );
+                                    }
+                                  }}
+                                  onBlur={(e) => {
+                                    const raw = e.target.value.trim();
+                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                    const parsed = parseFloat(raw);
+                                    if (!isNaN(parsed)) {
+                                      const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                                      const formatted = colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec);
+                                      handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                                    }
+                                  }}
+                                  className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-2 flex-1 min-w-[50px]"
+                                  placeholder="0.000"
+                                />
+                              </div>
+                            )
+                          ) : isEditableMergedText ? (
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1 px-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                {isSpecCol || String(cellVal).includes("\n") ? (
+                                  <Textarea
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    rows={String(cellVal).includes("\n") || rSpan > 1 ? 2 : 1}
+                                    className="min-h-[28px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/80 hover:bg-background focus:bg-background transition-colors text-left w-full"
+                                    placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 50.80-0.02"}
+                                  />
+                                ) : (
+                                  <Input
+                                    type="text"
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    className="h-6 text-[11px] font-mono py-0 px-1.5 w-full bg-background/80 text-center"
+                                    placeholder="Value"
+                                  />
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 w-full justify-center px-1">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                {isSpecCol ? (
+                                  <Textarea
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    rows={1}
+                                    className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/80 hover:bg-background focus:bg-background transition-colors text-left flex-1"
+                                    placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 50.80-0.02"}
+                                  />
+                                ) : (
+                                  <Input
+                                    type="text"
+                                    value={cellVal}
+                                    onChange={(e) => {
+                                      handleWizardCanvasCellChange(
+                                        bIdx,
+                                        isSplit,
+                                        cIdx,
+                                        rIdx,
+                                        col.id,
+                                        e.target.value
+                                      );
+                                    }}
+                                    className="h-6 text-[11px] font-mono py-0 px-1.5 flex-1 bg-background/80 text-center"
+                                  />
+                                )}
+                              </div>
+                            )
+                          ) : (
+                            rSpan > 1 ? (
+                              <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[44px] py-1">
+                                <div className="flex items-center gap-1 flex-wrap justify-center">
+                                  {span > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                    >
+                                      {span} Cols
+                                    </Badge>
+                                  )}
+                                  {rSpan > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0"
+                                    >
+                                      {rSpan} Rows
+                                    </Badge>
+                                  )}
+                                </div>
+                                <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                                  {cellVal || "-"}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-1.5">
+                                {span > 1 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0"
+                                  >
+                                    {span} Cols
+                                  </Badge>
+                                )}
+                                <span className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                                  {cellVal || "-"}
+                                </span>
+                              </div>
+                            )
+                          )}
+                        </td>
+                      );
+                    }
+                    const colDec = col.decimal_places ?? col.decimalPrecision ?? (tbl.decimal_places !== undefined ? tbl.decimal_places : 3);
+                    if ((col.type === "nominal" || col.type === "number") && col.readOnly) {
+                      const rawCell = row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                        ? row[col.id]
+                        : (row.nominal_value !== undefined && row.nominal_value !== null && row.nominal_value !== ""
+                        ? row.nominal_value
+                        : (col.id === "nominal" || col.id === "nom" ? row.nominal : ""));
+                      const val = rawCell !== undefined && rawCell !== null && rawCell !== ""
+                        ? (!isNaN(Number(rawCell)) ? Number(rawCell).toFixed(colDec) : String(rawCell))
+                        : "-";
                       return (
                         <td key={col.id} className="py-0.5 px-1.5 font-bold text-foreground text-[11px]">
                           {val}
@@ -1368,56 +4813,168 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (col.type === "text") {
+                      const isDescCol = col.id === "description";
+                      const isReqDimCol = col.id === "required_dimension" || /dimension/i.test(col.label || "");
+                      const isSpecCol = isReqDimCol || isDescCol || col.id === "specification" || col.id === "spec" || /spec/i.test(col.label || "");
+                      if (isSpecCol) {
+                        const cellVal = isDescCol
+                          ? (row[col.id] ?? row.description ?? "")
+                          : (row[col.id] ?? row.required_dimension ?? row.specification ?? "");
+                        return (
+                          <td key={col.id} className="p-0.5 min-w-[130px]">
+                            <Textarea
+                              value={cellVal}
+                              onChange={(e) => {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  e.target.value
+                                );
+                              }}
+                              rows={String(cellVal).includes("\n") ? 2 : 1}
+                              className="min-h-[26px] py-1 px-1.5 text-[11px] font-mono leading-tight resize-y bg-background/50 hover:bg-background focus:bg-background transition-colors text-left w-full"
+                              placeholder={isDescCol ? "e.g. GO / NO GO" : "e.g. 55.10-0.025"}
+                            />
+                          </td>
+                        );
+                      }
+                      if (col.editable || !col.readOnly) {
+                        return (
+                          <td key={col.id} className="p-0.5 min-w-[100px]">
+                            <Input
+                              type="text"
+                              value={row[col.id] ?? ""}
+                              onChange={(e) => {
+                                handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, e.target.value);
+                              }}
+                              className="h-6 text-[11px] font-mono py-0 px-1.5 w-full"
+                            />
+                          </td>
+                        );
+                      }
+                      const readOnlyVal = col.id === "description"
+                        ? (row.description || row[col.id])
+                        : (row[col.id] || (col.id === "required_dimension" ? row.required_dimension : undefined));
                       return (
                         <td key={col.id} className="py-0.5 px-1.5 font-medium text-left pl-2 text-[11px]">
-                          {row.description || row[col.id] || (row.point_number ?? (rIdx + 1))}
+                          {readOnlyVal || "-"}
                         </td>
                       );
                     }
-                    if (col.type === "trial" || col.type === "reading") {
-                      return (
-                        <td key={col.id} className="p-0.5">
-                          <Input
-                            type="number"
-                            step="any"
-                            value={row[col.id] ?? ""}
-                            onChange={(e) =>
-                              handleWizardCanvasCellChange(
-                                bIdx,
-                                isSplit,
-                                cIdx,
-                                rIdx,
-                                col.id,
-                                e.target.value
-                              )
-                            }
-                            className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
-                            placeholder="0.000"
-                          />
-                        </td>
-                      );
-                    }
-                    if (col.type === "formula") {
+                    const isToleranceCol =
+                      col.type === "tolerance" ||
+                      col.role === "TOLERANCE" ||
+                      col.semanticRole === "TOLERANCE" ||
+                      /^(?:tolerance|tol)$/i.test(col.id || "") ||
+                      /^(?:tolerance|tol)$/i.test(col.label || "");
+
+                    const isNominalCol =
+                      col.type === "nominal" ||
+                      col.role === "NOMINAL" ||
+                      col.semanticRole === "NOMINAL" ||
+                      /^(?:nominal|nom)$/i.test(col.id || "");
+
+                    const isReadingCol =
+                      col.type === "trial" ||
+                      col.type === "reading" ||
+                      col.role === "READING" ||
+                      col.semanticRole === "READING" ||
+                      col.semanticRole === "TRIAL" ||
+                      /^(?:reading|trial|observed|actual)(?:_\d+|\d+)?$/i.test(col.id || "");
+
+                    const isJudgementCol =
+                      !isToleranceCol &&
+                      !isNominalCol &&
+                      !isReadingCol &&
+                      col.type !== "text" &&
+                      col.type !== "nominal" &&
+                      (col.type === "status" ||
+                        col.type === "judgement" ||
+                        col.role === "JUDGEMENT" ||
+                        col.semanticRole === "JUDGEMENT" ||
+                        Boolean(col.isPassFail) ||
+                        /^(?:judgement|judgment|verdict|status|decision)$/i.test(col.id || "") ||
+                        (typeof col.label === "string" &&
+                          /judg|verdict/i.test(col.label) &&
+                          !/tol|reading|trial|nominal|dimension/i.test(col.label)));
+
+                    const cellFormula = row.cellFormulas?.[col.id];
+                    const hasCellFormula = typeof cellFormula === "string" && cellFormula.trim().length > 0;
+                    const hasColFormula = col.type === "formula" && typeof col.formula === "string" && col.formula.trim().length > 0;
+                    const isFormulaCell = hasCellFormula || hasColFormula;
+
+                    if (isFormulaCell) {
                       const val = row[col.id] ?? "-";
+                      const verdict = getStatusVerdict(val);
+                      const isJudgementLike = isJudgementCol || verdict !== null;
+
                       return (
-                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px]">
-                          {val}
+                        <td key={col.id} className="py-0.5 px-1 font-bold text-foreground text-[11px] bg-primary/5 text-center">
+                          <div className="flex items-center justify-center gap-1" title={hasCellFormula ? `Formula: ${cellFormula}` : col.formula}>
+                            <span className="text-[9px] px-1 py-0.2 bg-primary/10 text-primary font-mono rounded shrink-0">fx</span>
+                            {isJudgementLike ? (
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] font-bold py-0 px-1.5 ${
+                                  verdict === "pass"
+                                    ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                    : verdict === "fail"
+                                      ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
+                                      : "border-border text-muted-foreground bg-muted"
+                                }`}
+                              >
+                                {val !== undefined && val !== null && val !== "" ? String(val) : "-"}
+                              </Badge>
+                            ) : (
+                              <span>{val !== undefined && val !== null && val !== "" ? String(val) : "-"}</span>
+                            )}
+                          </div>
                         </td>
                       );
                     }
-                    if (col.type === "status") {
-                      const st = row[col.id] || row.status || "-";
-                      const isPass = st === "PASS" || st === "OK";
-                      const isFail = st === "FAIL" || st === "REJECT";
+
+                    const cellRaw = isJudgementCol
+                      ? (row[col.id] ?? row.status ?? row.judgement ?? "-")
+                      : (row[col.id] ?? "-");
+
+                    if (isJudgementCol) {
+                      const hasColFormula = col.type === "formula" || (typeof col.formula === "string" && col.formula.trim().length > 0);
+                      const isManualJudge = Boolean(col.isManualJudgement) || (col as any).judgementMode === "manual" || !hasColFormula;
+
+                      if (isManualJudge) {
+                        const currentVal = row[col.id] || (isJudgementCol ? (row.status || row.judgement) : "") || "OK";
+                        return (
+                          <td key={col.id} className="py-0.5 px-1 text-center min-w-[100px]">
+                            <JudgementCellControl
+                              value={currentVal}
+                              onChange={(newVal) => {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  newVal,
+                                );
+                              }}
+                            />
+                          </td>
+                        );
+                      }
+                      const st = cellRaw !== undefined && cellRaw !== null && cellRaw !== "" ? cellRaw : "-";
+                      const verdict = getStatusVerdict(st);
                       return (
-                        <td key={col.id} className="py-0.5 px-1">
+                        <td key={col.id} className="py-0.5 px-1 text-center">
                           <Badge
                             variant="outline"
                             className={`text-[9px] font-bold py-0 px-1.5 ${
-                              isPass
-                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10"
-                                : isFail
-                                  ? "border-red-500 text-red-600 bg-red-500/10"
+                              verdict === "pass"
+                                ? "border-emerald-500 text-emerald-600 bg-emerald-500/10 dark:bg-emerald-950/60 dark:text-emerald-400"
+                                : verdict === "fail"
+                                  ? "border-red-500 text-red-600 bg-red-500/10 dark:bg-rose-950/60 dark:text-red-400"
                                   : "border-border text-muted-foreground bg-muted"
                             }`}
                           >
@@ -1426,12 +4983,151 @@ export default function CalibrationWizard() {
                         </td>
                       );
                     }
-                    return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] || "-"}</td>;
+
+                    // Editable cell: reading, trial, tolerance, nominal, number, measurement, or non-formula row in a formula column
+                    const isEditable =
+                      !col.readOnly &&
+                      (col.editable === true ||
+                        isToleranceCol ||
+                        col.type === "trial" ||
+                        col.type === "reading" ||
+                        col.type === "tolerance" ||
+                        col.type === "nominal" ||
+                        col.type === "number" ||
+                        col.type === "formula" ||
+                        col.role === "READING" ||
+                        col.role === "TOLERANCE" ||
+                        col.role === "NOMINAL" ||
+                        col.dataType === "MEASUREMENT" ||
+                        (col.role as string) === "MEASUREMENT" ||
+                        col.semanticRole === "READING" ||
+                        col.semanticRole === "TRIAL" ||
+                        /actual|reading|trial|observed|error|val|tol|tolerance|nom|dimension/i.test(col.id) ||
+                        /actual|reading|trial|observed|error|tol|tolerance|nom|dimension/i.test(col.label || ""));
+
+                    if (isEditable) {
+                      const isAcceptanceTable = Boolean(tbl?.title && /acceptance|criteria|permissible/i.test(tbl.title));
+                      const cellVal =
+                        row[col.id] !== undefined && row[col.id] !== null && row[col.id] !== ""
+                          ? row[col.id]
+                          : (col.id === "error" && row.error !== undefined && row.error !== null && row.error !== ""
+                            ? row.error
+                            : (col.type === "nominal" || col.id === "nominal"
+                              ? (row.nominal ?? row.nom ?? "")
+                              : (isToleranceCol || col.type === "tolerance" || col.id === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "")
+                                ? (row.tolerance ?? "")
+                                : "")));
+
+                      return (
+                        <td key={col.id} className="p-0.5">
+                          <Input
+                            type="text"
+                            inputMode={
+                              col.type === "text" ||
+                              col.role === "TOLERANCE" ||
+                              col.type === "tolerance" ||
+                              isToleranceCol ||
+                              isAcceptanceTable ||
+                              /spec|dimension|desc|remark|crit|acceptance/i.test(col.id || col.label || "")
+                                ? undefined
+                                : "decimal"
+                            }
+                            value={cellVal}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const isTextAllowed =
+                                col.type === "text" ||
+                                col.role === "TOLERANCE" ||
+                                col.type === "tolerance" ||
+                                isToleranceCol ||
+                                isAcceptanceTable ||
+                                /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.id) ||
+                                /spec|dimension|desc|remark|comment|feature|note|crit|acceptance/i.test(col.label || "");
+                              if (isTextAllowed || v === "" || /^[+-]?\d*\.?\d*$/.test(v) || /^[<>=≤≥±~]/.test(v)) {
+                                handleWizardCanvasCellChange(
+                                  bIdx,
+                                  isSplit,
+                                  cIdx,
+                                  rIdx,
+                                  col.id,
+                                  v
+                                );
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim();
+                              if (
+                                raw === "" ||
+                                raw === "-" ||
+                                raw === "+" ||
+                                raw === "." ||
+                                /^[<>=≤≥±~]/.test(raw) ||
+                                isAcceptanceTable
+                              ) {
+                                return;
+                              }
+                              const parsed = parseFloat(raw);
+                              if (!isNaN(parsed)) {
+                                const formatted = raw.startsWith("+")
+                                  ? "+" + (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec))
+                                  : (colDec === 0 ? String(Math.round(parsed)) : parsed.toFixed(colDec));
+                                handleWizardCanvasCellChange(bIdx, isSplit, cIdx, rIdx, col.id, formatted);
+                              }
+                            }}
+                            className="h-6 text-[11px] text-center font-mono font-semibold py-0 px-1"
+                            placeholder={isToleranceCol || col.type === "tolerance" || /tol/i.test(col.id) || /tol/i.test(col.label || "") ? "±Tol" : (colDec === 0 ? "0" : (0).toFixed(colDec))}
+                          />
+                        </td>
+                      );
+                    }
+
+                    return <td key={col.id} className="py-0.5 px-1 text-[11px]">{row[col.id] !== undefined && row[col.id] !== null ? String(row[col.id]) : "-"}</td>;
                   })}
+                  <td className="p-0.5 text-center">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleWizardCanvasDeleteRow(bIdx, isSplit, cIdx, rIdx)}
+                      title="Delete parameter row"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </td>
                 </tr>
-              ))}
+              );
+            });
+            })()}
             </tbody>
           </table>
+        </div>
+        <div className="bg-muted/30 px-3 py-1.5 border-t flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5 font-medium border-dashed border-primary/40 hover:bg-primary/5 text-primary"
+              onClick={() => handleWizardCanvasAddRow(bIdx, isSplit, cIdx)}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add Parameter Row ({tbl.rows.length + 1})
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5 font-medium border-dashed border-amber-500/40 hover:bg-amber-500/5 text-amber-700 dark:text-amber-400"
+              onClick={() => handleWizardCanvasAddStatementRow(bIdx, isSplit, cIdx)}
+            >
+              <Merge className="w-3.5 h-3.5" />
+              Add Statement Row
+            </Button>
+          </div>
+          <span className="text-[10px] text-muted-foreground font-mono">
+            {tbl.rows.length} {tbl.rows.length === 1 ? "row" : "rows"} configured
+          </span>
         </div>
         {tbl.footerNote && (
           <div className="p-1.5 text-[10px] italic bg-muted/20 border-t text-center text-muted-foreground">
@@ -1446,7 +5142,11 @@ export default function CalibrationWizard() {
     switch (step) {
       case 0: return !!selectedInstrument && !!selectedType;
       case 1: return true; // Reference standard is optional
-      case 2: return wizardIsCanvas ? wizardLayoutBlocks.length > 0 : calPoints.length > 0;
+      case 2: {
+        const hasPoints = wizardIsCanvas ? wizardLayoutBlocks.length > 0 : calPoints.length > 0;
+        const hasReceipt = receiptCondition === "CUSTOM" ? !!customReceiptCondition.trim() : !!receiptCondition;
+        return hasPoints && hasReceipt;
+      }
       case 3: return true;
       default: return true;
     }
@@ -1454,7 +5154,7 @@ export default function CalibrationWizard() {
 
   if (isInitializing || editLoading) {
     return (
-      <div className="flex-1 space-y-6 p-4 md:p-8 pt-6 overflow-y-auto animate-in fade-in-50 duration-200">
+      <div className="space-y-6 animate-in fade-in duration-200">
         {/* Header Skeleton */}
         <div className="flex items-center gap-4">
           <Skeleton className="h-9 w-9 rounded-lg shrink-0" />
@@ -1547,37 +5247,134 @@ export default function CalibrationWizard() {
   }
 
   return (
-    <div className="flex-1 space-y-6 p-4 md:p-8 pt-6 overflow-y-auto">
+    <div className="space-y-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => navigate("/calibration")} className="shrink-0">
           <ArrowLeft className="w-4 h-4" />
         </Button>
         <div>
-          <h1 className="text-xl font-bold">New Calibration</h1>
-          <p className="text-sm text-muted-foreground">Complete the calibration process step by step</p>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-bold">
+              {rejectionNotice ? "Re-Calibration" : isEditMode ? "Edit Calibration" : "New Calibration"}
+            </h1>
+            {rejectionNotice && (
+              <Badge variant="outline" className="bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-700 font-bold uppercase tracking-wider text-[10px] px-2 py-0.5">
+                Rework Mode
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {rejectionNotice
+              ? `Re-calibrating instrument following rejection of certificate ${rejectionNotice.certificateNumber}`
+              : isEditMode
+              ? "Update calibration data and regenerate certificate"
+              : "Complete the calibration process step by step"}
+          </p>
         </div>
       </div>
 
-      {/* Progress Steps */}
-      <div className="flex items-center gap-1 overflow-x-auto pb-2 min-w-full">
-        {STEPS.map((s, i) => (
-          <div key={i} className="flex items-center flex-1">
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all w-full ${
-              i === step
-                ? "bg-primary text-primary-foreground shadow-md"
-                : i < step
-                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                : "bg-muted text-muted-foreground"
-            }`}>
-              <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                i < step ? "bg-emerald-500 text-white" : i === step ? "bg-white/20" : "bg-muted-foreground/20"
-              }`}>
-                {i < step ? <Check className="w-3 h-3" /> : i + 1}
-              </span>
-              <span className="hidden sm:inline truncate">{s}</span>
+      {/* TypeUI Rejection Notice Alert Banner */}
+      {rejectionNotice && (
+        <div className="rounded-2xl border-2 border-rose-300 dark:border-rose-800 bg-rose-50/95 dark:bg-rose-950/30 p-4 sm:p-5 shadow-sm space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-100 dark:bg-rose-900/60 border border-rose-300 dark:border-rose-700 flex items-center justify-center text-rose-600 dark:text-rose-400 shrink-0 mt-0.5">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-rose-950 dark:text-rose-200">
+                    Re-Calibration Required: Previous Calibration Was Rejected
+                  </h3>
+                  <Badge variant="outline" className="text-[11px] font-bold uppercase tracking-wider bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/50 dark:text-rose-300">
+                    Rejected Cert: {rejectionNotice.certificateNumber}
+                  </Badge>
+                </div>
+                <p className="text-xs text-rose-800/80 dark:text-rose-300/80 mt-1">
+                  Rejected by <strong className="font-semibold text-rose-900 dark:text-rose-100">{rejectionNotice.rejectedBy}</strong>
+                  {rejectionNotice.rejectedAt && ` on ${formatDisplayDate(rejectionNotice.rejectedAt, "dd-MMM-yyyy 'at' hh:mm a")}`}.
+                  Previous specifications, masters, and values have been pre-filled. Review the reviewer reason below, correct failing readings or parameters, and click Finish to submit for re-approval.
+                </p>
+              </div>
             </div>
           </div>
-        ))}
+
+          {/* Rejection Reason Box */}
+          <div className="rounded-xl bg-white/95 dark:bg-slate-900/95 border border-rose-200 dark:border-rose-800/80 p-3.5 shadow-2xs">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400 flex items-center gap-1.5 mb-1">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Rejection Reason / Corrective Action Required:
+            </div>
+            <p className="text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+              {rejectionNotice.reason || "No explicit reason was recorded by the reviewer."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Progress Steps */}
+      <div className="w-full bg-card/80 backdrop-blur-md border border-border/80 p-2 rounded-2xl shadow-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {STEPS.map((s, i) => {
+            const isActive = i === step;
+            const isCompleted = i < step;
+            return (
+              <button
+                key={i}
+                type="button"
+                disabled={!isCompleted && i > step}
+                onClick={() => {
+                  if (isCompleted || i <= step) {
+                    // Prevent advancing past Step 2 if reference standard is expired
+                    if (i > 1 && step <= 1) {
+                      const { hasExpired, expiredItems } = validateReferenceStandards();
+                      if (hasExpired) {
+                        setExpiredStandardsList(expiredItems);
+                        setExpiredRefStandardsModalOpen(true);
+                        toast.error("Calibration Blocked: Reference Standard validity has expired!");
+                        return;
+                      }
+                    }
+                    if (step === 2 && i > 2 && wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+                      const evaluated = evaluateAllCanvasBlocks(wizardLayoutBlocks, { forceFull: true });
+                      setWizardLayoutBlocks(evaluated);
+                      const synced = syncCalPointsFromCanvas(evaluated);
+                      if (synced.length > 0) {
+                        setCalPoints(synced);
+                      }
+                    }
+                    setStep(i);
+                  }
+                }}
+                className={cn(
+                  "group relative flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all duration-200 text-left border shadow-2xs",
+                  isActive
+                    ? "bg-primary text-primary-foreground border-primary shadow-md ring-2 ring-primary/20 scale-[1.01]"
+                    : isCompleted
+                    ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/15 cursor-pointer"
+                    : "bg-muted/30 border-border/60 text-muted-foreground opacity-75 cursor-not-allowed"
+                )}
+              >
+                <span
+                  className={cn(
+                    "w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-transform duration-200 shadow-2xs",
+                    isCompleted
+                      ? "bg-emerald-500 text-white"
+                      : isActive
+                      ? "bg-white text-primary font-black"
+                      : "bg-background border border-border text-muted-foreground"
+                  )}
+                >
+                  {isCompleted ? <Check className="w-3.5 h-3.5 stroke-[3]" /> : i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <span className="text-[10px] font-mono tracking-wider uppercase block opacity-70">Step {i + 1}</span>
+                  <span className="font-bold truncate text-xs block leading-snug">{s}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Step Content */}
@@ -1672,7 +5469,18 @@ export default function CalibrationWizard() {
                         </div>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                           <div><span className="text-muted-foreground block text-[10px]">Traceable To</span><span className="font-medium">{ref.traceable_to || "NABL Accredited Lab"}</span></div>
-                          <div><span className="text-muted-foreground block text-[10px]">Validity</span><span className="font-medium">{ref.validity ? formatDisplayDate(ref.validity) : "-"}</span></div>
+                          <div>
+                            <span className="text-muted-foreground block text-[10px]">Validity</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-medium">{ref.validity ? formatDisplayDate(ref.validity) : "-"}</span>
+                              {ref.validity && (() => {
+                                const v = checkReferenceStandardValidity(ref.validity);
+                                if (v.isExpired) return <Badge variant="destructive" className="text-[9px] py-0 px-1.5 h-3.5">Expired</Badge>;
+                                if (v.isWarning) return <Badge className="text-[9px] py-0 px-1.5 h-3.5 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">Due Soon</Badge>;
+                                return null;
+                              })()}
+                            </div>
+                          </div>
                           <div><span className="text-muted-foreground block text-[10px]">Range</span><span className="font-medium">{ref.range || "-"}</span></div>
                           <div><span className="text-muted-foreground block text-[10px]">Least Count</span><span className="font-medium">{ref.least_count || "-"}</span></div>
                         </div>
@@ -1697,7 +5505,23 @@ export default function CalibrationWizard() {
                       <div>
                         <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Step 3: Calibration Data</span>
                         <p className="text-sm font-semibold text-foreground">
-                          {calPoints.length} Test Points • Unit: {calUnit || "mm"} {procedureReference ? `• SOP: ${procedureReference}` : ""}
+                          {(() => {
+                            if (wizardIsCanvas && wizardLayoutBlocks.length > 0) {
+                              const allTables = getAllCanvasTables(wizardLayoutBlocks);
+                              let totalPoints = 0;
+                              allTables.forEach((tbl) => {
+                                if (Array.isArray(tbl.rows)) {
+                                  totalPoints += tbl.rows.filter((r: any) => !r.is_merged && !r.isMerged).length;
+                                }
+                              });
+                              const ptsText = totalPoints > 0 ? `${totalPoints} Test Points • ` : "";
+                              const sectionsText = `${wizardLayoutBlocks.length} Section${wizardLayoutBlocks.length > 1 ? "s" : ""}`;
+                              const unitText = calUnit || (allTables[0]?.unit) || "mm";
+                              const procText = procedureNo || procedureReference ? `• Proc: ${procedureNo || procedureReference}` : "";
+                              return `${ptsText}${sectionsText} • Unit: ${unitText} ${procText}`.trim();
+                            }
+                            return `${calPoints.length} Test Points • Unit: ${calUnit || "mm"} ${procedureNo || procedureReference ? `• Proc: ${procedureNo || procedureReference}` : ""}`;
+                          })()}
                         </p>
                       </div>
                     </div>
@@ -1708,48 +5532,75 @@ export default function CalibrationWizard() {
                   </button>
 
                   {!step3Collapsed && (
-                    <div className="p-4 border-t bg-card text-xs space-y-3 animate-in fade-in-50 duration-200">
+                    <div className="p-4 border-t bg-card text-xs space-y-4 animate-in fade-in-50 duration-200">
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs bg-muted/20 p-2.5 rounded-lg border">
-                        <div><span className="text-muted-foreground block text-[10px]">Procedure SOP</span><span className="font-medium">{procedureReference || "-"}</span></div>
+                        <div><span className="text-muted-foreground block text-[10px]">Procedure No</span><span className="font-medium">{procedureNo || procedureReference || "-"}</span></div>
                         <div><span className="text-muted-foreground block text-[10px]">Doc. No.</span><span className="font-medium">{docNo || "-"}</span></div>
                         <div><span className="text-muted-foreground block text-[10px]">Temperature</span><span className="font-medium">{envTemp ? `${envTemp}°C` : "-"}</span></div>
                         <div><span className="text-muted-foreground block text-[10px]">Humidity</span><span className="font-medium">{envHumidity ? `${envHumidity}%` : "-"}</span></div>
                         <div><span className="text-muted-foreground block text-[10px]">Soaking Time</span><span className="font-medium text-primary">{envSoakingTime || (envSoakingStartTime && envSoakingEndTime ? `${envSoakingStartTime} - ${envSoakingEndTime}` : "-")}</span></div>
                       </div>
 
-                      {calPoints.length > 0 && (
+                      {wizardIsCanvas && wizardLayoutBlocks.length > 0 ? (
+                        <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                          <CanvasBlocksRenderer blocks={wizardLayoutBlocks} isScreen={true} />
+                        </div>
+                      ) : calPoints.length > 0 ? (
                         <div className="border rounded-lg overflow-hidden max-h-56 overflow-y-auto">
-                          <table className="w-full text-xs text-left border-collapse">
-                            <thead className="bg-muted text-muted-foreground font-semibold sticky top-0 text-[10px] uppercase">
-                              <tr>
-                                <th className="p-2 border-b border-r">Pt</th>
-                                <th className="p-2 border-b border-r">Description</th>
-                                <th className="p-2 border-b border-r">Nominal ({calUnit})</th>
-                                <th className="p-2 border-b border-r">Actual ({calUnit})</th>
-                                <th className="p-2 border-b border-r">Error ({calUnit})</th>
-                                <th className="p-2 border-b">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                              {calPoints.map((pt, i) => (
-                                <tr key={i} className="hover:bg-muted/30">
-                                  <td className="p-2 border-r font-medium text-center">{pt.point_number || i + 1}</td>
-                                  <td className="p-2 border-r">{pt.description || `Point ${i + 1}`}</td>
-                                  <td className="p-2 border-r font-mono">{pt.nominal ?? (pt as any).nominal_value ?? "-"}</td>
-                                  <td className="p-2 border-r font-mono">{pt.ascending_reading ?? (pt as any).actual_reading ?? "-"}</td>
-                                  <td className="p-2 border-r font-mono">{pt.error ?? "-"}</td>
-                                  <td className="p-2">
-                                    <span className={cn(
-                                      "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
-                                      pt.status?.toUpperCase() === "PASS" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"
-                                    )}>
-                                      {pt.status || "PASS"}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          {(() => {
+                            const hasDescending = calPoints.some((pt: any) => pt.descending_reading !== undefined && pt.descending_reading !== null && pt.descending_reading !== 0);
+                            const customCols = wizardCustomColumns || [];
+                            return (
+                              <table className="w-full text-xs text-left border-collapse">
+                                <thead className="bg-muted text-muted-foreground font-semibold sticky top-0 text-[10px] uppercase">
+                                  <tr>
+                                    <th className="p-2 border-b border-r">Pt</th>
+                                    <th className="p-2 border-b border-r">Description</th>
+                                    <th className="p-2 border-b border-r">Nominal ({calUnit})</th>
+                                    <th className="p-2 border-b border-r">{hasDescending ? "Actual / Ascending" : `Actual (${calUnit})`}</th>
+                                    {hasDescending && <th className="p-2 border-b border-r">Descending ({calUnit})</th>}
+                                    {customCols.map((c) => (
+                                      <th key={c.id} className="p-2 border-b border-r">{(c as any).label || c.name}</th>
+                                    ))}
+                                    <th className="p-2 border-b border-r">Error ({calUnit})</th>
+                                    <th className="p-2 border-b">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {calPoints.map((pt, i) => (
+                                    <tr key={i} className="hover:bg-muted/30">
+                                      <td className="p-2 border-r font-medium text-center">{pt.point_number || i + 1}</td>
+                                      <td className="p-2 border-r">{pt.description || `Point ${i + 1}`}</td>
+                                      <td className="p-2 border-r font-mono">{pt.nominal ?? (pt as any).nominal_value ?? "-"}</td>
+                                      <td className="p-2 border-r font-mono">{pt.ascending_reading ?? (pt as any).actual_reading ?? "-"}</td>
+                                      {hasDescending && (
+                                        <td className="p-2 border-r font-mono">{pt.descending_reading ?? "-"}</td>
+                                      )}
+                                      {customCols.map((c) => {
+                                        const cVal = (pt as any).customFields?.[c.id]?.value ?? (pt as any).customFields?.[c.id] ?? (pt as any)[c.id] ?? "-";
+                                        return (
+                                          <td key={c.id} className="p-2 border-r font-mono">{String(cVal)}</td>
+                                        );
+                                      })}
+                                      <td className="p-2 border-r font-mono">{pt.error ?? "-"}</td>
+                                      <td className="p-2">
+                                        <span className={cn(
+                                          "px-1.5 py-0.5 rounded text-[10px] font-bold uppercase",
+                                          pt.status?.toUpperCase() === "PASS" ? "bg-emerald-500/10 text-emerald-600" : "bg-red-500/10 text-red-600"
+                                        )}>
+                                          {pt.status || "PASS"}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            );
+                          })()}
+                        </div>
+                      ) : (
+                        <div className="p-4 text-center text-muted-foreground italic text-xs border rounded-lg">
+                          No calibration test points recorded yet.
                         </div>
                       )}
                     </div>
@@ -1841,33 +5692,149 @@ export default function CalibrationWizard() {
           {/* ═══ Step 2: Reference Standard ═══ */}
           {step === 1 && (
             <div className="space-y-6">
-              {referenceStandards.map((ref, index) => (
-                <div key={index} className="relative p-4 border rounded-xl bg-card">
-                  {referenceStandards.length > 1 && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="absolute right-2 top-2 h-6 w-6 text-destructive hover:bg-destructive/10"
-                      onClick={() => {
-                        const newRefs = [...referenceStandards];
-                        newRefs.splice(index, 1);
-                        setReferenceStandards(newRefs);
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  )}
-                  <h4 className="font-semibold text-sm mb-4">Reference Standard {index + 1}</h4>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-1.5 md:col-span-2">
-                      <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
-                      <Select 
-                        value={masterStandards.find(m => m.id === ref.id || m.id_code === ref.id || (ref.name && m.name.toLowerCase() === ref.name.toLowerCase()))?.id || ""}
-                        onValueChange={(val) => {
-                          const master = masterStandards.find(m => m.id === val);
-                          if (master) {
-                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || (master as any).calibration_agency || (master as any).calibration_source || master.id_code || master.id || "";
+              {/* Step 2 Global Expiration or Warning Alert Banner */}
+              {(() => {
+                const { hasExpired, hasWarning, expiredItems, warningItems } = validateReferenceStandards();
+                if (hasExpired) {
+                  return (
+                    <div className="flex items-start gap-3 p-4 rounded-xl bg-destructive/10 border-2 border-destructive/40 text-destructive text-xs shadow-xs animate-in fade-in duration-200">
+                      <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-destructive" />
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <p className="font-bold text-sm">Calibration Blocked: Reference Standard Validity Expired</p>
+                          <Badge variant="destructive" className="text-[10px] font-bold">Action Required</Badge>
+                        </div>
+                        <p className="text-xs opacity-90 leading-relaxed">
+                          {expiredItems.length === 1
+                            ? `Reference Standard "${expiredItems[0].name}" (${expiredItems[0].id}) expired on ${expiredItems[0].formattedDate} (${expiredItems[0].daysAgo} days ago).`
+                            : `${expiredItems.length} selected Reference Standards have expired calibration validity.`}
+                          {" "}ISO/IEC 17025 and quality compliance rules strictly prohibit using expired reference standards. You cannot proceed to calibration data entry until a valid standard is provided.
+                        </p>
+                        <div className="flex items-center gap-2 pt-2 flex-wrap">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => {
+                              setMasterSelectFilter("valid");
+                              const firstExpiredIdx = referenceStandards.findIndex((r) => {
+                                const c = r.validity ? checkReferenceStandardValidity(r.validity) : null;
+                                return c?.isExpired;
+                              });
+                              setActiveMasterSelectIndex(firstExpiredIdx >= 0 ? firstExpiredIdx : 0);
+                              toast.info("Instrument Master dropdown opened and filtered to show only Valid reference standards");
+                            }}
+                            className="h-7 text-xs font-semibold gap-1.5 bg-background shadow-2xs hover:bg-muted text-foreground"
+                          >
+                            <Filter className="w-3 h-3 text-emerald-600" />
+                            Select Valid Standard from Inventory
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => window.open("/instruments?is_reference_standard=true&device_type=Reference Standard", "_blank")}
+                            className="h-7 text-xs font-semibold gap-1.5 bg-background/80 hover:bg-background border-destructive/30 text-destructive hover:text-destructive"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Filter in Instrument Master List
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                if (hasWarning) {
+                  return (
+                    <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-900 dark:text-amber-200 text-xs shadow-xs animate-in fade-in duration-200">
+                      <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <div className="space-y-1 flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <p className="font-bold text-sm text-amber-800 dark:text-amber-300">Warning: Reference Standard Expiring Within 15 Days</p>
+                          <Badge className="text-[10px] font-bold bg-amber-500/20 text-amber-800 dark:text-amber-300 border-amber-500/40">Expiring Soon</Badge>
+                        </div>
+                        <p className="text-xs opacity-90 leading-relaxed">
+                          {warningItems.length === 1
+                            ? `Reference Standard "${warningItems[0].name}" (${warningItems[0].id}) is due for calibration in ${warningItems[0].daysRemaining === 0 ? "today" : `${warningItems[0].daysRemaining} days`} (${warningItems[0].formattedDate}).`
+                            : `${warningItems.length} Reference Standards are due for recalibration within 15 days.`}
+                          {" "}You may proceed with today's calibration, but please arrange recalibration for this standard promptly.
+                        </p>
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              {referenceStandards.map((ref, index) => {
+                const vCheck = ref.validity ? checkReferenceStandardValidity(ref.validity) : null;
+                return (
+                  <div
+                    key={index}
+                    className={cn(
+                      "relative p-4 border rounded-xl bg-card transition-all duration-200",
+                      vCheck?.isExpired && "border-destructive/60 bg-destructive/[0.02] shadow-xs ring-1 ring-destructive/20",
+                      vCheck?.isWarning && "border-amber-500/50 bg-amber-500/[0.01] shadow-xs ring-1 ring-amber-500/20"
+                    )}
+                  >
+                    {referenceStandards.length > 1 && (
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className="absolute right-2 top-2 h-6 w-6 text-destructive hover:bg-destructive/10"
+                        onClick={() => {
+                          const newRefs = [...referenceStandards];
+                          newRefs.splice(index, 1);
+                          setReferenceStandards(newRefs);
+                          setAcknowledgedRefStandardWarning(false);
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}
+
+                    <div className="flex items-center justify-between mb-4 pr-8 flex-wrap gap-2">
+                      <h4 className="font-semibold text-sm">Reference Standard {index + 1}</h4>
+                      {vCheck?.isExpired && (
+                        <Badge variant="destructive" className="text-[10px] font-bold gap-1 py-0.5 px-2">
+                          <AlertCircle className="w-3 h-3" />
+                          Expired ({vCheck.formattedDate})
+                        </Badge>
+                      )}
+                      {vCheck?.isWarning && (
+                        <Badge className="text-[10px] font-bold gap-1 py-0.5 px-2 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">
+                          <AlertTriangle className="w-3 h-3 text-amber-600 dark:text-amber-400" />
+                          Expiring Soon ({vCheck.daysRemaining === 0 ? "Today" : `${vCheck.daysRemaining}d`})
+                        </Badge>
+                      )}
+                      {vCheck?.status === "valid" && (
+                        <Badge variant="outline" className="text-[10px] gap-1 py-0.5 px-2 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 bg-emerald-500/10">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          Valid ({vCheck.formattedDate})
+                        </Badge>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Choose from Master Instrument */}
+                      <div className="space-y-1.5 md:col-span-2">
+                        <Label className="text-xs text-primary font-semibold">Select from Master Inventory (Optional)</Label>
+                        <MasterStandardSelect
+                          masterStandards={masterStandards}
+                          selectedMasterId={
+                            masterStandards.find(
+                              (m) =>
+                                m.id === ref.id ||
+                                m.id_code === ref.id ||
+                                (ref.name && m.name.toLowerCase() === ref.name.toLowerCase())
+                            )?.id || ""
+                          }
+                          isOpen={activeMasterSelectIndex === index}
+                          onOpenChange={(isOpen) => setActiveMasterSelectIndex(isOpen ? index : null)}
+                          filterMode={masterSelectFilter}
+                          onFilterModeChange={setMasterSelectFilter}
+                          onSelect={(master) => {
+                            const initialCertNo = master.cert_no || master.traceable || (master as any).certificate_no || (master as any).cert_number || master.id_code || master.id || "";
                             const newRefs = [...referenceStandards];
                             newRefs[index] = {
                               ...newRefs[index],
@@ -1879,163 +5846,224 @@ export default function CalibrationWizard() {
                               validity: master.due_date ? toLocalYyyyMmDd(master.due_date) : "",
                               traceable_to: initialCertNo,
                               cert_no: initialCertNo,
-                              agency: (master as any).calibration_agency || (master as any).agency || (master as any).calibration_source || master.traceable || master.location || ""
+                              agency: master.agency || "",
                             };
                             setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                            setActiveMasterSelectIndex(null);
+                          }}
+                          onClear={() => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index] = {
+                              ...newRefs[index],
+                              name: "",
+                              make: "",
+                              id: "",
+                              range: "",
+                              least_count: "",
+                              validity: "",
+                              traceable_to: "",
+                              cert_no: "",
+                              agency: "",
+                            };
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                            setActiveMasterSelectIndex(null);
+                          }}
+                        />
+                      </div>
 
-                            // Asynchronously fetch latest calibration certificate for this master instrument
-                            httpClient.get(`/calibrations/latest/${master.id}`).then((res) => {
-                              if (res.data && res.data.certificate_number) {
-                                const fetchedCert = res.data.certificate_number;
-                                setReferenceStandards((prevRefs) => {
-                                  const updated = [...prevRefs];
-                                  if (updated[index]) {
-                                    updated[index] = {
-                                      ...updated[index],
-                                      traceable_to: fetchedCert,
-                                      cert_no: fetchedCert,
-                                    };
-                                  }
-                                  return updated;
-                                });
-                              }
-                            }).catch(() => {});
-                          }
-                        }}
-                      >
-                        <SelectTrigger className="w-full bg-primary/5">
-                          <SelectValue placeholder="-- Select a Master Instrument to auto-fill --" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {masterStandards.map(m => (
-                            <SelectItem key={m.id} value={m.id}>{m.name} ({m.id_code})</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Reference Standard Name</Label>
+                        </div>
+                        <Input 
+                          value={ref.name} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].name = e.target.value;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }} 
+                          placeholder="e.g., Dead Weight Tester" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">ID / Serial Number</Label>
+                        </div>
+                        <Input 
+                          value={ref.id} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].id = e.target.value;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }} 
+                          placeholder="e.g., DWT-001" 
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <div className="h-5 flex items-center">
+                            <Label className="text-xs font-semibold leading-none">Make</Label>
+                          </div>
+                          <Input
+                            value={ref.make || ""}
+                            onChange={(e) => {
+                              const newRefs = [...referenceStandards];
+                              newRefs[index].make = e.target.value;
+                              setReferenceStandards(newRefs);
+                            }}
+                            placeholder="e.g., Mitutoyo"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="h-5 flex items-center">
+                            <Label className="text-xs font-semibold leading-none">Cal.Agency</Label>
+                          </div>
+                          <Input
+                            value={ref.agency || ""}
+                            onChange={(e) => {
+                              const newRefs = [...referenceStandards];
+                              newRefs[index].agency = e.target.value;
+                              setReferenceStandards(newRefs);
+                            }}
+                            placeholder="e.g., VIPL / TEST CAL (NABL)"
+                          />
+                        </div>
+                      </div>
 
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Reference Standard Name</Label>
-                      <Input 
-                        value={ref.name} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].name = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., Dead Weight Tester" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">ID / Serial Number</Label>
-                      <Input 
-                        value={ref.id} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].id = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., DWT-001" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Traceable To (Cert No)</Label>
-                      <Input 
-                        value={ref.traceable_to || ref.cert_no || ""} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].traceable_to = e.target.value;
-                          newRefs[index].cert_no = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., NABL Cert 12345" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Validity / Due Date</Label>
-                      <Input 
-                        type="date" 
-                        value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].validity = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Range</Label>
-                      <Input 
-                        value={ref.range} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].range = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., 0-100 Bar" 
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">Least Count</Label>
-                      <Input 
-                        value={ref.least_count} 
-                        onChange={(e) => {
-                          const newRefs = [...referenceStandards];
-                          newRefs[index].least_count = e.target.value;
-                          setReferenceStandards(newRefs);
-                        }} 
-                        placeholder="e.g., 0.01 Bar" 
-                      />
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Traceable To (NABL Lab / Cert No)</Label>
+                        </div>
+                        <Input 
+                          value={ref.traceable_to || ref.cert_no || ""} 
+                          onChange={(e) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].traceable_to = e.target.value;
+                            newRefs[index].cert_no = e.target.value;
+                            setReferenceStandards(newRefs);
+                          }} 
+                          placeholder="e.g., NABL Cert 12345" 
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="h-5 flex items-center justify-between">
+                          <Label className="text-xs font-semibold leading-none">Validity / Due Date</Label>
+                          {vCheck?.isExpired && (
+                            <span className="text-[10px] font-bold text-destructive flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" /> EXPIRED
+                            </span>
+                          )}
+                          {vCheck?.isWarning && (
+                            <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                              <AlertTriangle className="w-3 h-3" /> EXPIRING SOON
+                            </span>
+                          )}
+                        </div>
+                        <YearMonthDatePicker
+                          value={ref.validity ? toLocalYyyyMmDd(ref.validity) : ""}
+                          onChange={(newDate) => {
+                            const newRefs = [...referenceStandards];
+                            newRefs[index].validity = newDate;
+                            setReferenceStandards(newRefs);
+                            setAcknowledgedRefStandardWarning(false);
+                          }}
+                          placeholder="Select validity date"
+                          className={cn(
+                            "h-9 text-sm transition-colors",
+                            vCheck?.isExpired && "border-destructive text-destructive focus-visible:ring-destructive/30 ring-1 ring-destructive/20",
+                            vCheck?.isWarning && "border-amber-500 text-amber-900 dark:text-amber-200 focus-visible:ring-amber-500/30 ring-1 ring-amber-500/20"
+                          )}
+                          formatPattern="dd-MMM-yyyy"
+                          clearable
+                        />
+                        {vCheck?.isExpired && (
+                          <div className="flex items-start gap-1.5 p-2.5 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs animate-in fade-in">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-destructive" />
+                            <div className="space-y-0.5 leading-tight">
+                              <p className="font-bold">Validity Expired — Calibration Blocked</p>
+                              <p className="text-[11px] opacity-90">
+                                {vCheck.message}. In compliance with calibration quality standards, this standard cannot be used for calibration.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {vCheck?.isWarning && (
+                          <div className="flex items-start gap-1.5 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs animate-in fade-in">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                            <div className="space-y-0.5 leading-tight">
+                              <p className="font-bold">Validity Warning — Recalibration Due Soon</p>
+                              <p className="text-[11px] opacity-90">
+                                {vCheck.message}. Standard validity will expire within 15 days. Please ensure recalibration is scheduled.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                        {vCheck?.status === "valid" && (
+                          <div className="flex items-center gap-1.5 p-1.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-[11px]">
+                            <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                            <span>{vCheck.message}</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-              <Button 
-                variant="outline" 
-                size="sm" 
-                className="w-full border-dashed"
-                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", traceable_to: "", validity: "", range: "", least_count: "" }])}
+                );
+              })}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setReferenceStandards([...referenceStandards, { name: "", id: "", make: "", agency: "", traceable_to: "", cert_no: "", validity: "" }])}
+                className="w-full text-xs font-semibold border-dashed"
               >
-                <PlusCircle className="w-4 h-4 mr-2" /> Add Another Reference Standard
+                + Add Another Reference Standard
               </Button>
             </div>
           )}
 
-          {/* ═══ Step 3: Environmental + Data Entry ═══ */}
+          {/* ═══ Step 3: Calibration Data ═══ */}
           {step === 2 && selectedType && (
             <>
               {/* Calibration Template Selector */}
-              <div className="p-3 bg-gradient-to-r from-blue-500/10 to-indigo-500/5 border border-blue-200 dark:border-blue-900 rounded-xl space-y-2 mb-4">
+              <div className="space-y-2 bg-primary/5 p-3.5 rounded-xl border border-primary/20 mb-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Layers className="w-4 h-4 text-primary" />
-                    <span className="text-xs font-semibold">Calibration Template</span>
-                    <Badge variant="secondary" className="text-[10px] capitalize">
+                  <Label className="text-xs font-bold text-primary flex items-center gap-1.5">
+                    <Layers className="w-3.5 h-3.5" />
+                    Calibration Template
+                  </Label>
+                  {selectedType && (
+                    <span className="text-[10px] font-mono text-muted-foreground bg-background px-2 py-0.5 rounded border">
                       {selectedType.label}
-                    </Badge>
-                  </div>
-                  <span className="text-[10px] text-muted-foreground">
-                    Search and select a template to auto-fill test points & tolerances
-                  </span>
+                    </span>
+                  )}
                 </div>
 
-                {/* Searchable Combobox Dropdown */}
                 <Popover open={templatePopoverOpen} onOpenChange={setTemplatePopoverOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
                       role="combobox"
                       aria-expanded={templatePopoverOpen}
-                      className="w-full justify-between bg-background text-xs h-9 font-normal border-input"
+                      className="w-full justify-between h-9 text-xs bg-background hover:bg-muted/50 border-border/70 shadow-2xs font-medium"
                     >
                       {selectedTemplateId && selectedTemplateId !== "none" ? (
-                        <span className="truncate font-semibold text-foreground">
-                          {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
-                          {" "}
-                          <span className="text-muted-foreground font-normal">
-                            ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type}) — {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
+                        <div className="flex items-center gap-2 truncate">
+                          <span className="font-semibold text-foreground truncate">
+                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.name}
                           </span>
-                        </span>
+                          {availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type && (
+                            <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                              ({availableTemplates.find((t) => t.id === selectedTemplateId)?.instrument_type})
+                            </span>
+                          )}
+                          <Badge variant="secondary" className="text-[9px] font-mono shrink-0">
+                            {availableTemplates.find((t) => t.id === selectedTemplateId)?.calibration_points?.length || 0} points
+                          </Badge>
+                        </div>
                       ) : (
                         <span className="text-muted-foreground font-medium">
                           {availableTemplates.length > 0
@@ -2043,60 +6071,93 @@ export default function CalibrationWizard() {
                             : "-- No Templates Found (Using Custom Grid) --"}
                         </span>
                       )}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      <ChevronDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2 space-y-2 z-50 bg-popover shadow-xl border">
-                    {/* Search Filter Input */}
-                    <div className="relative">
-                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                      <Input
+                  <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] p-0 shadow-xl border-border/80 rounded-xl overflow-hidden">
+                    <div className="p-2 border-b bg-muted/40 flex items-center gap-2">
+                      <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      <input
+                        type="text"
+                        placeholder="Filter templates..."
                         value={templateSearchQuery}
                         onChange={(e) => setTemplateSearchQuery(e.target.value)}
-                        placeholder="Search template name, instrument type..."
-                        className="pl-8 pr-7 h-8 text-xs bg-background"
+                        className="w-full bg-transparent text-xs focus:outline-none placeholder:text-muted-foreground"
                       />
-                      {templateSearchQuery && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setTemplateSearchQuery("")}
-                          className="h-6 w-6 absolute right-1 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        >
-                          <X className="w-3 h-3" />
-                        </Button>
-                      )}
                     </div>
+                    <div className="max-h-60 overflow-y-auto divide-y">
+                      {/* Option: Template Saved with Instrument Master */}
+                      {selectedInstrument && hasMasterSavedTemplate && (
+                        <div
+                          className={cn(
+                            "p-2.5 text-xs transition-colors flex items-center justify-between border-b bg-amber-500/5 hover:bg-amber-500/10",
+                            selectedTemplateId === "master_saved" && "bg-amber-500/15 font-bold"
+                          )}
+                        >
+                          <div
+                            className="flex-1 cursor-pointer"
+                            onClick={() => {
+                              if (selectedInstrument) {
+                                const targetTpl = availableTemplates.find(t => t.id === selectedTemplateId && t.id !== "none") || availableTemplates[0];
+                                if (targetTpl) {
+                                  applyTemplateObject(targetTpl, false, undefined, selectedInstrument);
+                                  toast.success(`Loaded template saved with Instrument Master (${selectedInstrument.id_code})`);
+                                }
+                              }
+                              setTemplatePopoverOpen(false);
+                              setTemplateSearchQuery("");
+                            }}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <Layers className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              <p className="font-semibold text-foreground">Template Saved with Master</p>
+                              <Badge variant="outline" className="text-[9px] bg-amber-500/10 text-amber-700 border-amber-500/30">
+                                {selectedInstrument.id_code}
+                              </Badge>
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-0.5">
+                              {selectedInstrument.custom_parameters?.specifications?.length || 0} custom specifications &amp; diagram
+                            </p>
+                          </div>
 
-                    {/* Filtered Suggestion List */}
-                    <div className="max-h-56 overflow-y-auto space-y-1">
-                      {/* Default Option: None */}
+                          <div className="flex items-center gap-1 ml-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteMasterTemplateOpen(true);
+                              }}
+                              className="h-7 w-7 text-destructive hover:bg-destructive/15 hover:text-destructive"
+                              title="Delete saved template from Instrument Master"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
                       <div
                         onClick={() => {
                           handleApplyTemplate("none");
                           setTemplatePopoverOpen(false);
                           setTemplateSearchQuery("");
                         }}
-                        className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                          !selectedTemplateId || selectedTemplateId === "none"
-                            ? "bg-primary/10 text-primary font-bold"
-                            : "hover:bg-accent text-muted-foreground"
-                        }`}
+                        className={cn(
+                          "p-2.5 text-xs cursor-pointer hover:bg-muted/50 transition-colors flex items-center justify-between",
+                          (!selectedTemplateId || selectedTemplateId === "none") && "bg-primary/10 font-bold text-primary"
+                        )}
                       >
-                        <span>-- None / Custom (No Template) --</span>
-                        {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary" />}
+                        <div>
+                          <p className="font-medium text-foreground">Custom / Manual Data Entry</p>
+                          <p className="text-[10px] text-muted-foreground">Do not use a saved template structure</p>
+                        </div>
+                        {(!selectedTemplateId || selectedTemplateId === "none") && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
                       </div>
 
-                      {/* Templates List */}
                       {availableTemplates
-                        .filter((tpl) => {
-                          if (!templateSearchQuery.trim()) return true;
-                          const q = templateSearchQuery.toLowerCase();
-                          return (
-                            tpl.name.toLowerCase().includes(q) ||
-                            tpl.instrument_type.toLowerCase().includes(q)
-                          );
-                        })
+                        .filter(t => !templateSearchQuery || t.name.toLowerCase().includes(templateSearchQuery.toLowerCase()) || t.instrument_type?.toLowerCase().includes(templateSearchQuery.toLowerCase()))
                         .map((tpl) => {
                           const isSelected = selectedTemplateId === tpl.id;
                           return (
@@ -2107,13 +6168,14 @@ export default function CalibrationWizard() {
                                 setTemplatePopoverOpen(false);
                                 setTemplateSearchQuery("");
                               }}
-                              className={`p-2 rounded-md cursor-pointer text-xs flex items-center justify-between transition-colors ${
-                                isSelected ? "bg-primary/10 text-primary font-bold" : "hover:bg-accent"
-                              }`}
+                              className={cn(
+                                "p-2.5 text-xs cursor-pointer hover:bg-primary/5 transition-colors flex items-center justify-between",
+                                isSelected && "bg-primary/10 font-bold text-primary"
+                              )}
                             >
-                              <div className="truncate pr-2">
+                              <div>
                                 <p className="font-semibold text-foreground">{tpl.name}</p>
-                                <p className="text-[10px] text-muted-foreground truncate">
+                                <p className="text-[10px] text-muted-foreground font-mono">
                                   {tpl.instrument_type} • {tpl.calibration_points?.length || 0} test points
                                 </p>
                               </div>
@@ -2122,77 +6184,698 @@ export default function CalibrationWizard() {
                           );
                         })}
 
-                      {availableTemplates.length === 0 && (
-                        <div className="p-3 text-center text-xs text-muted-foreground">
-                          No templates found. Go to <span className="font-semibold text-primary cursor-pointer hover:underline" onClick={() => navigate("/templates")}>Calibration Templates</span> to create one.
-                        </div>
-                      )}
+                      {/* Standard System Presets (LF Gauge Standard, Micrometer, Caliper, etc.) */}
+                      <div className="bg-muted/60 px-2.5 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider border-t">
+                        Standard System Presets
+                      </div>
+                      {CANVAS_PRESETS
+                        .filter(p => !templateSearchQuery || p.name.toLowerCase().includes(templateSearchQuery.toLowerCase()) || p.instrumentType.toLowerCase().includes(templateSearchQuery.toLowerCase()))
+                        .map((preset) => {
+                          const isSelected = selectedTemplateId === preset.id;
+                          return (
+                            <div
+                              key={preset.id}
+                              onClick={() => {
+                                handleApplyTemplate(preset.id);
+                                setTemplatePopoverOpen(false);
+                                setTemplateSearchQuery("");
+                              }}
+                              className={cn(
+                                "p-2.5 text-xs cursor-pointer hover:bg-primary/5 transition-colors flex items-center justify-between",
+                                isSelected && "bg-primary/10 font-bold text-primary"
+                              )}
+                            >
+                              <div>
+                                <p className="font-semibold text-foreground flex items-center gap-1.5">
+                                  <Sparkles className="w-3 h-3 text-amber-500 shrink-0" />
+                                  <span>{preset.name}</span>
+                                </p>
+                                <p className="text-[10px] text-muted-foreground font-mono">
+                                  {preset.instrumentType} • {preset.blocks.length} sections
+                                </p>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-primary shrink-0" />}
+                            </div>
+                          );
+                        })}
                     </div>
                   </PopoverContent>
                 </Popover>
               </div>
 
-              <div className="space-y-3 mb-6 p-3 bg-card border rounded-xl shadow-xs">
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="space-y-1.5 flex-1 min-w-[240px]">
-                    <Label className="text-xs font-semibold">Standard Reference</Label>
-                    <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
+              {/* ═══ Collapsible Document, Procedure & Environmental Metadata ═══ */}
+              {(() => {
+                const metadataFields = [
+                  { label: "Receipt Condition", value: receiptCondition === "CUSTOM" ? customReceiptCondition : receiptCondition, required: true },
+                  { label: "Standard Reference", value: standardReference },
+                  { label: "Template Doc No", value: docNo },
+                  { label: "Doc Date", value: docDate },
+                  { label: "Doc Rev", value: docRev },
+                  { label: "Temp (°C)", value: envTemp },
+                  { label: "Humidity (%)", value: envHumidity },
+                  { label: "Procedure No", value: procedureNo },
+                  { label: "Procedure Name", value: procedureName },
+                  { label: "Rev", value: procedureRev },
+                  { label: "Date", value: procedureDate },
+                  { label: "Acceptance Criteria Doc No", value: acceptanceCriteriaDocNo },
+                  { label: "Criteria Rev", value: acceptanceCriteriaRev },
+                  { label: "Criteria Date", value: acceptanceCriteriaDate },
+                  { label: "Criteria Ref", value: acceptanceCriteriaReference },
+                  { label: "Soaking Time", value: envSoakingTime },
+                ];
+                const emptyMetadataFields = metadataFields.filter((f) => !f.value || !String(f.value).trim());
+                const emptyMetadataCount = emptyMetadataFields.length;
+                const isReceiptConditionEmpty = !receiptCondition || (receiptCondition === "CUSTOM" && !customReceiptCondition?.trim());
+
+                return (
+                  <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20 mb-4">
+                    <button
+                      type="button"
+                      onClick={() => setMetadataCollapsed(!metadataCollapsed)}
+                      className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                      aria-expanded={!metadataCollapsed}
+                    >
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={cn(
+                            "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                            isReceiptConditionEmpty
+                              ? "bg-rose-500 text-white"
+                              : emptyMetadataCount > 0
+                              ? "bg-amber-500 text-white"
+                              : "bg-emerald-500 text-white"
+                          )}
+                        >
+                          {isReceiptConditionEmpty ? (
+                            <AlertCircle className="w-3.5 h-3.5" />
+                          ) : emptyMetadataCount > 0 ? (
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                          ) : (
+                            <Check className="w-3.5 h-3.5" />
+                          )}
+                        </span>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                              SOP, Environmental &amp; Document Properties
+                            </span>
+                            {isReceiptConditionEmpty && (
+                              <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/30 font-semibold flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3 text-rose-500" />
+                                Receipt Condition Required *
+                              </Badge>
+                            )}
+                            {emptyMetadataCount > 0 ? (
+                              <Badge
+                                variant="outline"
+                                title={`Empty fields: ${emptyMetadataFields.map(f => f.label).join(", ")}`}
+                                className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold flex items-center gap-1 cursor-help"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-500" />
+                                {emptyMetadataCount} Empty {emptyMetadataCount === 1 ? "Field" : "Fields"}
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold flex items-center gap-1">
+                                <Check className="w-3 h-3 text-emerald-600" />
+                                All Parameters Filled
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-xs font-medium text-foreground mt-0.5">
+                            {effectiveReceiptCondition ? `${effectiveReceiptCondition}` : "No Receipt Condition"}
+                            {(envTemp || envHumidity) && ` • ${envTemp || "--"}°C / ${envHumidity || "--"}%`}
+                            {procedureNo && ` • SOP: ${procedureNo}`}
+                            {docNo && ` • Doc: ${docNo}`}
+                          </p>
+                          {emptyMetadataCount > 0 && (
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-normal mt-0.5">
+                              <span className="font-semibold">Empty:</span>{" "}
+                              {emptyMetadataFields.map((f) => f.label).slice(0, 4).join(", ")}
+                              {emptyMetadataCount > 4 && ` +${emptyMetadataCount - 4} more`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground shrink-0">
+                        <span>{metadataCollapsed ? "View Details" : "Hide Details"}</span>
+                        <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !metadataCollapsed && "rotate-180")} />
+                      </div>
+                    </button>
+
+                    {!metadataCollapsed && (
+                      <div className="p-3.5 border-t bg-card space-y-3 animate-in fade-in-50 duration-200">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="space-y-1.5 flex-1 min-w-[220px]">
+                            <Label className="text-xs font-semibold">Standard Reference</Label>
+                            <Input value={standardReference} onChange={(e) => setStandardReference(e.target.value)} placeholder="Standard calibration per ISO/IEC 17025" className="text-xs font-medium" />
+                          </div>
+                          <div className="space-y-1.5 min-w-[210px]">
+                            <Label className="text-xs font-semibold flex items-center gap-1">
+                              Gauge Receipt Condition <span className="text-rose-500">*</span>
+                            </Label>
+                            <Select value={receiptCondition} onValueChange={(val) => setReceiptCondition(val)}>
+                              <SelectTrigger className="text-xs font-medium bg-background h-9">
+                                <SelectValue placeholder="Select Condition" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="NO DENT & DAMAGE (OK)">NO DENT & DAMAGE (OK)</SelectItem>
+                                <SelectItem value="SATISFACTORY">SATISFACTORY</SelectItem>
+                                <SelectItem value="DENT & DAMAGE OBSERVED">DENT & DAMAGE OBSERVED</SelectItem>
+                                <SelectItem value="CUSTOM">CUSTOM (Enter Condition...)</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {receiptCondition === "CUSTOM" && (
+                            <div className="space-y-1.5 min-w-[220px] flex-1">
+                              <Label className="text-xs font-semibold text-foreground">Custom Receipt Condition <span className="text-rose-500">*</span></Label>
+                              <Input
+                                value={customReceiptCondition}
+                                onChange={(e) => setCustomReceiptCondition(e.target.value)}
+                                placeholder="e.g., No dent, measuring face OK"
+                                className="text-xs font-medium h-9"
+                              />
+                            </div>
+                          )}
+                          <div className="space-y-1.5 w-36">
+                            <Label className="text-xs font-semibold">Template Doc No</Label>
+                            <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
+                          </div>
+                          <div className="space-y-1.5 min-w-[130px] w-36">
+                            <Label className="text-xs font-medium text-muted-foreground">Doc Date</Label>
+                            <YearMonthDatePicker
+                              value={docDate}
+                              onChange={(newDate) => setDocDate(newDate)}
+                              placeholder="DD-MM-YYYY"
+                              className="text-xs font-medium h-9"
+                              formatPattern="dd-MMM-yyyy"
+                              clearable
+                            />
+                          </div>
+                          <div className="space-y-1.5 w-20">
+                            <Label className="text-xs font-medium text-muted-foreground">Doc Rev</Label>
+                            <Input value={docRev} onChange={(e) => setDocRev(e.target.value)} placeholder="e.g. 3" className="text-xs font-medium text-center" />
+                          </div>
+                          <div className="space-y-1.5 w-24">
+                            <Label className="text-xs font-medium">Temp (°C)</Label>
+                            <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
+                          </div>
+                          <div className="space-y-1.5 w-24">
+                            <Label className="text-xs font-medium">Humidity (%)</Label>
+                            <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
+                          </div>
+                        </div>
+
+                        {/* Procedure & Acceptance Criteria Details */}
+                        <div className="pt-3 border-t border-border/70 grid grid-cols-1 md:grid-cols-12 gap-3">
+                          <div className="space-y-1 col-span-12 md:col-span-3">
+                            <Label className="text-[11px] font-semibold text-foreground">Procedure No</Label>
+                            <Input
+                              value={procedureNo}
+                              onChange={(e) => {
+                                setProcedureNo(e.target.value);
+                                setProcedureReference(e.target.value);
+                              }}
+                              placeholder="e.g. PC-01"
+                              className="text-xs h-8 font-medium"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-12 md:col-span-5">
+                            <Label className="text-[11px] font-semibold text-foreground">Procedure Name</Label>
+                            <Input
+                              value={procedureName}
+                              onChange={(e) => setProcedureName(e.target.value)}
+                              placeholder="e.g. Master procedure"
+                              className="text-xs h-8 font-medium"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-6 md:col-span-2">
+                            <Label className="text-[11px] font-semibold text-foreground">Rev</Label>
+                            <Input
+                              value={procedureRev}
+                              onChange={(e) => setProcedureRev(e.target.value)}
+                              placeholder="Rev"
+                              className="text-xs h-8 font-medium text-center"
+                            />
+                          </div>
+                          <div className="space-y-1 col-span-6 md:col-span-2">
+                            <Label className="text-[11px] font-semibold text-foreground">Date</Label>
+                            <YearMonthDatePicker
+                              value={procedureDate}
+                              onChange={(newDate) => setProcedureDate(newDate)}
+                              placeholder="DD-MM-YYYY"
+                              className="text-xs h-8 font-medium"
+                              formatPattern="dd-MMM-yyyy"
+                              clearable
+                            />
+                          </div>
+
+                          <div className="space-y-1 col-span-12 md:col-span-4">
+                            <Label className="text-[11px] font-semibold text-foreground">Acceptance Criteria Doc No</Label>
+                            <Input value={acceptanceCriteriaDocNo} onChange={(e) => setAcceptanceCriteriaDocNo(e.target.value)} placeholder="e.g. D/QCM/GI/001/03" className="text-xs h-8 font-medium" />
+                          </div>
+                          <div className="space-y-1 col-span-12 md:col-span-8">
+                            <Label className="text-[11px] font-semibold text-foreground">Criteria Rev &amp; Date / Ref</Label>
+                            <div className="flex gap-1.5 items-center">
+                              <Input value={acceptanceCriteriaRev} onChange={(e) => setAcceptanceCriteriaRev(e.target.value)} placeholder="Rev" className="text-xs h-8 w-14 shrink-0 font-medium text-center" />
+                              <YearMonthDatePicker
+                                value={acceptanceCriteriaDate}
+                                onChange={(newDate) => setAcceptanceCriteriaDate(newDate)}
+                                placeholder="Date"
+                                className="text-xs h-8 w-40 min-w-[150px] shrink-0 font-medium"
+                                formatPattern="dd-MMM-yyyy"
+                                clearable
+                              />
+                              <Input value={acceptanceCriteriaReference} onChange={(e) => setAcceptanceCriteriaReference(e.target.value)} placeholder="Custom Ref Text" className="text-xs h-8 min-w-[120px] flex-1 font-medium" />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Soaking Time Row */}
+                        <div className="pt-2.5 border-t border-border/70 flex flex-wrap items-end gap-3">
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                              Soaking Start Time
+                            </Label>
+                            <TimePicker
+                              value={envSoakingStartTime}
+                              onChange={(val) => handleSoakingStartChange(val)}
+                              placeholder="08:30"
+                            />
+                          </div>
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
+                              Soaking End Time
+                            </Label>
+                            <TimePicker
+                              value={envSoakingEndTime}
+                              onChange={(val) => handleSoakingEndChange(val)}
+                              placeholder="10:30"
+                            />
+                          </div>
+                          <div className="space-y-1 w-32 sm:w-36">
+                            <Label className="text-[11px] text-primary font-bold flex items-center gap-1">
+                              Soaking Time (hh:mm)
+                            </Label>
+                            <DurationPicker
+                              value={envSoakingTime}
+                              onChange={(val) => setEnvSoakingTime(val)}
+                              placeholder="02:00"
+                            />
+                          </div>
+                          {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
+                            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium self-center mt-3">
+                              ✓ Soaking details active
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-1.5 w-36 sm:w-44">
-                    <Label className="text-xs font-semibold">Doc. No.</Label>
-                    <Input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="e.g., DOC/CAL/01" className="text-xs font-medium" />
+                );
+              })()}
+
+              {/* ═══ Diagram / Schematic Image (Optional) Card ═══ */}
+              <div className="border rounded-xl bg-card overflow-hidden shadow-xs border-muted-foreground/20 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setDiagramCollapsed(!diagramCollapsed)}
+                  className="w-full flex items-center justify-between p-3.5 bg-muted/30 hover:bg-muted/60 transition-colors text-left"
+                  aria-expanded={!diagramCollapsed}
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                        wizardDiagramImage ? "bg-emerald-500 text-white" : "bg-amber-500 text-white"
+                      )}
+                    >
+                      {wizardDiagramImage ? <Check className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                          <ImageIcon className="w-3.5 h-3.5 text-primary" />
+                          Diagram / Schematic Image (Optional)
+                        </span>
+                        {wizardDiagramImage ? (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold flex items-center gap-1">
+                            <Check className="w-3 h-3 text-emerald-600" />
+                            Diagram Attached
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3 text-amber-500" />
+                            No Diagram Uploaded
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs font-medium text-foreground mt-0.5">
+                        {wizardDiagramImage
+                          ? `${wizardDiagramWidth}px × ${wizardDiagramHeight}px • Align ${wizardDiagramAlignment || "center"}`
+                          : "No schematic image uploaded yet for this calibration"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="space-y-1.5 w-44 sm:w-52">
-                    <Label className="text-xs font-semibold">Procedure Reference</Label>
-                    <Input value={procedureReference} onChange={(e) => setProcedureReference(e.target.value)} placeholder="e.g., AE/CAL-SOP/01" className="text-xs font-medium" />
+                  <div className="flex items-center gap-2">
+                    {wizardDiagramImage && (
+                      <div className="hidden sm:flex items-center gap-1.5 mr-2" onClick={(e) => e.stopPropagation()}>
+                        <img
+                          src={wizardDiagramImage}
+                          alt="Thumbnail"
+                          className="w-7 h-7 object-contain rounded border border-muted bg-white shrink-0"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowCertPreviewModal(true);
+                          }}
+                          className="h-6 px-2 text-[10px] gap-1 font-semibold text-primary border-primary/30 hover:bg-primary/5 shadow-2xs"
+                          title="Open Full Certificate Preview"
+                        >
+                          <Eye className="w-3 h-3" />
+                          Preview
+                        </Button>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground shrink-0">
+                      <span>{diagramCollapsed ? "View Details" : "Hide Details"}</span>
+                      <ChevronDown className={cn("w-4 h-4 transition-transform duration-200", !diagramCollapsed && "rotate-180")} />
+                    </div>
                   </div>
-                  <div className="space-y-1.5 w-20 sm:w-24">
-                    <Label className="text-xs font-medium">Temp (°C)</Label>
-                    <Input value={envTemp} onChange={(e) => setEnvTemp(e.target.value)} placeholder="20" className="text-xs text-center font-medium" />
+                </button>
+
+                {!diagramCollapsed && (
+                  <div className="p-4 border-t bg-card space-y-3 animate-in fade-in-50 duration-200">
+                    <p className="text-[11px] text-muted-foreground leading-tight">
+                      Upload an instrument schematic or measurement diagram to print on the certificate directly above the calibration results table.
+                    </p>
+
+                    {!wizardDiagramImage ? (
+                      <div
+                        tabIndex={0}
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                        onDragLeave={() => setIsDragOverDiagram(false)}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          setIsDragOverDiagram(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) processImageFile(file);
+                        }}
+                        className={`border-2 border-dashed ${
+                          isDragOverDiagram ? "border-primary bg-primary/10" : "border-muted-foreground/30 hover:border-primary/50 bg-background/50"
+                        } rounded-lg p-3 text-center transition-colors focus:outline-none focus:ring-2 focus:ring-primary/40`}
+                      >
+                        <input
+                          type="file"
+                          id="wizard-diagram-upload"
+                          accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) processImageFile(file);
+                          }}
+                        />
+                        <div className="flex flex-col items-center gap-1.5 py-1">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                            <Upload className="w-4 h-4" />
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap justify-center mt-0.5">
+                            <label
+                              htmlFor="wizard-diagram-upload"
+                              className="cursor-pointer text-xs font-semibold text-primary hover:underline"
+                            >
+                              Browse File
+                            </label>
+                            <span className="text-xs text-muted-foreground">•</span>
+                            <button
+                              type="button"
+                              onClick={handlePasteFromClipboard}
+                              className="text-xs font-semibold text-primary hover:underline flex items-center gap-1"
+                            >
+                              <ClipboardPaste className="w-3 h-3" />
+                              Paste from Clipboard
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground">
+                            PNG, JPG, SVG, WebP (Max 5MB) • Press <kbd className="px-1 py-0.5 text-[9px] font-mono bg-muted rounded border">Ctrl+V</kbd> anywhere to paste
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 bg-muted/20 p-3 rounded-xl border">
+                        {/* Live Preview Box */}
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                            <span className="font-semibold text-foreground">Live Certificate Preview</span>
+                            <span className="font-mono text-[10px]">{wizardDiagramWidth}px × {wizardDiagramHeight}px • {wizardDiagramAlignment || "center"}</span>
+                          </div>
+                          <div
+                            onDragOver={(e) => { e.preventDefault(); setIsDragOverDiagram(true); }}
+                            onDragLeave={() => setIsDragOverDiagram(false)}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setIsDragOverDiagram(false);
+                              const file = e.dataTransfer.files?.[0];
+                              if (file) processImageFile(file);
+                            }}
+                            className={`border rounded-lg bg-slate-50 dark:bg-slate-900 p-3 flex ${
+                              wizardDiagramAlignment === 'left' ? 'justify-start' : wizardDiagramAlignment === 'right' ? 'justify-end' : 'justify-center'
+                            } overflow-hidden min-h-[100px] max-h-[220px] items-center relative ${isDragOverDiagram ? 'ring-2 ring-primary bg-primary/5' : ''}`}
+                          >
+                            <img
+                              src={wizardDiagramImage}
+                              alt="Diagram Preview"
+                              style={{
+                                width: `${wizardDiagramWidth}px`,
+                                maxHeight: `${wizardDiagramHeight}px`,
+                                objectFit: "contain",
+                              }}
+                              className="rounded border border-slate-300 dark:border-slate-700 bg-white shadow-xs"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Size Sliders */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <Label className="text-[10px] text-muted-foreground">Width: <span className="font-mono font-bold text-foreground">{wizardDiagramWidth}px</span></Label>
+                            </div>
+                            <input
+                              type="range"
+                              min={80}
+                              max={540}
+                              step={5}
+                              value={wizardDiagramWidth}
+                              onChange={(e) => setWizardDiagramWidth(parseInt(e.target.value, 10))}
+                              className="w-full accent-primary h-1.5 cursor-pointer"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-1">
+                              <Label className="text-[10px] text-muted-foreground">Max Height: <span className="font-mono font-bold text-foreground">{wizardDiagramHeight}px</span></Label>
+                            </div>
+                            <input
+                              type="range"
+                              min={40}
+                              max={280}
+                              step={5}
+                              value={wizardDiagramHeight}
+                              onChange={(e) => setWizardDiagramHeight(parseInt(e.target.value, 10))}
+                              className="w-full accent-primary h-1.5 cursor-pointer"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Alignment & Actions Row */}
+                        <div className="flex items-center justify-between gap-2 pt-2 border-t flex-wrap">
+                          <div className="flex items-center gap-1">
+                            <Label className="text-[10px] text-muted-foreground mr-1">Align:</Label>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "left" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("left")}
+                              title="Align Left"
+                            >
+                              <AlignLeft className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "center" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("center")}
+                              title="Align Center"
+                            >
+                              <AlignCenter className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={wizardDiagramAlignment === "right" ? "default" : "outline"}
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => setWizardDiagramAlignment("right")}
+                              title="Align Right"
+                            >
+                              <AlignRight className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 font-medium"
+                              onClick={handleCopyImageToClipboard}
+                              title="Copy Diagram Image to Clipboard"
+                            >
+                              <Copy className="w-3 h-3" />
+                              Copy
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs gap-1 font-medium"
+                              onClick={handlePasteFromClipboard}
+                              title="Paste new image from Clipboard (or press Ctrl+V)"
+                            >
+                              <ClipboardPaste className="w-3 h-3" />
+                              Paste
+                            </Button>
+                            <label
+                              htmlFor="wizard-diagram-replace-upload"
+                              className="cursor-pointer inline-flex items-center gap-1 text-xs h-7 px-2.5 border rounded-md hover:bg-muted font-medium"
+                            >
+                              <Upload className="w-3 h-3" />
+                              Replace
+                            </label>
+                            <input
+                              type="file"
+                              id="wizard-diagram-replace-upload"
+                              accept="image/png, image/jpeg, image/jpg, image/webp, image/svg+xml"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) processImageFile(file);
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2.5 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 gap-1"
+                              onClick={() => {
+                                setWizardDiagramImage(null);
+                                toast.info("Diagram image removed");
+                              }}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Remove
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* View in Full Certificate Preview Button */}
+                        <div className="pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setShowCertPreviewModal(true)}
+                            className="w-full h-8 text-xs font-semibold text-primary border-primary/30 hover:bg-primary/5 bg-primary/5 gap-2"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            View in Full Certificate Preview
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-1.5 w-20 sm:w-24">
-                    <Label className="text-xs font-medium">Humidity (%)</Label>
-                    <Input value={envHumidity} onChange={(e) => setEnvHumidity(e.target.value)} placeholder="55" className="text-xs text-center font-medium" />
-                  </div>
+                )}
+              </div>
+
+              {/* ═══ Template Variant & Instrument Master Action Bar ═══ */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-gradient-to-r from-muted/50 via-card to-muted/50 border rounded-xl shadow-xs mb-4">
+                <div className="flex items-center gap-2">
+                  {hasMasterSavedTemplate ? (
+                    <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
+                      <Layers className="w-3 h-3 text-amber-600" />
+                      Template Saved with Master ({selectedInstrument?.id_code})
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 font-semibold px-2 py-0.5 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      Auto-saved to Instrument Master
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    {hasMasterSavedTemplate
+                      ? `Custom template & specifications are currently active on ${selectedInstrument?.id_code}`
+                      : selectedInstrument ? `Custom diagram & specifications save directly to ${selectedInstrument.id_code} on calibration completion` : "Specifications & drawing save automatically to instrument master"}
+                  </span>
                 </div>
 
-                {/* Soaking Time Row */}
-                <div className="pt-2.5 border-t border-border/70 flex flex-wrap items-end gap-3">
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                      Soaking Start Time
-                    </Label>
-                    <TimePicker
-                      value={envSoakingStartTime}
-                      onChange={(val) => handleSoakingStartChange(val)}
-                      placeholder="08:30"
-                    />
-                  </div>
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-muted-foreground flex items-center gap-1 font-medium">
-                      Soaking End Time
-                    </Label>
-                    <TimePicker
-                      value={envSoakingEndTime}
-                      onChange={(val) => handleSoakingEndChange(val)}
-                      placeholder="10:30"
-                    />
-                  </div>
-                  <div className="space-y-1 w-32 sm:w-36">
-                    <Label className="text-[11px] text-primary font-bold flex items-center gap-1">
-                      Soaking Time (hh:mm)
-                    </Label>
-                    <DurationPicker
-                      value={envSoakingTime}
-                      onChange={(val) => setEnvSoakingTime(val)}
-                      placeholder="02:00"
-                    />
-                  </div>
-                  {(envSoakingTime || envSoakingStartTime || envSoakingEndTime) && (
-                    <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium self-center mt-3">
-                      ✓ Soaking details active
-                    </div>
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  {/* Delete Template from Master Button (when template is saved with master) */}
+                  {selectedInstrument && hasMasterSavedTemplate && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmDeleteMasterTemplateOpen(true)}
+                      disabled={deletingMasterTemplate}
+                      className="text-xs h-8 gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive font-medium"
+                      title="Delete saved template specifications and diagram from this Instrument Master"
+                    >
+                      {deletingMasterTemplate ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                      Delete Template from Master
+                    </Button>
                   )}
+
+                  {selectedInstrument && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleSaveToInstrumentMaster}
+                      disabled={savingInstrumentCustom}
+                      className="text-xs h-8 gap-1.5 border-primary/30 hover:bg-primary/5 text-primary font-medium"
+                    >
+                      {savingInstrumentCustom ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Save className="w-3.5 h-3.5" />
+                      )}
+                      Save to Instrument Master
+                    </Button>
+                  )}
+
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      if (selectedInstrument) {
+                        setNewTemplateName(`${selectedInstrument.name} - ${selectedInstrument.id_code} Variant`);
+                      }
+                      setSaveTemplateModalOpen(true);
+                    }}
+                    className="text-xs h-8 gap-1.5 shadow-xs font-semibold"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    Save as New Template Variant
+                  </Button>
                 </div>
               </div>
 
@@ -2203,9 +6886,24 @@ export default function CalibrationWizard() {
                       <Sparkles className="w-4 h-4 text-primary" />
                       <span className="font-bold text-foreground">Canvas Template Data Entry ({wizardLayoutBlocks.length} Sections)</span>
                     </div>
-                    <span className="text-[11px] text-muted-foreground">
-                      Readings calculate automatically based on template formulas
-                    </span>
+                    <div className="flex items-center gap-3">
+                      {selectedTemplateId && selectedTemplateId !== "none" && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleApplyTemplate(selectedTemplateId)}
+                          className="h-6 text-[11px] px-2 gap-1 text-primary hover:bg-primary/20"
+                          title="Reload layout blocks, values and merges directly from the saved template"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          Reload from Template
+                        </Button>
+                      )}
+                      <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                        Readings calculate automatically based on template formulas
+                      </span>
+                    </div>
                   </div>
 
                   {wizardLayoutBlocks.map((block: any, bIdx: number) => {
@@ -2233,37 +6931,101 @@ export default function CalibrationWizard() {
                       );
                     }
                     if (block.type === "matrix_table") {
+                      const totalCols = getMatrixTotalCols(block as any);
+                      const { coveredCells: coveredHeaders } = computeMatrix2DGrid(block.headers || [], totalCols);
+                      const { coveredCells: coveredRows } = computeMatrix2DGrid(block.rows || [], totalCols);
+
                       return (
-                        <div key={block.id || bIdx} className="border rounded-lg overflow-hidden bg-card shadow-xs">
-                          <div className="bg-muted px-3 py-1.5 font-bold text-xs border-b">
-                            {block.title} (Reference Matrix)
+                        <div key={block.id || bIdx} className={`border rounded-lg overflow-hidden bg-card shadow-xs ${block.width === "50%" ? "max-w-xl mx-auto" : "w-full"}`}>
+                          <div className="bg-muted px-3 py-1.5 font-bold text-xs border-b flex items-center justify-between">
+                            <span>{block.title || "Reference Matrix"}</span>
+                            <span className="text-[10px] text-muted-foreground uppercase font-mono">Reference</span>
                           </div>
                           <div className="overflow-x-auto">
                             <table className="w-full text-xs text-center border-collapse">
                               <thead>
-                                {block.headers?.map((hRow: any[], hIdx: number) => (
-                                  <tr key={hIdx} className="bg-muted/40 font-bold border-b divide-x text-[11px]">
-                                    {hRow.map((cell: any, cIdx: number) => (
-                                      <th key={cIdx} colSpan={cell.colSpan} rowSpan={cell.rowSpan} className="p-1.5">
-                                        {cell.text}
-                                      </th>
-                                    ))}
-                                  </tr>
-                                ))}
+                                {block.headers?.map((hRow: any[], hIdx: number) => {
+                                  const cells = Array.isArray(hRow) ? hRow : [hRow];
+                                  let colPointer = 0;
+                                  return (
+                                    <tr key={hIdx} className="bg-muted/40 font-bold border-b divide-x text-[11px]">
+                                      {cells.map((rawCell: any, cIdx: number) => {
+                                        while (colPointer < totalCols && coveredHeaders.has(`${hIdx}_${colPointer}`)) {
+                                          colPointer++;
+                                        }
+                                        const actualCol = colPointer;
+                                        const cell = normalizeMatrixCell(rawCell);
+                                        colPointer += (cell.colSpan || 1);
+
+                                        if (coveredHeaders.has(`${hIdx}_${actualCol}`)) {
+                                          return null;
+                                        }
+
+                                        return (
+                                          <th
+                                            key={cIdx}
+                                            colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                            rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                            style={{ textAlign: cell.align || "center" }}
+                                            className="p-1.5 border"
+                                          >
+                                            {cell.text}
+                                          </th>
+                                        );
+                                      })}
+                                    </tr>
+                                  );
+                                })}
                               </thead>
                               <tbody className="divide-y font-mono text-[11px]">
-                                {block.rows?.map((row: any[], rIdx: number) => (
-                                  <tr key={rIdx} className="divide-x hover:bg-muted/20">
-                                    {row.map((cellVal: any, cIdx: number) => (
-                                      <td key={cIdx} className="p-1.5">
-                                        {cellVal}
-                                      </td>
-                                    ))}
+                                {(!block.rows || block.rows.length === 0) ? (
+                                  <tr>
+                                    <td colSpan={totalCols} className="p-3 text-center text-muted-foreground italic border">
+                                      -
+                                    </td>
                                   </tr>
-                                ))}
+                                ) : (
+                                  block.rows.map((row: any[], rIdx: number) => {
+                                    const cells = Array.isArray(row) ? row : [row];
+                                    let colPointer = 0;
+                                    return (
+                                      <tr key={rIdx} className="divide-x hover:bg-muted/20">
+                                        {cells.map((rawCell: any, cIdx: number) => {
+                                          while (colPointer < totalCols && coveredRows.has(`${rIdx}_${colPointer}`)) {
+                                            colPointer++;
+                                          }
+                                          const actualCol = colPointer;
+                                          const cell = normalizeMatrixCell(rawCell);
+                                          colPointer += (cell.colSpan || 1);
+
+                                          if (coveredRows.has(`${rIdx}_${actualCol}`)) {
+                                            return null;
+                                          }
+
+                                          return (
+                                            <td
+                                              key={cIdx}
+                                              colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+                                              rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+                                              style={{ textAlign: cell.align || "center" }}
+                                              className="p-1.5 border"
+                                            >
+                                              {cell.text}
+                                            </td>
+                                          );
+                                        })}
+                                      </tr>
+                                    );
+                                  })
+                                )}
                               </tbody>
                             </table>
                           </div>
+                          {block.footerNote && (
+                            <div className="text-[10px] italic text-muted-foreground px-3 py-1.5 border-t bg-muted/20 text-center">
+                              {block.footerNote}
+                            </div>
+                          )}
                         </div>
                       );
                     }
@@ -2365,17 +7127,152 @@ export default function CalibrationWizard() {
                   <Input value={uncertainty} onChange={(e) => setUncertainty(e.target.value)} placeholder="e.g., ±0.03 Bar" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Verdict</Label>
-                  <Select value={verdict} onValueChange={(v) => setVerdict(v as any)}>
-                    <SelectTrigger>
-                      <SelectValue />
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-semibold flex items-center gap-1.5">
+                      Calibration Verdict
+                      {isVerdictManuallyOverridden ? (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium text-amber-700 bg-amber-50 border-amber-300 dark:bg-amber-950/40 dark:text-amber-400">
+                          Manual Override
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-medium text-primary bg-primary/5 border-primary/20 flex items-center gap-1">
+                          <Sparkles className="w-2.5 h-2.5 text-primary" /> Auto-evaluated
+                        </Badge>
+                      )}
+                    </Label>
+                    {isVerdictManuallyOverridden && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVerdict(autoVerdict);
+                          setIsVerdictManuallyOverridden(false);
+                          toast.info(`Verdict reset to auto-evaluated (${autoVerdict})`);
+                        }}
+                        className="text-[11px] text-primary hover:text-primary/80 hover:underline flex items-center gap-1 font-semibold cursor-pointer transition-colors"
+                        title="Reset to automatically calculated verdict based on calibration test points"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        Reset to Auto ({autoVerdict})
+                      </button>
+                    )}
+                  </div>
+                  <Select
+                    value={verdict}
+                    onValueChange={(v) => {
+                      const selectedVal = v as "PASS" | "FAIL" | "CONDITIONAL";
+                      setVerdict(selectedVal);
+                      if (selectedVal !== autoVerdict) {
+                        setIsVerdictManuallyOverridden(true);
+                      } else {
+                        setIsVerdictManuallyOverridden(false);
+                      }
+                    }}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        "h-10 text-xs font-semibold rounded-lg transition-all border shadow-2xs",
+                        verdict === "PASS" &&
+                          "bg-emerald-50/80 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 focus:ring-emerald-500",
+                        verdict === "FAIL" &&
+                          "bg-rose-50/80 dark:bg-rose-950/30 border-rose-300 dark:border-rose-700 text-rose-900 dark:text-rose-200 focus:ring-rose-500",
+                        verdict === "CONDITIONAL" &&
+                          "bg-amber-50/80 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 focus:ring-amber-500"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        {verdict === "PASS" && (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                            <span className="font-bold tracking-wide">PASS</span>
+                            <span className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Conforms to Specifications
+                            </span>
+                          </>
+                        )}
+                        {verdict === "FAIL" && (
+                          <>
+                            <XCircle className="w-4 h-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                            <span className="font-bold tracking-wide">FAIL</span>
+                            <span className="text-[11px] text-rose-700/80 dark:text-rose-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Non-Conforming / Out of Tolerance
+                            </span>
+                          </>
+                        )}
+                        {verdict === "CONDITIONAL" && (
+                          <>
+                            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                            <span className="font-bold tracking-wide">CONDITIONAL</span>
+                            <span className="text-[11px] text-amber-700/80 dark:text-amber-400/80 font-normal ml-1 hidden sm:inline">
+                              &mdash; Conditional Acceptance / Derated
+                            </span>
+                          </>
+                        )}
+                      </div>
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="PASS">✅ PASS</SelectItem>
-                      <SelectItem value="FAIL">❌ FAIL</SelectItem>
-                      <SelectItem value="CONDITIONAL">⚠️ CONDITIONAL</SelectItem>
+                    <SelectContent className="p-1">
+                      <SelectItem
+                        value="PASS"
+                        className="cursor-pointer py-2 focus:bg-emerald-50 dark:focus:bg-emerald-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 shrink-0">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-emerald-800 dark:text-emerald-300">PASS</span>
+                            <span className="text-[10px] text-muted-foreground">All measurement points conform to tolerance limits</span>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem
+                        value="FAIL"
+                        className="cursor-pointer py-2 focus:bg-rose-50 dark:focus:bg-rose-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-rose-100 dark:bg-rose-900/60 text-rose-600 dark:text-rose-400 shrink-0">
+                            <XCircle className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-rose-800 dark:text-rose-300">FAIL</span>
+                            <span className="text-[10px] text-muted-foreground">One or more points exceed tolerance or instrument rejected</span>
+                          </div>
+                        </div>
+                      </SelectItem>
+                      <SelectItem
+                        value="CONDITIONAL"
+                        className="cursor-pointer py-2 focus:bg-amber-50 dark:focus:bg-amber-950/40 rounded-md my-0.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="p-1 rounded-md bg-amber-100 dark:bg-amber-900/60 text-amber-600 dark:text-amber-400 shrink-0">
+                            <AlertTriangle className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-xs text-amber-800 dark:text-amber-300">CONDITIONAL</span>
+                            <span className="text-[10px] text-muted-foreground">Derated accuracy, limited range, or conditional approval</span>
+                          </div>
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
+                  {verdictStats.total > 0 && (
+                    <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-0.5 font-medium">
+                      <span>Data telemetry:</span>
+                      <span className="text-emerald-700 dark:text-emerald-400 font-semibold">{verdictStats.pass} passed</span>
+                      {verdictStats.fail > 0 && (
+                        <>
+                          <span>&bull;</span>
+                          <span className="text-rose-600 dark:text-rose-400 font-semibold">{verdictStats.fail} failed</span>
+                        </>
+                      )}
+                      {verdictStats.conditional > 0 && (
+                        <>
+                          <span>&bull;</span>
+                          <span className="text-amber-600 dark:text-amber-400 font-semibold">{verdictStats.conditional} conditional</span>
+                        </>
+                      )}
+                      <span>out of {verdictStats.total} test points</span>
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -2394,14 +7291,16 @@ export default function CalibrationWizard() {
                     {(() => {
                       const userRoleStr = getRoleName(user?.role);
                       const isAdmin = userRoleStr.toLowerCase().includes("admin") || userRoleStr === "Admin" || userRoleStr === "Administrator";
-                      return isAdmin ? (
+                      const canEditCalibrated = isAdmin || isEditMode;
+                      return canEditCalibrated ? (
                         <Select
-                          value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy)?.id || calibratedBy}
+                          value={systemUsers.find((u) => u.name === calibratedBy || u.id === calibratedBy || (calibratedById && u.id === calibratedById))?.id || calibratedBy}
                           onValueChange={(val) => {
                             const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
                             if (selectedUser) {
                               setCalibratedBy(selectedUser.name);
                               setCalibratedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Calibration Engineer");
+                              setCalibratedById(selectedUser.id);
                               if (selectedUser.signature) {
                                 setCalibratedBySignature(selectedUser.signature);
                               }
@@ -2435,27 +7334,141 @@ export default function CalibrationWizard() {
                     </div>
                   </div>
 
-                  {/* Reviewed By (Pending Manager Review) */}
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Reviewed By</Label>
-                    <Input
-                      value={reviewedBy || "Pending Review"}
-                      readOnly
-                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
-                    />
-                    <span className="text-[10px] text-muted-foreground block">Will be assigned upon Quality Review</span>
-                  </div>
+                  {/* Reviewed By (Editable in Edit Mode, Read-Only for Fresh Calibrations) */}
+                  {(() => {
+                    if (isEditMode) {
+                      const selectedReviewerId =
+                        systemUsers.find((u) => u.name === reviewedBy || u.id === reviewedBy || (reviewedById && u.id === reviewedById))?.id ||
+                        (reviewedBy && reviewedBy !== "Pending Review" ? reviewedBy : "__PENDING_REVIEW__");
 
-                  {/* Approved By (Captured automatically on Approval) */}
-                  <div className="space-y-2">
-                    <Label className="text-xs font-semibold">Approved By</Label>
-                    <Input
-                      value={approvedBy || "Pending Approval"}
-                      readOnly
-                      className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
-                    />
-                    <span className="text-[10px] text-muted-foreground block">Captured automatically when Manager Approves</span>
-                  </div>
+                      return (
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">Reviewed By</Label>
+                          <Select
+                            value={selectedReviewerId}
+                            onValueChange={(val) => {
+                              if (val === "__PENDING_REVIEW__") {
+                                setReviewedBy("Pending Review");
+                                setReviewedByDesignation("");
+                                setReviewedBySignature("");
+                                setReviewedById("");
+                                return;
+                              }
+                              const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                              if (selectedUser) {
+                                setReviewedBy(selectedUser.name);
+                                setReviewedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Quality Reviewer");
+                                setReviewedById(selectedUser.id);
+                                if (selectedUser.signature) {
+                                  setReviewedBySignature(selectedUser.signature);
+                                }
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                              <SelectValue placeholder="Select Quality Reviewer" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__PENDING_REVIEW__" className="italic text-muted-foreground">
+                                Pending Review (Unassigned)
+                              </SelectItem>
+                              {systemUsers.map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.name} ({getRoleName(u.designation) || getRoleName(u.role) || "Reviewer"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/50 rounded-md border border-emerald-200 dark:border-emerald-800 text-xs shadow-sm">
+                            <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                            <span className="font-bold text-emerald-950 dark:text-emerald-100 uppercase tracking-wide text-[11px]">
+                              {getRoleName(reviewedByDesignation) || (reviewedBy && reviewedBy !== "Pending Review" ? "QUALITY REVIEWER" : "PENDING REVIEW")}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold">Reviewed By</Label>
+                        <Input
+                          value={reviewedBy || "Pending Review"}
+                          readOnly
+                          className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                        />
+                        <span className="text-[10px] text-muted-foreground block">Will be assigned upon Quality Review</span>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Approved By (Editable in Edit Mode, Captured automatically on Approval for Fresh Calibrations) */}
+                  {(() => {
+                    if (isEditMode) {
+                      const selectedApproverId =
+                        systemUsers.find((u) => u.name === approvedBy || u.id === approvedBy || (approvedById && u.id === approvedById))?.id ||
+                        (approvedBy && approvedBy !== "Pending Approval" ? approvedBy : "__PENDING_APPROVAL__");
+
+                      return (
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">Approved By</Label>
+                          <Select
+                            value={selectedApproverId}
+                            onValueChange={(val) => {
+                              if (val === "__PENDING_APPROVAL__") {
+                                setApprovedBy("Pending Approval");
+                                setApprovedByDesignation("");
+                                setApprovedBySignature("");
+                                setApprovedById("");
+                                return;
+                              }
+                              const selectedUser = systemUsers.find((u) => u.id === val || u.name === val);
+                              if (selectedUser) {
+                                setApprovedBy(selectedUser.name);
+                                setApprovedByDesignation(selectedUser.designation || getRoleName(selectedUser.role) || "Quality Manager");
+                                setApprovedById(selectedUser.id);
+                                if (selectedUser.signature) {
+                                  setApprovedBySignature(selectedUser.signature);
+                                }
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-9 text-xs font-semibold bg-background">
+                              <SelectValue placeholder="Select Quality Manager / Approver" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__PENDING_APPROVAL__" className="italic text-muted-foreground">
+                                Pending Approval (Unassigned)
+                              </SelectItem>
+                              {systemUsers.map((u) => (
+                                <SelectItem key={u.id} value={u.id}>
+                                  {u.name} ({getRoleName(u.designation) || getRoleName(u.role) || "Approver"})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 dark:bg-purple-950/50 rounded-md border border-purple-200 dark:border-purple-800 text-xs shadow-sm">
+                            <span className="font-semibold text-slate-500 dark:text-slate-400">Designation:</span>
+                            <span className="font-bold text-purple-950 dark:text-purple-100 uppercase tracking-wide text-[11px]">
+                              {getRoleName(approvedByDesignation) || (approvedBy && approvedBy !== "Pending Approval" ? "QUALITY MANAGER / APPROVER" : "PENDING APPROVAL")}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-semibold">Approved By</Label>
+                        <Input
+                          value={approvedBy || "Pending Approval"}
+                          readOnly
+                          className="bg-muted/20 text-muted-foreground italic cursor-not-allowed text-xs h-9"
+                        />
+                        <span className="text-[10px] text-muted-foreground block">Captured automatically when Manager Approves</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
 
@@ -2516,6 +7529,18 @@ export default function CalibrationWizard() {
                         soaking_end_time: envSoakingEndTime || undefined,
                       },
                       doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+                      doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+                      doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
+                      procedure_reference: procedureNo || procedureReference || undefined,
+                      procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
+                      procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+                      procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+                      procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+                      acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+                      acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+                      acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+                      acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
+                      standard_reference: standardReference || remarks,
                       is_canvas_template: wizardIsCanvas,
                       layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
                       calibration_points: calPoints,
@@ -2525,14 +7550,16 @@ export default function CalibrationWizard() {
                       calibrated_by: calibratedBy,
                       calibrated_by_designation: calibratedByDesignation,
                       calibrated_by_signature: calibratedBySignature,
+                      calibrated_by_id: calibratedById,
                       reviewed_by: reviewedBy,
                       reviewed_by_designation: reviewedByDesignation,
                       reviewed_by_signature: reviewedBySignature,
+                      reviewed_by_id: reviewedById,
                       approved_by: approvedBy,
                       approved_by_designation: approvedByDesignation,
                       approved_by_signature: approvedBySignature,
-                      procedure_reference: procedureReference,
-                      standard_reference: standardReference || remarks,
+                      approved_by_id: approvedById,
+                      approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
                       column_order: wizardColumnOrder,
                       hidden_columns: wizardHiddenColumns,
                       custom_columns: wizardCustomColumns as any,
@@ -2565,7 +7592,7 @@ export default function CalibrationWizard() {
 
         {step < 3 ? (
           <Button
-            onClick={() => setStep(step + 1)}
+            onClick={handleNextStep}
             disabled={!canProceed()}
             className="gap-2"
           >
@@ -2579,7 +7606,7 @@ export default function CalibrationWizard() {
             className="gap-2"
           >
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Save & Generate Certificate
+            {savedCalibrationId ? "Save Changes & Generate Certificate" : "Save & Generate Certificate"}
           </Button>
         ) : (
           <Button
@@ -2592,27 +7619,55 @@ export default function CalibrationWizard() {
         )}
       </div>
 
-      {/* ═══ Recently Calibrated Warning Alert Modal ═══ */}
-      <Dialog open={recentCalModalOpen} onOpenChange={setRecentCalModalOpen}>
+      {/* ═══ Unfinished Draft Found Modal ═══ */}
+      <UnfinishedDraftModal
+        open={unfinishedDraftModalOpen}
+        onOpenChange={setUnfinishedDraftModalOpen}
+        draft={detectedDraft}
+        instrumentName={pendingInstrumentForDraft?.name || detectedDraft?.data?.selectedInstrument?.name}
+        instrumentCode={pendingInstrumentForDraft?.id_code || detectedDraft?.data?.selectedInstrument?.id_code}
+        onResume={handleResumeUnfinishedDraft}
+        onStartScratch={handleStartScratchFromDraft}
+        onCancel={handleCancelDraftModal}
+        isLoading={isDraftActionLoading}
+      />
+
+      {/* ═══ Already Calibrated (not yet due) — Early Recalibration Confirmation ═══ */}
+      <Dialog open={recentCalModalOpen} onOpenChange={(open) => {
+        setRecentCalModalOpen(open);
+        if (!open) setPendingSelectedInstrument(null);
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              Instrument Recently Calibrated
+              Instrument Already Calibrated
             </DialogTitle>
             <DialogDescription className="space-y-3 pt-2 text-sm text-foreground">
               <p>
-                Notice: <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) was already calibrated recently.
+                <strong>{pendingSelectedInstrument?.name}</strong> ({pendingSelectedInstrument?.id_code}) is already calibrated and is
+                not due yet. Recalibrating early needs your confirmation and a reason, which is saved in the audit log.
               </p>
               <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-1 text-xs font-medium">
-                <div><span className="text-muted-foreground">Previous Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? formatDisplayDate(recentCalDetails.lastCalDate) : "Recent"}</strong></div>
-                <div><span className="text-muted-foreground">Current Due Date:</span> <strong>{recentCalDetails?.dueDate ? formatDisplayDate(recentCalDetails.dueDate) : "N/A"}</strong></div>
+                <div><span className="text-muted-foreground">Last Calibration Date:</span> <strong>{recentCalDetails?.lastCalDate ? formatDisplayDate(recentCalDetails.lastCalDate) : "—"}</strong></div>
+                <div><span className="text-muted-foreground">Next Due Date:</span> <strong>{recentCalDetails?.dueDate ? formatDisplayDate(recentCalDetails.dueDate) : "—"}</strong></div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Are you sure you want to perform another calibration for this instrument?
-              </p>
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="earlyRecalReason" className="text-xs font-semibold">
+              Reason for early recalibration *
+            </Label>
+            <Textarea
+              id="earlyRecalReason"
+              value={earlyReasonInput}
+              onChange={(e) => setEarlyReasonInput(e.target.value)}
+              placeholder="e.g. Instrument dropped / damaged, suspected out of tolerance, customer request…"
+              maxLength={500}
+              className="text-sm min-h-[80px]"
+            />
+            <p className="text-[11px] text-muted-foreground">Minimum 5 characters.</p>
+          </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => {
               setRecentCalModalOpen(false);
@@ -2620,13 +7675,584 @@ export default function CalibrationWizard() {
             }}>
               Cancel
             </Button>
-            <Button variant="default" className="bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
-              if (pendingSelectedInstrument) {
-                proceedWithInstrumentSelect(pendingSelectedInstrument);
-              }
-              setRecentCalModalOpen(false);
-            }}>
-              Proceed with Calibration
+            <Button
+              variant="default"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={earlyReasonInput.trim().length < 5 || saving}
+              onClick={() => {
+                const reason = earlyReasonInput.trim();
+                if (reason.length < 5) return;
+                setEarlyRecalReason(reason);
+                setRecentCalModalOpen(false);
+                if (earlyModalMode === "save") {
+                  executeSaveAndContinue({ ...(lastSaveOptionsRef.current || {}), earlyReason: reason });
+                } else if (pendingSelectedInstrument) {
+                  proceedWithInstrumentSelect(pendingSelectedInstrument);
+                }
+                setPendingSelectedInstrument(null);
+              }}
+            >
+              Confirm Early Recalibration
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Calibration Pending Review/Approval — blocks a new calibration ═══ */}
+      <Dialog open={!!pendingCalBlock} onOpenChange={(open) => { if (!open) setPendingCalBlock(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertCircle className="w-5 h-5 shrink-0" />
+              Calibration Pending Approval
+            </DialogTitle>
+            <DialogDescription className="space-y-3 pt-2 text-sm text-foreground">
+              <p>
+                <strong>{pendingCalBlock?.inst?.name}</strong> ({pendingCalBlock?.inst?.id_code}) already has calibration{" "}
+                <strong>{pendingCalBlock?.certificate_number || ""}</strong> with status{" "}
+                <strong>"{pendingCalBlock?.approval_status}"</strong>.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Approve or reject that calibration before starting a new one.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setPendingCalBlock(null)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => {
+                const id = pendingCalBlock?.inst?.id;
+                setPendingCalBlock(null);
+                if (id) navigate(`/calibration/history/${id}`);
+              }}
+            >
+              View Calibration History
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Reference Standard Validity Expired Modal (BLOCKING ERROR POPUP) ═══ */}
+      <Dialog open={expiredRefStandardsModalOpen} onOpenChange={setExpiredRefStandardsModalOpen}>
+        <DialogContent className="max-w-lg border-destructive/40 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-destructive/10 flex items-center justify-center shrink-0 border border-destructive/20">
+                <AlertTriangle className="w-5 h-5 text-destructive" />
+              </div>
+              <div>
+                <DialogTitle className="text-destructive font-bold text-base flex items-center gap-2">
+                  Calibration Blocked: Reference Standard Expired
+                </DialogTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Metrology &amp; Quality Compliance Rule (ISO/IEC 17025 &amp; NABL)
+                </p>
+              </div>
+            </div>
+            <DialogDescription className="space-y-3 pt-3 text-xs text-foreground">
+              <p>
+                You cannot proceed with this calibration. One or more selected Reference Standards have <strong>expired validity</strong> dates. In accordance with calibration quality standards, all master standards must have active validity at the time of testing.
+              </p>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {expiredStandardsList.map((item, i) => (
+                  <div key={i} className="p-3 bg-destructive/5 border border-destructive/20 rounded-xl space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-foreground text-xs">
+                        {item.name}
+                      </span>
+                      <Badge variant="destructive" className="text-[10px] font-bold shrink-0">
+                        Expired {item.daysAgo} {item.daysAgo === 1 ? "day" : "days"} ago
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      <div>ID / Serial No: <strong className="text-foreground">{item.id}</strong></div>
+                      <div>Traceable To: <strong className="text-foreground">{item.traceable_to}</strong></div>
+                      <div className="col-span-2">
+                        Validity Due Date: <span className="font-bold text-destructive">{item.formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-2.5 bg-muted/40 rounded-lg border text-[11px] text-muted-foreground flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+                <span>
+                  Please update the Reference Standard with an active validity date, or select a different in-date master standard from your inventory to continue.
+                </span>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center w-full pt-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                window.open("/instruments?is_reference_standard=true&device_type=Reference Standard", "_blank");
+              }}
+              className="w-full sm:w-auto text-xs font-semibold gap-1.5 border-input hover:bg-muted"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              Filter in Instrument Master List
+            </Button>
+
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              onClick={() => {
+                setExpiredRefStandardsModalOpen(false);
+                setStep(1); // Ensure stays on Reference Standard step
+                setMasterSelectFilter("valid"); // Pre-filter master inventory to Valid Only
+                const firstExpiredIdx = referenceStandards.findIndex((r) => {
+                  const c = r.validity ? checkReferenceStandardValidity(r.validity) : null;
+                  return c?.isExpired;
+                });
+                const targetIdx = firstExpiredIdx >= 0 ? firstExpiredIdx : 0;
+                setActiveMasterSelectIndex(targetIdx);
+                toast.info("Instrument Master dropdown opened and filtered to show only Valid reference standards");
+              }}
+              className="w-full sm:w-auto text-xs font-semibold gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+              Review Reference Standards (Valid Only)
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Reference Standard Expiring Soon Warning Modal (<= 15 Days) ═══ */}
+      <Dialog open={warningRefStandardsModalOpen} onOpenChange={setWarningRefStandardsModalOpen}>
+        <DialogContent className="max-w-lg border-amber-500/40 shadow-xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center shrink-0 border border-amber-500/20">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-500" />
+              </div>
+              <div>
+                <DialogTitle className="text-amber-700 dark:text-amber-400 font-bold text-base">
+                  Warning: Reference Standard Expiring Soon
+                </DialogTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Calibration validity due within 15 days
+                </p>
+              </div>
+            </div>
+            <DialogDescription className="space-y-3 pt-3 text-xs text-foreground">
+              <p>
+                The following Reference Standard is nearing its calibration expiration date. You may proceed with today's calibration, but please ensure this master standard is sent for recalibration promptly.
+              </p>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                {warningStandardsList.map((item, i) => (
+                  <div key={i} className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-1.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-foreground text-xs">
+                        {item.name}
+                      </span>
+                      <Badge className="text-[10px] font-bold shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30">
+                        {item.daysRemaining === 0 ? "Expires Today" : `Expires in ${item.daysRemaining} days`}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                      <div>ID / Serial No: <strong className="text-foreground">{item.id}</strong></div>
+                      <div>Traceable To: <strong className="text-foreground">{item.traceable_to}</strong></div>
+                      <div className="col-span-2">
+                        Validity Due Date: <span className="font-bold text-amber-700 dark:text-amber-400">{item.formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0 justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setWarningRefStandardsModalOpen(false);
+              }}
+              className="text-xs"
+            >
+              Review Standards
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                setAcknowledgedRefStandardWarning(true);
+                setWarningRefStandardsModalOpen(false);
+                setStep(step + 1);
+              }}
+              className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-semibold gap-1.5"
+            >
+              Acknowledge &amp; Proceed
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Modal for Saving New Template Variant ═══ */}
+      <Dialog open={saveTemplateModalOpen} onOpenChange={setSaveTemplateModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center gap-2">
+              <Copy className="w-4 h-4 text-primary" />
+              Save as New Template Variant
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Create a new reusable calibration template variant containing all current points, diagram image, document metadata, and environmental parameters without affecting the original master template.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Template Variant Name</Label>
+              <Input
+                value={newTemplateName}
+                onChange={(e) => setNewTemplateName(e.target.value)}
+                placeholder="e.g., LF Gauge - Part 41311-076CL Variant"
+                className="text-xs"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Description (Optional)</Label>
+              <Textarea
+                value={newTemplateDescription}
+                onChange={(e) => setNewTemplateDescription(e.target.value)}
+                placeholder="Specific calibration template variant for gauge drawing number..."
+                className="text-xs h-20"
+              />
+            </div>
+
+            <div className="p-3 bg-muted/40 rounded-lg text-[11px] space-y-1 text-muted-foreground border">
+              <p className="font-semibold text-foreground">Included in this Template Variant:</p>
+              <p>• {calPoints.length} Specification / Calibration Points</p>
+              <p>• Gauge Diagram Image ({wizardDiagramImage ? "Attached" : "None"})</p>
+              <p>• Document &amp; Procedure Metadata ({docNo || procedureNo || "Defined"})</p>
+              <p>• Environmental Defaults ({envTemp ? `${envTemp}°C` : "Default"})</p>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSaveTemplateModalOpen(false)}
+              className="text-xs"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSaveAsNewTemplate}
+              disabled={savingTemplateVariant || !newTemplateName.trim()}
+              className="text-xs gap-1.5"
+            >
+              {savingTemplateVariant ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  Save Template Variant
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Modal for Full Certificate Preview ═══ */}
+      <Dialog open={showCertPreviewModal} onOpenChange={setShowCertPreviewModal}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-base font-bold flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 text-primary">
+                <Eye className="w-5 h-5" />
+                Full Certificate Preview
+              </span>
+              <Badge variant="outline" className="text-xs">
+                {selectedInstrument?.id_code || "Draft"}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Live preview of how the final calibration certificate will look when printed, including layout, diagram image, and calibration points.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-2 flex justify-center bg-slate-100 dark:bg-slate-900/60 p-4 rounded-xl border min-h-[400px]">
+            <CertificatePreview
+              calibration={{
+                instrument: selectedInstrument as any,
+                certificate_number: nextCertNumber !== "—" ? nextCertNumber : "CERT-PREVIEW-001",
+                ulr_number: ulrEnabled ? (nextUlrNumber !== "—" ? nextUlrNumber : "ULR-PREVIEW-001") : undefined,
+                calibration_date: calDate,
+                certificate_issue_date: certIssueDate || calDate,
+                next_calibration_date: nextCalDate,
+                reference_standards: referenceStandards,
+                reference_standard_name: referenceStandards[0]?.name,
+                reference_standard_id: referenceStandards[0]?.id,
+                reference_standard_traceable_to: referenceStandards[0]?.traceable_to,
+                reference_standard_validity: referenceStandards[0]?.validity,
+                environmental_conditions: {
+                  temperature: envTemp,
+                  humidity: envHumidity,
+                  soaking_time: envSoakingTime || undefined,
+                  soaking_start_time: envSoakingStartTime || undefined,
+                  soaking_end_time: envSoakingEndTime || undefined,
+                },
+                receipt_condition: effectiveReceiptCondition,
+                doc_no: docNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_no : undefined) || undefined,
+                doc_date: docDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_date : undefined) || undefined,
+                doc_rev: docRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.doc_rev : undefined) || undefined,
+                procedure_reference: procedureNo || procedureReference || undefined,
+                procedure_no: procedureNo || (selectedTemplateId && selectedTemplateId !== "none" ? (availableTemplates.find(t => t.id === selectedTemplateId) as any)?.procedure_no : undefined) || undefined,
+                procedure_name: procedureName || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_name : undefined) || undefined,
+                procedure_date: procedureDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_date : undefined) || undefined,
+                procedure_rev: procedureRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.procedure_rev : undefined) || undefined,
+                acceptance_criteria_doc_no: acceptanceCriteriaDocNo || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_doc_no : undefined) || undefined,
+                acceptance_criteria_date: acceptanceCriteriaDate || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_date : undefined) || undefined,
+                acceptance_criteria_rev: acceptanceCriteriaRev || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_rev : undefined) || undefined,
+                acceptance_criteria_reference: acceptanceCriteriaReference || (selectedTemplateId && selectedTemplateId !== "none" ? availableTemplates.find(t => t.id === selectedTemplateId)?.acceptance_criteria_reference : undefined) || undefined,
+                standard_reference: standardReference || remarks,
+                is_canvas_template: wizardIsCanvas,
+                layout_blocks: wizardIsCanvas ? wizardLayoutBlocks : undefined,
+                calibration_points: calPoints,
+                uncertainty,
+                verdict,
+                remarks,
+                calibrated_by: calibratedBy,
+                calibrated_by_designation: calibratedByDesignation,
+                calibrated_by_signature: calibratedBySignature,
+                calibrated_by_id: calibratedById,
+                reviewed_by: reviewedBy,
+                reviewed_by_designation: reviewedByDesignation,
+                reviewed_by_signature: reviewedBySignature,
+                reviewed_by_id: reviewedById,
+                approved_by: approvedBy,
+                approved_by_designation: approvedByDesignation,
+                approved_by_signature: approvedBySignature,
+                approved_by_id: approvedById,
+                approval_status: isEditMode && savedCalibrationId ? undefined : "Calibration Completed",
+                column_order: wizardColumnOrder,
+                hidden_columns: wizardHiddenColumns,
+                custom_columns: wizardCustomColumns as any,
+                standard_columns_config: wizardStandardColumnConfigs,
+                acceptance_criteria: wizardAcceptanceCriteria,
+                diagram_image: wizardDiagramImage || undefined,
+                diagram_image_width: wizardDiagramWidth,
+                diagram_image_height: wizardDiagramHeight,
+                diagram_image_alignment: wizardDiagramAlignment,
+              }}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCertPreviewModal(false)}
+            >
+              Close Preview
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Template Modifications Detected Modal ═══ */}
+      <Dialog open={templateModifiedModalOpen} onOpenChange={setTemplateModifiedModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary font-bold text-base">
+              <Layers className="w-5 h-5 text-primary shrink-0" />
+              Original Template Modified
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2 text-xs text-foreground">
+              <p>
+                You made modifications to the specifications or diagram drawing from template{" "}
+                <strong>
+                  "{availableTemplates.find((t) => t.id === selectedTemplateId)?.name || "Original Template"}"
+                </strong>.
+              </p>
+              <p className="text-muted-foreground">
+                How would you like to save these changes?
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 py-2">
+            {/* Option 1: Save to Instrument Master */}
+            <div
+              onClick={() => {
+                if (saving || saveInProgressRef.current) return;
+                setTemplateModifiedModalOpen(false);
+                executeSaveAndContinue({ saveToMaster: true });
+              }}
+              aria-disabled={saving}
+              className={`group p-3 rounded-lg border border-border hover:border-emerald-500/50 hover:bg-emerald-500/5 cursor-pointer transition-all flex items-start gap-3 ${saving ? "pointer-events-none opacity-60" : ""}`}
+            >
+              <div className="p-2 rounded-md bg-emerald-500/10 text-emerald-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <Save className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span>Save to Instrument Master</span>
+                  <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-700 border-emerald-500/30">
+                    Recommended
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Update <strong>{selectedInstrument?.id_code}</strong> master with these specifications &amp; diagram for future calibrations of this gauge.
+                </p>
+              </div>
+            </div>
+
+            {/* Option 2: Save as New Template */}
+            <div
+              onClick={() => {
+                setTemplateModifiedModalOpen(false);
+                proceedAfterTemplateVariantRef.current = true;
+                if (selectedInstrument) {
+                  setNewTemplateName(`${selectedInstrument.name} - ${selectedInstrument.id_code} Variant`);
+                }
+                setSaveTemplateModalOpen(true);
+              }}
+              className="group p-3 rounded-lg border border-border hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-all flex items-start gap-3"
+            >
+              <div className="p-2 rounded-md bg-primary/10 text-primary shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <Copy className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground">
+                  Save as New Template
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Create a new reusable calibration template variant available for all instruments in your company.
+                </p>
+              </div>
+            </div>
+
+            {/* Option 3: Skip */}
+            <div
+              onClick={() => {
+                if (saving || saveInProgressRef.current) return;
+                setTemplateModifiedModalOpen(false);
+                executeSaveAndContinue({ skipMasterSave: true });
+              }}
+              aria-disabled={saving}
+              className={`group p-3 rounded-lg border border-border hover:border-amber-500/50 hover:bg-amber-500/5 cursor-pointer transition-all flex items-start gap-3 ${saving ? "pointer-events-none opacity-60" : ""}`}
+            >
+              <div className="p-2 rounded-md bg-amber-500/10 text-amber-600 shrink-0 mt-0.5 group-hover:scale-105 transition-transform">
+                <ArrowRight className="w-4 h-4" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <div className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span>Skip (Do Not Save to Master or Template)</span>
+                  <Badge variant="outline" className="text-[10px] bg-muted text-muted-foreground border-border">
+                    This calibration only
+                  </Badge>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Proceed with this calibration only. Instrument Master ({selectedInstrument?.id_code}) will <strong>not</strong> be modified.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0 justify-between items-center">
+            {hasMasterSavedTemplate && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setTemplateModifiedModalOpen(false);
+                  setConfirmDeleteMasterTemplateOpen(true);
+                }}
+                className="text-xs text-destructive hover:bg-destructive/10 gap-1.5 h-8 mr-auto"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Template from Master
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setTemplateModifiedModalOpen(false)}
+              className="text-xs h-8"
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ═══ Confirm Delete Template from Master Modal ═══ */}
+      <Dialog open={confirmDeleteMasterTemplateOpen} onOpenChange={setConfirmDeleteMasterTemplateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive font-bold text-base">
+              <Trash2 className="w-5 h-5 text-destructive shrink-0" />
+              Delete Template from Instrument Master?
+            </DialogTitle>
+            <DialogDescription className="space-y-2 pt-2 text-xs text-foreground">
+              <p>
+                Are you sure you want to delete the custom template specifications, diagram image, and metadata saved directly to Instrument Master{" "}
+                <strong>"{selectedInstrument?.name} ({selectedInstrument?.id_code})"</strong>?
+              </p>
+              <p className="text-muted-foreground">
+                Future calibrations for this instrument will revert to the standard template. This action will clear the instrument's custom parameters and reload the base template.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setConfirmDeleteMasterTemplateOpen(false)}
+              className="text-xs"
+              disabled={deletingMasterTemplate}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteTemplateFromMaster}
+              disabled={deletingMasterTemplate}
+              className="text-xs gap-1.5 font-semibold"
+            >
+              {deletingMasterTemplate ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Delete from Master
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

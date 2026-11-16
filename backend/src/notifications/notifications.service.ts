@@ -16,6 +16,7 @@ export class NotificationsService {
   }
 
   async getNotificationsByCompany(companyId: string) {
+    if (!companyId) return [];
     return await this.notificationRepository.find({
       where: { companyId },
       order: { created_at: 'DESC' },
@@ -23,13 +24,17 @@ export class NotificationsService {
     });
   }
 
-  async markAsRead(id: string) {
-    await this.notificationRepository.update(id, { is_read: true });
+  async markAsRead(id: string, companyId?: string) {
+    const where: any = { id };
+    if (companyId) where.companyId = companyId;
+    await this.notificationRepository.update(where, { is_read: true });
     return { success: true };
   }
 
-  async deleteNotification(id: string) {
-    await this.notificationRepository.delete(id);
+  async deleteNotification(id: string, companyId?: string) {
+    const where: any = { id };
+    if (companyId) where.companyId = companyId;
+    await this.notificationRepository.delete(where);
     return { success: true };
   }
 }

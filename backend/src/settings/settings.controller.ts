@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Headers, UseInterceptors, UploadedFile, UseGuards, Req, ForbiddenException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { SettingsService } from './settings.service';
 import { CreateSettingDto } from './dto/create-setting.dto';
 import { UpdateSettingDto } from './dto/update-setting.dto';
+import { UpsertLocationEmailDto } from './dto/upsert-location-email.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { MailerService } from '../mail/mailer.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -21,6 +22,7 @@ export class SettingsController {
   ) { }
 
   @Get()
+  @RequirePermission('settings', 'view')
   getSettingsByQuery(
     @Query('userId') userId: string,
     @Query('companyId') companyId: string,
@@ -33,42 +35,69 @@ export class SettingsController {
   }
 
   @Post()
+  @RequirePermission('settings', 'edit')
   saveSettings(@Body() createSettingDto: CreateSettingDto) {
     return this.settingsService.create(createSettingDto);
   }
 
+  @Get('theme')
+  getTheme(
+    @Query('userId') queryUserId: string,
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
+  ) {
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (queryCompanyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (queryUserId || user.userId || user.id) : (user.userId || user.id);
+
+    return this.settingsService.getThemeSettings(userId, companyId);
+  }
+
+  @Post('theme')
+  saveTheme(
+    @Body() body: any,
+    @Req() req: any,
+  ) {
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (body.companyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (body.userId || user.userId || user.id) : (user.userId || user.id);
+    const themeSettings = body.themeSettings || body;
+
+    return this.settingsService.saveThemeSettings(userId, companyId, themeSettings, user);
+  }
+
   @Get(':userId/:companyId')
+  @RequirePermission('settings', 'view')
   getSettings(
     @Param('userId') userId: string,
     @Param('companyId') companyId: string,
+    @Req() req: any,
   ) {
+    const user = req.user || {};
+    if (!user.isSuperAdmin && user.companyId && companyId && user.companyId !== companyId) {
+      throw new ForbiddenException('Access denied to other company settings');
+    }
     return this.settingsService.findOne(userId, companyId);
   }
 
   @Post("mailconfig")
   @RequirePermission('settings', 'edit')
-  create(@Body() createSettingDto: CreateSettingDto, @Headers('authorization') authHeader: string) {
-    if (!createSettingDto.userId || createSettingDto.userId === 'undefined') {
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            const token = authHeader.split(' ')[1];
-            try {
-                const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
-                createSettingDto.userId = payload.sub;
-                createSettingDto.companyId = createSettingDto.companyId || payload.companyId;
-            } catch (e) {
-                console.error("Failed to decode token", e);
-            }
-        }
-    }
-    console.log("RECEIVED SETTINGS PAYLOAD: ", createSettingDto);
+  create(@Body() createSettingDto: CreateSettingDto, @Req() req: any) {
+    const user = req.user || {};
+    createSettingDto.companyId = user.isSuperAdmin ? (createSettingDto.companyId || user.companyId) : user.companyId;
+    createSettingDto.userId = user.isSuperAdmin ? (createSettingDto.userId || user.userId || user.id) : (user.userId || user.id);
     return this.settingsService.create(createSettingDto);
   }
 
   @Get('fetchmailconfig')
   fetchMailConfig(
-    @Query('userId') userId: string,
-    @Query('companyId') companyId: string,
+    @Query('userId') queryUserId: string,
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
   ) {
+    const user = req.user || {};
+    const companyId = user.isSuperAdmin ? (queryCompanyId || user.companyId) : user.companyId;
+    const userId = user.isSuperAdmin ? (queryUserId || user.userId || user.id) : (user.userId || user.id);
     return this.settingsService.findOne(userId, companyId);
   }
 
@@ -107,21 +136,70 @@ export class SettingsController {
   }
 
   @Get('location-emails')
-  async getLocationEmails(@Query('companyId') companyId: string) {
-    return this.settingsService.getLocationEmails(companyId);
+  @RequirePermission('settings', 'view')
+  async getLocationEmails(
+    @Query('companyId') queryCompanyId: string,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    const effectiveCompanyId = user.isSuperAdmin
+      ? (queryCompanyId || user.companyId)
+      : user.companyId;
+
+    if (!effectiveCompanyId) return [];
+    return this.settingsService.getLocationEmails(effectiveCompanyId);
   }
 
   @Post('location-emails')
   @RequirePermission('settings', 'edit')
-  async saveLocationEmail(@Body() body: any) {
-    return this.settingsService.upsertLocationEmail(body);
+  async saveLocationEmail(
+    @Body() dto: UpsertLocationEmailDto,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    const effectiveCompanyId = user.isSuperAdmin
+      ? (dto.companyId || user.companyId)
+      : user.companyId;
+
+    if (!effectiveCompanyId) {
+      throw new ForbiddenException('Company ID is required to configure location emails');
+    }
+    return this.settingsService.upsertLocationEmail(
+      {
+        ...dto,
+        companyId: effectiveCompanyId,
+      },
+      user.isSuperAdmin,
+    );
   }
 
   @Delete('location-emails/:id')
   @RequirePermission('settings', 'edit')
-  async deleteLocationEmail(@Param('id') id: string) {
-    return this.settingsService.deleteLocationEmail(id);
+  async deleteLocationEmail(
+    @Param('id') id: string,
+    @Req() req: any,
+  ) {
+    const user = req?.user || {};
+    return this.settingsService.deleteLocationEmail(id, user.companyId, !!user.isSuperAdmin);
   }
 
+  @Get('instrument-statuses')
+  async getInstrumentStatuses(
+    @Query('companyId') companyId: string,
+    @Req() req: any,
+  ) {
+    const effectiveCompanyId = companyId || req?.user?.companyId;
+    return this.settingsService.getCustomInstrumentStatuses(effectiveCompanyId);
+  }
+
+  @Post('instrument-statuses')
+  async addInstrumentStatus(
+    @Body('companyId') bodyCompanyId: string,
+    @Body('status') status: string,
+    @Req() req: any,
+  ) {
+    const effectiveCompanyId = bodyCompanyId || req?.user?.companyId;
+    return this.settingsService.addCustomInstrumentStatus(effectiveCompanyId, status);
+  }
 }
 

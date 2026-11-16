@@ -14,6 +14,7 @@ import { Setting } from 'src/settings/entities/setting.entity';
 import { MailerModule } from 'src/mail/mailer.module';
 import { NotificationsModule } from 'src/notifications/notifications.module';
 import { SummaryReportService } from './summary-report.service';
+import { PermissionsGuard } from 'src/auth/permissions.guard';
 
 @Module({
   imports: [
@@ -24,7 +25,7 @@ import { SummaryReportService } from './summary-report.service';
     NotificationsModule,
   ],
   controllers: [ReportsController],
-  providers: [ReportsService, SummaryReportService],
+  providers: [ReportsService, SummaryReportService, PermissionsGuard],
   exports: [ReportsService, SummaryReportService],
 })
 export class ReportsModule { }

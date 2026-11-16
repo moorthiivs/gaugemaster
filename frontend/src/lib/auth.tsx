@@ -1,6 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import { API_URL, TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY, SETUP_KEY, INSPECTED_COMPANY_KEY } from "./httpClient";
+import {
+  getStoredAccessToken,
+  setStoredAccessToken,
+  getStoredRefreshToken,
+  setStoredRefreshToken,
+  clearStoredTokens,
+} from "./tokenStorage";
 
 export type User = {
   id: string;
@@ -33,10 +40,39 @@ export type AuthContextType = {
   signInWithGoogleToken: (token: string) => Promise<void>;
   signInWithPassword: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
   setIsNewCustomer: (value: boolean) => void;
   setUser: React.Dispatch<React.SetStateAction<User | null>>;
+  validateSession: () => Promise<boolean>;
 };
+
+/** Decode JWT token payload safely */
+export function parseJwt(token: string): any {
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return null;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      window
+        .atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch {
+    return null;
+  }
+}
+
+/** Check if JWT is expired with safety buffer in seconds */
+export function isTokenExpired(token: string | null, bufferSeconds: number = 15): boolean {
+  if (!token) return true;
+  const decoded = parseJwt(token);
+  if (!decoded || !decoded.exp) return true;
+  const currentTime = Math.floor(Date.now() / 1000);
+  return decoded.exp <= currentTime + bufferSeconds;
+}
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -58,58 +94,222 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setInspectedCompanyState(company);
     if (company) {
       localStorage.setItem(INSPECTED_COMPANY_KEY, JSON.stringify(company));
+      setUser((prev) => (prev ? { ...prev, companyId: company.id } : null));
     } else {
       localStorage.removeItem(INSPECTED_COMPANY_KEY);
+      setUser((prev) => (prev ? { ...prev, companyId: null as any } : null));
     }
   };
 
   const signOut = useCallback(async () => {
+    const currentToken = token || getStoredAccessToken();
     try {
-      if (token) {
-        await axios.post(`${API_URL}/auth/logout`, {}, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+      if (currentToken) {
+        await axios.post(
+          `${API_URL}/auth/logout`,
+          {},
+          {
+            headers: { Authorization: `Bearer ${currentToken}` },
+          }
+        );
       }
     } catch (err) {
-      console.error("Failed to call logout endpoint", err);
+      console.warn("Failed to notify backend on logout", err);
     }
-    
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+
+    clearStoredTokens();
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(SETUP_KEY);
     localStorage.removeItem("setupData");
     localStorage.removeItem(INSPECTED_COMPANY_KEY);
+    sessionStorage.clear();
+
     setToken(null);
     setUser(null);
     setInspectedCompanyState(null);
     setIsNewCustomer(false);
   }, [token]);
 
-  // Initialize auth state on mount
-  useEffect(() => {
-    const storedToken = localStorage.getItem(TOKEN_KEY);
-    const storedUser = localStorage.getItem(USER_KEY);
-    const setupCompleted = localStorage.getItem(SETUP_KEY);
+  // Validate session against backend /api/auth/me
+  const validateSession = useCallback(async (): Promise<boolean> => {
+    const currentToken = getStoredAccessToken();
+    if (!currentToken) return false;
 
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      try {
-        const parsedUser: User = JSON.parse(storedUser);
-        setUser(parsedUser);
-        setIsNewCustomer(!parsedUser.isNewCustomer && setupCompleted !== "true" ? true : false);
-      } catch {
-        setUser(null);
-        setIsNewCustomer(false);
+    try {
+      const response = await axios.get(`${API_URL}/auth/me`, {
+        headers: { Authorization: `Bearer ${currentToken}` },
+      });
+      const authUser = response.data;
+      if (authUser) {
+        let effectiveCompanyId = authUser.companyId;
+        if (authUser.isSuperAdmin) {
+          try {
+            const storedInspected = localStorage.getItem(INSPECTED_COMPANY_KEY);
+            if (storedInspected) {
+              const comp = JSON.parse(storedInspected);
+              effectiveCompanyId = comp.id || null;
+            } else {
+              effectiveCompanyId = null;
+            }
+          } catch {
+            effectiveCompanyId = null;
+          }
+        }
+
+        const userObj: User = {
+          id: authUser.sub || authUser.id,
+          name: authUser.name,
+          email: authUser.email,
+          role: authUser.role || "Admin",
+          userRole: authUser.userRole,
+          avatarUrl: authUser.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
+          provider: "password",
+          isNewCustomer: !authUser.onboarded,
+          companyId: effectiveCompanyId,
+          isSuperAdmin: authUser.isSuperAdmin || false,
+          companyAccess: authUser.companyAccess || null,
+          signature: authUser.signature || undefined,
+        };
+        setUser(userObj);
+        setIsNewCustomer(!authUser.onboarded);
+        localStorage.setItem(USER_KEY, JSON.stringify(userObj));
+        return true;
       }
+      return false;
+    } catch {
+      return false;
     }
-    setLoading(false);
   }, []);
 
-  // Listen for custom token refresh and session expired events
+  // Initialize auth state on mount with automatic refresh if access token expired
+  useEffect(() => {
+    let isMounted = true;
+
+    const initAuth = async () => {
+      const storedToken = getStoredAccessToken();
+      const storedRefreshToken = getStoredRefreshToken();
+      const storedUser = localStorage.getItem(USER_KEY);
+      const setupCompleted = localStorage.getItem(SETUP_KEY);
+
+      if (!storedToken && !storedRefreshToken) {
+        if (isMounted) {
+          setToken(null);
+          setUser(null);
+          setLoading(false);
+        }
+        return;
+      }
+
+      let parsedUser: User | null = null;
+      if (storedUser) {
+        try {
+          parsedUser = JSON.parse(storedUser);
+        } catch {
+          parsedUser = null;
+        }
+      }
+
+      let activeToken = storedToken;
+
+      // If access token is missing or expired, but we have a refresh token, perform silent refresh
+      if (isTokenExpired(storedToken) && storedRefreshToken) {
+        if (isTokenExpired(storedRefreshToken)) {
+          // Both access and refresh tokens are expired
+          clearStoredTokens();
+          localStorage.removeItem(USER_KEY);
+          localStorage.removeItem(SETUP_KEY);
+          localStorage.removeItem(INSPECTED_COMPANY_KEY);
+          activeToken = null;
+          parsedUser = null;
+        } else {
+          try {
+            const response = await axios.post(`${API_URL}/auth/refresh`, {
+              refreshToken: storedRefreshToken,
+            });
+            const { accessToken: newAccessToken, refreshToken: newRefreshToken, user: authUser } = response.data;
+            if (newAccessToken) {
+              activeToken = newAccessToken;
+              setStoredAccessToken(newAccessToken);
+              if (newRefreshToken) {
+                setStoredRefreshToken(newRefreshToken);
+              }
+              if (authUser) {
+                parsedUser = {
+                  id: authUser.sub || authUser.id,
+                  name: authUser.name,
+                  email: authUser.email,
+                  role: authUser.role || "Admin",
+                  userRole: authUser.userRole,
+                  avatarUrl: authUser.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
+                  provider: "password",
+                  isNewCustomer: !authUser.onboarded,
+                  companyId: authUser.companyId,
+                  isSuperAdmin: authUser.isSuperAdmin || false,
+                  companyAccess: authUser.companyAccess || null,
+                };
+                localStorage.setItem(USER_KEY, JSON.stringify(parsedUser));
+              }
+            }
+          } catch (err) {
+            console.warn("Silent refresh failed on startup:", err);
+            clearStoredTokens();
+            localStorage.removeItem(USER_KEY);
+            localStorage.removeItem(SETUP_KEY);
+            localStorage.removeItem(INSPECTED_COMPANY_KEY);
+            activeToken = null;
+            parsedUser = null;
+          }
+        }
+      }
+
+      if (isMounted) {
+        if (activeToken && parsedUser) {
+          if (parsedUser.isSuperAdmin) {
+            try {
+              const storedInspected = localStorage.getItem(INSPECTED_COMPANY_KEY);
+              if (storedInspected) {
+                const comp = JSON.parse(storedInspected);
+                parsedUser.companyId = comp.id || null;
+              } else {
+                parsedUser.companyId = null as any;
+              }
+            } catch {
+              parsedUser.companyId = null as any;
+            }
+          }
+          setToken(activeToken);
+          setUser(parsedUser);
+          setIsNewCustomer(parsedUser.isNewCustomer && setupCompleted !== "true");
+          validateSession().catch(() => {});
+        } else {
+          setToken(null);
+          setUser(null);
+          setIsNewCustomer(false);
+        }
+        setLoading(false);
+      }
+    };
+
+    initAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Listen for custom token refresh, session expired, and cross-tab storage events
   useEffect(() => {
     const handleSessionExpiredEvent = () => {
-      signOut();
+      clearStoredTokens();
+      localStorage.removeItem(USER_KEY);
+      localStorage.removeItem(SETUP_KEY);
+      localStorage.removeItem("setupData");
+      localStorage.removeItem(INSPECTED_COMPANY_KEY);
+      sessionStorage.clear();
+      setToken(null);
+      setUser(null);
+      setInspectedCompanyState(null);
+      setIsNewCustomer(false);
     };
 
     const handleTokenRefreshedEvent = (e: Event) => {
@@ -118,16 +318,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(customEvent.detail.token);
       }
       if (customEvent.detail?.user) {
-        setUser((prev) => (prev ? { ...prev, ...customEvent.detail.user } : customEvent.detail.user));
+        const u = customEvent.detail.user;
+        setUser((prev) => ({
+          id: u.sub || u.id || prev?.id || "",
+          name: u.name || prev?.name || "",
+          email: u.email || prev?.email || "",
+          role: u.role || prev?.role || "Admin",
+          userRole: u.userRole || prev?.userRole,
+          avatarUrl: u.avatarUrl || prev?.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.name || prev?.name || "User")}`,
+          provider: prev?.provider || "password",
+          isNewCustomer: u.onboarded !== undefined ? !u.onboarded : (prev?.isNewCustomer ?? false),
+          companyId: u.companyId !== undefined ? u.companyId : (prev?.companyId || ""),
+          isSuperAdmin: u.isSuperAdmin !== undefined ? u.isSuperAdmin : prev?.isSuperAdmin,
+          companyAccess: u.companyAccess !== undefined ? u.companyAccess : prev?.companyAccess,
+          signature: u.signature !== undefined ? u.signature : prev?.signature,
+        }));
       }
     };
 
     // Cross-tab synchronization
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === TOKEN_KEY && !e.newValue) {
-        signOut();
+        handleSessionExpiredEvent();
       } else if (e.key === TOKEN_KEY && e.newValue) {
-        setToken(e.newValue);
+        const freshToken = getStoredAccessToken() || e.newValue;
+        setToken(freshToken);
         const storedUser = localStorage.getItem(USER_KEY);
         if (storedUser) {
           try {
@@ -137,28 +352,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Back-forward cache (bfcache) check
+    const handlePageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        const currentToken = getStoredAccessToken();
+        if (!currentToken) {
+          handleSessionExpiredEvent();
+        }
+      }
+    };
+
     window.addEventListener("auth:session-expired", handleSessionExpiredEvent);
     window.addEventListener("auth:token-refreshed", handleTokenRefreshedEvent);
     window.addEventListener("storage", handleStorageChange);
+    window.addEventListener("pageshow", handlePageShow);
 
     return () => {
       window.removeEventListener("auth:session-expired", handleSessionExpiredEvent);
       window.removeEventListener("auth:token-refreshed", handleTokenRefreshedEvent);
       window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("pageshow", handlePageShow);
     };
-  }, [signOut]);
+  }, []);
 
   const signIn = async (userData: User, accessToken: string, refreshToken?: string) => {
-    localStorage.setItem(TOKEN_KEY, accessToken);
+    setStoredAccessToken(accessToken);
     if (refreshToken) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+      setStoredRefreshToken(refreshToken);
     }
     localStorage.setItem(USER_KEY, JSON.stringify(userData));
     localStorage.setItem(SETUP_KEY, userData.isNewCustomer ? "false" : "true");
 
     setToken(accessToken);
     setUser(userData);
-    setIsNewCustomer(!userData.isNewCustomer);
+    setIsNewCustomer(userData.isNewCustomer);
   };
 
   const effectiveUser = useMemo(() => {
@@ -182,6 +409,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setInspectedCompany,
       setIsNewCustomer,
       setUser,
+      validateSession,
 
       signInWithGoogleToken: async (idToken: string) => {
         try {
@@ -189,15 +417,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const { accessToken, refreshToken, user: authUser } = response.data;
 
           const userObj: User = {
-            id: authUser.sub,
+            id: authUser.sub || authUser.id,
             name: authUser.name,
             email: authUser.email,
             role: authUser.role || "Admin",
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "google",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
+            isSuperAdmin: authUser.isSuperAdmin || false,
+            companyAccess: authUser.companyAccess || null,
+            signature: authUser.signature || undefined,
           };
 
           await signIn(userObj, accessToken, refreshToken);
@@ -212,18 +443,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const response = await axios.post(`${API_URL}/auth/login`, { email, password });
           const { accessToken, refreshToken, user: authUser } = response.data;
 
+          if (authUser.isSuperAdmin) {
+            localStorage.removeItem(INSPECTED_COMPANY_KEY);
+            setInspectedCompanyState(null);
+          }
+
           const userObj: User = {
-            id: authUser.sub,
+            id: authUser.sub || authUser.id,
             name: authUser.name,
             email: authUser.email,
             role: authUser.role || "Admin",
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "password",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
             isSuperAdmin: authUser.isSuperAdmin || false,
             companyAccess: authUser.companyAccess || null,
+            signature: authUser.signature || undefined,
           };
 
           await signIn(userObj, accessToken, refreshToken);
@@ -242,15 +479,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const { accessToken, refreshToken, user: authUser } = response.data;
 
           const userObj: User = {
-            id: authUser.sub,
+            id: authUser.sub || authUser.id,
             name: authUser.name,
             email: authUser.email,
             role: authUser.role || "Admin",
             userRole: authUser.userRole,
             avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(authUser.name)}`,
             provider: "password",
-            isNewCustomer: authUser.onboarded,
+            isNewCustomer: !authUser.onboarded,
             companyId: authUser.companyId,
+            isSuperAdmin: authUser.isSuperAdmin || false,
+            companyAccess: authUser.companyAccess || null,
           };
 
           await signIn(userObj, accessToken, refreshToken);
@@ -262,7 +501,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       signOut,
     }),
-    [effectiveUser, token, loading, isNewCustomer, inspectedCompany, signOut]
+    [effectiveUser, token, loading, isNewCustomer, inspectedCompany, signOut, validateSession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -273,4 +512,3 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
-

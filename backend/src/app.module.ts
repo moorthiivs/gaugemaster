@@ -24,6 +24,11 @@ import { RolesModule } from './roles/roles.module';
 import { SuperAdminModule } from './super-admin/super-admin.module';
 import { AuditLogsModule } from './audit-logs/audit-logs.module';
 import { LabelPrintHistoryModule } from './label-print-history/label-print-history.module';
+import { CalibrationProceduresModule } from './calibration-procedures/calibration-procedures.module';
+import { GaugeDiagramsModule } from './gauge-diagrams/gauge-diagrams.module';
+import { WorkInstructionsModule } from './work-instructions/work-instructions.module';
+import { StandardsModule } from './standards/standards.module';
+import { RecoveryModule } from './recovery/recovery.module';
 
 @Module({
   imports: [
@@ -43,9 +48,16 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
       entities: [__dirname + '/**/*.entity{.ts,.js}'],
       migrations: [__dirname + '/migrations/*{.ts,.js}'],
       migrationsRun: false,
-      synchronize: true,
+      synchronize: process.env.NODE_ENV !== 'production' && process.env.DB_SYNCHRONIZE !== 'false',
       ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
       uuidExtension: 'pgcrypto',
+      extra: {
+        max: parseInt(process.env.DB_POOL_MAX || '30', 10),
+        min: parseInt(process.env.DB_POOL_MIN || '5', 10),
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000,
+        options: '-c timezone=UTC',
+      },
     }),
 
     AuthModule,
@@ -67,6 +79,11 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
     SuperAdminModule,
     AuditLogsModule,
     LabelPrintHistoryModule,
+    CalibrationProceduresModule,
+    GaugeDiagramsModule,
+    WorkInstructionsModule,
+    StandardsModule,
+    RecoveryModule,
 
     // ⭐ PgBoss correct async config (NO ERRORS)
     PGBossModule.forRootAsync({
@@ -74,6 +91,7 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
         application_name: "default",
 
         host: config.get<string>("DB_HOST"),
+        port: parseInt(config.get<string>("DB_PORT") || "5432", 10),
         user: config.get<string>("DB_USERNAME"),
         password: config.get<string>("DB_PASSWORD"),
         database: config.get<string>("DB_NAME"),
@@ -93,3 +111,4 @@ import { LabelPrintHistoryModule } from './label-print-history/label-print-histo
   ],
 })
 export class AppModule { }
+

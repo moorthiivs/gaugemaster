@@ -3,17 +3,21 @@ import {
     ConflictException,
     InternalServerErrorException,
     NotFoundException,
+    BadRequestException,
+    OnApplicationBootstrap,
 } from '@nestjs/common';
 import { Instrument } from './instrument.entity';
 import { CalibrationHistory } from './calibration-history.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw } from 'typeorm';
+import { ILike, Like, Between, LessThan, LessThanOrEqual, MoreThan, Repository, In, Raw, Not, DataSource } from 'typeorm';
+import { Calibration } from '../calibration/calibration.entity';
 import { CreateInstrumentDto } from '../dto/create-instrument.dto';
 import { UpdateInstrumentDto } from 'src/dto/update-instrument.dto';
+import { BulkUpdatePreviewDto, BulkUpdateExecuteDto } from '../dto/bulk-update.dto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Logger } from '@nestjs/common';
 import { User } from 'src/users/user.entity';
-import { ValidationService } from 'src/validation/validation.service';
+import { ValidationService, parseDateOrNull } from 'src/validation/validation.service';
 import { MailerService } from 'src/mail/mailer.service';
 import { StatusNotificationService } from 'src/reminder/status-notification.service';
 
@@ -44,7 +48,7 @@ interface InstrumentFilters {
 }
 
 @Injectable()
-export class InstrumentsService {
+export class InstrumentsService implements OnApplicationBootstrap {
     constructor(
         @InjectRepository(Instrument)
         private readonly instrumentRepository: Repository<Instrument>,
@@ -55,43 +59,194 @@ export class InstrumentsService {
         private readonly mailerService: MailerService,
         private readonly validationService: ValidationService,
         private readonly statusNotificationService: StatusNotificationService,
+        private readonly dataSource: DataSource,
     ) { }
 
-    private async getCompanyUserIds(userId?: string): Promise<string[]> {
-        if (!userId) return [];
-        const user = await this.userRepository.findOne({ where: { id: userId } });
-        if (user && user.companyId) {
+    async onApplicationBootstrap() {
+        await this.autoupdateinstrumentStatus().catch((err) => {
+            console.error('Failed to run initial autoupdateinstrumentStatus on bootstrap:', err);
+        });
+    }
+
+    public getTodayStart(): Date {
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+        const now = new Date();
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        return new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+    }
+
+    public resolveEffectiveStatus(inst: Instrument, todayStart?: Date): string {
+        const current = (inst.status || '').trim();
+        const lower = current.toLowerCase();
+
+        // Standard statuses that are subject to automated overdue/OK expiration logic
+        const standardStatuses = [
+            'ok',
+            'calibrated',
+            'upcoming calibration (10 days before )',
+            'upcoming calibration',
+            'overdue',
+            'over due',
+            '',
+        ];
+
+        // 1. If status is a custom status or special preserved status, ALWAYS preserve it!
+        if (!standardStatuses.includes(lower)) {
+            return current;
+        }
+
+        // 2. If the physical item status is retired (Scrapped, Inactive, Lost, Under Repair, Rejected),
+        // it must not be converted into 'Overdue'
+        const itemLower = (inst.item_status || '').toLowerCase().trim();
+        if (['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(itemLower)) {
+            return current || 'OK';
+        }
+
+        const effectiveToday = todayStart || this.getTodayStart();
+
+        // 3. Overdue if due_date has passed for standard active items
+        if (inst.due_date) {
+            const dueDate = new Date(inst.due_date);
+            if (!isNaN(dueDate.getTime()) && dueDate < effectiveToday) {
+                return 'Overdue';
+            }
+        }
+
+        // 4. Reset Overdue to OK if due date is in the future
+        if (lower.includes('overdue') || lower === 'over due') {
+            if (inst.due_date) {
+                const dueDate = new Date(inst.due_date);
+                if (!isNaN(dueDate.getTime()) && dueDate >= effectiveToday) {
+                    return 'OK';
+                }
+            }
+        }
+
+        return current || 'OK';
+    }
+
+    private async getCompanyUserIds(userId?: string, companyId?: string): Promise<string[]> {
+        const targetCompanyId = companyId || (userId ? (await this.userRepository.findOne({ where: { id: userId } }))?.companyId : undefined);
+        if (targetCompanyId) {
             const companyUsers = await this.userRepository.find({
-                where: { companyId: user.companyId },
+                where: { companyId: targetCompanyId },
                 select: ['id'],
             });
-            return companyUsers.map(u => u.id);
+            if (companyUsers.length > 0) {
+                return companyUsers.map(u => u.id);
+            }
         }
-        return [userId];
+        return userId ? [userId] : [];
     }
 
     /**
      * Generates the next sequential S.No for a given company.
-     * Finds the current maximum sino and returns max + 1.
+     * Uses PostgreSQL advisory locks to guarantee concurrency safety and prevent race conditions.
      */
     private async generateNextSino(companyId: string): Promise<number> {
-        const result = await this.instrumentRepository
-            .createQueryBuilder('instrument')
-            .select('MAX(instrument.sino)', 'maxSino')
-            .where('instrument."companyId" = :companyId', { companyId })
-            .andWhere('instrument.sino IS NOT NULL')
-            .getRawOne();
+        if (!companyId) {
+            const result = await this.instrumentRepository
+                .createQueryBuilder('instrument')
+                .select('MAX(instrument.sino)', 'maxSino')
+                .where('instrument.sino IS NOT NULL')
+                .getRawOne();
+            return (result?.maxSino ? Number(result.maxSino) : 0) + 1;
+        }
 
-        const maxSino = result?.maxSino ? Number(result.maxSino) : 0;
-        return maxSino + 1;
+        try {
+            await this.instrumentRepository.query(
+                `SELECT pg_advisory_lock(hashtext('company_sino_' || $1))`,
+                [companyId],
+            );
+
+            const result = await this.instrumentRepository
+                .createQueryBuilder('instrument')
+                .select('MAX(instrument.sino)', 'maxSino')
+                .where('instrument."companyId" = :companyId', { companyId })
+                .andWhere('instrument.sino IS NOT NULL')
+                .getRawOne();
+
+            const maxSino = result?.maxSino ? Number(result.maxSino) : 0;
+            return maxSino + 1;
+        } finally {
+            try {
+                await this.instrumentRepository.query(
+                    `SELECT pg_advisory_unlock(hashtext('company_sino_' || $1))`,
+                    [companyId],
+                );
+            } catch {
+                // Ignore if connection already terminated
+            }
+        }
     }
 
-    async findFilterParams(createdById: string) {
-        const userIds = await this.getCompanyUserIds(createdById);
-        const instruments = await this.instrumentRepository.find({
-            where: userIds.length > 0 ? { created_by: { id: In(userIds) } } : {},
-            select: ['status', 'item_status', 'frequency', 'location', 'calibration_source', 'device_type'],
-        });
+    private async resolveTargetCompanyId(userId?: string, companyId?: string): Promise<string | undefined> {
+        if (companyId) return companyId;
+        if (userId) {
+            const user = await this.userRepository.findOne({ where: { id: userId }, select: ['id', 'companyId'] });
+            if (user?.companyId) return user.companyId;
+        }
+        return undefined;
+    }
+
+    normalizeItemStatus(status?: string | null): string {
+        if (!status) return 'Active';
+        const trimmed = status.toString().trim();
+        if (!trimmed) return 'Active';
+        const lower = trimmed.toLowerCase();
+        if (lower === 'active' || lower === 'ok') return 'Active';
+        if (lower === 'spare') return 'SPARE';
+        if (lower === 'stock') return 'STOCK';
+        if (lower === 'inactive') return 'Inactive';
+        if (lower === 'scrapped') return 'Scrapped';
+        if (lower === 'lost') return 'Lost';
+        if (lower === 'under repair' || lower === 'under_repair') return 'Under Repair';
+        if (lower === 'rejected') return 'Rejected';
+        return trimmed;
+    }
+
+    async findFilterParams(createdById: string, companyId?: string) {
+        const targetCompanyId = await this.resolveTargetCompanyId(createdById, companyId);
+        
+        let customStatuses: string[] = [];
+        if (targetCompanyId) {
+            try {
+                const settingRes = await this.instrumentRepository.query(
+                    `SELECT "customInstrumentStatuses" FROM settings WHERE "companyId" = $1 LIMIT 1`,
+                    [targetCompanyId],
+                );
+                if (settingRes?.[0]?.customInstrumentStatuses && Array.isArray(settingRes[0].customInstrumentStatuses)) {
+                    customStatuses = settingRes[0].customInstrumentStatuses;
+                }
+            } catch (err) {
+                // Ignore if settings query fails
+            }
+        }
+
+        // OPTIMIZED: Query distinct values in a single SQL aggregation instead of loading all instruments into Node.js heap memory
+        let filterSql = `
+            SELECT
+                ARRAY(SELECT DISTINCT status FROM instruments WHERE status IS NOT NULL AND status != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS statuses,
+                ARRAY(SELECT DISTINCT item_status FROM instruments WHERE item_status IS NOT NULL AND item_status != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS item_statuses,
+                ARRAY(SELECT DISTINCT frequency FROM instruments WHERE frequency IS NOT NULL AND frequency != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS frequencies,
+                ARRAY(SELECT DISTINCT location FROM instruments WHERE location IS NOT NULL AND location != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS locations,
+                ARRAY(SELECT DISTINCT calibration_source FROM instruments WHERE calibration_source IS NOT NULL AND calibration_source != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS sources,
+                ARRAY(SELECT DISTINCT device_type FROM instruments WHERE device_type IS NOT NULL AND device_type != '' AND ($1::uuid IS NULL OR "companyId" = $1) AND ($2::uuid IS NULL OR created_by = $2)) AS device_types
+        `;
+
+        const filterRes = await this.instrumentRepository.query(filterSql, [
+            targetCompanyId || null,
+            targetCompanyId ? null : (createdById || null),
+        ]);
+
+        const raw = filterRes?.[0] || {};
+        const rawStatuses: string[] = raw.statuses || [];
+        const rawItemStatuses: string[] = raw.item_statuses || [];
+        const rawFrequencies: string[] = raw.frequencies || [];
+        const rawLocations: string[] = raw.locations || [];
+        const rawSources: string[] = raw.sources || [];
+        const rawDeviceTypes: string[] = raw.device_types || [];
 
         const unique = (arr: string[]) => {
             const seen = new Set<string>();
@@ -103,13 +258,32 @@ export class InstrumentsService {
             }).map(item => item.trim());
         };
 
+        const canonicalStatuses = [
+            'OK',
+            'Upcoming Calibration (10 days before )',
+            'Sent for Calibration',
+            'Overdue',
+        ];
+
+        const itemStatuses = rawItemStatuses.map(s => this.normalizeItemStatus(s));
+
+        const deviceTypes = rawDeviceTypes.map(dt => {
+            const trimmed = (dt || '').trim();
+            if (/reference|master/i.test(trimmed)) return 'Reference Standard';
+            return trimmed;
+        });
+
         return {
-            status: unique(instruments.map(i => i.status)),
-            item_status: unique(instruments.map(i => i.item_status || 'Active')),
-            frequency: unique(instruments.map(i => i.frequency)),
-            location: unique(instruments.map(i => i.location)),
-            calibration_source: unique(instruments.map(i => i.calibration_source)),
-            device_type: unique(instruments.map(i => i.device_type)),
+            status: unique([
+                ...canonicalStatuses,
+                ...rawStatuses,
+                ...customStatuses,
+            ]),
+            item_status: unique([...itemStatuses, 'Active', 'SPARE', 'Inactive', 'STOCK']),
+            frequency: unique(rawFrequencies),
+            location: unique(rawLocations),
+            calibration_source: unique(rawSources),
+            device_type: unique([...deviceTypes, 'Instrument', 'Gauge', 'Reference Standard']),
         };
     }
 
@@ -121,6 +295,7 @@ export class InstrumentsService {
         if (!instrument) {
             throw new NotFoundException(`Instrument with ID ${id} not found`);
         }
+        instrument.status = this.resolveEffectiveStatus(instrument);
         return instrument;
     }
 
@@ -135,20 +310,44 @@ export class InstrumentsService {
         const baseWhere: any = {};
 
         if (device_type && device_type !== 'All') {
-            baseWhere.device_type = ILike(device_type);
+            if (/reference|master/i.test(device_type)) {
+                baseWhere.device_type = Raw(alias => `LOWER(TRIM(${alias})) IN ('reference standard', 'master')`);
+            } else {
+                baseWhere.device_type = ILike(device_type);
+            }
         }
+
+        const tzOffsetMinutes = parseInt(process.env.TIMEZONE_OFFSET || '330', 10);
+        const now = new Date();
+        const nowLocal = new Date(now.getTime() + tzOffsetMinutes * 60 * 1000);
+        const todayStartLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 0, 0, 0, 0));
+        const todayEndLocal = new Date(Date.UTC(nowLocal.getFullYear(), nowLocal.getMonth(), nowLocal.getDate(), 23, 59, 59, 999));
+        const todayStart = new Date(todayStartLocal.getTime() - tzOffsetMinutes * 60 * 1000);
+        const todayEnd = new Date(todayEndLocal.getTime() - tzOffsetMinutes * 60 * 1000);
 
         if (status && status !== 'All') {
             const normalizedStatus = status.toLowerCase().replace(/\s+/g, '');
             if (normalizedStatus === 'overdue') {
-                baseWhere.due_date = LessThan(new Date());
+                baseWhere.due_date = LessThan(todayStart);
+                baseWhere.status = Raw(
+                    alias => `(${alias} ILIKE '%overdue%' OR LOWER(TRIM(COALESCE(${alias}, 'ok'))) IN ('ok', 'calibrated', 'upcoming calibration (10 days before )', 'upcoming calibration'))`
+                );
+                baseWhere.item_status = Raw(
+                    alias => `LOWER(TRIM(COALESCE(${alias}, 'active'))) NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')`
+                );
             } else if (normalizedStatus === 'duesoon') {
-                const now = new Date();
-                const dueSoonEnd = new Date(now);
-                dueSoonEnd.setDate(now.getDate() + 30);
-                baseWhere.due_date = Between(now, dueSoonEnd);
+                const dueSoonEnd = new Date(todayEnd);
+                dueSoonEnd.setDate(dueSoonEnd.getDate() + 30);
+                baseWhere.due_date = Between(todayStart, dueSoonEnd);
+            } else if (normalizedStatus === 'duetoday' || normalizedStatus === 'today') {
+                baseWhere.due_date = Between(todayStart, todayEnd);
+            } else if (normalizedStatus === 'ok' || normalizedStatus === 'calibrated') {
+                baseWhere.due_date = Raw(alias => `(${alias} >= :todayStart OR ${alias} IS NULL)`, { todayStart });
+                baseWhere.status = Raw(
+                    alias => `LOWER(TRIM(COALESCE(${alias}, 'ok'))) IN ('ok', 'calibrated')`
+                );
             } else {
-                baseWhere.status = ILike(status);
+                baseWhere.status = ILike(status.trim());
             }
         }
         if (item_status && item_status !== 'All') baseWhere.item_status = ILike(item_status);
@@ -183,13 +382,11 @@ export class InstrumentsService {
                 baseWhere.module = Raw(alias => `TRIM(${alias}) ILIKE :mod`, { mod: module.trim() });
             }
         }
-        if (companyId) {
-            baseWhere.companyId = companyId;
+        const targetCompanyId = await this.resolveTargetCompanyId(createdBy, companyId);
+        if (targetCompanyId) {
+            baseWhere.companyId = targetCompanyId;
         } else if (createdBy) {
-            const userIds = await this.getCompanyUserIds(createdBy);
-            if (userIds.length > 0) {
-                baseWhere.created_by = { id: In(userIds) };
-            }
+            baseWhere.created_by = { id: createdBy };
         }
         
         if (due_date) {
@@ -292,6 +489,10 @@ export class InstrumentsService {
             order: orderOption,
         });
 
+        data.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst, todayStart);
+        });
+
         return {
             data,
             total,
@@ -317,12 +518,18 @@ export class InstrumentsService {
 
         // Step 1: Get distinct instrument IDs from calibration_history 
         // (matches dashboard's countHistoryCalibrations logic exactly)
-        const userIds = await this.getCompanyUserIds(createdBy);
+        const targetCompanyId = await this.resolveTargetCompanyId(createdBy, filters.companyId);
         const historyQuery = this.calibrationHistoryRepository.createQueryBuilder('history')
             .innerJoin('history.instrument', 'instrument')
-            .select('DISTINCT instrument.id', 'id')
-            .where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] })
-            .andWhere('history.created_at BETWEEN :startRange AND :endRange', { startRange, endRange });
+            .select('DISTINCT instrument.id', 'id');
+
+        if (targetCompanyId) {
+            historyQuery.where('instrument."companyId" = :targetCompanyId', { targetCompanyId });
+        } else {
+            const userIds = await this.getCompanyUserIds(createdBy);
+            historyQuery.where('instrument.created_by IN (:...userIds)', { userIds: userIds.length > 0 ? userIds : [createdBy] });
+        }
+        historyQuery.andWhere('history.last_calibration_date BETWEEN :startRange AND :endRange', { startRange, endRange });
 
         if (item_status && item_status !== 'All') {
             historyQuery.andWhere('instrument.item_status ILIKE :item_status', { item_status });
@@ -331,7 +538,11 @@ export class InstrumentsService {
             historyQuery.andWhere('instrument.location ILIKE :location', { location });
         }
         if (device_type && device_type !== 'All') {
-            historyQuery.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            if (/reference|master/i.test(device_type)) {
+                historyQuery.andWhere("LOWER(TRIM(instrument.device_type)) IN ('reference standard', 'master')");
+            } else {
+                historyQuery.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            }
         }
 
         const instrumentIds = await historyQuery.getRawMany();
@@ -352,7 +563,11 @@ export class InstrumentsService {
             .where('instrument.id IN (:...ids)', { ids });
 
         if (device_type && device_type !== 'All') {
-            query.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            if (/reference|master/i.test(device_type)) {
+                query.andWhere("LOWER(TRIM(instrument.device_type)) IN ('reference standard', 'master')");
+            } else {
+                query.andWhere('instrument.device_type ILIKE :device_type', { device_type });
+            }
         }
         if (frequency && frequency !== 'All') {
             query.andWhere('instrument.frequency ILIKE :frequency', { frequency });
@@ -384,6 +599,11 @@ export class InstrumentsService {
             .take(pageSize)
             .getMany();
 
+        const todayStart = this.getTodayStart();
+        data.forEach(inst => {
+            inst.status = this.resolveEffectiveStatus(inst, todayStart);
+        });
+
         return {
             data,
             total,
@@ -396,12 +616,26 @@ export class InstrumentsService {
 
     private parseDateSafe(dateString: any): Date | undefined {
         if (!dateString) return undefined;
-        const d = new Date(dateString);
-        return isNaN(d.getTime()) ? undefined : d;
+        const d = parseDateOrNull(dateString);
+        return d || undefined;
     }
 
     async create(instrumentDto: CreateInstrumentDto, skipUniqueCheck = false) {
         try {
+            // Normalize localized date strings (e.g. 15.12.2025 or DD/MM/YYYY) to ISO strings
+            if (instrumentDto.last_calibration_date) {
+                const parsed = this.parseDateSafe(instrumentDto.last_calibration_date);
+                if (parsed) {
+                    instrumentDto.last_calibration_date = parsed.toISOString();
+                }
+            }
+            if (instrumentDto.due_date) {
+                const parsed = this.parseDateSafe(instrumentDto.due_date);
+                if (parsed) {
+                    instrumentDto.due_date = parsed.toISOString();
+                }
+            }
+
             // Configurable Validation
             await this.validationService.validateData(instrumentDto.companyId, instrumentDto);
 
@@ -424,31 +658,74 @@ export class InstrumentsService {
             // Always auto-generate S.No — ignore any user-provided value
             const sinoValue = await this.generateNextSino(instrumentDto.companyId);
 
-            let autoItemStatus = instrumentDto.item_status;
-            if (!autoItemStatus || autoItemStatus.toString().trim().toLowerCase() === 'ok') {
-                autoItemStatus = 'Active';
-            }
+            const autoItemStatus = this.normalizeItemStatus(instrumentDto.item_status);
 
             let autoStatus = instrumentDto.status;
             if (autoStatus && autoStatus.toString().trim().toLowerCase() === 'active') {
                 autoStatus = 'OK';
             }
 
-            const parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
-            if (parsedDueDate) {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
-                if (parsedDueDate <= today) {
-                    autoStatus = 'Overdue';
+            let parsedDueDate = this.parseDateSafe(instrumentDto.due_date);
+            const parsedLastCal = this.parseDateSafe(instrumentDto.last_calibration_date);
+            if (!parsedDueDate && parsedLastCal) {
+                parsedDueDate = this.calculateDueDateFromFrequency(parsedLastCal, instrumentDto.frequency);
+            }
+
+            const standardStatuses = [
+                'ok',
+                'calibrated',
+                'upcoming calibration (10 days before )',
+                'upcoming calibration',
+                'overdue',
+                '',
+            ];
+            const lowerAuto = (autoStatus || '').trim().toLowerCase();
+            const isStandard = standardStatuses.includes(lowerAuto);
+            const isNonCalibratable = ['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(
+                (autoItemStatus || '').toLowerCase().trim(),
+            );
+
+            if (isNonCalibratable) {
+                if (!autoStatus || lowerAuto === 'overdue') {
+                    autoStatus = autoItemStatus;
+                }
+            } else if (isStandard) {
+                if (parsedDueDate) {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0); // Reset time to accurately compare dates
+                    if (parsedDueDate <= today) {
+                        autoStatus = 'Overdue';
+                    } else if (!autoStatus) {
+                        autoStatus = 'OK';
+                    }
                 } else if (!autoStatus) {
                     autoStatus = 'OK';
                 }
-            } else if (!autoStatus) {
-                autoStatus = 'OK';
+            }
+
+            // Enforce unified device_type / is_reference_standard consistency
+            let autoIsReferenceStandard = instrumentDto.is_reference_standard;
+            let normalizedDeviceType = instrumentDto.device_type;
+            if (instrumentDto.device_type) {
+                const dt = instrumentDto.device_type.trim();
+                if (/reference|master/i.test(dt)) {
+                    autoIsReferenceStandard = true;
+                    normalizedDeviceType = 'Reference Standard';
+                } else if (/instrument/i.test(dt)) {
+                    autoIsReferenceStandard = false;
+                    normalizedDeviceType = 'Instrument';
+                } else if (/gauge/i.test(dt)) {
+                    autoIsReferenceStandard = false;
+                    normalizedDeviceType = 'Gauge';
+                }
+            } else if (autoIsReferenceStandard) {
+                normalizedDeviceType = 'Reference Standard';
             }
 
             const newInstrument = this.instrumentRepository.create({
                 ...instrumentDto,
+                device_type: normalizedDeviceType,
+                is_reference_standard: autoIsReferenceStandard ?? false,
                 sino: sinoValue,
                 status: autoStatus,
                 item_status: autoItemStatus,
@@ -489,13 +766,50 @@ export class InstrumentsService {
                 throw new NotFoundException(`Instrument with ID ${id} not found`);
             }
 
+            const previousStatus = instrument.status;
+
             const payload: any = { ...updateInstrumentDto };
+
+            if (payload.device_type !== undefined) {
+                const dt = (payload.device_type || '').trim();
+                if (/reference|master/i.test(dt)) {
+                    payload.is_reference_standard = true;
+                    payload.device_type = 'Reference Standard';
+                } else if (/instrument/i.test(dt)) {
+                    payload.is_reference_standard = false;
+                    payload.device_type = 'Instrument';
+                } else if (/gauge/i.test(dt)) {
+                    payload.is_reference_standard = false;
+                    payload.device_type = 'Gauge';
+                }
+            } else if (payload.is_reference_standard !== undefined) {
+                if (payload.is_reference_standard) {
+                    payload.device_type = 'Reference Standard';
+                }
+            }
+
+            if (payload.item_status !== undefined) {
+                payload.item_status = this.normalizeItemStatus(payload.item_status);
+            }
 
             if (payload.created_by) {
                 payload.created_by = { id: payload.created_by };
             }
             if (payload.updated_by) {
                 payload.updated_by = { id: payload.updated_by };
+            }
+
+            if (payload.last_calibration_date !== undefined && payload.last_calibration_date !== null && payload.last_calibration_date !== '') {
+                const parsed = this.parseDateSafe(payload.last_calibration_date);
+                if (parsed) {
+                    payload.last_calibration_date = parsed.toISOString();
+                }
+            }
+            if (payload.due_date !== undefined && payload.due_date !== null && payload.due_date !== '') {
+                const parsed = this.parseDateSafe(payload.due_date);
+                if (parsed) {
+                    payload.due_date = parsed.toISOString();
+                }
             }
 
             // Configurable Validation
@@ -505,53 +819,180 @@ export class InstrumentsService {
                 await this.validationService.validateData(companyId, merged);
             }
 
-            // Automatically update status based on new due_date if not REJECTED
-            const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
-            if (finalDueDate && payload.status !== 'REJECTED') {
-                const parsedDueDate = this.parseDateSafe(finalDueDate);
-                if (parsedDueDate) {
-                    const today = new Date();
-                    today.setHours(0, 0, 0, 0);
-                    if (parsedDueDate <= today) {
-                        payload.status = 'Overdue';
-                    } else if ((instrument.status === 'Overdue' || instrument.status === 'REJECTED') && (!payload.status || payload.status === 'Overdue' || payload.status === 'REJECTED')) {
-                        // If it was overdue/rejected but now date is extended into the future and verdict passed, reset to OK
-                        payload.status = 'OK';
+            // Automatically update due_date if last_calibration_date is updated and due_date was omitted
+            if (payload.last_calibration_date !== undefined && (payload.due_date === undefined || payload.due_date === null)) {
+                const parsedLastCal = this.parseDateSafe(payload.last_calibration_date);
+                if (parsedLastCal) {
+                    payload.due_date = this.calculateDueDateFromFrequency(
+                        parsedLastCal,
+                        payload.frequency || instrument.frequency,
+                    );
+                }
+            }
+
+            // Determine effective status handling
+            const targetStatus = payload.status !== undefined ? (payload.status || '').trim() : (instrument.status || '').trim();
+            const lowerTarget = targetStatus.toLowerCase();
+            const standardStatuses = [
+                'ok',
+                'calibrated',
+                'upcoming calibration (10 days before )',
+                'upcoming calibration',
+                'overdue',
+                '',
+            ];
+            const isStandard = standardStatuses.includes(lowerTarget);
+            const effectiveItemStatus = (payload.item_status || instrument.item_status || 'Active').toLowerCase().trim();
+            const isNonCalibratable = ['scrapped', 'inactive', 'lost', 'under repair', 'rejected'].includes(effectiveItemStatus);
+
+            if (lowerTarget.includes('under calibration') || lowerTarget.includes('sent for calibration')) {
+                payload.status = targetStatus;
+            } else if (!isStandard) {
+                // Explicit custom status (e.g. "not in use", "Spare", "Under Maintenance") or REJECTED / Scrapped
+                // PRESERVE user's explicit status! Never force it to Overdue!
+                payload.status = targetStatus;
+            } else if (isNonCalibratable) {
+                // Non-calibratable asset lifecycle (Scrapped, Inactive, etc.): NEVER force to 'Overdue'!
+                if (lowerTarget === 'overdue') {
+                    payload.status = payload.item_status || instrument.item_status || 'OK';
+                } else {
+                    payload.status = targetStatus || 'OK';
+                }
+            } else {
+                // Standard status: dynamically adjust based on due date for active in-service items
+                const finalDueDate = payload.due_date !== undefined ? payload.due_date : instrument.due_date;
+                if (finalDueDate) {
+                    const parsedDueDate = this.parseDateSafe(finalDueDate);
+                    if (parsedDueDate) {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+                        if (parsedDueDate <= today) {
+                            payload.status = 'Overdue';
+                        } else if (lowerTarget === 'overdue') {
+                            // If it was overdue but now date is in the future, reset to OK
+                            payload.status = 'OK';
+                        } else {
+                            payload.status = targetStatus || 'OK';
+                        }
                     }
+                } else if (!targetStatus) {
+                    payload.status = 'OK';
                 }
             }
 
             const updatedInstrument = this.instrumentRepository.merge(instrument, payload);
-            const savedInstrument = await this.instrumentRepository.save(updatedInstrument);
 
-            // History logic
-            if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
-                const history = this.calibrationHistoryRepository.create({
-                    instrument: { id: savedInstrument.id },
-                    last_calibration_date: savedInstrument.last_calibration_date,
-                    due_date: savedInstrument.due_date,
-                    certificate_file: savedInstrument.certificate_file,
-                    calibration_source: savedInstrument.calibration_source,
-                });
-                await this.calibrationHistoryRepository.save(history);
-            } else if (updateInstrumentDto.certificate_file) {
-                // If only certificate is uploaded, update the latest history entry
-                const latestHistory = await this.calibrationHistoryRepository.findOne({
-                    where: { instrument: { id: savedInstrument.id } },
-                    order: { created_at: 'DESC' },
-                });
-                if (latestHistory) {
-                    latestHistory.certificate_file = updateInstrumentDto.certificate_file;
-                    if (updateInstrumentDto.calibration_source) {
-                        latestHistory.calibration_source = updateInstrumentDto.calibration_source;
+            // Execute instrument save and calibration history update atomically in a single transaction
+            const savedInstrument = await this.instrumentRepository.manager.transaction(async (transactionalEntityManager) => {
+                const instRepo = transactionalEntityManager.getRepository(Instrument);
+                const histRepo = transactionalEntityManager.getRepository(CalibrationHistory);
+
+                const savedInst = await instRepo.save(updatedInstrument);
+
+                // History logic
+                if (updateInstrumentDto.last_calibration_date || updateInstrumentDto.due_date) {
+                    let existingHistory: CalibrationHistory | null = null;
+
+                    // 1. Look for history record matching the previous calibration date if provided
+                    if ((updateInstrumentDto as any).previous_last_calibration_date) {
+                        const prevDate = new Date((updateInstrumentDto as any).previous_last_calibration_date);
+                        existingHistory = await histRepo.findOne({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                last_calibration_date: prevDate,
+                            },
+                            order: { created_at: 'DESC' },
+                        });
                     }
-                    await this.calibrationHistoryRepository.save(latestHistory);
-                }
-            }
 
-            // Trigger collection notification to Location Head if instrument was calibrated/updated to OK
+                    // 2. If not found by previous date, look for an entry matching the new calibration date
+                    if (!existingHistory && savedInst.last_calibration_date) {
+                        existingHistory = await histRepo.findOne({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                last_calibration_date: savedInst.last_calibration_date,
+                            },
+                            order: { created_at: 'DESC' },
+                        });
+                    }
+
+                    // 3. Fallback: for in-house calibrations, update the most recent in-house history entry
+                    if (!existingHistory && savedInst.calibration_source === 'In-House') {
+                        const inHouseHistories = await histRepo.find({
+                            where: {
+                                instrument: { id: savedInst.id },
+                                calibration_source: 'In-House',
+                            },
+                            order: { created_at: 'DESC' },
+                            take: 1,
+                        });
+                        if (inHouseHistories.length > 0) {
+                            existingHistory = inHouseHistories[0];
+                        }
+                    }
+
+                    if (existingHistory) {
+                        existingHistory.last_calibration_date = savedInst.last_calibration_date;
+                        existingHistory.due_date = savedInst.due_date;
+                        if (savedInst.certificate_file) {
+                            existingHistory.certificate_file = savedInst.certificate_file;
+                        }
+                        if (savedInst.calibration_source) {
+                            existingHistory.calibration_source = savedInst.calibration_source;
+                        }
+                        await histRepo.save(existingHistory);
+                    } else {
+                        const history = histRepo.create({
+                            instrument: { id: savedInst.id },
+                            last_calibration_date: savedInst.last_calibration_date,
+                            due_date: savedInst.due_date,
+                            certificate_file: savedInst.certificate_file,
+                            calibration_source: savedInst.calibration_source,
+                        });
+                        await histRepo.save(history);
+                    }
+
+                    // Clean up any remaining obsolete duplicate history entries matching previous_last_calibration_date
+                    if ((updateInstrumentDto as any).previous_last_calibration_date && savedInst.last_calibration_date) {
+                        const prevDate = new Date((updateInstrumentDto as any).previous_last_calibration_date);
+                        if (prevDate.getTime() !== new Date(savedInst.last_calibration_date).getTime()) {
+                            const staleEntries = await histRepo.find({
+                                where: {
+                                    instrument: { id: savedInst.id },
+                                    last_calibration_date: prevDate,
+                                },
+                            });
+                            for (const stale of staleEntries) {
+                                if (!existingHistory || stale.id !== existingHistory.id) {
+                                    await histRepo.remove(stale).catch(() => {});
+                                }
+                            }
+                        }
+                    }
+                } else if (updateInstrumentDto.certificate_file) {
+                    // If only certificate is uploaded, update the latest history entry
+                    const latestHistory = await histRepo.findOne({
+                        where: { instrument: { id: savedInst.id } },
+                        order: { created_at: 'DESC' },
+                    });
+                    if (latestHistory) {
+                        latestHistory.certificate_file = updateInstrumentDto.certificate_file;
+                        if (updateInstrumentDto.calibration_source) {
+                            latestHistory.calibration_source = updateInstrumentDto.calibration_source;
+                        }
+                        await histRepo.save(latestHistory);
+                    }
+                }
+
+                return savedInst;
+            });
+
+            // Trigger collection notification to Location Head if instrument was calibrated/updated to OK from calibration
+            const prevStatusNormalized = (previousStatus || '').toLowerCase().trim();
+            const wasInLab = prevStatusNormalized.includes('under calibration') || prevStatusNormalized.includes('sent for calibration');
             if (
                 savedInstrument.status === 'OK' &&
+                wasInLab &&
                 (updateInstrumentDto.last_calibration_date || updateInstrumentDto.certificate_file || updateInstrumentDto.due_date)
             ) {
                 this.statusNotificationService.notifyCalibrated(savedInstrument).catch((err) => {
@@ -567,10 +1008,180 @@ export class InstrumentsService {
     }
 
     async getHistory(instrumentId: string) {
-        return this.calibrationHistoryRepository.find({
+        const histories = await this.calibrationHistoryRepository.find({
             where: { instrument: { id: instrumentId } },
             order: { created_at: 'DESC' },
         });
+
+        // Deduplicate history records by calibration date to ensure clean audit trail display
+        const seenCycleKeys = new Set<string>();
+        const uniqueHistories = histories.filter((h: any) => {
+            if (!h.last_calibration_date) return true;
+            const dateKey = new Date(h.last_calibration_date).toISOString().slice(0, 10);
+            if (seenCycleKeys.has(dateKey)) return false;
+            seenCycleKeys.add(dateKey);
+            return true;
+        });
+
+        try {
+            const calibrations = await this.instrumentRepository.query(
+                `SELECT id, certificate_number, calibration_date, next_calibration_date, verdict, approval_status, certificate_file, created_at 
+                 FROM calibrations 
+                 WHERE instrument_id = $1 
+                 ORDER BY created_at DESC`,
+                [instrumentId]
+            );
+
+            return uniqueHistories.map((h: any) => {
+                const match = calibrations.find((c: any) => {
+                    if (!c.calibration_date || !h.last_calibration_date) return false;
+                    const cDate = new Date(c.calibration_date).toISOString().slice(0, 10);
+                    const hDate = new Date(h.last_calibration_date).toISOString().slice(0, 10);
+                    return cDate === hDate;
+                }) || (h.calibration_source === 'In-House' && calibrations.length === 1 ? calibrations[0] : null);
+
+                return {
+                    ...h,
+                    cert_no: match?.certificate_number || null,
+                    certificate_number: match?.certificate_number || null,
+                    calibration_id: match?.id || null,
+                    approval_status: match?.approval_status || null,
+                    verdict: match?.verdict || null,
+                    certificate_file: h.certificate_file || match?.certificate_file || null,
+                };
+            });
+        } catch (err) {
+            console.warn('Failed to enrich calibration history:', err);
+            return uniqueHistories;
+        }
+    }
+
+    /**
+     * Deletes a calibration history record and recalculates the instrument's
+     * active calibration dates, due date, status, certificate, and source.
+     */
+    async deleteHistoryRecord(instrumentId: string, historyId: string) {
+        if (!historyId) {
+            throw new BadRequestException('History ID is required');
+        }
+
+        const historyEntry = await this.calibrationHistoryRepository.findOne({
+            where: { id: historyId },
+            relations: ['instrument'],
+        });
+
+        if (!historyEntry) {
+            throw new NotFoundException(`Calibration history record with ID ${historyId} not found`);
+        }
+
+        const targetInstrumentId = instrumentId || historyEntry.instrument?.id;
+        if (instrumentId && historyEntry.instrument && historyEntry.instrument.id !== instrumentId) {
+            throw new BadRequestException('History record does not belong to the specified instrument');
+        }
+
+        const deletedCalDate = historyEntry.last_calibration_date;
+
+        // If duplicate history entries exist for the exact same calibration date on this instrument, clean them up
+        if (targetInstrumentId && deletedCalDate) {
+            const sameDateHistories = await this.calibrationHistoryRepository.find({
+                where: {
+                    instrument: { id: targetInstrumentId },
+                    last_calibration_date: deletedCalDate,
+                },
+            });
+            for (const item of sameDateHistories) {
+                if (item.id !== historyEntry.id) {
+                    await this.calibrationHistoryRepository.remove(item).catch(() => {});
+                }
+            }
+        }
+
+        // If this history entry corresponds to an in-house digital calibration, clean up the digital record too
+        if (targetInstrumentId && deletedCalDate) {
+            try {
+                const calDateStr = new Date(deletedCalDate).toISOString().slice(0, 10);
+                const matchingCals = await this.instrumentRepository.query(
+                    `SELECT id FROM calibrations 
+                     WHERE instrument_id = $1 
+                     AND DATE(calibration_date) = $2`,
+                    [targetInstrumentId, calDateStr]
+                );
+                if (matchingCals && matchingCals.length > 0) {
+                    for (const mc of matchingCals) {
+                        await this.instrumentRepository.query(
+                            `DELETE FROM calibration_audit_logs WHERE calibration_id = $1`,
+                            [mc.id]
+                        ).catch(() => {});
+                        await this.instrumentRepository.query(
+                            `DELETE FROM calibrations WHERE id = $1`,
+                            [mc.id]
+                        ).catch(() => {});
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to clean up matching in-house calibration record:', err);
+            }
+        }
+
+        // Remove the target history entry
+        await this.calibrationHistoryRepository.remove(historyEntry);
+
+        // Synchronize and roll back the instrument to the previous cycle
+        let updatedInstrument: Instrument | null = null;
+        if (targetInstrumentId) {
+            const instrument = await this.instrumentRepository.findOne({ where: { id: targetInstrumentId } });
+            if (instrument) {
+                const remainingHistories = await this.calibrationHistoryRepository.find({
+                    where: { instrument: { id: targetInstrumentId } },
+                    order: { last_calibration_date: 'DESC', created_at: 'DESC' },
+                });
+
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                if (remainingHistories.length > 0) {
+                    const latestHistory = remainingHistories[0];
+                    const newDueDate = latestHistory.due_date;
+                    const isOverdue = newDueDate ? new Date(newDueDate) <= today : false;
+
+                    instrument.last_calibration_date = latestHistory.last_calibration_date;
+                    instrument.due_date = latestHistory.due_date;
+                    instrument.certificate_file = latestHistory.certificate_file;
+                    instrument.calibration_source = latestHistory.calibration_source || instrument.calibration_source;
+                    instrument.status = isOverdue ? 'Overdue' : 'OK';
+                    updatedInstrument = await this.instrumentRepository.save(instrument);
+                } else {
+                    // No remaining histories: roll back using frequency or reset
+                    if (deletedCalDate) {
+                        const months = this.parseFrequencyMonths(instrument.frequency);
+                        const prevCalDate = new Date(deletedCalDate);
+                        prevCalDate.setMonth(prevCalDate.getMonth() - months);
+
+                        const prevDueDate = new Date(deletedCalDate);
+                        const isOverdue = prevDueDate <= today;
+
+                        instrument.last_calibration_date = prevCalDate;
+                        instrument.due_date = prevDueDate;
+                        instrument.certificate_file = null as any;
+                        instrument.calibration_source = 'In-House';
+                        instrument.status = isOverdue ? 'Overdue' : 'OK';
+                        updatedInstrument = await this.instrumentRepository.save(instrument);
+                    } else {
+                        instrument.last_calibration_date = null as any;
+                        instrument.due_date = null as any;
+                        instrument.certificate_file = null as any;
+                        updatedInstrument = await this.instrumentRepository.save(instrument);
+                    }
+                }
+            }
+        }
+
+        return {
+            success: true,
+            message: 'Calibration history record deleted successfully',
+            deletedId: historyId,
+            instrument: updatedInstrument,
+        };
     }
 
     /**
@@ -639,20 +1250,109 @@ export class InstrumentsService {
         }
     }
 
-    private parseFrequencyMonths(frequencyStr?: string): number {
-        if (!frequencyStr) return 6;
-        const match = frequencyStr.match(/\d+/);
-        if (!match) return 6;
-        let val = parseInt(match[0], 10);
-        const normalized = frequencyStr.toLowerCase();
-        if (normalized.includes('year') || normalized.includes('yr')) {
-            val *= 12;
-        } else if (normalized.includes('day')) {
-            val = Math.max(1, Math.round(val / 30));
-        } else if (normalized.includes('week')) {
-            val = Math.max(1, Math.round((val * 7) / 30));
+    public parseFrequencyMonths(frequencyStr?: string): number {
+        if (!frequencyStr) return 12;
+        const normalized = frequencyStr.toLowerCase().trim();
+        if (normalized.includes('year') || normalized.includes('yr') || normalized.includes('annu')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return num * 12;
         }
-        return val > 0 ? val : 6;
+        if (normalized.includes('month') || normalized.includes('mo')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return num;
+        }
+        if (normalized.includes('week') || normalized.includes('wk')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return Math.max(1, Math.round((num * 7) / 30));
+        }
+        if (normalized.includes('day')) {
+            const match = normalized.match(/\d+/);
+            const num = match ? parseInt(match[0], 10) : 1;
+            return Math.max(1, Math.round(num / 30));
+        }
+        const match = normalized.match(/\d+/);
+        if (match) {
+            const val = parseInt(match[0], 10);
+            return val > 0 ? val : 12;
+        }
+        return 12;
+    }
+
+    private addMonthsClamped(date: Date, months: number): Date {
+        const result = new Date(date);
+        const originalDay = result.getDate();
+        result.setDate(1); // prevent premature month overflow
+        result.setMonth(result.getMonth() + months);
+        const daysInTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
+        result.setDate(Math.min(originalDay, daysInTargetMonth));
+        return result;
+    }
+
+    public calculateDueDateFromFrequency(baseDate: Date | string, frequencyStr?: string): Date {
+        const d = new Date(baseDate);
+        if (isNaN(d.getTime())) return new Date();
+
+        if (!frequencyStr || typeof frequencyStr !== 'string') {
+            return this.addMonthsClamped(d, 12);
+        }
+
+        // 1. Strip parenthetical expressions like "(364D)" to prevent false number matches
+        const clean = frequencyStr.replace(/\(.*?\)/g, '').trim().toLowerCase();
+
+        // 2. Specific text intervals
+        if (clean.includes('half') || clean.includes('semi')) {
+            return this.addMonthsClamped(d, 6);
+        }
+        if (clean.includes('quarter')) {
+            return this.addMonthsClamped(d, 3);
+        }
+
+        // 3. Year matches: "1 Year", "Once in year", "once in 2years", "2 YRS", "Yearly"
+        if (clean.includes('year') || clean.includes('yr') || clean.includes('annu')) {
+            const match = clean.match(/(\d+)/);
+            const years = match ? parseInt(match[1], 10) : 1;
+            return this.addMonthsClamped(d, (years > 0 ? years : 1) * 12);
+        }
+
+        // 4. Month matches: "1 MONTH", "6 Months", "Once in 6 months", "monthly"
+        if (clean.includes('month') || clean.includes('mo')) {
+            const match = clean.match(/(\d+)/);
+            const months = match ? parseInt(match[1], 10) : 1;
+            return this.addMonthsClamped(d, months > 0 ? months : 1);
+        }
+
+        // 5. Week matches
+        if (clean.includes('week') || clean.includes('wk')) {
+            const match = clean.match(/(\d+)/);
+            const weeks = match ? parseInt(match[1], 10) : 1;
+            const res = new Date(d);
+            res.setDate(res.getDate() + weeks * 7);
+            return res;
+        }
+
+        // 6. Day matches
+        if (clean.includes('day')) {
+            const match = clean.match(/(\d+)/);
+            const days = match ? parseInt(match[1], 10) : 1;
+            const res = new Date(d);
+            res.setDate(res.getDate() + days);
+            return res;
+        }
+
+        // 7. Pure digits fallback
+        const match = clean.match(/(\d+)/);
+        if (match) {
+            const val = parseInt(match[1], 10);
+            if (val === 1 || val === 2) {
+                return this.addMonthsClamped(d, val * 12);
+            }
+            return this.addMonthsClamped(d, val > 0 ? val : 12);
+        }
+
+        return this.addMonthsClamped(d, 12);
     }
 
 
@@ -711,42 +1411,519 @@ export class InstrumentsService {
 
     }
 
+    async bulkUpdatePreview(dto: BulkUpdatePreviewDto, user: any) {
+        const companyId = user?.isSuperAdmin && dto.options?.companyId ? dto.options.companyId : user?.companyId;
+        if (!companyId) {
+            throw new BadRequestException('User companyId is required');
+        }
+
+        const overwrite = dto.options?.overwrite ?? false;
+
+        const instruments = await this.instrumentRepository.find({
+            where: { companyId },
+        });
+
+        const normalize = (val: any): string => {
+            if (val === null || val === undefined) return '';
+            return String(val)
+                .replace(/\r\n/g, ' ')
+                .replace(/\n/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .toLowerCase();
+        };
+
+        const tier1Map = new Map<string, Instrument>();
+        const tier2Map = new Map<string, Instrument[]>();
+        const tier3Map = new Map<string, Instrument[]>();
+
+        for (const inst of instruments) {
+            const normName = normalize(inst.name);
+            const normId = normalize(inst.id_code);
+
+            if (inst.sino !== null && inst.sino !== undefined) {
+                tier1Map.set(`${inst.sino}:::${normName}:::${normId}`, inst);
+            }
+
+            const kNameId = `${normName}:::${normId}`;
+            if (!tier2Map.has(kNameId)) tier2Map.set(kNameId, []);
+            tier2Map.get(kNameId)!.push(inst);
+
+            if (!tier3Map.has(normId)) tier3Map.set(normId, []);
+            tier3Map.get(normId)!.push(inst);
+        }
+
+        const allowedFields: Array<{ key: keyof Instrument; label: string }> = [
+            { key: 'id_code', label: 'ID Code' },
+            { key: 'module', label: 'Module' },
+            { key: 'location', label: 'Location' },
+            { key: 'range', label: 'Range' },
+            { key: 'serial_no', label: 'Serial No' },
+            { key: 'make', label: 'Make' },
+            { key: 'frequency', label: 'Frequency' },
+            { key: 'least_count', label: 'Least Count' },
+            { key: 'part_name', label: 'Part Name' },
+            { key: 'part_no', label: 'Part No' },
+            { key: 'agency', label: 'Agency' },
+            { key: 'item_status', label: 'Item Status' },
+            { key: 'status', label: 'Status' },
+            { key: 'calibration_source', label: 'Calibration Source' },
+            { key: 'device_type', label: 'Device Type' },
+            { key: 'notes', label: 'Notes' },
+            { key: 'remarks', label: 'Remarks' },
+            { key: 'customer', label: 'Customer' },
+            { key: 'sector', label: 'Sector' },
+            { key: 'criticality_level', label: 'Criticality Level' },
+            { key: 'cert_no', label: 'Cert No' },
+        ];
+
+        const selectedColumnsSet = dto.options?.selectedColumns && dto.options.selectedColumns.length > 0
+            ? new Set(dto.options.selectedColumns.map(c => c.toLowerCase().trim()))
+            : null;
+
+        const activeFields = selectedColumnsSet
+            ? allowedFields.filter(f => selectedColumnsSet.has(String(f.key).toLowerCase()))
+            : allowedFields;
+
+        const previewRows: any[] = [];
+        const matchedIdsInBatch = new Set<string>();
+
+        for (const row of dto.rows) {
+            const rawIdCode = row.id_code || row.raw?.['ID CODE'] || row.raw?.['IMTE'] || row.raw?.['id_code'];
+            const rawName = row.name || row.raw?.['NAME OF INSTRUMENT'] || row.raw?.['Name'] || row.raw?.['name'];
+            const rawSino = row.sino ?? (row.raw?.['S.No'] && !isNaN(Number(row.raw?.['S.No'])) ? Number(row.raw?.['S.No']) : undefined);
+            const rawPartName = row.part_name || row.raw?.['Part Name'] || row.raw?.['part_name'];
+            const rawSerialNo = row.serial_no || row.raw?.['SERIAL NO'] || row.raw?.['serial_no'];
+            const rawLocation = row.location || row.raw?.['LOCATION'] || row.raw?.['Location'] || row.raw?.['location'] || row.raw?.['Line'];
+            const rawRange = row.range || row.raw?.['RANGE'] || row.raw?.['Range'] || row.raw?.['range'];
+            const rawPartNo = row.current_part_no || row.raw?.['Current Part Number'] || row.raw?.['PART NO'] || row.raw?.['part_no'] || row.raw?.['Part No'];
+
+            const normId = normalize(rawIdCode);
+            const normName = normalize(rawName);
+            const normPart = normalize(rawPartName);
+            const normSerial = normalize(rawSerialNo);
+            const normLocation = normalize(rawLocation);
+            const normRange = normalize(rawRange);
+            const normPartNo = normalize(rawPartNo);
+
+            // Skip secondary header rows if present in multi-row header sheets
+            if (
+                normId === 'id code' ||
+                normId === 'current id code' ||
+                normId === 'old id code' ||
+                normId === 'idcode' ||
+                normId === 'imte'
+            ) {
+                continue;
+            }
+
+            if (!normId && !normName) {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'error',
+                    errors: ['Row is missing both ID Code and Name'],
+                    changes: [],
+                    raw: row.raw,
+                });
+                continue;
+            }
+
+            let matched: Instrument | null = null;
+            let matchMethod = '';
+
+            // Tier 1: S.No + Name + ID Code
+            if (rawSino !== undefined && rawSino !== null) {
+                const k1 = `${rawSino}:::${normName}:::${normId}`;
+                if (tier1Map.has(k1)) {
+                    matched = tier1Map.get(k1)!;
+                    matchMethod = 'Exact S.No + Name + ID Code';
+                }
+            }
+
+            // Tier 2: Name + ID Code
+            if (!matched && normName && normId) {
+                const k2 = `${normName}:::${normId}`;
+                const candidates = tier2Map.get(k2) || [];
+                if (candidates.length === 1) {
+                    matched = candidates[0];
+                    matchMethod = 'Exact Name + ID Code';
+                } else if (candidates.length > 1) {
+                    let filtered = candidates;
+                    if (normLocation && normRange) {
+                        const byBoth = filtered.filter(c => normalize(c.location) === normLocation && normalize(c.range) === normRange);
+                        if (byBoth.length > 0) filtered = byBoth;
+                    }
+                    if (filtered.length > 1 && normRange) {
+                        const byRange = filtered.filter(c => normalize(c.range) === normRange);
+                        if (byRange.length > 0) filtered = byRange;
+                    }
+                    if (filtered.length > 1 && normLocation) {
+                        const byLoc = filtered.filter(c => normalize(c.location) === normLocation);
+                        if (byLoc.length > 0) filtered = byLoc;
+                    }
+                    const byPart = normPart ? filtered.filter(c => normalize(c.part_name) && (normalize(c.part_name).includes(normPart) || normPart.includes(normalize(c.part_name)))) : [];
+                    const bySerial = normSerial ? filtered.filter(c => normalize(c.serial_no) === normSerial) : [];
+                    const bySino = rawSino !== undefined ? filtered.filter(c => c.sino === rawSino) : [];
+
+                    if (filtered.length === 1) {
+                        matched = filtered[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Location/Range)';
+                    } else if (byPart.length === 1) {
+                        matched = byPart[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Part Name)';
+                    } else if (bySerial.length === 1) {
+                        matched = bySerial[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by Serial No)';
+                    } else if (bySino.length === 1) {
+                        matched = bySino[0];
+                        matchMethod = 'Name + ID Code (Disambiguated by S.No)';
+                    } else {
+                        previewRows.push({
+                            rowIndex: row.rowIndex,
+                            status: 'error',
+                            errors: [`Multiple instruments match ID '${rawIdCode || normName}'. Disambiguation needed.`],
+                            changes: [],
+                            raw: row.raw,
+                        });
+                        continue;
+                    }
+                }
+            }
+
+            // Tier 3: ID Code Unique / Disambiguated by Location, Range, Part No, etc.
+            if (!matched && normId) {
+                const candidates = tier3Map.get(normId) || [];
+                if (candidates.length === 1) {
+                    matched = candidates[0];
+                    matchMethod = 'Fallback Unique ID Code';
+                } else if (candidates.length > 1) {
+                    let filtered = candidates;
+
+                    // Step 1: Disambiguate by both Location AND Range
+                    if (normLocation && normRange) {
+                        const byBoth = filtered.filter(c => normalize(c.location) === normLocation && normalize(c.range) === normRange);
+                        if (byBoth.length > 0) filtered = byBoth;
+                    }
+
+                    // Step 2: Disambiguate by Range if still multiple
+                    if (filtered.length > 1 && normRange) {
+                        const byRange = filtered.filter(c => normalize(c.range) === normRange);
+                        if (byRange.length > 0) filtered = byRange;
+                    }
+
+                    // Step 3: Disambiguate by Location if still multiple
+                    if (filtered.length > 1 && normLocation) {
+                        const byLoc = filtered.filter(c => normalize(c.location) === normLocation);
+                        if (byLoc.length > 0) filtered = byLoc;
+                    }
+
+                    // Step 4: Disambiguate by Part No if still multiple
+                    if (filtered.length > 1 && normPartNo) {
+                        const byPno = filtered.filter(c => normalize(c.part_no) === normPartNo);
+                        if (byPno.length > 0) filtered = byPno;
+                    }
+
+                    // Step 5: Disambiguate by Part Name if still multiple
+                    if (filtered.length > 1 && normPart) {
+                        const byPname = filtered.filter(c => normalize(c.part_name) === normPart || normalize(c.part_name).includes(normPart));
+                        if (byPname.length > 0) filtered = byPname;
+                    }
+
+                    // Step 6: Disambiguate by Name if still multiple
+                    if (filtered.length > 1 && normName) {
+                        const byName = filtered.filter(c => normalize(c.name) === normName);
+                        if (byName.length > 0) filtered = byName;
+                    }
+
+                    // Step 7: Disambiguate by unassigned candidate in this batch
+                    if (filtered.length > 1) {
+                        const unassigned = filtered.filter(c => !matchedIdsInBatch.has(c.id));
+                        if (unassigned.length > 0) filtered = unassigned;
+                    }
+
+                    if (filtered.length === 1) {
+                        matched = filtered[0];
+                        matchMethod = 'ID Code (Disambiguated by Location/Range)';
+                    } else {
+                        previewRows.push({
+                            rowIndex: row.rowIndex,
+                            status: 'error',
+                            errors: [`Multiple instruments match ID '${rawIdCode}' (${filtered.length} matches). Please specify Location or Range.`],
+                            changes: [],
+                            raw: row.raw,
+                        });
+                        continue;
+                    }
+                }
+            }
+
+            if (!matched) {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'error',
+                    errors: [`Instrument not found in database for ID '${rawIdCode || normName}'`],
+                    changes: [],
+                    raw: row.raw,
+                });
+                continue;
+            }
+
+            matchedIdsInBatch.add(matched.id);
+
+            // Check changes for active selected fields
+            const proposedChanges: Array<{ field: string; label: string; oldValue: any; newValue: any }> = [];
+
+            for (const { key, label } of activeFields) {
+                let newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+
+                if (key === 'id_code') {
+                    newVal = row.new_id_code ?? row.raw?.['Change ID Code as Below'] ?? row.raw?.['Change ID Code'] ?? row.raw?.['New ID Code'] ?? row.raw?.['ID CODE_1'] ?? newVal;
+                    if (newVal && normalize(newVal) === normId) {
+                        newVal = undefined;
+                    }
+                }
+
+                if (key === 'part_no') {
+                    newVal = row.new_part_no ?? row.part_no ?? row.raw?.['Change Part Number'] ?? row.raw?.['New Part Number'] ?? row.raw?.['New Part No'] ?? row.raw?.['Change Part No'] ?? row.raw?.['Change ID Code as Below_1'] ?? row.raw?.['PART NO_1'] ?? newVal;
+                }
+
+                if (newVal === undefined || newVal === null) continue;
+
+                const cleanNew = String(newVal).trim();
+                if (cleanNew === '') continue;
+
+                const currVal = matched[key] !== null && matched[key] !== undefined ? String(matched[key]).trim() : '';
+
+                if (!overwrite) {
+                    if (currVal === '') {
+                        proposedChanges.push({
+                            field: key as string,
+                            label,
+                            oldValue: '<EMPTY>',
+                            newValue: cleanNew,
+                        });
+                    }
+                } else {
+                    if (currVal !== cleanNew) {
+                        proposedChanges.push({
+                            field: key as string,
+                            label,
+                            oldValue: currVal || '<EMPTY>',
+                            newValue: cleanNew,
+                        });
+                    }
+                }
+            }
+
+            if (proposedChanges.length === 0) {
+                const reasons: string[] = [];
+
+                for (const { key, label } of activeFields) {
+                    const newVal = row[key as string] ?? row.raw?.[label] ?? row.raw?.[key as string];
+                    const cleanNew = (newVal !== undefined && newVal !== null) ? String(newVal).trim() : '';
+                    const currVal = (matched[key] !== null && matched[key] !== undefined) ? String(matched[key]).trim() : '';
+
+                    if (!cleanNew) {
+                        reasons.push(`Excel cell for ${label} is empty`);
+                    } else if (cleanNew === currVal) {
+                        reasons.push(`${label} already matches database ("${currVal}")`);
+                    } else if (!overwrite) {
+                        reasons.push(`${label} exists in DB ("${currVal}") vs Excel ("${cleanNew}") — Overwrite is OFF`);
+                    }
+                }
+
+                const noChangeReason = reasons.length > 0
+                    ? reasons.join('; ')
+                    : 'Values in database already match Excel for selected columns';
+
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'no_change',
+                    errors: [noChangeReason],
+                    instrumentId: matched.id,
+                    sino: matched.sino,
+                    name: matched.name,
+                    id_code: matched.id_code,
+                    changes: [],
+                    matchMethod,
+                    raw: row.raw,
+                });
+            } else {
+                previewRows.push({
+                    rowIndex: row.rowIndex,
+                    status: 'ready',
+                    errors: [],
+                    instrumentId: matched.id,
+                    sino: matched.sino,
+                    name: matched.name,
+                    id_code: matched.id_code,
+                    changes: proposedChanges,
+                    matchMethod,
+                    raw: row.raw,
+                });
+            }
+        }
+
+        const columnUpdateCounts: Record<string, number> = {};
+        for (const row of previewRows) {
+            if (row.status === 'ready' && row.changes) {
+                for (const change of row.changes) {
+                    columnUpdateCounts[change.field] = (columnUpdateCounts[change.field] || 0) + 1;
+                }
+            }
+        }
+
+        return {
+            totalRows: dto.rows.length,
+            readyCount: previewRows.filter(r => r.status === 'ready').length,
+            errorCount: previewRows.filter(r => r.status === 'error').length,
+            noChangeCount: previewRows.filter(r => r.status === 'no_change').length,
+            columnUpdateCounts,
+            rows: previewRows,
+        };
+    }
+
+    async bulkUpdateExecute(dto: BulkUpdateExecuteDto, user: any) {
+        const companyId = user?.isSuperAdmin && dto.companyId ? dto.companyId : user?.companyId;
+        if (!companyId) {
+            throw new BadRequestException('User companyId is required');
+        }
+
+        if (!dto.updates || dto.updates.length === 0) {
+            throw new BadRequestException('No updates provided');
+        }
+
+        const allowedKeys = new Set([
+            'id_code', 'module', 'location', 'range', 'serial_no', 'make', 'frequency',
+            'least_count', 'part_name', 'part_no', 'agency', 'item_status',
+            'status', 'calibration_source', 'device_type', 'notes', 'remarks',
+            'customer', 'sector', 'criticality_level', 'cert_no',
+        ]);
+
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
+        try {
+            const updated: string[] = [];
+            const failed: Array<{ id: string; error: string }> = [];
+
+            for (const item of dto.updates) {
+                try {
+                    const inst = await queryRunner.manager.findOne(Instrument, {
+                        where: { id: item.id, companyId },
+                    });
+
+                    if (!inst) {
+                        failed.push({ id: item.id, error: 'Instrument not found or unauthorized' });
+                        continue;
+                    }
+
+                    // Whitelist item.changes to allowed fields only
+                    const safeChanges: Record<string, any> = {};
+                    for (const [k, v] of Object.entries(item.changes || {})) {
+                        if (allowedKeys.has(k)) {
+                            safeChanges[k] = v;
+                        }
+                    }
+
+                    if (Object.keys(safeChanges).length === 0) {
+                        failed.push({ id: item.id, error: 'No valid fields to update' });
+                        continue;
+                    }
+
+                    Object.assign(inst, safeChanges);
+                    inst.updated_at = new Date();
+                    if (user?.id) {
+                        inst.updated_by = { id: user.id } as User;
+                    }
+
+                    await queryRunner.manager.save(inst);
+                    updated.push(inst.id);
+                } catch (err: any) {
+                    failed.push({ id: item.id, error: err?.message || 'Update failed' });
+                }
+            }
+
+            if (failed.length > 0 && updated.length === 0) {
+                await queryRunner.rollbackTransaction();
+                return {
+                    successCount: 0,
+                    failedCount: failed.length,
+                    failedRows: failed,
+                };
+            }
+
+            await queryRunner.commitTransaction();
+
+            return {
+                successCount: updated.length,
+                failedCount: failed.length,
+                failedRows: failed,
+            };
+        } catch (error: any) {
+            await queryRunner.rollbackTransaction();
+            throw new InternalServerErrorException(error?.message || 'Failed to execute bulk update transaction');
+        } finally {
+            await queryRunner.release();
+        }
+    }
+
 
     async sendCalibagency(data: any) {
         await this.mailerService.sendCalibrationAgency(data);
     }
 
-    //@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
-    @Cron('27 12 * * *')
+    @Cron('5 0 * * *', { timeZone: 'Asia/Kolkata' })
     async autoupdateinstrumentStatus() {
         const logger = new Logger('InstrumentsService');
 
         try {
             logger.log('🕒 Running auto-overdue status update job...');
 
-            const today = new Date();
-            today.setHours(0, 0, 0, 0); // Normalize to start of day
+            const today = this.getTodayStart();
 
-            const overdueInstruments = await this.instrumentRepository.find({
-                where: {
-                    due_date: LessThan(today),
-                },
-            });
+            // 1. Single atomic SQL update: marks all expired in-service instruments as Overdue
+            // Exempt active calibrations, and non-calibratable item statuses (Scrapped, Inactive, Lost, Under Repair, Rejected)
+            const resultOverdue = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: 'Overdue' })
+                .where('due_date < :today', { today })
+                .andWhere(
+                    "status NOT IN ('Under Calibration', 'UNDER_CALIBRATION', 'Sent for Calibration', 'Overdue')",
+                )
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
+                )
+                .execute();
 
+            // 2. Reverse sync: if due_date is in the future, reset any stale 'Overdue' status back to 'OK'
+            const resultRestored = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: 'OK' })
+                .where('due_date >= :today', { today })
+                .andWhere("status = 'Overdue'")
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') NOT IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
+                )
+                .execute();
 
-            if (!overdueInstruments.length) {
-                logger.log('✅ No overdue instruments found.');
-                return;
-            }
+            // 3. One-time healing/cleanup: fix non-calibratable instruments that were wrongly turned 'Overdue' by previous logic
+            const resultNonCalCleaned = await this.instrumentRepository
+                .createQueryBuilder()
+                .update(Instrument)
+                .set({ status: () => "COALESCE(NULLIF(TRIM(item_status), ''), 'Inactive')" })
+                .where("status = 'Overdue'")
+                .andWhere(
+                    "COALESCE(LOWER(TRIM(item_status)), 'active') IN ('scrapped', 'inactive', 'lost', 'under repair', 'rejected')",
+                )
+                .execute();
 
-            // 🔹 Update each to status = 'Overdue'
-            for (const instrument of overdueInstruments) {
-                instrument.status = 'Overdue';
-                await this.instrumentRepository.save(instrument);
-                logger.log(`⚠️ Instrument ${instrument.name} (${instrument.id_code}) marked as Overdue.`);
-            }
-
-            logger.log(`✅ ${overdueInstruments.length} instruments updated to 'Overdue'`);
+            logger.log(
+                `✅ Auto-status sync completed: ${resultOverdue.affected || 0} marked Overdue, ${resultRestored.affected || 0} restored to OK, ${resultNonCalCleaned.affected || 0} non-calibratable restored from Overdue.`,
+            );
         } catch (error) {
             console.error('❌ Error in autoupdateinstrumentStatus cron:', error);
         }
@@ -761,14 +1938,16 @@ export class InstrumentsService {
             isReferenceStandard?: string;
             itemStatus?: string;
             location?: string;
+            companyId?: string;
         },
     ) {
-        const userIds = await this.getCompanyUserIds(userId);
-        const targetUserIds = userIds.length > 0 ? userIds : [userId];
-
-        const whereCondition: any = {
-            created_by: { id: In(targetUserIds) },
-        };
+        const targetCompanyId = await this.resolveTargetCompanyId(userId, options?.companyId);
+        const whereCondition: any = {};
+        if (targetCompanyId) {
+            whereCondition.companyId = targetCompanyId;
+        } else if (userId) {
+            whereCondition.created_by = { id: userId };
+        }
 
         if (options?.itemStatus && options.itemStatus !== 'All') {
             whereCondition.item_status = ILike(options.itemStatus);
@@ -822,6 +2001,7 @@ export class InstrumentsService {
         const targetMonth = Number(month); // 1-12
 
         for (const inst of instruments) {
+            inst.status = this.resolveEffectiveStatus(inst);
             const freqMonths = parseFreqMonths(inst.frequency);
 
             // 1. Completed calibration on last_calibration_date
@@ -847,6 +2027,7 @@ export class InstrumentsService {
                                 due_date: inst.due_date ? new Date(inst.due_date).toISOString() : localCalDate.toISOString(),
                                 last_calibration_date: localCalDate.toISOString(),
                                 status: inst.status || 'OK',
+                                item_status: inst.item_status,
                                 location: inst.location,
                                 agency: inst.agency,
                                 frequency: inst.frequency || `${freqMonths} month(s)`,
@@ -908,6 +2089,7 @@ export class InstrumentsService {
                             due_date: scheduledDateISO,
                             last_calibration_date: inst.last_calibration_date ? new Date(inst.last_calibration_date).toISOString() : null,
                             status: inst.status,
+                            item_status: inst.item_status,
                             location: inst.location,
                             agency: inst.agency,
                             frequency: inst.frequency || `${freqMonths} month(s)`,
@@ -927,18 +2109,70 @@ export class InstrumentsService {
         };
     }
 
-    async remove(id: string) {
+    async remove(id: string, user?: any, reason?: string) {
         const instrument = await this.instrumentRepository.findOne({ where: { id } });
         if (!instrument) {
-            throw new Error('Instrument not found');
+            throw new NotFoundException('Instrument not found');
         }
-        return this.instrumentRepository.remove(instrument);
+
+        const queryRunner = this.dataSource.createQueryRunner();
+        await queryRunner.connect();
+        await queryRunner.startTransaction();
+
+        try {
+            const now = new Date();
+            const userId = user?.id || user?.userId;
+            const userName = user?.name || user?.email || 'User';
+
+            // 1. Soft delete the instrument
+            await queryRunner.manager.update(Instrument, id, {
+                deleted_at: now,
+                deleted_by_id: userId,
+                deleted_by_name: userName,
+                deletion_reason: reason || null,
+            });
+
+            // 2. Coordinated soft delete of active child calibrations
+            await queryRunner.manager
+                .createQueryBuilder()
+                .update(Calibration)
+                .set({
+                    deleted_at: now,
+                    deleted_by_id: userId,
+                    deleted_by_name: userName,
+                    deletion_reason: reason ? `Deleted with instrument: ${reason}` : 'Deleted with parent instrument',
+                    deleted_with_parent_id: id,
+                })
+                .where('instrument_id = :id AND deleted_at IS NULL', { id })
+                .execute();
+
+            await queryRunner.commitTransaction();
+
+            return {
+                success: true,
+                message: `Instrument "${instrument.name}" moved to Recovery Center`,
+                id,
+            };
+        } catch (err) {
+            await queryRunner.rollbackTransaction();
+            throw err;
+        } finally {
+            await queryRunner.release();
+        }
     }
 
-    async bulkRemove(ids: string[]) {
+    async bulkRemove(ids: string[], user?: any, reason?: string) {
         if (!ids || ids.length === 0) return { deletedCount: 0 };
-        const result = await this.instrumentRepository.delete(ids);
-        return { deletedCount: result.affected || 0 };
+        let deletedCount = 0;
+        for (const id of ids) {
+            try {
+                await this.remove(id, user, reason);
+                deletedCount++;
+            } catch (e) {
+                // Continue with next
+            }
+        }
+        return { deletedCount };
     }
 
     /**

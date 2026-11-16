@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
 import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { useToast } from "@/hooks/use-toast";
@@ -60,6 +62,7 @@ interface AppUser {
 }
 
 import { usePermissions } from "@/hooks/usePermissions";
+import { PageHeader } from "@/components/common/PageHeader";
 
 export default function UserManagement() {
   const { user: currentUser, setUser } = useAuth();
@@ -273,13 +276,22 @@ export default function UserManagement() {
   };
 
   const handlePermissionChange = (moduleKey: string, action: "create" | "edit" | "view" | "delete", checked: boolean) => {
-    setRolePermissions((prev) => ({
-      ...prev,
-      [moduleKey]: {
-        ...(prev[moduleKey] || { create: false, edit: false, view: false, delete: false }),
-        [action]: checked,
-      },
-    }));
+    setRolePermissions((prev) => {
+      const current = prev[moduleKey] || { create: false, edit: false, view: false, delete: false };
+      const next = { ...current, [action]: checked };
+      if (moduleKey === "template_import" && (action === "view" || action === "create")) {
+        next.view = checked;
+        next.create = checked;
+      }
+      if (moduleKey === "template_export" && (action === "view" || action === "create")) {
+        next.view = checked;
+        next.create = checked;
+      }
+      return {
+        ...prev,
+        [moduleKey]: next,
+      };
+    });
   };
 
   const handleToggleModuleAll = (moduleKey: string, checked: boolean) => {
@@ -292,6 +304,29 @@ export default function UserManagement() {
         delete: checked,
       },
     }));
+  };
+
+  const handleToggleColumnAll = (action: "create" | "edit" | "view" | "delete", checked: boolean) => {
+    setRolePermissions((prev) => {
+      const next = { ...prev };
+      MODULE_NAMES.forEach((m) => {
+        next[m.key] = {
+          ...(next[m.key] || { create: false, edit: false, view: false, delete: false }),
+          [action]: checked,
+        };
+      });
+      return next;
+    });
+  };
+
+  const handleGrantAllPermissions = (checked: boolean) => {
+    setRolePermissions(() => {
+      const next: RolePermissions = {};
+      MODULE_NAMES.forEach((m) => {
+        next[m.key] = { create: checked, edit: checked, view: checked, delete: checked };
+      });
+      return next;
+    });
   };
 
   const handleSaveRole = async () => {
@@ -371,30 +406,168 @@ export default function UserManagement() {
     }
   };
 
-  return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-muted/20 p-6 rounded-2xl border">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-            <UserCheck className="h-7 w-7 text-primary" /> User & Role Management
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Manage system users, assign roles, define granular module permissions, and draw digital signatures.
-          </p>
-        </div>
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
-        {canAccess("users", "create") && (
-          <div className="flex items-center gap-3">
-            <Button onClick={handleOpenCreateUser} className="gap-2 bg-primary hover:bg-primary/90">
-              <Plus className="h-4 w-4" /> Add New User
-            </Button>
-            <Button onClick={handleOpenCreateRole} variant="outline" className="gap-2 border-primary/30">
-              <ShieldCheck className="h-4 w-4 text-primary" /> Create Custom Role
-            </Button>
+  const paginatedUsers = useMemo(() => {
+    const start = (pageIndex - 1) * pageSize;
+    return users.slice(start, start + pageSize);
+  }, [users, pageIndex, pageSize]);
+
+  const userColumns = useMemo<ColumnDef<AppUser>[]>(
+    () => [
+      {
+        id: "sno",
+        header: () => <div className="w-12 text-center font-semibold">#</div>,
+        cell: ({ row }) => (
+          <div className="w-12 text-center text-xs text-muted-foreground font-mono">
+            {(pageIndex - 1) * pageSize + row.index + 1}
           </div>
-        )}
-      </div>
+        ),
+        size: 50,
+      },
+      {
+        accessorKey: "name",
+        header: () => <span className="font-semibold">User Details</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="font-bold text-sm text-foreground">{u.name}</span>
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Mail className="h-3 w-3" /> {u.email}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "role",
+        header: () => <span className="font-semibold">Role</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          const roleName = u.role?.name || (typeof u.role === "string" ? u.role : u.roleId) || "User";
+          return (
+            <Badge
+              variant="secondary"
+              className="font-semibold bg-primary/10 text-primary border-primary/20"
+            >
+              <ShieldCheck className="h-3 w-3 mr-1" />
+              {roleName}
+            </Badge>
+          );
+        },
+      },
+      {
+        accessorKey: "designation",
+        header: () => <span className="font-semibold">Designation</span>,
+        cell: ({ row }) => (
+          <span className="text-xs font-medium text-foreground">
+            {row.original.designation || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "additionalEmails",
+        header: () => <span className="font-semibold">Additional Emails</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return u.additionalEmails && u.additionalEmails.length > 0 ? (
+            <div className="flex flex-wrap gap-1 max-w-[200px]">
+              {u.additionalEmails.map((em, i) => (
+                <Badge key={i} variant="outline" className="text-[10px] bg-background">
+                  {em}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">—</span>
+          );
+        },
+      },
+      {
+        accessorKey: "signature",
+        header: () => <span className="font-semibold">Digital Signature</span>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return u.signature ? (
+            <div className="h-8 w-24 bg-white border rounded p-0.5 flex items-center justify-center">
+              <img src={u.signature} alt="Signature" className="max-h-full max-w-full object-contain" />
+            </div>
+          ) : (
+            <Badge variant="outline" className="text-[10px] text-amber-600 bg-amber-50">
+              <PenTool className="h-3 w-3 mr-1" /> Not Drawn
+            </Badge>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: () => <div className="text-right font-semibold pr-2">Actions</div>,
+        cell: ({ row }) => {
+          const u = row.original;
+          return (
+            <div className="flex items-center justify-end gap-1">
+              {canAccess("users", "edit") && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-primary hover:bg-primary/10"
+                  onClick={() => handleOpenEditUser(u)}
+                  title="Edit User"
+                >
+                  <Edit2 className="h-4 w-4" />
+                </Button>
+              )}
+              {canAccess("users", "delete") && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                  onClick={() => setUserToDelete(u)}
+                  title="Delete User"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize, canAccess]
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Page Header */}
+      <PageHeader
+        title="User & Role Management"
+        description="Manage system users, assign roles, define granular module permissions, and draw digital signatures."
+        actions={
+          canAccess("users", "create") && (
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={handleOpenCreateRole}
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-semibold"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                <span>Create Role</span>
+              </Button>
+              <Button
+                onClick={handleOpenCreateUser}
+                size="sm"
+                className="h-8 gap-1.5 text-xs font-semibold shadow-2xs"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Add User</span>
+              </Button>
+            </div>
+          )
+        }
+      />
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-6">
@@ -418,114 +591,34 @@ export default function UserManagement() {
                 List of registered users with role access, designations, additional emails, and digital signatures.
               </CardDescription>
             </CardHeader>
-            <CardContent className="p-0">
-              {loadingUsers ? (
-                <div className="p-12 text-center text-muted-foreground flex flex-col items-center gap-2">
-                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  <p className="text-xs">Loading users list...</p>
-                </div>
-              ) : users.length === 0 ? (
-                <div className="p-12 text-center text-muted-foreground space-y-2">
-                  <Users className="h-10 w-10 mx-auto opacity-30" />
-                  <p className="text-sm font-medium">No users found.</p>
-                  <Button size="sm" onClick={handleOpenCreateUser} className="gap-1">
-                    <Plus className="h-3.5 w-3.5" /> Add First User
-                  </Button>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader className="bg-muted/30">
-                      <TableRow>
-                        <TableHead className="w-12">#</TableHead>
-                        <TableHead>User Details</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead>Designation</TableHead>
-                        <TableHead>Additional Emails</TableHead>
-                        <TableHead>Digital Signature</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {users.map((u, idx) => (
-                        <TableRow key={u.id} className="hover:bg-muted/10">
-                          <TableCell className="text-xs text-muted-foreground font-mono">{idx + 1}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span className="font-bold text-sm text-foreground">{u.name}</span>
-                              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Mail className="h-3 w-3" /> {u.email}
-                              </span>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className="font-semibold bg-primary/10 text-primary border-primary/20"
-                            >
-                              <ShieldCheck className="h-3 w-3 mr-1" />
-                              {u.role?.name || u.roleId || "User"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-xs font-medium text-foreground">
-                            {u.designation || "—"}
-                          </TableCell>
-                          <TableCell>
-                            {u.additionalEmails && u.additionalEmails.length > 0 ? (
-                              <div className="flex flex-wrap gap-1 max-w-[200px]">
-                                {u.additionalEmails.map((em, i) => (
-                                  <Badge key={i} variant="outline" className="text-[10px] bg-background">
-                                    {em}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-muted-foreground italic">—</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {u.signature ? (
-                              <div className="h-8 w-24 bg-white border rounded p-0.5 flex items-center justify-center">
-                                <img src={u.signature} alt="Signature" className="max-h-full max-w-full object-contain" />
-                              </div>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] text-amber-600 bg-amber-50">
-                                <PenTool className="h-3 w-3 mr-1" /> Not Drawn
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              {canAccess("users", "edit") && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-primary hover:bg-primary/10"
-                                  onClick={() => handleOpenEditUser(u)}
-                                  title="Edit User"
-                                >
-                                  <Edit2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                              {canAccess("users", "delete") && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-destructive hover:bg-destructive/10"
-                                  onClick={() => setUserToDelete(u)}
-                                  title="Delete User"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              )}
+            <CardContent className="p-4">
+              <DataTable
+                columns={userColumns}
+                data={paginatedUsers}
+                loading={loadingUsers}
+                pageIndex={pageIndex}
+                pageSize={pageSize}
+                pageCount={Math.max(1, Math.ceil(users.length / pageSize))}
+                totalItems={users.length}
+                onPageChange={setPageIndex}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPageIndex(1);
+                }}
+                searchPlaceholder="Search users by name or email..."
+                hideSearch={false}
+                hideColumnToggle={false}
+                emptyTitle="No users found"
+                emptyDescription="Manage your organization's users, assign roles, and configure access permissions."
+                emptyIcon={<Users className="h-10 w-10 mx-auto opacity-30" />}
+                emptyAction={
+                  canAccess("users", "create") ? (
+                    <Button size="sm" onClick={handleOpenCreateUser} className="gap-1 mt-2">
+                      <Plus className="h-3.5 w-3.5" /> Add First User
+                    </Button>
+                  ) : undefined
+                }
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -594,22 +687,29 @@ export default function UserManagement() {
                       </CardHeader>
                       <CardContent className="p-4 pt-2">
                         <div className="bg-muted/30 rounded-lg p-2.5 space-y-1.5 border text-xs">
-                          <p className="font-bold text-[10px] uppercase text-muted-foreground tracking-wider">
-                            Active Permissions Overview:
-                          </p>
-                          <div className="grid grid-cols-2 gap-1 text-[11px]">
+                          <div className="flex items-center justify-between pb-1 border-b border-muted">
+                            <p className="font-bold text-[10px] uppercase text-muted-foreground tracking-wider">
+                              Permissions Matrix (12 Modules)
+                            </p>
+                            <span className="text-[10px] font-semibold text-primary">
+                              {Object.values(r.permissions || {}).filter((p: any) => p?.view || p?.create || p?.edit || p?.delete).length} / 12 Active
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] max-h-52 overflow-y-auto pr-1 scrollbar-thin">
                             {MODULE_NAMES.map((m) => {
                               const perm = r.permissions?.[m.key];
                               const hasAny = perm?.view || perm?.create || perm?.edit || perm?.delete;
                               return (
-                                <div key={m.key} className="flex items-center justify-between py-0.5 border-b last:border-0 border-muted">
-                                  <span className="truncate pr-1 text-foreground/80">{m.label.split(" ")[0]}</span>
+                                <div key={m.key} className="flex items-center justify-between py-0.5 border-b last:border-0 border-muted/50">
+                                  <span className="truncate pr-1 text-foreground/80 text-[11px]" title={m.label}>
+                                    {m.label}
+                                  </span>
                                   {hasAny ? (
-                                    <span className="text-[10px] font-bold text-green-600">
+                                    <span className="text-[10px] font-mono font-bold text-emerald-600 bg-emerald-500/10 px-1 rounded shrink-0">
                                       {[perm?.view && "V", perm?.create && "C", perm?.edit && "E", perm?.delete && "D"].filter(Boolean).join("")}
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] text-muted-foreground">None</span>
+                                    <span className="text-[10px] text-muted-foreground/60 shrink-0">—</span>
                                   )}
                                 </div>
                               );
@@ -794,61 +894,127 @@ export default function UserManagement() {
                 <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
                   Module Permissions Matrix
                 </h4>
-                <span className="text-[10px] text-muted-foreground italic">
-                  Check boxes to grant specific permissions
-                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px] font-bold px-2 text-primary border-primary/30 hover:bg-primary/10"
+                    onClick={() => handleGrantAllPermissions(true)}
+                  >
+                    Grant All
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-[10px] font-bold px-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    onClick={() => handleGrantAllPermissions(false)}
+                  >
+                    Clear All
+                  </Button>
+                </div>
               </div>
 
               <Table className="border rounded-lg bg-background">
                 <TableHeader className="bg-muted/40">
                   <TableRow>
                     <TableHead className="w-[40%]">Module</TableHead>
-                    <TableHead className="text-center w-[15%]">View</TableHead>
-                    <TableHead className="text-center w-[15%]">Create</TableHead>
-                    <TableHead className="text-center w-[15%]">Edit</TableHead>
-                    <TableHead className="text-center w-[15%]">Delete</TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>View</span>
+                        <Checkbox
+                          title="Toggle View for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.view)}
+                          onCheckedChange={(c) => handleToggleColumnAll("view", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Create</span>
+                        <Checkbox
+                          title="Toggle Create for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.create)}
+                          onCheckedChange={(c) => handleToggleColumnAll("create", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Edit</span>
+                        <Checkbox
+                          title="Toggle Edit for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.edit)}
+                          onCheckedChange={(c) => handleToggleColumnAll("edit", !!c)}
+                        />
+                      </div>
+                    </TableHead>
+                    <TableHead className="text-center w-[15%]">
+                      <div className="flex flex-col items-center gap-1">
+                        <span>Delete</span>
+                        <Checkbox
+                          title="Toggle Delete for all modules"
+                          checked={MODULE_NAMES.every((m) => rolePermissions[m.key]?.delete)}
+                          onCheckedChange={(c) => handleToggleColumnAll("delete", !!c)}
+                        />
+                      </div>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {MODULE_NAMES.map((m) => {
-                    const perm = rolePermissions[m.key] || { create: false, edit: false, view: false, delete: false };
-                    const isAllChecked = perm.view && perm.create && perm.edit && perm.delete;
-
+                  {(["Operations", "Master Data", "Administration"] as const).map((categoryName) => {
+                    const categoryModules = MODULE_NAMES.filter((m) => m.category === categoryName);
+                    if (categoryModules.length === 0) return null;
                     return (
-                      <TableRow key={m.key}>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
-                              {m.label}
+                      <React.Fragment key={categoryName}>
+                        <TableRow className="bg-muted/60 hover:bg-muted/60 border-y">
+                          <TableCell colSpan={5} className="py-1 px-3">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-primary">
+                              {categoryName}
                             </span>
-                            <span className="text-[10px] text-muted-foreground">{m.description}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.view}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "view", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.create}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "create", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.edit}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "edit", !!c)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Checkbox
-                            checked={perm.delete}
-                            onCheckedChange={(c) => handlePermissionChange(m.key, "delete", !!c)}
-                          />
-                        </TableCell>
-                      </TableRow>
+                          </TableCell>
+                        </TableRow>
+                        {categoryModules.map((m) => {
+                          const perm = rolePermissions[m.key] || { create: false, edit: false, view: false, delete: false };
+                          return (
+                            <TableRow key={m.key} className="hover:bg-muted/20">
+                              <TableCell className="py-2">
+                                <div className="flex flex-col">
+                                  <span className="font-semibold text-xs text-foreground flex items-center gap-1.5">
+                                    {m.label}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground">{m.description}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.view}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "view", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.create}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "create", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.edit}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "edit", !!c)}
+                                />
+                              </TableCell>
+                              <TableCell className="text-center py-2">
+                                <Checkbox
+                                  checked={perm.delete}
+                                  onCheckedChange={(c) => handlePermissionChange(m.key, "delete", !!c)}
+                                />
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>

@@ -4,6 +4,7 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
@@ -81,7 +82,37 @@ export class CalibrationTemplate {
   procedure_reference?: string;
 
   @Column({ nullable: true })
+  procedure_no?: string;
+
+  @Column({ nullable: true })
+  procedure_name?: string;
+
+  @Column({ nullable: true })
+  procedure_date?: string;
+
+  @Column({ nullable: true })
+  procedure_rev?: string;
+
+  @Column({ nullable: true })
   doc_no?: string;
+
+  @Column({ nullable: true })
+  doc_date?: string;
+
+  @Column({ nullable: true })
+  doc_rev?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_doc_no?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_date?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_rev?: string;
+
+  @Column({ type: 'text', nullable: true })
+  acceptance_criteria_reference?: string;
 
   @Column({ nullable: true })
   status_rule_type?: string;
@@ -114,9 +145,24 @@ export class CalibrationTemplate {
   @Column({ nullable: true })
   companyId?: string;
 
+  @Column({ type: 'int', default: 1 })
+  version?: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
 }

@@ -1,6 +1,7 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
+import * as bcrypt from 'bcryptjs';
 import { Company } from '../company/entities/company.entity';
 import { User } from '../users/user.entity';
 import { Instrument } from '../instruments/instrument.entity';
@@ -14,7 +15,7 @@ import { Role } from '../roles/role.entity';
 import { Setting } from '../settings/entities/setting.entity';
 import { Notification } from '../notifications/notification.entity';
 import { ReminderFrequncy } from '../reminder/reminder.entity';
-import { UpdateCompanyAccessDto, UpdateCompanyDto } from './dto/super-admin.dto';
+import { UpdateCompanyAccessDto, UpdateCompanyDto, CreateCompanyByAdminDto } from './dto/super-admin.dto';
 
 @Injectable()
 export class SuperAdminService {
@@ -31,6 +32,69 @@ export class SuperAdminService {
     @InjectRepository(Role)
     private readonly roleRepository: Repository<Role>,
   ) {}
+
+  async createCompany(dto: CreateCompanyByAdminDto) {
+    const existing = await this.companyRepository.findOne({
+      where: [{ companyName: dto.companyName }, { registeredEmail: dto.registeredEmail }],
+    });
+    if (existing) {
+      throw new ConflictException(
+        existing.companyName.toLowerCase() === dto.companyName.toLowerCase()
+          ? 'A company with this name already exists'
+          : 'A company with this registered email already exists',
+      );
+    }
+
+    // Check or create admin user for this company
+    let adminUser = await this.userRepository.findOne({ where: { email: dto.registeredEmail } });
+    if (adminUser && adminUser.isSuperAdmin) {
+      throw new BadRequestException('Cannot use a Super Admin email as a company registered email');
+    }
+
+    if (!adminUser) {
+      const hashedPassword = await bcrypt.hash(dto.adminPassword || 'Admin@123', 10);
+      adminUser = this.userRepository.create({
+        name: dto.adminName || 'Company Admin',
+        email: dto.registeredEmail,
+        password: hashedPassword,
+        onboarded: true,
+        isSuperAdmin: false,
+      });
+      adminUser = await this.userRepository.save(adminUser);
+    }
+
+    const now = new Date();
+    const expiry = dto.accessExpiryDate
+      ? new Date(dto.accessExpiryDate)
+      : new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    const company = this.companyRepository.create({
+      companyName: dto.companyName,
+      registeredEmail: dto.registeredEmail,
+      companySize: dto.companySize,
+      industry: dto.industry,
+      role: 'admin',
+      registeredUserId: adminUser.id,
+      accessStatus: dto.accessStatus || 'enabled',
+      accessStartDate: now,
+      accessExpiryDate: (dto.accessStatus === 'time_limited' ? expiry : null) as any,
+    });
+    const savedCompany = await this.companyRepository.save(company);
+
+    // Link user to company
+    adminUser.companyId = savedCompany.id;
+    await this.userRepository.save(adminUser);
+
+    return {
+      message: 'Company created successfully',
+      company: savedCompany,
+      adminUser: {
+        id: adminUser.id,
+        email: adminUser.email,
+        name: adminUser.name,
+      },
+    };
+  }
 
   async listCompanies() {
     const companies = await this.companyRepository.find({
@@ -162,7 +226,7 @@ export class SuperAdminService {
     }
 
     // Validate confirmation name
-    if (company.companyName.trim().toLowerCase() !== confirmationName.trim().toLowerCase()) {
+    if (!confirmationName || company.companyName.trim().toLowerCase() !== confirmationName.trim().toLowerCase()) {
       throw new BadRequestException('Company name confirmation does not match. Deletion aborted.');
     }
 
@@ -286,7 +350,23 @@ export class SuperAdminService {
         .execute();
       deleteSummary['backup_schedules'] = backupSchedResult.affected || 0;
 
-      // 13. Roles
+      // 13. Users (never delete platform Super Admin accounts!)
+      await manager
+        .createQueryBuilder()
+        .update('users')
+        .set({ companyId: null })
+        .where('"companyId" = :companyId AND "isSuperAdmin" = true', { companyId })
+        .execute();
+
+      const usersResult = await manager
+        .createQueryBuilder()
+        .delete()
+        .from('users')
+        .where('"companyId" = :companyId AND "isSuperAdmin" = false', { companyId })
+        .execute();
+      deleteSummary['users'] = usersResult.affected || 0;
+
+      // 14. Roles (deleted after users so users.roleId does not violate FK)
       const rolesResult = await manager
         .createQueryBuilder()
         .delete()
@@ -294,15 +374,6 @@ export class SuperAdminService {
         .where('"companyId" = :companyId', { companyId })
         .execute();
       deleteSummary['roles'] = rolesResult.affected || 0;
-
-      // 14. Users
-      const usersResult = await manager
-        .createQueryBuilder()
-        .delete()
-        .from('users')
-        .where('"companyId" = :companyId', { companyId })
-        .execute();
-      deleteSummary['users'] = usersResult.affected || 0;
 
       // 15. Company itself
       await manager

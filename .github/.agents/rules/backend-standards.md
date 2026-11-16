@@ -9,7 +9,7 @@ trigger: always_on
 - Keep controllers thin.
 - Keep business logic in services or appropriate domain layers.
 - Use DTOs for request validation.
-- Use Sequelize according to existing project conventions.
+- Use TypeORM according to existing project conventions.
 - Apply authorization at the API layer.
 - Use proper HTTP status codes.
 - Never expose internal errors to clients.

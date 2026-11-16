@@ -12,43 +12,7 @@ async function seed() {
     const userRepository = dataSource.getRepository(User);
     const companyRepository = dataSource.getRepository(Company);
 
-    // 1. Create a default admin user if none exists
-    const adminEmail = 'admin@gaugemaster.com';
-    let adminUser = await userRepository.findOne({ where: { email: adminEmail } });
-    if (!adminUser) {
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      adminUser = userRepository.create({
-        name: 'Administrator',
-        email: adminEmail,
-        password: hashedPassword,
-        onboarded: true,
-        isSuperAdmin: false,
-      });
-      adminUser = await userRepository.save(adminUser);
-      console.log('✅ Default admin user created (admin@gaugemaster.com / admin123)');
-    }
-
-    // 2. Create a default company if none exists
-    let defaultCompany = await companyRepository.findOne({ where: { companyName: 'Gaugemaster Default' } });
-    if (!defaultCompany) {
-      defaultCompany = companyRepository.create({
-        companyName: 'Gaugemaster Default',
-        registeredEmail: 'info@gaugemaster.com',
-        role: 'admin',
-        registeredUserId: adminUser.id,
-        accessStatus: 'enabled',
-      });
-      defaultCompany = await companyRepository.save(defaultCompany);
-      console.log('✅ Default company created');
-
-      // 3. Link the admin user to the company
-      adminUser.company = defaultCompany;
-      adminUser.companyId = defaultCompany.id;
-      await userRepository.save(adminUser);
-      console.log('✅ Linked admin user to default company');
-    }
-
-    // 4. Create Super Admin if none exists
+    // 1. Super Admin is the primary platform authority (independent of any company)
     const superAdminEmail = 'superadmin@gaugemaster.com';
     let superAdmin = await userRepository.findOne({ where: { email: superAdminEmail } });
     if (!superAdmin) {
@@ -59,15 +23,63 @@ async function seed() {
         password: hashedPassword,
         isSuperAdmin: true,
         onboarded: true,
-        // No companyId — super admin is platform-level
+        companyId: null as any,
       });
       await userRepository.save(superAdmin);
-      console.log('✅ Super Admin created (superadmin@gaugemaster.com / Admin@123)');
-    } else if (!superAdmin.isSuperAdmin) {
-      // Ensure existing user is flagged as super admin
-      superAdmin.isSuperAdmin = true;
-      await userRepository.save(superAdmin);
-      console.log('✅ Existing user updated to Super Admin');
+      console.log('✅ Super Admin created as global platform authority (superadmin@gaugemaster.com / Admin@123)');
+    } else {
+      let needsSave = false;
+      if (!superAdmin.isSuperAdmin) {
+        superAdmin.isSuperAdmin = true;
+        needsSave = true;
+      }
+      if (superAdmin.companyId !== null) {
+        superAdmin.companyId = null as any;
+        needsSave = true;
+      }
+      if (needsSave) {
+        await userRepository.save(superAdmin);
+        console.log('✅ Super Admin updated and decoupled from companyId');
+      } else {
+        console.log('ℹ️ Super Admin verified and is unattached to any company');
+      }
+    }
+
+    // 2. Only bootstrap a default company and admin if NO companies exist at all
+    const existingCompaniesCount = await companyRepository.count();
+    if (existingCompaniesCount === 0) {
+      console.log('ℹ️ No companies found in system. Creating initial default company and admin...');
+      const adminEmail = 'admin@gaugemaster.com';
+      let adminUser = await userRepository.findOne({ where: { email: adminEmail } });
+      if (!adminUser) {
+        const hashedPassword = await bcrypt.hash('admin123', 10);
+        adminUser = userRepository.create({
+          name: 'Administrator',
+          email: adminEmail,
+          password: hashedPassword,
+          onboarded: true,
+          isSuperAdmin: false,
+        });
+        adminUser = await userRepository.save(adminUser);
+        console.log('✅ Default company admin created (admin@gaugemaster.com / admin123)');
+      }
+
+      const defaultCompany = companyRepository.create({
+        companyName: 'Gaugemaster Default',
+        registeredEmail: 'info@gaugemaster.com',
+        role: 'admin',
+        registeredUserId: adminUser.id,
+        accessStatus: 'enabled',
+      });
+      const savedCompany = await companyRepository.save(defaultCompany);
+      console.log('✅ Default company created');
+
+      adminUser.company = savedCompany;
+      adminUser.companyId = savedCompany.id;
+      await userRepository.save(adminUser);
+      console.log('✅ Linked default company admin to company');
+    } else {
+      console.log(`ℹ️ System already has ${existingCompaniesCount} company/companies. Skipping default company creation.`);
     }
 
     console.log('🚀 Seeding completed successfully!');

@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
   UseGuards,
   Req,
 } from '@nestjs/common';
@@ -39,20 +40,32 @@ export class CalibrationTemplatesController {
 
   @Post()
   @RequirePermission('templates', 'create')
-  async create(@Body() dto: CreateCalibrationTemplateDto) {
+  async create(@Body() dto: CreateCalibrationTemplateDto, @Req() req: any) {
+    if (!dto.companyId && req.user?.companyId) {
+      dto.companyId = req.user.companyId;
+    }
+    if (!dto.userId && (req.user?.userId || req.user?.id)) {
+      dto.userId = req.user?.userId || req.user?.id;
+    }
     return this.templatesService.create(dto);
   }
 
   @Get()
+  @RequirePermission('templates', 'view')
   async findAll(
+    @Req() req: any,
     @Query('userId') userId?: string,
     @Query('companyId') companyId?: string,
     @Query('calibrationType') calibrationType?: string,
   ) {
-    return this.templatesService.findAll({ userId, companyId, calibrationType });
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req.user?.companyId) : req.user?.companyId;
+    const effectiveUserId = isSuperAdmin ? (userId || req.user?.userId || req.user?.id) : (req.user?.userId || req.user?.id);
+    return this.templatesService.findAll({ userId: effectiveUserId, companyId: effectiveCompanyId, calibrationType });
   }
 
   @Post('export')
+  @RequirePermission('template_export', 'view')
   async exportTemplates(
     @Body() body: { templateIds?: string[]; companyId?: string; userId?: string; userName?: string },
     @Res() res: Response,
@@ -70,6 +83,7 @@ export class CalibrationTemplatesController {
   }
 
   @Post('import/validate')
+  @RequirePermission('template_import', 'create')
   @UseInterceptors(FileInterceptor('file'))
   async validateImport(
     @UploadedFile() file?: any,
@@ -90,6 +104,7 @@ export class CalibrationTemplatesController {
   }
 
   @Post('import')
+  @RequirePermission('template_import', 'create')
   @UseInterceptors(FileInterceptor('file'))
   async importTemplates(
     @UploadedFile() file?: any,
@@ -119,8 +134,11 @@ export class CalibrationTemplatesController {
   }
 
   @Get('audit-logs')
-  async getAuditLogs(@Query('companyId') companyId?: string) {
-    return this.auditLogService.findAll(companyId);
+  @RequirePermission('templates', 'view')
+  async getAuditLogs(@Req() req: any, @Query('companyId') companyId?: string) {
+    const isSuperAdmin = !!req.user?.isSuperAdmin;
+    const effectiveCompanyId = isSuperAdmin ? (companyId || req.user?.companyId) : req.user?.companyId;
+    return this.auditLogService.findAll(effectiveCompanyId);
   }
 
   @Post('bulk-delete')
@@ -133,8 +151,14 @@ export class CalibrationTemplatesController {
   }
 
   @Get(':id')
-  async findOne(@Param('id') id: string) {
-    return this.templatesService.findOne(id);
+  @RequirePermission('templates', 'view')
+  async findOne(@Param('id') id: string, @Req() req: any) {
+    const template = await this.templatesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && template.companyId && user.companyId && template.companyId !== user.companyId) {
+      throw new ForbiddenException('Access denied to template outside your company');
+    }
+    return template;
   }
 
   @Put(':id')
@@ -142,15 +166,30 @@ export class CalibrationTemplatesController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateCalibrationTemplateDto,
+    @Req() req: any,
   ) {
+    const template = await this.templatesService.findOne(id);
+    const user = req.user || {};
+    if (!user.isSuperAdmin && template.companyId && user.companyId && template.companyId !== user.companyId) {
+      throw new ForbiddenException('Cannot modify template outside your company');
+    }
+    if (!dto.companyId && req.user?.companyId) {
+      dto.companyId = req.user.companyId;
+    }
     return this.templatesService.update(id, dto);
   }
 
   @Delete(':id')
   @RequirePermission('templates', 'delete')
-  async remove(@Param('id') id: string, @Req() req: any) {
-    await this.templatesService.remove(id, req.user);
-    return { message: 'Template deleted successfully' };
+  async remove(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Query('reason') queryReason?: string,
+    @Body('reason') bodyReason?: string,
+  ) {
+    const reason = bodyReason || queryReason;
+    await this.templatesService.remove(id, req.user, reason);
+    return { message: 'Template moved to Recovery Center successfully' };
   }
 }
 

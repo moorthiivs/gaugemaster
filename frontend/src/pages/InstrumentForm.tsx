@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState, useRef, useMemo } from "react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -10,34 +10,51 @@ import { useAuth } from "@/lib/auth";
 import httpClient from "@/lib/httpClient";
 import { Instrument } from "@/types/instrument";
 import DynamicForm, { FormFieldConfig } from "@/components/DynamicForm";
+import { computeNextDueDate, isDatePast } from "@/lib/dateUtils";
+import { CANONICAL_ITEM_STATUSES, normalizeItemStatus } from "@/lib/itemStatus";
+import { AddCustomStatusModal } from "@/components/instruments/AddCustomStatusModal";
+import { getCustomInstrumentStatuses } from "@/lib/instrumentActions";
 
-const computeStatusOptions = (currentStatus: string, dueDate: string) => {
-  const today = new Date();
-  const due = new Date(dueDate);
-
-  // 1. Overdue condition
-  if (due < today) {
-    return ["Overdue"];
-  }
-
-  // 2. Upcoming Calibration condition
-  if (currentStatus === "Upcoming Calibration (10 days before )") {
-    return ["Upcoming Calibration (10 days before )", "Sent for Calibration"];
-  }
-
-  // 3. Sent for Calibration condition
-  if (currentStatus === "Sent for Calibration") {
-    return ["Sent for Calibration", "Overdue"];
-  }
-
-  // 4. Default: OK
-  return [
+const computeStatusOptions = (
+  currentStatus: string,
+  dueDate: string,
+  customList: string[] = []
+) => {
+  const standardList = [
     "OK",
     "Upcoming Calibration (10 days before )",
     "Sent for Calibration",
-    "Overdue"
+    "Overdue",
   ];
+
+  const optionsSet = new Set<string>();
+
+  // If overdue, place Overdue near top
+  if (dueDate && isDatePast(dueDate)) {
+    optionsSet.add("Overdue");
+  }
+
+  standardList.forEach((s) => optionsSet.add(s));
+  if (currentStatus && currentStatus.trim()) {
+    optionsSet.add(currentStatus.trim());
+  }
+  customList.forEach((s) => {
+    if (s && s.trim()) optionsSet.add(s.trim());
+  });
+
+  return Array.from(optionsSet);
 };
+
+export const STANDARD_FREQUENCIES = [
+  "1 Year",
+  "6 Months",
+  "3 Months",
+  "2 Years",
+  "3 Years",
+  "1 Month",
+  "12 MONTH",
+  "Once in year"
+];
 
 const INSTRUMENT_FIELDS: FormFieldConfig[] = [
   { name: "name", label: "Instrument Name", type: "text", col: 6 },
@@ -52,9 +69,8 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Device Type",
     type: "select",
     col: 4,
-    options: ["Instrument", "Gauge", "Master", "Reference Standard"]
+    options: ["Instrument", "Gauge", "Reference Standard", "AP/EP Display Unit"]
   },
-  { name: "is_reference_standard", label: "Is Reference Standard / Master Instrument?", type: "checkbox", col: 12 },
   { name: "make", label: "Item Make", type: "text", col: 4 },
   { name: "item_type", label: "Item Type", type: "text", col: 4 },
   { name: "part_no", label: "Part No", type: "text", col: 4 },
@@ -71,15 +87,15 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
   { name: "calibration_procedure", label: "Calibration Procedure", type: "textarea", col: 12 },
   { name: "remarks", label: "Remarks", type: "textarea", col: 12 },
   { name: "notes", label: "Notes", type: "textarea", col: 12 },
-  { name: "last_calibration_date", label: "Last Calibration Date", type: "date", col: 4, defaultValue: new Date().toISOString().slice(0, 10) },
-  { name: "due_date", label: "Due Date", type: "date", col: 4, defaultValue: new Date(new Date().setMonth(new Date().getMonth() + 12)).toISOString().slice(0, 10) },
+  { name: "last_calibration_date", label: "Last Calibration Date", type: "date", col: 4 },
+  { name: "due_date", label: "Due Date", type: "date", col: 4, placeholder: "Auto-calculated or pick a date" },
   { name: "gauge_issue_date", label: "Gauge Issue Date", type: "date", col: 4 },
   {
     name: "frequency",
     label: "Frequency",
     type: "select",
     col: 6,
-    options: ["1 MONTH", "2 MONTH", "3 MONTH", "6 MONTH", "12 MONTH", "24 MONTH", "36 MONTH", "48 MONTH", "60 MONTH"]
+    options: STANDARD_FREQUENCIES
   },
   {
     name: "status",
@@ -95,7 +111,7 @@ const INSTRUMENT_FIELDS: FormFieldConfig[] = [
     label: "Item Status",
     type: "select",
     col: 6,
-    options: ["Active", "Inactive", "Scrapped", "Lost", "Under Repair", "Rejected", "Stock"]
+    options: CANONICAL_ITEM_STATUSES as unknown as string[]
   }
 ];
 
@@ -106,10 +122,62 @@ export default function InstrumentForm() {
   useSEO({ title: isEdit ? "Edit Instrument — Calibration Alerts" : "Add Instrument — Calibration Alerts" });
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleReturn = () => {
+    if (location.state?.returnUrl) {
+      navigate(location.state.returnUrl);
+      return;
+    }
+    try {
+      const saved = sessionStorage.getItem("gaugemaster_instruments_last_query");
+      if (saved) {
+        navigate(`/instruments?${saved}`);
+        return;
+      }
+    } catch {}
+    navigate("/instruments");
+  };
   
   const [isSaving, setIsSaving] = useState(false);
   const [validationRules, setValidationRules] = useState<any[]>([]);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
   const [instrumentData, setInstrumentData] = useState<any>(null);
+  const [rawCustomParameters, setRawCustomParameters] = useState<Record<string, any>>({});
+  const [customStatuses, setCustomStatuses] = useState<string[]>([]);
+  const [isCustomStatusModalOpen, setIsCustomStatusModalOpen] = useState(false);
+  const formSetValueRef = useRef<any>(null);
+
+  // Fetch company custom statuses on mount
+  useEffect(() => {
+    const fetchCustomStatuses = async () => {
+      if (!user?.companyId) return;
+      try {
+        const statuses = await getCustomInstrumentStatuses(user.companyId);
+        setCustomStatuses(statuses || []);
+      } catch (err) {
+        console.error("Failed to fetch custom statuses", err);
+      }
+    };
+    fetchCustomStatuses();
+  }, [user?.companyId]);
+
+  const handleCustomStatusCreated = (newStatus: string) => {
+    setCustomStatuses((prev) => {
+      if (prev.some((s) => s.toLowerCase() === newStatus.toLowerCase())) {
+        return prev;
+      }
+      return [...prev, newStatus];
+    });
+
+    if (formSetValueRef.current) {
+      formSetValueRef.current("status", newStatus, {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    }
+    setInstrumentData((prev: any) => ({ ...(prev || {}), status: newStatus }));
+  };
 
   // 1. Fetch dynamic validation rules
   useEffect(() => {
@@ -119,6 +187,9 @@ export default function InstrumentForm() {
         setValidationRules(res.data || []);
       } catch (err) {
         console.error("Failed to fetch rules", err);
+        setValidationRules([]);
+      } finally {
+        setRulesLoaded(true);
       }
     };
     fetchRules();
@@ -134,7 +205,40 @@ export default function InstrumentForm() {
       col: 4,
     }));
 
-  const dynamicFormFields: FormFieldConfig[] = [...INSTRUMENT_FIELDS, ...customFields];
+  const dynamicFormFields: FormFieldConfig[] = useMemo(() => {
+    const baseFields: FormFieldConfig[] = INSTRUMENT_FIELDS.map((f) => {
+      if (f.name === "frequency") {
+        const currentFreq = instrumentData?.frequency;
+        const opts = [...STANDARD_FREQUENCIES];
+        if (currentFreq && !opts.includes(currentFreq)) {
+          opts.push(currentFreq);
+        }
+        return {
+          ...f,
+          options: opts,
+        };
+      }
+      if (f.name === "status") {
+        return {
+          ...f,
+          customAction: {
+            label: "+ Custom Status",
+            onAction: () => setIsCustomStatusModalOpen(true),
+          },
+          options: (watchedValues: any) => {
+            return computeStatusOptions(
+              watchedValues.status || "OK",
+              watchedValues.due_date || new Date().toISOString(),
+              customStatuses
+            );
+          },
+        };
+      }
+      return f;
+    });
+
+    return [...baseFields, ...customFields];
+  }, [customFields, customStatuses, instrumentData?.frequency]);
 
   // 2. Fetch instrument details if in Edit Mode
   useEffect(() => {
@@ -145,28 +249,34 @@ export default function InstrumentForm() {
 
         const customValues: Record<string, any> = {};
         if (i.custom_parameters && typeof i.custom_parameters === "object") {
+          setRawCustomParameters(i.custom_parameters);
           Object.keys(i.custom_parameters).forEach((k) => {
             customValues[`custom_${k}`] = i.custom_parameters[k];
           });
         }
 
+        let resolvedDeviceType = i.device_type ?? "Instrument";
+        if (resolvedDeviceType === "Master" || resolvedDeviceType === "MASTER" || i.is_reference_standard) {
+          resolvedDeviceType = "Reference Standard";
+        }
+
         setInstrumentData({
-          name: i.name || "",
-          id_code: i.id_code || "",
+          name: i.name ?? "",
+          id_code: i.id_code ?? "",
           range: i.range ?? "",
           serial_no: i.serial_no ?? "",
           least_count: i.least_count ?? "",
-          location: i.location || "",
-          frequency: i.frequency || "12 MONTH",
+          location: i.location ?? "",
+          frequency: i.frequency || "1 Year",
           last_calibration_date: i.last_calibration_date ? i.last_calibration_date.slice(0, 10) : "",
           due_date: i.due_date ? i.due_date.slice(0, 10) : "",
           agency: i.agency ?? "",
           status: i.status || "OK",
-          item_status: i.item_status || "Active",
+          item_status: normalizeItemStatus(i.item_status),
           notes: i.notes ?? "",
           make: i.make ?? "",
           item_type: i.item_type ?? "",
-          device_type: i.device_type ?? "Instrument",
+          device_type: resolvedDeviceType,
           part_no: i.part_no ?? "",
           part_name: i.part_name ?? "",
           module: i.module ?? "",
@@ -181,33 +291,31 @@ export default function InstrumentForm() {
           gauges_issued_by: i.gauges_issued_by ?? "",
           calibration_procedure: i.calibration_procedure ?? "",
           traceable: i.traceable ?? "",
-          is_reference_standard: i.is_reference_standard || false,
           ...customValues,
         });
-      } catch (error) {
-        toast({
-          title: "Error",
-          description: "Failed to load instrument details.",
-          variant: "destructive",
+        } catch (error) {
+          toast({
+            title: "Error",
+            description: "Failed to load instrument details.",
+            variant: "destructive",
+          });
+        }
+      };
+
+      if (params.id) {
+        fetchInstrument();
+      } else {
+        // Set default values for New Instrument Mode
+        setInstrumentData({
+          device_type: "Instrument",
+          frequency: "1 Year",
+          status: "OK",
+          item_status: "Active",
+          last_calibration_date: "",
+          due_date: "",
         });
       }
-    };
-
-    if (params.id) {
-      fetchInstrument();
-    } else {
-      // Set default values for New Instrument Mode
-      setInstrumentData({
-        device_type: "Instrument",
-        frequency: "12 MONTH",
-        status: "OK",
-        item_status: "Active",
-        last_calibration_date: "",
-        due_date: "",
-        is_reference_standard: false,
-      });
-    }
-  }, [params.id]);
+    }, [params.id]);
 
   // 3. Handle Form Submit
   const onSubmit = async (values: any) => {
@@ -226,7 +334,7 @@ export default function InstrumentForm() {
     }
 
     // Extract custom parameters
-    const custom_parameters: Record<string, any> = {};
+    const custom_parameters: Record<string, any> = { ...rawCustomParameters };
     validationRules
       .filter((r) => r.isCustom)
       .forEach((r) => {
@@ -251,7 +359,7 @@ export default function InstrumentForm() {
         least_count: values.least_count || "",
         notes: values.notes || "",
         status: values.status || "OK",
-        item_status: values.item_status || "Active",
+        item_status: normalizeItemStatus(values.item_status),
         make: values.make || "",
         item_type: values.item_type || "",
         device_type: values.device_type || "Instrument",
@@ -272,7 +380,7 @@ export default function InstrumentForm() {
         created_by: user.id,
         updated_by: user.id,
         companyId: user.companyId,
-        is_reference_standard: values.is_reference_standard || false,
+        is_reference_standard: /reference|master/i.test(values.device_type || ""),
         custom_parameters,
       };
 
@@ -284,7 +392,7 @@ export default function InstrumentForm() {
         toast({ title: "Created", description: "Instrument added successfully." });
       }
 
-      navigate("/instruments");
+      handleReturn();
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
@@ -301,68 +409,125 @@ export default function InstrumentForm() {
     }
   };
 
-  // 4. Handle Side Effects when fields change (e.g. Due Date side-effects)
+  // 4. Handle Side Effects when fields change (Last Calibration Date, Frequency, Due Date)
   const onChangeEffects = (
     name: string,
     value: any,
     setValue: any,
     getValues: any
   ) => {
-    if (name === "due_date") {
-      const today = new Date();
-      const due = new Date(value);
-      if (due < today) {
-        setValue("status", "Overdue");
+    const currentStatus = getValues("status") || "OK";
+    const standardStatuses = ["ok", "calibrated", "upcoming calibration (10 days before )", "upcoming calibration", "overdue"];
+    const isCustomStatus =
+      !standardStatuses.includes(currentStatus.toLowerCase().trim()) ||
+      customStatuses.some((s) => s.toLowerCase() === currentStatus.toLowerCase().trim());
+
+    if (name === "last_calibration_date") {
+      const frequency = getValues("frequency") || "1 Year";
+      if (value && frequency) {
+        const nextDueDate = computeNextDueDate(value, frequency);
+        if (nextDueDate) {
+          setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
+
+          if (!isCustomStatus) {
+            if (isDatePast(nextDueDate)) {
+              setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+            } else if (getValues("status") === "Overdue") {
+              setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+            }
+          }
+        }
+      }
+    } else if (name === "frequency") {
+      const lastCalDate = getValues("last_calibration_date");
+      if (lastCalDate && value) {
+        const nextDueDate = computeNextDueDate(lastCalDate, value);
+        if (nextDueDate) {
+          setValue("due_date", nextDueDate, { shouldValidate: true, shouldDirty: true });
+
+          if (!isCustomStatus) {
+            if (isDatePast(nextDueDate)) {
+              setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+            } else if (getValues("status") === "Overdue") {
+              setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+            }
+          }
+        }
+      }
+    } else if (name === "due_date") {
+      if (value && !isCustomStatus) {
+        if (isDatePast(value)) {
+          setValue("status", "Overdue", { shouldValidate: true, shouldDirty: true });
+        } else if (getValues("status") === "Overdue") {
+          setValue("status", "OK", { shouldValidate: true, shouldDirty: true });
+        }
       }
     }
   };
 
-  const isFormLoading = !instrumentData || validationRules.length === 0;
+  const isFormLoading = !instrumentData || !rulesLoaded;
 
   return (
-    <Card className="border-primary/10 shadow-2xl bg-card/50 backdrop-blur-sm animate-in fade-in duration-500">
-      <div className="flex items-center gap-2 p-6 border-b bg-gradient-to-r from-primary/5 to-transparent">
-        {isEdit && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate("/instruments")}
-            className="rounded-full hover:bg-primary/10"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-        )}
-        <div>
-          <CardTitle className="text-2xl font-bold">
-            {isEdit ? "Edit Instrument" : "Add New Instrument"}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground mt-1">
-            Complete the fields below to track your calibration data.
-          </p>
-        </div>
-      </div>
-      <CardContent className="p-8">
-        {isFormLoading ? (
-          <div className="grid gap-6 md:grid-cols-12 animate-pulse">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <div key={i} className="md:col-span-4 space-y-2">
-                <Skeleton className="h-4 w-24 rounded" />
-                <Skeleton className="h-11 w-full rounded-md" />
-              </div>
-            ))}
+    <div className="space-y-6">
+      <Card className="border-primary/10 shadow-2xl bg-card/50 backdrop-blur-sm animate-in fade-in duration-500">
+        <div className="flex items-center gap-2 p-6 border-b bg-gradient-to-r from-primary/5 to-transparent">
+          {isEdit && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleReturn}
+              className="rounded-full hover:bg-primary/10"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+          )}
+          <div>
+            <CardTitle className="text-2xl font-bold">
+              {isEdit ? "Edit Instrument" : "Add New Instrument"}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Complete the fields below to track your calibration data.
+            </p>
           </div>
-        ) : (
-          <DynamicForm
-            fields={dynamicFormFields}
-            validationRules={validationRules}
-            defaultValues={instrumentData}
-            onSubmit={onSubmit}
-            onCancel={() => navigate("/instruments")}
-            isSubmitting={isSaving}
-            onChangeEffects={onChangeEffects}
-          />
-        )}
-      </CardContent>
-    </Card>
+        </div>
+        <CardContent className="p-8">
+          {isFormLoading ? (
+            <div className="grid gap-6 md:grid-cols-12 animate-pulse">
+              {Array.from({ length: 12 }).map((_, i) => (
+                <div key={i} className="md:col-span-4 space-y-2">
+                  <Skeleton className="h-4 w-24 rounded" />
+                  <Skeleton className="h-11 w-full rounded-md" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <DynamicForm
+              fields={dynamicFormFields}
+              validationRules={validationRules}
+              defaultValues={instrumentData}
+              onSubmit={onSubmit}
+              onCancel={handleReturn}
+              isSubmitting={isSaving}
+              onChangeEffects={onChangeEffects}
+              setFormValueRef={formSetValueRef}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <AddCustomStatusModal
+        open={isCustomStatusModalOpen}
+        onOpenChange={setIsCustomStatusModalOpen}
+        existingStatuses={[
+          "OK",
+          "Upcoming Calibration (10 days before )",
+          "Sent for Calibration",
+          "Overdue",
+          ...customStatuses,
+        ]}
+        companyId={user?.companyId}
+        onStatusCreated={handleCustomStatusCreated}
+      />
+    </div>
   );
 }

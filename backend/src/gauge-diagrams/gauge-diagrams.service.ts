@@ -1,0 +1,201 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, ILike } from 'typeorm';
+import { GaugeDiagram } from './gauge-diagram.entity';
+import { GaugeDiagramHistory } from './gauge-diagram-history.entity';
+import { CreateGaugeDiagramDto } from './dto/create-gauge-diagram.dto';
+import { UpdateGaugeDiagramDto } from './dto/update-gauge-diagram.dto';
+
+@Injectable()
+export class GaugeDiagramsService {
+  constructor(
+    @InjectRepository(GaugeDiagram)
+    private readonly diagramRepo: Repository<GaugeDiagram>,
+    @InjectRepository(GaugeDiagramHistory)
+    private readonly historyRepo: Repository<GaugeDiagramHistory>,
+  ) {}
+
+  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string, range?: string) {
+    const baseWhere: any = {};
+    if (companyId) {
+      baseWhere.companyId = companyId;
+    }
+    if (id_code && id_code.trim() && id_code !== 'all') {
+      baseWhere.id_code = ILike(`%${id_code.trim()}%`);
+    }
+    if (part_name && part_name.trim() && part_name !== 'all') {
+      baseWhere.part_name = ILike(`%${part_name.trim()}%`);
+    }
+
+    if (search && search.trim()) {
+      const pattern = ILike(`%${search.trim()}%`);
+      return this.diagramRepo.find({
+        where: [
+          { ...baseWhere, gauge_name: pattern },
+          { ...baseWhere, id_code: pattern },
+          { ...baseWhere, part_name: pattern },
+          { ...baseWhere, range: pattern },
+        ],
+        order: { created_at: 'DESC' },
+      });
+    }
+
+    return this.diagramRepo.find({
+      where: baseWhere,
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async findOne(id: string, companyId?: string) {
+    const where: any = { id };
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    const diagram = await this.diagramRepo.findOne({ where });
+    if (!diagram) {
+      throw new NotFoundException(`Gauge diagram with ID ${id} not found`);
+    }
+    return diagram;
+  }
+
+  async create(
+    dto: CreateGaugeDiagramDto,
+    file: any,
+    user: { id?: string; name?: string; companyId?: string },
+  ) {
+    const targetCompanyId = dto.companyId || user.companyId;
+
+    const diagram = this.diagramRepo.create({
+      gauge_name: dto.gauge_name,
+      id_code: dto.id_code,
+      part_name: dto.part_name,
+      range: dto.range,
+      instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
+      description: dto.description,
+      companyId: targetCompanyId,
+      version: 1,
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      updated_by_id: user.id,
+      updated_by_name: user.name || 'User',
+      document_name: file ? file.originalname : undefined,
+      file_type: file ? file.mimetype : undefined,
+      file_path: file ? `/uploads/gauge-diagrams/${file.filename}` : undefined,
+    });
+
+    const saved = await this.diagramRepo.save(diagram);
+
+    // Initial history record
+    const history = this.historyRepo.create({
+      diagram_id: saved.id,
+      gauge_name: saved.gauge_name,
+      id_code: saved.id_code,
+      part_name: saved.part_name,
+      range: saved.range,
+      instrument_id: saved.instrument_id,
+      document_name: saved.document_name,
+      file_type: saved.file_type,
+      file_path: saved.file_path,
+      version: saved.version,
+      action_details: 'Initial gauge diagram uploaded',
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      companyId: targetCompanyId,
+    });
+    await this.historyRepo.save(history);
+
+    return saved;
+  }
+
+  async update(
+    id: string,
+    dto: UpdateGaugeDiagramDto,
+    file: any,
+    user: { id?: string; name?: string; companyId?: string },
+  ) {
+    const diagram = await this.findOne(id, user.companyId);
+
+    const isNewFile = !!file;
+    if (isNewFile) {
+      diagram.version += 1;
+      diagram.document_name = file.originalname;
+      diagram.file_type = file.mimetype;
+      diagram.file_path = `/uploads/gauge-diagrams/${file.filename}`;
+    }
+
+    if (dto.gauge_name !== undefined) {
+      diagram.gauge_name = dto.gauge_name;
+    }
+    if (dto.id_code !== undefined) {
+      diagram.id_code = dto.id_code;
+    }
+    if (dto.part_name !== undefined) {
+      diagram.part_name = dto.part_name;
+    }
+    if (dto.range !== undefined) {
+      diagram.range = dto.range;
+    }
+    if (dto.instrument_id !== undefined) {
+      diagram.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
+    }
+    if (dto.description !== undefined) {
+      diagram.description = dto.description;
+    }
+
+    diagram.updated_by_id = user.id;
+    diagram.updated_by_name = user.name || 'User';
+
+    const updated = await this.diagramRepo.save(diagram);
+
+    let actionDetails = dto.actionDetails;
+    if (!actionDetails) {
+      if (isNewFile) {
+        actionDetails = `Updated diagram document to version ${updated.version} (${file.originalname})`;
+      } else {
+        actionDetails = `Updated gauge diagram details`;
+      }
+    }
+
+    const history = this.historyRepo.create({
+      diagram_id: updated.id,
+      gauge_name: updated.gauge_name,
+      id_code: updated.id_code,
+      part_name: updated.part_name,
+      range: updated.range,
+      instrument_id: updated.instrument_id,
+      document_name: updated.document_name,
+      file_type: updated.file_type,
+      file_path: updated.file_path,
+      version: updated.version,
+      action_details: actionDetails,
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      companyId: updated.companyId,
+    });
+    await this.historyRepo.save(history);
+
+    return updated;
+  }
+
+  async remove(id: string, companyId?: string, user?: any, reason?: string) {
+    const diagram = await this.findOne(id, companyId);
+    await this.diagramRepo.update(id, {
+      deleted_at: new Date(),
+      deleted_by_id: user?.id,
+      deleted_by_name: user?.name || user?.email || 'User',
+      deletion_reason: reason || null,
+    });
+    return { success: true, message: 'Gauge diagram moved to Recovery Center' };
+  }
+
+  async getHistory(diagramId: string, companyId?: string) {
+    const where: any = { diagram_id: diagramId };
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    return this.historyRepo.find({
+      where,
+      order: { version: 'DESC', created_at: 'DESC' },
+    });
+  }
+}

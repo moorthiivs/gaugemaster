@@ -16,7 +16,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
         super({
             clientID: clientID || 'not-configured',
             clientSecret: clientSecret || 'not-configured',
-            callbackURL: callbackURL || 'http://localhost/not-configured',
+            callbackURL: callbackURL || 'https://gaugemaster.iviewsense.com/api/auth/google/callback',
             scope: ['email', 'profile'],
         });
     }

@@ -10,6 +10,57 @@ import { CalibrationTemplate } from './entities/calibration-template.entity';
 import { CreateCalibrationTemplateDto } from './dto/create-calibration-template.dto';
 import { UpdateCalibrationTemplateDto } from './dto/update-calibration-template.dto';
 import { BulkDeleteCalibrationTemplatesDto } from './dto/bulk-delete-calibration-templates.dto';
+import {
+  validateTemplateBlockFormulas,
+  validateFormulaSyntax,
+} from '../calibration/utils/formula-engine.util';
+
+function slugifyTableKey(title: string): string {
+  if (!title) return 'table';
+  return (
+    title
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '_')
+      .replace(/^-+|-+$/g, '') || 'table'
+  );
+}
+
+function ensureTableKeys(blocks: any[]): any[] {
+  if (!Array.isArray(blocks) || blocks.length === 0) return blocks;
+  const usedKeys = new Set<string>();
+
+  const assignKey = (table: any, defaultPrefix: string) => {
+    if (!table || typeof table !== 'object') return;
+    let key = table.tableKey || slugifyTableKey(table.title || defaultPrefix);
+    if (!key || key === 'table') {
+      key = defaultPrefix;
+    }
+    let uniqueKey = key;
+    let counter = 1;
+    while (usedKeys.has(uniqueKey)) {
+      uniqueKey = `${key}_${counter++}`;
+    }
+    usedKeys.add(uniqueKey);
+    table.tableKey = uniqueKey;
+  };
+
+  blocks.forEach((block, idx) => {
+    if (!block) return;
+    if (block.type === 'table_grid') {
+      assignKey(block, `table_${idx + 1}`);
+    } else if (block.type === 'split_row' && Array.isArray(block.children)) {
+      block.children.forEach((child: any, cIdx: number) => {
+        if (child && child.type === 'table_grid') {
+          assignKey(child, `table_${idx + 1}_${cIdx + 1}`);
+        }
+      });
+    }
+  });
+
+  return blocks;
+}
 
 @Injectable()
 export class CalibrationTemplatesService {
@@ -38,6 +89,26 @@ export class CalibrationTemplatesService {
         );
       }
     }
+    if (!dto.calibration_type) {
+      dto.calibration_type = 'dimensional';
+    }
+    if (dto.layout_blocks) {
+      const formulaCheck = validateTemplateBlockFormulas(dto.layout_blocks as any);
+      if (!formulaCheck.valid) {
+        throw new BadRequestException(
+          `Template contains invalid formula(s): ${formulaCheck.errors.join('; ')}`,
+        );
+      }
+      ensureTableKeys(dto.layout_blocks as any);
+    }
+    if (dto.status_formula) {
+      const statusCheck = validateFormulaSyntax(dto.status_formula);
+      if (!statusCheck.valid) {
+        throw new BadRequestException(
+          `Template status formula is invalid: ${statusCheck.message}`,
+        );
+      }
+    }
     const template = this.repository.create(dto);
     return this.repository.save(template);
   }
@@ -51,15 +122,16 @@ export class CalibrationTemplatesService {
 
     const qb = this.repository.createQueryBuilder('template');
 
-    if (companyId && userId) {
-      qb.where('(template.companyId = :companyId OR template.companyId IS NULL OR template.userId = :userId)', {
-        companyId,
-        userId,
-      });
-    } else if (companyId) {
-      qb.where('(template.companyId = :companyId OR template.companyId IS NULL)', { companyId });
+    if (companyId) {
+      qb.where(
+        '(template.companyId = :companyId OR (template.companyId IS NULL AND template.userId IS NULL))',
+        { companyId },
+      );
     } else if (userId) {
-      qb.where('(template.userId = :userId OR template.companyId IS NULL)', { userId });
+      qb.where(
+        '(template.userId = :userId OR (template.companyId IS NULL AND template.userId IS NULL))',
+        { userId },
+      );
     }
 
     if (calibrationType && calibrationType !== 'All') {
@@ -74,9 +146,18 @@ export class CalibrationTemplatesService {
       );
     }
 
-    qb.orderBy('template.createdAt', 'DESC');
+    qb.orderBy(
+      'CASE WHEN template.updatedAt IS NOT NULL AND template.updatedAt > template.createdAt THEN template.updatedAt ELSE template.createdAt END',
+      'DESC',
+    ).addOrderBy('template.createdAt', 'DESC');
 
-    return qb.getMany();
+    const templates = await qb.getMany();
+    templates.forEach((t) => {
+      if (t.layout_blocks) {
+        ensureTableKeys(t.layout_blocks as any);
+      }
+    });
+    return templates;
   }
 
   async findOne(id: string): Promise<CalibrationTemplate> {
@@ -86,6 +167,9 @@ export class CalibrationTemplatesService {
     const template = await this.repository.findOne({ where: { id } });
     if (!template) {
       throw new NotFoundException(`Calibration template with ID ${id} not found`);
+    }
+    if (template.layout_blocks) {
+      ensureTableKeys(template.layout_blocks as any);
     }
     return template;
   }
@@ -118,6 +202,23 @@ export class CalibrationTemplatesService {
         );
       }
     }
+    if (dto.layout_blocks) {
+      const formulaCheck = validateTemplateBlockFormulas(dto.layout_blocks as any);
+      if (!formulaCheck.valid) {
+        throw new BadRequestException(
+          `Template contains invalid formula(s): ${formulaCheck.errors.join('; ')}`,
+        );
+      }
+      ensureTableKeys(dto.layout_blocks as any);
+    }
+    if (dto.status_formula) {
+      const statusCheck = validateFormulaSyntax(dto.status_formula);
+      if (!statusCheck.valid) {
+        throw new BadRequestException(
+          `Template status formula is invalid: ${statusCheck.message}`,
+        );
+      }
+    }
     Object.assign(template, dto);
     if (dto.diagram_image !== undefined) {
       template.diagram_image = dto.diagram_image ? dto.diagram_image : (null as any);
@@ -125,26 +226,53 @@ export class CalibrationTemplatesService {
     return this.repository.save(template);
   }
 
-  async remove(id: string, currentUser?: any): Promise<void> {
+  async remove(id: string, currentUser?: any, reason?: string): Promise<void> {
     const template = await this.findOne(id);
 
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
+    const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
+    const isAdmin =
+      isSuperAdmin ||
+      currentUser?.role === 'Admin' ||
+      currentUser?.role === 'admin' ||
+      currentUser?.role?.name?.toLowerCase() === 'admin' ||
+      currentUser?.userRole?.name?.toLowerCase() === 'admin';
 
     if (!isSuperAdmin) {
-      if (!template.companyId) {
+      const templateCompanyId = template.companyId || template.user?.companyId;
+      const isOwner = !!(currentUserId && template.userId === currentUserId);
+      const isSameCompany = !!(userCompanyId && templateCompanyId === userCompanyId);
+
+      // Only true system templates (no creator user AND no company) cannot be deleted by non-superadmins
+      if (!template.companyId && !template.userId) {
         throw new BadRequestException(
           `System default template "${template.name}" cannot be deleted.`,
         );
       }
-      if (userCompanyId && template.companyId !== userCompanyId) {
+
+      // If template is assigned to an organization, check tenant isolation
+      if (templateCompanyId && userCompanyId && templateCompanyId !== userCompanyId && !isOwner) {
         throw new ForbiddenException(
-          'You do not have permission to delete this template.',
+          'You do not have permission to delete calibration templates belonging to another organization.',
+        );
+      }
+
+      // If user is not an Admin, they can only delete their own templates
+      if (!isAdmin && !isOwner) {
+        throw new ForbiddenException(
+          'You do not have permission to delete templates created by another user.',
         );
       }
     }
 
-    await this.repository.remove(template);
+    // Soft delete template
+    await this.repository.update(template.id, {
+      deleted_at: new Date(),
+      deleted_by_id: currentUserId,
+      deleted_by_name: currentUser?.name || currentUser?.email || 'User',
+      deletion_reason: reason || null,
+    });
   }
 
   async bulkRemove(
@@ -171,11 +299,18 @@ export class CalibrationTemplatesService {
     }
 
     const isSuperAdmin = !!currentUser?.isSuperAdmin;
+    const currentUserId = currentUser?.userId || currentUser?.id;
     const userCompanyId = currentUser?.companyId;
+    const isAdmin =
+      isSuperAdmin ||
+      currentUser?.role === 'Admin' ||
+      currentUser?.role === 'admin' ||
+      currentUser?.role?.name?.toLowerCase() === 'admin' ||
+      currentUser?.userRole?.name?.toLowerCase() === 'admin';
 
     if (!isSuperAdmin) {
-      // 1. System templates protection (companyId IS NULL)
-      const systemTemplates = templates.filter((t) => !t.companyId);
+      // 1. System templates protection (true system default: neither companyId nor userId)
+      const systemTemplates = templates.filter((t) => !t.companyId && !t.userId);
       if (systemTemplates.length > 0) {
         const names = systemTemplates.map((t) => `"${t.name}"`).join(', ');
         throw new BadRequestException(
@@ -185,12 +320,29 @@ export class CalibrationTemplatesService {
 
       // 2. Multi-tenant isolation check
       if (userCompanyId) {
-        const foreignTemplates = templates.filter(
-          (t) => t.companyId && t.companyId !== userCompanyId,
-        );
+        const foreignTemplates = templates.filter((t) => {
+          const templateCompanyId = t.companyId || t.user?.companyId;
+          return (
+            templateCompanyId &&
+            templateCompanyId !== userCompanyId &&
+            (!currentUserId || t.userId !== currentUserId)
+          );
+        });
         if (foreignTemplates.length > 0) {
           throw new ForbiddenException(
             'You do not have permission to delete calibration templates belonging to another organization.',
+          );
+        }
+      }
+
+      // 3. User ownership check for non-admins
+      if (!isAdmin) {
+        const notOwnedTemplates = templates.filter(
+          (t) => t.userId && currentUserId && t.userId !== currentUserId,
+        );
+        if (notOwnedTemplates.length > 0) {
+          throw new ForbiddenException(
+            'You do not have permission to delete templates created by another user.',
           );
         }
       }
@@ -244,9 +396,20 @@ export class CalibrationTemplatesService {
       // If table query encounters an issue (e.g. table not created in dev), continue with deletion
     }
 
-    // 4. Atomic transaction deletion
+    // 4. Atomic transaction soft-deletion
+    const now = new Date();
+    const actingUserId = currentUserId;
+    const actingUserName = currentUser?.name || currentUser?.email || 'User';
+
     await this.repository.manager.transaction(async (transactionalEntityManager) => {
-      await transactionalEntityManager.remove(CalibrationTemplate, templates);
+      for (const t of templates) {
+        await transactionalEntityManager.update(CalibrationTemplate, t.id, {
+          deleted_at: now,
+          deleted_by_id: actingUserId,
+          deleted_by_name: actingUserName,
+          deletion_reason: (dto as any)?.reason || null,
+        });
+      }
     });
 
     return {

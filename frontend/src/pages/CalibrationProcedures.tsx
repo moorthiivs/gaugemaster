@@ -1,0 +1,873 @@
+import { useState, useEffect, useId, useMemo } from "react";
+import { format } from "date-fns";
+import { toast } from "sonner";
+import { useAuth } from "@/lib/auth";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useSEO } from "@/hooks/useSEO";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { ColumnDef } from "@tanstack/react-table";
+import { DataTable } from "@/components/DataTable";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  PlusCircle,
+  Search,
+  Eye,
+  Edit2,
+  Trash2,
+  ArchiveRestore,
+  History,
+  FileText,
+  Image as ImageIcon,
+  FileSpreadsheet,
+  Download,
+  Upload,
+  Clock,
+  User,
+  CheckCircle2,
+  RefreshCw,
+} from "lucide-react";
+import {
+  CalibrationProcedure,
+  CalibrationProcedureHistory,
+} from "@/types/documentation";
+import {
+  getCalibrationProcedures,
+  createCalibrationProcedure,
+  updateCalibrationProcedure,
+  deleteCalibrationProcedure,
+  getCalibrationProcedureHistory,
+} from "@/lib/documentationActions";
+import { DocumentViewerModal } from "@/components/documentation/DocumentViewerModal";
+import { DocumentHistoryModal } from "@/components/documentation/DocumentHistoryModal";
+import { isExcelFile, downloadFileFromUrl } from "@/lib/tokenStorage";
+
+const COMMON_PROCESSES = [
+  "Calibration of Vernier Caliper",
+  "Calibration of Micrometer",
+  "Calibration of Height Gauge",
+  "Calibration of Dial Indicator",
+  "Calibration of Depth Micrometer",
+  "Calibration of Bore Gauge",
+  "Calibration of Pressure Gauge",
+  "Calibration of Digital Multimeter",
+  "Calibration of Torque Wrench",
+  "Calibration of Temperature Controller",
+  "Calibration of Weighing Balance",
+];
+
+const MAX_DOC_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50MB
+const MAX_DOC_FILE_SIZE_MB = 50;
+
+export default function CalibrationProcedures() {
+  useSEO({
+    title: "Calibration Procedures — GaugeMaster",
+    description: "Manage standard calibration operating procedures, documents, and revisions",
+  });
+
+  const { user } = useAuth();
+  const { canAccess } = usePermissions();
+  const [procedures, setProcedures] = useState<CalibrationProcedure[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pageIndex, setPageIndex] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Create Modal State
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [createProcess, setCreateProcess] = useState("");
+  const [createDescription, setCreateDescription] = useState("");
+  const [createFile, setCreateFile] = useState<File | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Post-upload immediate view state
+  const [lastUploadedItem, setLastUploadedItem] = useState<CalibrationProcedure | null>(null);
+  const [isSuccessPromptOpen, setIsSuccessPromptOpen] = useState(false);
+
+  // Edit Modal State
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<CalibrationProcedure | null>(null);
+  const [editProcess, setEditProcess] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editFile, setEditFile] = useState<File | null>(null);
+  const [editActionDetails, setEditActionDetails] = useState("");
+
+  // Delete State
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
+
+  // Viewer Modal State
+  const [viewerDoc, setViewerDoc] = useState<{
+    isOpen: boolean;
+    title: string;
+    documentName?: string;
+    filePath?: string;
+    fileType?: string;
+    version?: number;
+  }>({ isOpen: false, title: "" });
+
+  // History Modal State
+  const [historyModal, setHistoryModal] = useState<{
+    isOpen: boolean;
+    itemName: string;
+    itemId: string;
+    list: CalibrationProcedureHistory[];
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    itemName: "",
+    itemId: "",
+    list: [],
+    isLoading: false,
+  });
+
+  const processDataListId = useId();
+
+  const fetchProcedures = async () => {
+    setLoading(true);
+    try {
+      const data = await getCalibrationProcedures({
+        companyId: user?.companyId,
+        search: searchQuery,
+      });
+      setProcedures(data || []);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to load calibration procedures");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProcedures();
+  }, [user?.companyId]);
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    fetchProcedures();
+  };
+
+  // Handle Create
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createProcess.trim()) {
+      toast.error("Please enter or select a Process name");
+      return;
+    }
+
+    if (createFile && createFile.size > MAX_DOC_FILE_SIZE_BYTES) {
+      toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(createFile.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("process", createProcess.trim());
+      if (createDescription.trim()) {
+        formData.append("description", createDescription.trim());
+      }
+      if (user?.companyId) {
+        formData.append("companyId", user.companyId);
+      }
+      if (createFile) {
+        formData.append("file", createFile);
+      }
+
+      const created = await createCalibrationProcedure(formData);
+      toast.success("Calibration procedure saved successfully");
+      setIsCreateOpen(false);
+      setCreateProcess("");
+      setCreateDescription("");
+      setCreateFile(null);
+
+      // Offer immediate view prompt if file was uploaded
+      if (created.file_path) {
+        setLastUploadedItem(created);
+        setIsSuccessPromptOpen(true);
+      }
+      fetchProcedures();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to save calibration procedure");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Open Edit Dialog
+  const handleOpenEdit = (item: CalibrationProcedure) => {
+    setEditingItem(item);
+    setEditProcess(item.process);
+    setEditDescription(item.description || "");
+    setEditFile(null);
+    setEditActionDetails("");
+    setIsEditOpen(true);
+  };
+
+  // Handle Edit Submit
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingItem) return;
+    if (!editProcess.trim()) {
+      toast.error("Process name is required");
+      return;
+    }
+
+    if (editFile && editFile.size > MAX_DOC_FILE_SIZE_BYTES) {
+      toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(editFile.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("process", editProcess.trim());
+      if (editDescription !== undefined) {
+        formData.append("description", editDescription.trim());
+      }
+      if (editActionDetails.trim()) {
+        formData.append("actionDetails", editActionDetails.trim());
+      }
+      if (editFile) {
+        formData.append("file", editFile);
+      }
+
+      await updateCalibrationProcedure(editingItem.id, formData);
+      toast.success("Calibration procedure updated successfully");
+      setIsEditOpen(false);
+      setEditingItem(null);
+      fetchProcedures();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to update calibration procedure");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle Delete
+  const handleDeleteConfirm = async () => {
+    if (!deletingId) return;
+    try {
+      await deleteCalibrationProcedure(deletingId, deleteReason.trim() || undefined);
+      toast.success("Calibration procedure moved to Trash");
+      setDeletingId(null);
+      setDeleteReason("");
+      fetchProcedures();
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || "Failed to delete procedure");
+    }
+  };
+
+  // View Document
+  const handleView = (item: CalibrationProcedure) => {
+    if (!item.file_path) {
+      toast.error("No document uploaded for this procedure");
+      return;
+    }
+    const isExcel = isExcelFile(item.file_path, item.document_name, item.file_type);
+    if (isExcel) {
+      downloadFileFromUrl(item.file_path, item.document_name);
+      toast.success(`Downloading ${item.document_name || "procedure.xlsx"} to view in Excel`);
+    }
+    setViewerDoc({
+      isOpen: true,
+      title: item.process,
+      documentName: item.document_name,
+      filePath: item.file_path,
+      fileType: item.file_type,
+      version: item.version,
+    });
+  };
+
+  // Open History
+  const handleOpenHistory = async (item: CalibrationProcedure) => {
+    setHistoryModal({
+      isOpen: true,
+      itemName: item.process,
+      itemId: item.id,
+      list: [],
+      isLoading: true,
+    });
+
+    try {
+      const history = await getCalibrationProcedureHistory(item.id);
+      setHistoryModal((prev) => ({
+        ...prev,
+        list: history,
+        isLoading: false,
+      }));
+    } catch (err: any) {
+      toast.error("Failed to load procedure history");
+      setHistoryModal((prev) => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const pageCount = Math.max(1, Math.ceil(procedures.length / pageSize));
+  const paginatedProcedures = useMemo(() => {
+    return procedures.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+  }, [procedures, pageIndex, pageSize]);
+
+  const procedureColumns = useMemo<ColumnDef<CalibrationProcedure>[]>(
+    () => [
+      {
+        id: "sno",
+        header: "S.No",
+        cell: ({ row }) => (
+          <span className="text-center font-mono text-xs text-muted-foreground block">
+            {(pageIndex - 1) * pageSize + row.index + 1}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "process",
+        header: "Process",
+        cell: ({ row }) => {
+          const proc = row.original;
+          return (
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-foreground">
+                {proc.process}
+              </span>
+              {proc.description && (
+                <span className="text-xs text-muted-foreground line-clamp-1">
+                  {proc.description}
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "document_name",
+        header: "Document",
+        cell: ({ row }) => {
+          const proc = row.original;
+          const isExcel = isExcelFile(proc.file_path, proc.document_name, proc.file_type);
+          const isPdf =
+            !isExcel &&
+            (proc.file_type?.toLowerCase().includes("pdf") ||
+              proc.document_name?.toLowerCase().endsWith(".pdf"));
+
+          return proc.document_name ? (
+            <div className="flex items-center gap-2">
+              {isExcel ? (
+                <FileSpreadsheet className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              ) : isPdf ? (
+                <FileText className="h-4 w-4 text-red-500 shrink-0" />
+              ) : (
+                <ImageIcon className="h-4 w-4 text-blue-500 shrink-0" />
+              )}
+              <span className="text-xs font-medium truncate max-w-[180px]" title={proc.document_name}>
+                {proc.document_name}
+              </span>
+              {isExcel && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-mono">
+                  EXCEL
+                </Badge>
+              )}
+            </div>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">No document</span>
+          );
+        },
+      },
+      {
+        accessorKey: "version",
+        header: "Version",
+        cell: ({ row }) => (
+          <div className="text-center">
+            <Badge variant="secondary" className="font-mono text-[11px] font-bold">
+              v{row.original.version}
+            </Badge>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "updated_at",
+        header: "Last Updated",
+        cell: ({ row }) => {
+          const proc = row.original;
+          return (
+            <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+              <span className="text-foreground font-medium flex items-center gap-1">
+                <User className="h-3 w-3 text-muted-foreground" />
+                {proc.updated_by_name || proc.created_by_name || "User"}
+              </span>
+              <span className="flex items-center gap-1 text-[11px]">
+                <Clock className="h-2.5 w-2.5" />
+                {proc.updated_at ? format(new Date(proc.updated_at), "dd MMM yyyy, hh:mm a") : "-"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "Action",
+        meta: { align: "right" },
+        cell: ({ row }) => {
+          const proc = row.original;
+          const isExcel = isExcelFile(proc.file_path, proc.document_name, proc.file_type);
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className={`h-8 px-2.5 text-xs gap-1 ${
+                  isExcel
+                    ? "text-emerald-600 hover:text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                    : "hover:text-primary hover:border-primary/50"
+                }`}
+                onClick={() => handleView(proc)}
+                disabled={!proc.file_path}
+                title={isExcel ? "Download Excel to view in local system" : "View Document inside application"}
+              >
+                {isExcel ? <Download className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{isExcel ? "Download" : "View"}</span>
+              </Button>
+              {canAccess("calibration_procedures", "edit") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2.5 text-xs gap-1 hover:text-blue-600 hover:border-blue-300"
+                  onClick={() => handleOpenEdit(proc)}
+                  title="Edit Procedure"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Edit</span>
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-xs gap-1 hover:text-amber-600 hover:border-amber-300"
+                onClick={() => handleOpenHistory(proc)}
+                title="Revision History"
+              >
+                <History className="h-3.5 w-3.5" />
+              </Button>
+              {canAccess("calibration_procedures", "delete") && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-xs text-destructive hover:bg-destructive/10 hover:border-destructive/30"
+                  onClick={() => setDeletingId(proc.id)}
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [pageIndex, pageSize, canAccess]
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Top Header Card */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Calibration Procedures</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Standard operating procedures, calibration work methods, and document revisions
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {canAccess("calibration_procedures", "create") && (
+            <Button
+              onClick={() => setIsCreateOpen(true)}
+              className="gap-2 shadow-xs bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              <PlusCircle className="h-4 w-4" />
+              <span>Create Calibration Procedure</span>
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Main Table Card */}
+      <Card className="border shadow-xs">
+        <CardHeader className="p-4 border-b bg-muted/20">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search procedure or process..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 h-9 text-sm bg-background"
+              />
+            </form>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchProcedures}
+              className="gap-1.5 h-9 shrink-0"
+              title="Refresh list"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+              <span>Refresh</span>
+            </Button>
+          </div>
+        </CardHeader>
+
+        <CardContent className="p-4">
+          <DataTable
+            columns={procedureColumns}
+            data={paginatedProcedures}
+            loading={loading}
+            pageCount={pageCount}
+            pageIndex={pageIndex}
+            pageSize={pageSize}
+            totalItems={procedures.length}
+            onPageChange={setPageIndex}
+            onPageSizeChange={(s) => { setPageSize(s); setPageIndex(1); }}
+            hideSearch={true}
+            hideColumnToggle={false}
+            emptyTitle="No calibration procedures found"
+            emptyDescription='Click "Create Calibration Procedure" to add your first procedure document.'
+            emptyIcon={FileText}
+          />
+        </CardContent>
+      </Card>
+
+      {/* CREATE PROCEDURE DIALOG */}
+      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Calibration Procedure</DialogTitle>
+            <DialogDescription>
+              Select or enter the Process name and upload the associated PDF or image procedure.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateSubmit} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="process-name" className="text-xs font-semibold">
+                Process <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="process-name"
+                list={processDataListId}
+                placeholder="e.g. Calibration of Vernier Caliper"
+                value={createProcess}
+                onChange={(e) => setCreateProcess(e.target.value)}
+                required
+                className="h-9 text-sm"
+              />
+              <datalist id={processDataListId}>
+                {COMMON_PROCESSES.map((proc) => (
+                  <option key={proc} value={proc} />
+                ))}
+              </datalist>
+              <p className="text-[11px] text-muted-foreground">
+                Type a custom process name or pick a common standard from suggestions.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="create-desc" className="text-xs font-semibold">
+                Description / Scope (Optional)
+              </Label>
+              <Textarea
+                id="create-desc"
+                placeholder="Brief notes on applicable standard, calibration interval, or range..."
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                rows={2}
+                className="text-sm resize-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Upload Procedure Document (PDF, Image, or Excel)
+              </Label>
+              <div className="border-2 border-dashed rounded-lg p-4 text-center hover:bg-muted/40 transition-colors">
+                <input
+                  type="file"
+                  id="proc-file-upload"
+                  className="hidden"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      const file = e.target.files[0];
+                      if (file.size > MAX_DOC_FILE_SIZE_BYTES) {
+                        toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(file.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+                        e.target.value = "";
+                        return;
+                      }
+                      setCreateFile(file);
+                    }
+                  }}
+                />
+                <label
+                  htmlFor="proc-file-upload"
+                  className="cursor-pointer flex flex-col items-center justify-center gap-1.5"
+                >
+                  <Upload className="h-6 w-6 text-muted-foreground" />
+                  {createFile ? (
+                    <div className="flex flex-col items-center">
+                      <span className="text-xs font-semibold text-primary">{createFile.name}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {(createFile.size / 1024 / 1024).toFixed(2)} MB / 50MB &bull; Click to replace
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <span className="text-xs font-medium text-foreground">
+                        Click to select or drop PDF, image, or Excel spreadsheet
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Supported: PDF, PNG, JPG, WebP, SVG, XLSX, XLS, CSV (Max 50MB)
+                      </span>
+                    </>
+                  )}
+                </label>
+              </div>
+            </div>
+
+            <DialogFooter className="pt-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsCreateOpen(false)}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting} className="gap-2">
+                {isSubmitting ? "Saving..." : "Save Calibration Procedure"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* SUCCESS PROMPT WITH VIEW OPTION */}
+      <Dialog open={isSuccessPromptOpen} onOpenChange={setIsSuccessPromptOpen}>
+        <DialogContent className="max-w-md text-center">
+          <div className="flex flex-col items-center justify-center gap-3 py-2">
+            <div className="p-3 bg-emerald-500/10 text-emerald-600 rounded-full">
+              <CheckCircle2 className="h-8 w-8" />
+            </div>
+            <DialogTitle className="text-lg font-bold">Procedure Uploaded Successfully</DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              <span className="font-semibold text-foreground">{lastUploadedItem?.process}</span> has
+              been saved with version v{lastUploadedItem?.version}.
+            </DialogDescription>
+            <div className="flex items-center gap-2 pt-3 w-full justify-center">
+              <Button
+                variant="outline"
+                className="w-1/2 text-xs"
+                onClick={() => setIsSuccessPromptOpen(false)}
+              >
+                Close
+              </Button>
+              <Button
+                className="w-1/2 text-xs gap-1.5 bg-primary text-primary-foreground"
+                onClick={() => {
+                  setIsSuccessPromptOpen(false);
+                  if (lastUploadedItem) handleView(lastUploadedItem);
+                }}
+              >
+                <Eye className="h-3.5 w-3.5" />
+                <span>View Document</span>
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* EDIT PROCEDURE DIALOG */}
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Calibration Procedure</DialogTitle>
+            <DialogDescription>
+              Update procedure details or upload a new version document (increments version).
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleEditSubmit} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Process</Label>
+              <Input
+                value={editProcess}
+                onChange={(e) => setEditProcess(e.target.value)}
+                required
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Description</Label>
+              <Textarea
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={2}
+                className="text-sm resize-none"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Upload New Document Revision (Optional - PDF, Image, or Excel)
+              </Label>
+              <div className="border border-dashed rounded-lg p-3 text-center hover:bg-muted/40 transition-colors">
+                <input
+                  type="file"
+                  id="edit-proc-file-upload"
+                  className="hidden"
+                  accept=".pdf,image/png,image/jpeg,image/jpg,image/webp,image/svg+xml,.xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      const file = e.target.files[0];
+                      if (file.size > MAX_DOC_FILE_SIZE_BYTES) {
+                        toast.error(`File size exceeds ${MAX_DOC_FILE_SIZE_MB}MB limit (Selected: ${(file.size / 1024 / 1024).toFixed(1)}MB). Please choose a file up to 50MB.`);
+                        e.target.value = "";
+                        return;
+                      }
+                      setEditFile(file);
+                    }
+                  }}
+                />
+                <label htmlFor="edit-proc-file-upload" className="cursor-pointer flex flex-col items-center gap-1">
+                  <Upload className="h-5 w-5 text-muted-foreground" />
+                  {editFile ? (
+                    <span className="text-xs font-semibold text-primary">{editFile.name} ({(editFile.size / 1024 / 1024).toFixed(2)} MB / 50MB &bull; Will increment to v{(editingItem?.version || 1) + 1})</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      Current file: {editingItem?.document_name || "None"} &bull; Click to upload replacement (Max 50MB)
+                    </span>
+                  )}
+                </label>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Revision Notes / Reason for Change</Label>
+              <Input
+                placeholder="e.g. Updated standard reference to ISO 3650"
+                value={editActionDetails}
+                onChange={(e) => setEditActionDetails(e.target.value)}
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <DialogFooter className="pt-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditOpen(false)}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Updating..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* DELETE CONFIRMATION */}
+      <AlertDialog open={!!deletingId} onOpenChange={(open) => { if (!open) { setDeletingId(null); setDeleteReason(""); } }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-600 dark:text-amber-500">
+              <Trash2 className="w-5 h-5" />
+              Move Calibration Procedure to Trash?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 pt-1 text-xs leading-relaxed">
+              <span>
+                Are you sure you want to delete this calibration procedure? It will be moved to the Trash (Recovery Center) and can be restored at any time.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="py-1 space-y-1">
+            <Label htmlFor="proc-delete-reason" className="text-xs text-muted-foreground">
+              Reason for deletion (optional)
+            </Label>
+            <Input
+              id="proc-delete-reason"
+              placeholder="e.g. Superseded by new SOP, duplicate procedure"
+              value={deleteReason}
+              onChange={(e) => setDeleteReason(e.target.value)}
+              className="text-xs h-8"
+            />
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setDeleteReason("")}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Move Procedure to Trash
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* DOCUMENT VIEWER MODAL */}
+      <DocumentViewerModal
+        isOpen={viewerDoc.isOpen}
+        onClose={() => setViewerDoc((prev) => ({ ...prev, isOpen: false }))}
+        title={viewerDoc.title}
+        documentName={viewerDoc.documentName}
+        filePath={viewerDoc.filePath}
+        fileType={viewerDoc.fileType}
+        version={viewerDoc.version}
+      />
+
+      {/* HISTORY MODAL */}
+      <DocumentHistoryModal
+        isOpen={historyModal.isOpen}
+        onClose={() => setHistoryModal((prev) => ({ ...prev, isOpen: false }))}
+        entityName="Calibration Procedure"
+        itemName={historyModal.itemName}
+        itemId={historyModal.itemId}
+        historyList={historyModal.list}
+        isLoading={historyModal.isLoading}
+        onViewDocument={(histItem) => {
+          setViewerDoc({
+            isOpen: true,
+            title: `${histItem.process || historyModal.itemName} (v${histItem.version})`,
+            documentName: histItem.document_name,
+            filePath: histItem.file_path,
+            fileType: histItem.file_type,
+            version: histItem.version,
+          });
+        }}
+      />
+    </div>
+  );
+}

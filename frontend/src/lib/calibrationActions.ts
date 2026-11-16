@@ -20,6 +20,7 @@ export async function listCalibrations(params: {
   calibrationType?: string;
   verdict?: string;
   pendingCertsOnly?: boolean;
+  approvalStatus?: string;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -28,6 +29,23 @@ export async function listCalibrations(params: {
   pageSize?: number;
 }) {
   const res = await httpClient.get("/calibrations", { params });
+  return res.data;
+}
+
+export interface ApprovalStats {
+  pendingReview: number;
+  reviewed: number;
+  approved: number;
+  rejected: number;
+  total: number;
+}
+
+/** Get approval workflow status statistics */
+export async function getApprovalStats(params?: {
+  companyId?: string;
+  userId?: string;
+}): Promise<ApprovalStats> {
+  const res = await httpClient.get("/calibrations/approval-stats", { params });
   return res.data;
 }
 
@@ -104,6 +122,12 @@ export async function getDraft(id: string) {
   return res.data;
 }
 
+/** Get draft by instrument ID */
+export async function getDraftByInstrument(instrumentId: string) {
+  const res = await httpClient.get(`/calibrations/drafts/instrument/${instrumentId}`);
+  return res.data;
+}
+
 /** Save draft */
 export async function saveDraft(userId: string, data: any, draftId?: string) {
   const res = await httpClient.post(`/calibrations/draft`, { userId, data, draftId });
@@ -113,6 +137,12 @@ export async function saveDraft(userId: string, data: any, draftId?: string) {
 /** Delete draft */
 export async function deleteDraft(id: string) {
   const res = await httpClient.delete(`/calibrations/draft/${id}`);
+  return res.data;
+}
+
+/** Delete drafts for a specific instrument */
+export async function deleteDraftsByInstrument(instrumentId: string) {
+  const res = await httpClient.delete(`/calibrations/drafts/instrument/${instrumentId}`);
   return res.data;
 }
 
@@ -137,7 +167,58 @@ export async function getCalibrationAuditLogs(calibrationId: string) {
   return res.data;
 }
 
-/** Delete a completed calibration record */
-export async function deleteCalibration(id: string): Promise<void> {
-  await httpClient.delete(`/calibrations/${id}`);
+export interface ResequencePreviewData {
+  canResequence: boolean;
+  isIssuedOrApproved?: boolean;
+  requiresSuperAdmin?: boolean;
+  message?: string;
+  targetCalibration: {
+    id: string;
+    certificate_number: string;
+    ulr_number?: string;
+    instrumentName?: string;
+    idCode?: string;
+    targetSeq: number;
+  };
+  affectedCalibrations: Array<{
+    id: string;
+    instrumentName?: string;
+    idCode?: string;
+    calibration_date?: string;
+    oldCertificateNumber: string;
+    newCertificateNumber: string;
+    oldUlrNumber?: string;
+    newUlrNumber?: string;
+    oldSeq: number;
+    newSeq: number;
+  }>;
+  currentNextSeq: number;
+  newNextSeq: number;
 }
+
+/** Get resequence preview before deleting a calibration */
+export async function getResequencePreview(id: string): Promise<ResequencePreviewData> {
+  const res = await httpClient.get(`/calibrations/${id}/resequence-preview`);
+  return res.data;
+}
+
+/** Delete a calibration record (soft-delete), optionally shifting subsequent sequence numbers */
+export async function deleteCalibration(id: string, resequence: boolean = false, reason?: string): Promise<void> {
+  await httpClient.delete(`/calibrations/${id}`, {
+    params: { resequence: resequence ? 'true' : 'false', reason },
+  });
+}
+
+/** Revert a rejected calibration back to previous stage (e.g. Pending Review) with mandatory note */
+export async function revertCalibrationStage(
+  id: string,
+  note: string,
+  targetStage: string = 'Pending Review',
+): Promise<any> {
+  const res = await httpClient.post(`/calibrations/${id}/revert-stage`, {
+    note,
+    targetStage,
+  });
+  return res.data;
+}
+

@@ -31,14 +31,14 @@ export async function updateInstrument(id: string, data: Partial<Instrument>) {
 }
 
 /** Delete an instrument record */
-export async function deleteInstrument(id: string) {
-  const res = await httpClient.delete(`/instruments/${id}`);
+export async function deleteInstrument(id: string, reason?: string) {
+  const res = await httpClient.delete(`/instruments/${id}`, { params: { reason } });
   return res.data;
 }
 
 /** Bulk delete multiple instrument records */
-export async function deleteInstrumentsBulk(ids: string[]) {
-  const res = await httpClient.post('/instruments/bulk-delete', { ids });
+export async function deleteInstrumentsBulk(ids: string[], reason?: string) {
+  const res = await httpClient.post('/instruments/bulk-delete', { ids, reason });
   return res.data;
 }
 
@@ -74,3 +74,25 @@ export async function getFilterParams(userId: string, companyId?: string) {
   });
   return res.data;
 }
+
+/** Fetch custom instrument statuses for a company */
+export async function getCustomInstrumentStatuses(companyId?: string): Promise<string[]> {
+  const res = await httpClient.get("/settings/instrument-statuses", {
+    params: { companyId },
+  });
+  return res.data || [];
+}
+
+/** Add a new custom instrument status for a company */
+export async function addCustomInstrumentStatus(companyId: string, status: string): Promise<{ success: boolean; status: string; statuses: string[] }> {
+  const res = await httpClient.post("/settings/instrument-statuses", {
+    companyId,
+    status,
+  });
+  return res.data;
+}
+
+
+// Re-export hardened canonical parseFrequencyMonths from dateUtils for consistency
+export { parseFrequencyMonths } from "./dateUtils";
+

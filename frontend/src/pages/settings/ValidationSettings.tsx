@@ -67,7 +67,6 @@ const DEFAULT_FIELDS = [
   { fieldName: "gauges_issued_by", displayName: "Gauges Issued By", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
   { fieldName: "calibration_procedure", displayName: "Calibration Procedure & Ref Std", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
   { fieldName: "traceable", displayName: "Traceable", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
-  { fieldName: "is_reference_standard", displayName: "Is Reference Standard", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
   { fieldName: "notes", displayName: "Notes", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
   { fieldName: "remarks", displayName: "Remarks", isRequired: false, isUnique: false, isStrictDate: false, validationType: "text", isCustom: false },
 ];

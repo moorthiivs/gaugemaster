@@ -25,7 +25,10 @@ import { CanvasBlock, TableGridBlock, SplitRowBlock, MatrixTableBlock, TextBlock
 import { CalibrationRecord } from "@/types/calibration";
 import { CertificatePreview } from "@/components/calibration/CertificatePreview";
 import { getEffectiveTableOrientation } from "@/lib/tableLayoutOptimizer";
+import { getCoveredCells } from "@/lib/tableSpanUtils";
+import { evaluateCanvasRowFormulas, buildRowContext } from "@/lib/formulaEngine";
 import { toast } from "sonner";
+import { getStatusVerdict } from "@/lib/statusVerdict";
 
 interface TrialRunModalProps {
   open: boolean;
@@ -39,6 +42,18 @@ interface TrialRunModalProps {
   defaultUnit?: string;
   defaultTolerance?: number;
   decimalPlaces?: number;
+  docNo?: string;
+  docDate?: string;
+  docRev?: string;
+  procedureReference?: string;
+  procedureNo?: string;
+  procedureName?: string;
+  procedureDate?: string;
+  procedureRev?: string;
+  acceptanceCriteriaDocNo?: string;
+  acceptanceCriteriaDate?: string;
+  acceptanceCriteriaRev?: string;
+  acceptanceCriteriaReference?: string;
 }
 
 export function TrialRunModal({
@@ -53,41 +68,46 @@ export function TrialRunModal({
   defaultUnit = "mm",
   defaultTolerance = 0.02,
   decimalPlaces = 3,
+  docNo,
+  docDate,
+  docRev,
+  procedureReference,
+  procedureNo,
+  procedureName,
+  procedureDate,
+  procedureRev,
+  acceptanceCriteriaDocNo,
+  acceptanceCriteriaDate,
+  acceptanceCriteriaRev,
+  acceptanceCriteriaReference,
 }: TrialRunModalProps) {
   const [activeTab, setActiveTab] = useState<"test" | "certificate">("test");
   const [testBlocks, setTestBlocks] = useState<CanvasBlock[]>([]);
+
+  // Prepare table rows for trial run (evaluating structured bounds with blank or existing readings)
+  const prefillTableRows = (tbl: TableGridBlock) => {
+    if (!tbl.rows || !tbl.columns) return;
+    const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+    const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
+
+    tbl.rows = tbl.rows.map((r: any) => {
+      // Evaluate row formulas (Avg, Error, Judgement) with deterministic metrology engine
+      return evaluateCanvasRowFormulas(r, tbl.columns, tol, dec);
+    });
+  };
 
   // Deep clone blocks when modal opens
   useEffect(() => {
     if (open) {
       const cloned = JSON.parse(JSON.stringify(blocks));
-      // Pre-fill sample reading equal to nominal for instant clean state
       cloned.forEach((block: any) => {
         if (block.type === "table_grid" && block.rows) {
-          block.rows.forEach((r: any) => {
-            const nom = r.nominal ?? 0;
-            const dec = block.decimal_places ?? decimalPlaces ?? 3;
-            r.reading = Number(nom).toFixed(dec);
-            r.t1 = Number(nom).toFixed(dec);
-            r.t2 = Number(nom).toFixed(dec);
-            r.t3 = Number(nom).toFixed(dec);
-            r.avg = Number(nom).toFixed(dec);
-            r.error = `+${(0).toFixed(dec)}`;
-            r.status = "PASS";
-          });
+          prefillTableRows(block);
         }
         if (block.type === "split_row" && block.children) {
           block.children.forEach((child: any) => {
             if (child.type === "table_grid" && child.rows) {
-              child.rows.forEach((r: any) => {
-                const nom = r.nominal ?? 0;
-                const dec = child.decimal_places ?? decimalPlaces ?? 3;
-                r.reading = Number(nom).toFixed(dec);
-                r.t1 = Number(nom).toFixed(dec);
-                r.avg = Number(nom).toFixed(dec);
-                r.error = `+${(0).toFixed(dec)}`;
-                r.status = "PASS";
-              });
+              prefillTableRows(child);
             }
           });
         }
@@ -117,103 +137,112 @@ export function TrialRunModal({
     if (!targetTbl || !targetTbl.rows) return;
 
     const row = { ...targetTbl.rows[rowIndex], [colId]: val };
-    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? defaultTolerance));
-    const nominal = parseFloat(String(row.nominal)) || 0;
+
+    // Clean stale sibling aliases if editing a trial/reading column
+    const trialMatch = colId.match(/^(?:t|trial_|trial|reading_|reading|actual_|actual|observed_|observed|r|col_)?([1-9]|1[0-9]|20)$/i);
+    if (trialMatch) {
+      const idx = trialMatch[1];
+      const aliases = [
+        `t${idx}`, `trial_${idx}`, `trial${idx}`, `reading_${idx}`, `reading${idx}`,
+        `actual_${idx}`, `actual${idx}`, `observed_${idx}`, `observed${idx}`, `r${idx}`, `col_${idx}`, idx
+      ];
+      aliases.forEach((a) => {
+        row[a] = val;
+      });
+    }
+
+    // Clean phantom reading fields if not in table columns
+    if (!targetTbl.columns.some((c) => c.id === "actual")) delete row.actual;
+    if (!targetTbl.columns.some((c) => c.id === "actual_dimension")) delete row.actual_dimension;
+    if (!targetTbl.columns.some((c) => c.id === "reading")) delete row.reading;
+
+    const tol = parseFloat(String(row.tolerance ?? targetTbl.tolerance ?? defaultTolerance)) || 0.02;
     const dec = targetTbl.decimal_places !== undefined ? targetTbl.decimal_places : (decimalPlaces || 3);
 
-    // Recalculate all formulas in this table
-    targetTbl.columns.forEach((col: any) => {
-      if (col.type === "formula" || col.type === "status") {
-        const formula = col.formula || "";
+    // Multi-pass formula evaluation: Pass 1 (Average) -> Pass 2 (Error) -> Pass 3 (Status)
+    const evaluatedRow = evaluateCanvasRowFormulas(row, targetTbl.columns, tol, dec);
 
-        // 1. AVERAGE
-        if (/AVERAGE/i.test(formula)) {
-          const trials = [row.t1, row.t2, row.t3, row.t4, row.t5, row.col_1, row.col_2, row.col_3]
-            .filter((v) => v !== undefined && v !== null && String(v).trim() !== "")
-            .map((v) => parseFloat(v))
-            .filter((v) => !isNaN(v));
-          if (trials.length > 0) {
-            const sum = trials.reduce((a, b) => a + b, 0);
-            const avgVal = parseFloat((sum / trials.length).toFixed(dec));
-            row[col.id] = avgVal.toFixed(dec);
-            row.avg = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.avg = undefined;
-          }
-        }
-        // 2. ERROR (avg - nominal or reading - nominal)
-        else if (/avg\s*-\s*nominal/i.test(formula)) {
-          if (row.avg !== undefined || (row.t1 !== undefined && String(row.t1).trim() !== "")) {
-            const avgVal = parseFloat(row.avg ?? row.t1);
-            if (!isNaN(avgVal)) {
-              const err = parseFloat((avgVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          }
-        } else if (/reading\s*-\s*nominal/i.test(formula) || /actual\s*-\s*nominal/i.test(formula)) {
-          const readStr = row.reading ?? row.t1;
-          if (readStr !== undefined && String(readStr).trim() !== "") {
-            const readVal = parseFloat(readStr);
-            if (!isNaN(readVal)) {
-              const err = parseFloat((readVal - nominal).toFixed(dec));
-              row[col.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-              row.error = err;
-            }
-          }
-        }
-        // 3. STATUS / JUDGEMENT
-        else if (/PASS.*FAIL/i.test(formula) || col.type === "status") {
-          const hasReading = row.error !== undefined || row.avg !== undefined || (row.reading !== undefined && String(row.reading).trim() !== "");
-          if (hasReading) {
-            const readVal = parseFloat(row.avg ?? row.reading ?? row.t1 ?? nominal);
-            const errVal = Math.abs(parseFloat(row.error !== undefined ? Number(row.error).toFixed(dec) : (readVal - nominal).toFixed(dec)) || 0);
-            row[col.id] = errVal <= tol ? "PASS" : "FAIL";
-            row.status = row[col.id];
-          } else {
-            row[col.id] = "-";
-            row.status = undefined;
-          }
-        }
-      }
-    });
-
-    targetTbl.rows[rowIndex] = row;
+    targetTbl.rows[rowIndex] = evaluatedRow;
     setTestBlocks(updated);
   };
 
-  // Quick fill sample data
+  // Quick fill sample data across all trials
   const handleQuickFill = (type: "pass" | "fail") => {
     const updated = JSON.parse(JSON.stringify(testBlocks));
     updated.forEach((block: any) => {
-      if (block.type === "table_grid" && block.rows) {
-        block.rows.forEach((r: any) => {
-          const nom = parseFloat(r.nominal) || 0;
-          const tol = parseFloat(r.tolerance ?? block.tolerance ?? defaultTolerance);
-          const dec = block.decimal_places ?? decimalPlaces ?? 3;
-          const delta = type === "pass" ? tol * 0.5 : tol * 1.8;
-          const readVal = parseFloat((nom + delta).toFixed(dec));
-          const err = parseFloat((readVal - nom).toFixed(dec));
+      const applyToTable = (tbl: TableGridBlock) => {
+        if (!tbl || !tbl.rows || !tbl.columns) return;
+        const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+        const tol = parseFloat(String(tbl.tolerance ?? defaultTolerance)) || 0.02;
 
-          r.reading = readVal.toFixed(dec);
-          r.t1 = readVal.toFixed(dec);
-          r.t2 = readVal.toFixed(dec);
-          r.avg = readVal.toFixed(dec);
-          r.error = (err >= 0 ? "+" : "") + err.toFixed(dec);
-          r.status = type === "pass" ? "PASS" : "FAIL";
+        tbl.rows = tbl.rows.map((r: any) => {
+          const ctx = buildRowContext(r, tbl.columns, tol, dec, 0, tbl.nominal);
+          let readVal: number;
+          if (type === "pass") {
+            // Midpoint of tolerance limits guarantees PASS across symmetric, asymmetric, and negative-only tolerances
+            readVal = parseFloat(((ctx.lowerLimit + ctx.upperLimit) / 2).toFixed(dec));
+          } else {
+            // Distinctly out-of-tolerance value beyond upper boundary
+            const span = Math.abs(ctx.upperLimit - ctx.lowerLimit) || (tol * 2);
+            readVal = parseFloat((ctx.upperLimit + span * 0.75 + 0.001).toFixed(dec));
+          }
+          const readStr = readVal.toFixed(dec);
 
-          block.columns.forEach((c: any) => {
-            if (c.id === "reading" || c.id === "t1") r[c.id] = readVal.toFixed(dec);
-            if (c.id === "error") r[c.id] = (err >= 0 ? "+" : "") + err.toFixed(dec);
-            if (c.id === "status") r[c.id] = type === "pass" ? "PASS" : "FAIL";
+          const updatedRow = { ...r };
+
+          // Populate all trial and reading columns
+          tbl.columns.forEach((c) => {
+            const cId = (c.id || "").toLowerCase();
+            const cLbl = (c.label || "").toLowerCase();
+            if (c.type === "trial" || /^t[1-9]$/i.test(c.id) || /^[1-9]$/.test(c.id) || /^col_[1-9]$/i.test(c.id)) {
+              updatedRow[c.id] = readStr;
+            }
+            if (
+              c.type === "reading" ||
+              c.role === "READING" ||
+              c.dataType === "MEASUREMENT" ||
+              (c.role as string) === "MEASUREMENT" ||
+              cId === "reading" ||
+              cId === "actual" ||
+              cId === "actual_dimension" ||
+              cId === "observation" ||
+              cLbl.includes("actual") ||
+              cLbl.includes("reading") ||
+              cLbl.includes("observed")
+            ) {
+              updatedRow[c.id] = readStr;
+            }
           });
+
+          updatedRow.actual_dimension = readStr;
+          updatedRow.actual = readStr;
+          updatedRow.reading = readStr;
+          updatedRow.t1 = readStr;
+          updatedRow.t2 = readStr;
+          updatedRow.t3 = readStr;
+          updatedRow.t4 = readStr;
+          updatedRow.t5 = readStr;
+
+          // Re-evaluate with new readings
+          return evaluateCanvasRowFormulas(updatedRow, tbl.columns, tol, dec);
+        });
+      };
+
+      if (block.type === "table_grid") {
+        applyToTable(block);
+      }
+      if (block.type === "split_row" && block.children) {
+        block.children.forEach((child: any) => {
+          if (child.type === "table_grid") {
+            applyToTable(child);
+          }
         });
       }
     });
     setTestBlocks(updated);
-    toast.success(`Populated sample ${type.toUpperCase()} test readings!`);
+    toast.success(`Populated sample ${type.toUpperCase()} test readings across all trial columns!`);
   };
+
 
   // Calculate pass/fail summary
   let totalPoints = 0;
@@ -224,8 +253,9 @@ export function TrialRunModal({
     if (b.type === "table_grid" && b.rows) {
       b.rows.forEach((r: any) => {
         totalPoints++;
-        if (r.status === "PASS") passPoints++;
-        if (r.status === "FAIL") failPoints++;
+        const st = String(r.status ?? r.judgement ?? r.judgment ?? "");
+        if (st === "PASS") passPoints++;
+        if (st === "FAIL") failPoints++;
       });
     }
   });
@@ -243,7 +273,9 @@ export function TrialRunModal({
     certificate_number: `CC-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
     ulr_number: `ULR-TC8492${new Date().getFullYear().toString().slice(-2)}0000001F`,
     ulr_enabled: true,
-    doc_no: "CC-2632",
+    doc_no: docNo || undefined,
+    doc_date: docDate || undefined,
+    doc_rev: docRev || undefined,
     calibration_date: new Date().toISOString(),
     next_calibration_date: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
     certificate_issue_date: new Date().toISOString(),
@@ -262,7 +294,15 @@ export function TrialRunModal({
       pressure: "1013.2 hPa",
       soaking_time: "4 Hours",
     },
-    procedure_reference: "WI/CAL/01 (Accredited Calibration Procedure)",
+    procedure_reference: procedureNo || procedureReference || undefined,
+    procedure_no: procedureNo || undefined,
+    procedure_name: procedureName || undefined,
+    procedure_date: procedureDate || undefined,
+    procedure_rev: procedureRev || undefined,
+    acceptance_criteria_doc_no: acceptanceCriteriaDocNo || undefined,
+    acceptance_criteria_date: acceptanceCriteriaDate || undefined,
+    acceptance_criteria_rev: acceptanceCriteriaRev || undefined,
+    acceptance_criteria_reference: acceptanceCriteriaReference || undefined,
     reference_standard_name: "Length Master / Caliper Checker / Slip Gauge Set",
     reference_standard_id: "REF-STD-01",
     reference_standard_traceable_to: "NPL (National Physical Laboratory)",
@@ -423,45 +463,87 @@ export function TrialRunModal({
                                       {col.type === "formula" && <span className="text-[9px] text-primary ml-1 font-normal">(fx)</span>}
                                     </td>
                                     {tbl.rows.map((row, rIdx) => {
-                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
+                                      const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
                                       if (col.type === "nominal") {
                                         const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
+                                        const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
                                         return (
                                           <td key={rIdx} className="py-1 px-1.5 font-bold font-mono text-foreground">
-                                            {typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}
+                                            {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
                                           </td>
                                         );
                                       }
-                                      if (col.type === "reading" || col.type === "trial") {
+                                      if (
+                                        col.type === "reading" ||
+                                        col.type === "trial" ||
+                                        col.role === "READING" ||
+                                        col.dataType === "MEASUREMENT" ||
+                                        (col.role as string) === "MEASUREMENT" ||
+                                        /actual|reading|trial|observed/i.test(col.id) ||
+                                        /actual|reading|trial|observed/i.test(col.label)
+                                      ) {
                                         return (
                                           <td key={rIdx} className="p-1">
                                             <Input
-                                              type="number"
-                                              step="any"
+                                              type="text"
+                                              inputMode="decimal"
                                               value={row[col.id] ?? ""}
-                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
+                                              onChange={(e) => {
+                                                const v = e.target.value;
+                                                if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                  handleCellChange(bIdx, rIdx, col.id, v);
+                                                }
+                                              }}
+                                              onBlur={(e) => {
+                                                const raw = e.target.value.trim();
+                                                if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                const parsed = parseFloat(raw);
+                                                if (!isNaN(parsed)) {
+                                                  const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+                                                  handleCellChange(bIdx, rIdx, col.id, formatted);
+                                                }
+                                              }}
                                               className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                              placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
                                             />
                                           </td>
                                         );
                                       }
                                       if (col.type === "formula") {
+                                        const val = row[col.id] ?? "-";
+                                        const verdict = getStatusVerdict(val);
+                                        if (verdict !== null) {
+                                          return (
+                                            <td key={rIdx} className="py-1 px-1 text-center">
+                                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
+                                                verdict === "pass"
+                                                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                  : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                              }`}>
+                                                {val}
+                                              </span>
+                                            </td>
+                                          );
+                                        }
                                         return (
                                           <td key={rIdx} className="py-1 px-1.5 font-mono font-bold text-primary">
-                                            {row[col.id] ?? "-"}
+                                            {val}
                                           </td>
                                         );
                                       }
                                       if (col.type === "status") {
-                                        const isPass = row[col.id] === "PASS";
+                                        const val = row[col.id] || "-";
+                                        const verdict = getStatusVerdict(val);
                                         return (
-                                          <td key={rIdx} className="py-1 px-1">
+                                          <td key={rIdx} className="py-1 px-1 text-center">
                                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold ${
-                                              isPass
+                                              verdict === "pass"
                                                 ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                : verdict === "fail"
+                                                  ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                  : "bg-muted text-muted-foreground"
                                             }`}>
-                                              {row[col.id] || "-"}
+                                              {val}
                                             </span>
                                           </td>
                                         );
@@ -491,55 +573,179 @@ export function TrialRunModal({
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-black">
-                                {tbl.rows.map((row, rIdx) => (
-                                  <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
-                                    {tbl.columns.map((col) => {
-                                      const dec = tbl.decimal_places ?? decimalPlaces ?? 3;
-                                      if (col.id === "point_number" || col.id === "sl_no") {
-                                        return <td key={col.id} className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300">{row.point_number ?? (rIdx + 1)}</td>;
-                                      }
-                                      if (col.type === "nominal") {
-                                        const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
-                                        return <td key={col.id} className="py-1 px-2 font-bold font-mono">{typeof cellVal === "number" ? cellVal.toFixed(dec) : String(cellVal ?? "-")}</td>;
-                                      }
-                                      if (col.type === "reading" || col.type === "trial") {
-                                        return (
-                                          <td key={col.id} className="p-1">
-                                            <Input
-                                              type="number"
-                                              step="any"
-                                              value={row[col.id] ?? ""}
-                                              onChange={(e) => handleCellChange(bIdx, rIdx, col.id, e.target.value)}
-                                              className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
-                                            />
+                                {(() => {
+                                  const coveredCells = getCoveredCells(tbl.rows, tbl.columns);
+                                  return tbl.rows.map((row, rIdx) => {
+                                    if (row.is_merged || row.isMerged) {
+                                      return (
+                                        <tr key={rIdx} className="bg-amber-50/40 dark:bg-amber-950/20">
+                                          <td
+                                            colSpan={tbl.columns.length}
+                                            className="py-1.5 px-3 font-semibold text-left text-slate-800 dark:text-slate-200 text-xs italic"
+                                          >
+                                            {row.statement || row.merged_text || row.description || row.required_dimension || "All the jaws are free from dent and damages"}
                                           </td>
-                                        );
-                                      }
-                                      if (col.type === "formula") {
-                                        return (
-                                          <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
-                                            {row[col.id] ?? "-"}
-                                          </td>
-                                        );
-                                      }
-                                      if (col.type === "status") {
-                                        const isPass = row[col.id] === "PASS";
-                                        return (
-                                          <td key={col.id} className="py-1 px-2">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
-                                              isPass
-                                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                                : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
-                                            }`}>
-                                              {row[col.id] || "-"}
-                                            </span>
-                                          </td>
-                                        );
-                                      }
-                                      return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
-                                    })}
-                                  </tr>
-                                ))}
+                                        </tr>
+                                      );
+                                    }
+
+                                    return (
+                                      <tr key={rIdx} className="divide-x divide-black hover:bg-slate-50/50">
+                                        {tbl.columns.map((col, colIdx) => {
+                                          if (coveredCells.has(`${rIdx}_${col.id}`)) {
+                                            return null;
+                                          }
+                                          const spanInfo = (row as any).cellSpans?.[col.id];
+                                          const span = spanInfo?.colSpan || 1;
+                                          const rSpan = spanInfo?.rowSpan || 1;
+                                          const isMerged = span > 1 || rSpan > 1;
+
+                                          const dec = col.decimal_places ?? col.decimalPrecision ?? tbl.decimal_places ?? decimalPlaces ?? 3;
+                                          if (col.id === "point_number" || col.id === "sl_no") {
+                                            return (
+                                              <td
+                                                key={col.id}
+                                                colSpan={span > 1 ? span : undefined}
+                                                rowSpan={rSpan > 1 ? rSpan : undefined}
+                                                className="py-1 px-2 font-bold text-slate-700 dark:text-slate-300"
+                                              >
+                                                {row.point_number ?? (rIdx + 1)}
+                                              </td>
+                                            );
+                                          }
+                                          // MERGED CELL (span > 1 || rSpan > 1)
+                                          if (isMerged) {
+                                            const cellVal = row[col.id] !== undefined ? row[col.id] : (col.id === "nominal" ? row.nominal : "") ?? "";
+                                            return (
+                                              <td
+                                                key={col.id}
+                                                colSpan={span > 1 ? span : undefined}
+                                                rowSpan={rSpan > 1 ? rSpan : undefined}
+                                                className="py-1 px-2 font-bold text-center bg-amber-50/40 dark:bg-amber-950/20 text-foreground text-xs align-middle"
+                                              >
+                                                {rSpan > 1 ? (
+                                                  <div className="flex flex-col items-center justify-center gap-1 w-full h-full min-h-[36px] py-0.5">
+                                                    <div className="flex items-center gap-1 flex-wrap justify-center">
+                                                      {span > 1 && (
+                                                        <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0">
+                                                          {span} Cols
+                                                        </Badge>
+                                                      )}
+                                                      {rSpan > 1 && (
+                                                        <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-indigo-100 dark:bg-indigo-900/60 text-indigo-900 dark:text-indigo-200 border-indigo-300 shrink-0">
+                                                          {rSpan} Rows
+                                                        </Badge>
+                                                      )}
+                                                    </div>
+                                                    <span className="font-semibold text-slate-800 dark:text-slate-100">
+                                                      {cellVal}
+                                                    </span>
+                                                  </div>
+                                                ) : (
+                                                  <div className="flex items-center justify-center gap-1.5">
+                                                    {span > 1 && (
+                                                      <Badge variant="outline" className="text-[9px] py-0 px-1 font-bold bg-amber-100 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 border-amber-300 shrink-0">
+                                                        {span} Cols
+                                                      </Badge>
+                                                    )}
+                                                    <span className="font-semibold text-slate-800 dark:text-slate-100">
+                                                      {cellVal}
+                                                    </span>
+                                                  </div>
+                                                )}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "nominal") {
+                                            const cellVal = row[col.id] !== undefined ? row[col.id] : row.nominal;
+                                            const numVal = typeof cellVal === "number" ? cellVal : (cellVal && !isNaN(Number(cellVal)) ? Number(cellVal) : null);
+                                            return (
+                                              <td key={col.id} className="py-1 px-2 font-bold font-mono">
+                                                {numVal !== null ? (dec === 0 ? String(Math.round(numVal)) : numVal.toFixed(dec)) : String(cellVal ?? "-")}
+                                              </td>
+                                            );
+                                          }
+                                          if (
+                                            col.type === "reading" ||
+                                            col.type === "trial" ||
+                                            col.role === "READING" ||
+                                            col.dataType === "MEASUREMENT" ||
+                                            (col.role as string) === "MEASUREMENT" ||
+                                            /actual|reading|trial|observed/i.test(col.id) ||
+                                            /actual|reading|trial|observed/i.test(col.label)
+                                          ) {
+                                            return (
+                                              <td key={col.id} className="p-1">
+                                                <Input
+                                                  type="text"
+                                                  inputMode="decimal"
+                                                  value={row[col.id] ?? ""}
+                                                  onChange={(e) => {
+                                                    const v = e.target.value;
+                                                    if (v === "" || /^[+-]?\d*\.?\d*$/.test(v)) {
+                                                      handleCellChange(bIdx, rIdx, col.id, v);
+                                                    }
+                                                  }}
+                                                  onBlur={(e) => {
+                                                    const raw = e.target.value.trim();
+                                                    if (raw === "" || raw === "-" || raw === "+" || raw === ".") return;
+                                                    const parsed = parseFloat(raw);
+                                                    if (!isNaN(parsed)) {
+                                                      const formatted = dec === 0 ? String(Math.round(parsed)) : parsed.toFixed(dec);
+                                                      handleCellChange(bIdx, rIdx, col.id, formatted);
+                                                    }
+                                                  }}
+                                                  className="h-6 text-xs text-center font-mono font-bold bg-cyan-50/40 dark:bg-cyan-950/20 border-cyan-400/50 focus-visible:ring-1 focus-visible:ring-cyan-500"
+                                                  placeholder={dec === 0 ? "0" : (0).toFixed(dec)}
+                                                />
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "formula") {
+                                            const val = row[col.id] ?? "-";
+                                            const verdict = getStatusVerdict(val);
+                                            if (verdict !== null) {
+                                              return (
+                                                <td key={col.id} className="py-1 px-2 text-center">
+                                                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                    verdict === "pass"
+                                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                      : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                  }`}>
+                                                    {val}
+                                                  </span>
+                                                </td>
+                                              );
+                                            }
+                                            return (
+                                              <td key={col.id} className="py-1 px-2 font-mono font-bold text-primary">
+                                                {val}
+                                              </td>
+                                            );
+                                          }
+                                          if (col.type === "status") {
+                                            const val = row[col.id] || "-";
+                                            const verdict = getStatusVerdict(val);
+                                            return (
+                                              <td key={col.id} className="py-1 px-2 text-center">
+                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                                                  verdict === "pass"
+                                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                                    : verdict === "fail"
+                                                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                                      : "bg-muted text-muted-foreground"
+                                                }`}>
+                                                  {val}
+                                                </span>
+                                              </td>
+                                            );
+                                          }
+                                          return <td key={col.id} className="py-1 px-2">{row[col.id] ?? "-"}</td>;
+                                        })}
+                                      </tr>
+                                    );
+                                  });
+                                })()}
                               </tbody>
                             </table>
                           </div>
@@ -566,8 +772,10 @@ export function TrialRunModal({
                         <tbody className="divide-y divide-black">
                           {(block as MatrixTableBlock).rows.map((r, rIdx) => (
                             <tr key={rIdx} className="divide-x divide-black">
-                              {r.map((val, cIdx) => (
-                                <td key={cIdx} className="py-1 px-2 font-mono">{val}</td>
+                              {r.map((val: any, cIdx) => (
+                                <td key={cIdx} className="py-1 px-2 font-mono">
+                                  {typeof val === "object" && val !== null ? (val.text ?? "-") : String(val ?? "-")}
+                                </td>
                               ))}
                             </tr>
                           ))}
@@ -595,6 +803,7 @@ export function TrialRunModal({
                   calibration={mockCalibrationRecord}
                   instrumentName={templateName}
                   showDownloadPng={true}
+                  isTemplatePreview={true}
                 />
               </div>
             </div>

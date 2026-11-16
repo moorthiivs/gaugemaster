@@ -1,4 +1,5 @@
 import { Instrument } from "./instrument";
+import type { CanvasBlock } from "./template";
 
 /**
  * A single calibration data point.
@@ -6,6 +7,7 @@ import { Instrument } from "./instrument";
 export interface CalibrationPoint {
   point_number: number;
   description?: string;
+  required_dimension?: number | string;
   nominal: number;
   ascending_reading: number;
   descending_reading?: number;
@@ -13,7 +15,7 @@ export interface CalibrationPoint {
   unit: string;
   tolerance?: number;
   status?: "PASS" | "FAIL";
-  customFields?: Record<string, any>;
+  customFields?: Record<string, unknown>;
 }
 
 /**
@@ -33,7 +35,7 @@ export interface CalibrationRecord {
   reference_standard_validity?: string;
   reference_standard_range?: string;
   reference_standard_least_count?: string;
-  reference_standards?: any[];
+  reference_standards?: Record<string, unknown>[];
 
   // Environmental
   environmental_conditions: {
@@ -43,23 +45,37 @@ export interface CalibrationRecord {
     soaking_time?: string;
     soaking_start_time?: string;
     soaking_end_time?: string;
+    receipt_condition?: string;
   };
+  receipt_condition?: string;
+
   procedure_reference?: string;
+  procedure_no?: string;
+  procedure_name?: string;
+  procedure_date?: string;
+  procedure_rev?: string;
   doc_no?: string;
+  doc_date?: string;
+  doc_rev?: string;
+  acceptance_criteria_doc_no?: string;
+  acceptance_criteria_date?: string;
+  acceptance_criteria_rev?: string;
+  acceptance_criteria_reference?: string;
 
   // Data
   is_canvas_template?: boolean;
-  layout_blocks?: any[];
+  is_template_preview?: boolean;
+  layout_blocks?: CanvasBlock[] | Record<string, unknown>[];
   calibration_points: CalibrationPoint[];
-  custom_columns?: any[];
-  standard_columns_config?: Record<string, any>;
-  acceptance_criteria?: any;
+  custom_columns?: Record<string, unknown>[];
+  standard_columns_config?: Record<string, unknown>;
+  acceptance_criteria?: Record<string, unknown> | string;
   decimal_places?: number;
   column_order?: string[];
   hidden_columns?: string[];
   template_id?: string;
   template_name?: string;
-  template?: any;
+  template?: Record<string, unknown>;
   diagram_image?: string;
   diagram_image_width?: number;
   diagram_image_height?: number;
@@ -75,14 +91,28 @@ export interface CalibrationRecord {
 
   // Signatories
   calibrated_by: string;
+  calibrated_by_id?: string;
   calibrated_by_designation?: string;
   calibrated_by_signature?: string;
   reviewed_by: string;
+  reviewed_by_id?: string;
   reviewed_by_designation?: string;
   reviewed_by_signature?: string;
   approved_by: string;
+  approved_by_id?: string;
   approved_by_designation?: string;
   approved_by_signature?: string;
+
+  // Approval Workflow
+  approval_status?: string;
+  reviewed_at?: string;
+  reviewer_remarks?: string;
+  approved_at?: string;
+  approver_remarks?: string;
+  rejected_by?: string;
+  rejected_at?: string;
+  rejection_reason?: string;
+  recalibration_of_id?: string;
 
   // Certificate & ULR
   certificate_number: string;
@@ -95,7 +125,7 @@ export interface CalibrationRecord {
 
   // Audit
   companyId?: string;
-  created_by?: any;
+  created_by?: string | Record<string, unknown>;
   created_at?: string;
   updated_at?: string;
 }
@@ -247,8 +277,8 @@ export interface CalibrationAuditLog {
   calibration_id: string;
   edited_by_id?: string;
   edited_by_name?: string;
-  edited_by?: any;
-  changes_summary: { field: string; oldValue: any; newValue: any }[];
+  edited_by?: string | Record<string, unknown>;
+  changes_summary: { field: string; oldValue: unknown; newValue: unknown }[];
   remarks?: string;
   edited_at: string;
 }

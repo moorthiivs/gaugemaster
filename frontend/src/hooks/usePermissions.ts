@@ -16,13 +16,50 @@ export function usePermissions() {
     // Standard un-restricted modules
     if (moduleKey === "dashboard" || moduleKey === "profile") return true;
 
+    // Recovery module access: strictly respect matrix, or fallback to admin/manager
+    if (moduleKey === "recovery") {
+      const rolePermissions: RolePermissions | undefined =
+        user.userRole?.permissions || (typeof user.role === "object" ? user.role?.permissions : undefined);
+      if (rolePermissions && (rolePermissions as any).recovery !== undefined) {
+        return !!(rolePermissions as any).recovery[action];
+      }
+      const roleName = typeof user.role === "string" ? user.role : user.role?.name || "";
+      if (roleName.toLowerCase().includes("admin") || roleName.toLowerCase().includes("manager") || roleName.toLowerCase() === "superadmin") return true;
+      return false;
+    }
+
     // Retrieve role permissions matrix object from userRole or role
     const rolePermissions: RolePermissions | undefined =
       user.userRole?.permissions || (typeof user.role === "object" ? user.role?.permissions : undefined);
 
     // If permissions matrix exists for this module, strictly evaluate it
     if (rolePermissions && rolePermissions[moduleKey] !== undefined) {
+      if (moduleKey === "template_import" && (action === "create" || action === "view")) {
+        return !!(rolePermissions[moduleKey].create || rolePermissions[moduleKey].view);
+      }
+      if (moduleKey === "template_export" && (action === "create" || action === "view")) {
+        return !!(rolePermissions[moduleKey].view || rolePermissions[moduleKey].create);
+      }
       return !!rolePermissions[moduleKey][action];
+    }
+
+    // Smart fallback for granular submodules if not yet configured in legacy role
+    if (rolePermissions && moduleKey === "standards" && rolePermissions.standards === undefined) {
+      if (rolePermissions.calibration_procedures !== undefined) {
+        return !!rolePermissions.calibration_procedures[action];
+      }
+    }
+
+    if (rolePermissions && rolePermissions.templates !== undefined) {
+      if (moduleKey === "template_builder") {
+        return !!rolePermissions.templates[action];
+      }
+      if (moduleKey === "template_import") {
+        return !!rolePermissions.templates.create;
+      }
+      if (moduleKey === "template_export") {
+        return !!rolePermissions.templates.view;
+      }
     }
 
     // Fallback if permissions matrix is not defined

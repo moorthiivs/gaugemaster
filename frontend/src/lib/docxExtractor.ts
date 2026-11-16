@@ -36,8 +36,10 @@ export async function extractDocxTextAndTables(file: File): Promise<string> {
         }
       } else if (node.tagName === "w:tbl") {
         // Extract structured table
-        output += "\n--- TABLE START ---\n";
         const rows = node.getElementsByTagName("w:tr");
+        const tableLines: string[] = [];
+        let isReceiptConditionTable = false;
+        let isMasterTraceabilityTable = false;
 
         for (let r = 0; r < rows.length; r++) {
           const cells = rows[r].getElementsByTagName("w:tc");
@@ -50,10 +52,45 @@ export async function extractDocxTextAndTables(file: File): Promise<string> {
           }
 
           if (cellTexts.some((t) => t.length > 0)) {
-            output += `Row ${r + 1}: ${cellTexts.join(" | ")}\n`;
+            const joined = cellTexts.join(" | ");
+            tableLines.push(`Row ${r + 1}: ${joined}\n`);
+            const lowerJoined = joined.toLowerCase();
+            if (
+              lowerJoined.includes("gauge receipt condition") ||
+              lowerJoined.includes("receipt condition") ||
+              lowerJoined.includes("dent & damage") ||
+              lowerJoined.includes("dent and damage") ||
+              lowerJoined.includes("no dent & damage")
+            ) {
+              isReceiptConditionTable = true;
+            }
+            if (
+              lowerJoined.includes("traceability of master") ||
+              lowerJoined.includes("traceability of masters") ||
+              lowerJoined.includes("master used") ||
+              lowerJoined.includes("masters used") ||
+              lowerJoined.includes("master equipment") ||
+              lowerJoined.includes("standard equipment") ||
+              lowerJoined.includes("reference standard") ||
+              lowerJoined.includes("standards used") ||
+              lowerJoined.includes("equipment used for calibration") ||
+              lowerJoined.includes("standard used for calibration")
+            ) {
+              isMasterTraceabilityTable = true;
+            }
           }
         }
-        output += "--- TABLE END ---\n\n";
+
+        // If table is identified as Gauge Receipt Condition checklist or Master Traceability, omit from measurement tables
+        if (isReceiptConditionTable) {
+          output += "\n<!-- OMITTED: PRE-CALIBRATION GAUGE RECEIPT CONDITION CHECKLIST (MANAGED BY DEFAULT IN GAUGEMASTER) -->\n\n";
+        } else if (isMasterTraceabilityTable) {
+          output += "\n<!-- OMITTED: TRACEABILITY OF MASTERS / STANDARD EQUIPMENTS USED (MANAGED BY DEFAULT IN GAUGEMASTER STEP 2 & CERTIFICATE HEADERS) -->\n\n";
+        } else if (tableLines.length > 0) {
+          output += "\n--- TABLE START ---\n";
+          output += tableLines.join("");
+          output += "--- TABLE END ---\n\n";
+        }
       }
     }
 

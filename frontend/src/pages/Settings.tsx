@@ -1,14 +1,14 @@
 import { useSEO } from "@/hooks/useSEO";
-import { Mail, Shield, Bell, Save, Palette, FileText, Award, MapPin } from "lucide-react";
+import { Mail, Shield, Bell, Save, Palette, Award, MapPin, Sparkles } from "lucide-react";
 import MailConfig from "./settings/MailConfig";
 import ThemeSettings from "./settings/ThemeSettings";
 import ReminderConfig from "./settings/ReminderConfig";
 import SettingsLayout, { SettingsTabItem } from "./settings/SettingsLayout";
 import ValidationSettings from "./settings/ValidationSettings";
 import BackupSettings from "./settings/BackupSettings";
-import ReportConfig from "./settings/ReportConfig";
 import CertificateConfig from "./settings/CertificateConfig";
 import LocationSettings from "./settings/LocationSettings";
+import AiConfig from "./settings/AiConfig";
 
 export default function Settings() {
   useSEO({
@@ -47,13 +47,6 @@ export default function Settings() {
     },
     {
       category: "Templates & Data Fields",
-      value: "report",
-      label: "Report Format",
-      icon: <FileText className="w-4 h-4 text-violet-500" />,
-      content: <ReportConfig />,
-    },
-    {
-      category: "Templates & Data Fields",
       value: "certificate",
       label: "Certificate Config",
       icon: <Award className="w-4 h-4 text-teal-500" />,
@@ -65,6 +58,13 @@ export default function Settings() {
       label: "Backup & Restore",
       icon: <Save className="w-4 h-4 text-indigo-500" />,
       content: <BackupSettings />,
+    },
+    {
+      category: "System Preferences",
+      value: "ai-config",
+      label: "AI & Copilot Configuration",
+      icon: <Sparkles className="w-4 h-4 text-purple-500" />,
+      content: <AiConfig />,
     },
     {
       category: "System Preferences",

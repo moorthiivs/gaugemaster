@@ -1,0 +1,525 @@
+name: Deploy Gaugemaster ATINDIA to AWS
+
+on:
+  push:
+    branches:
+      - atindia
+
+  workflow_dispatch:
+
+concurrency:
+  group: gaugemaster-atindia-production
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy Gaugemaster ATINDIA
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # ==================================================
+      # 1. Checkout
+      # ==================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ==================================================
+      # 2. Node.js
+      # ==================================================
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      # ==================================================
+      # 3. Frontend dependencies
+      # ==================================================
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install --legacy-peer-deps
+
+      # ==================================================
+      # 4. Build frontend
+      # ==================================================
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      # ==================================================
+      # 5. Copy frontend into backend public
+      # ==================================================
+      - name: Copy frontend build to backend public
+        run: |
+          set -e
+
+          rm -rf backend/src/public
+          mkdir -p backend/src/public
+
+          cp -R frontend/dist/. backend/src/public/
+
+      # ==================================================
+      # 6. Backend dependencies
+      # ==================================================
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install --legacy-peer-deps
+
+      # ==================================================
+      # 7. Build backend
+      # ==================================================
+      - name: Build backend
+        working-directory: backend
+        run: npm run build
+
+      # ==================================================
+      # 8. Copy certificate fonts
+      #
+      # Source:
+      # backend/src/fonts
+      #
+      # Production:
+      # backend/dist/fonts
+      # ==================================================
+      - name: Copy certificate fonts
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "Checking certificate fonts"
+          echo "======================================"
+
+          if [ ! -d "backend/src/fonts" ]; then
+            echo "ERROR: backend/src/fonts does not exist."
+            echo "Certificate generation fonts are required."
+            exit 1
+          fi
+
+          echo "Source font directory:"
+          find backend/src/fonts -type f -print
+
+          rm -rf backend/dist/fonts
+          mkdir -p backend/dist/fonts
+
+          cp -R backend/src/fonts/. backend/dist/fonts/
+
+          echo ""
+          echo "Production font directory:"
+          find backend/dist/fonts -type f -print
+
+          FONT_COUNT=$(find backend/dist/fonts -type f | wc -l)
+
+          echo ""
+          echo "Font file count: $FONT_COUNT"
+
+          if [ "$FONT_COUNT" -eq 0 ]; then
+            echo "ERROR: No font files were copied."
+            exit 1
+          fi
+
+      # ==================================================
+      # 9. Remove development dependencies
+      # ==================================================
+      - name: Prepare production backend
+        working-directory: backend
+        run: npm prune --omit=dev
+
+      # ==================================================
+      # 10. Verify production build
+      # ==================================================
+      - name: Verify build
+        run: |
+          set -e
+
+          echo "======================================"
+          echo "Verifying ATINDIA build"
+          echo "======================================"
+
+          test -f backend/dist/main.js
+          test -f backend/src/public/index.html
+          test -d backend/dist/fonts
+
+          echo ""
+          echo "Backend:"
+          ls -lh backend/dist/main.js
+
+          echo ""
+          echo "Frontend:"
+          ls -lh backend/src/public/index.html
+
+          echo ""
+          echo "Certificate fonts:"
+          find backend/dist/fonts -type f -print
+
+          echo ""
+          echo "Font count:"
+          find backend/dist/fonts -type f | wc -l
+
+      # ==================================================
+      # 11. Create deployment package
+      # ==================================================
+      - name: Create deployment package
+        run: |
+          set -e
+
+          PACKAGE="gaugemaster-atindia-${{ github.sha }}.tar.gz"
+
+          echo "======================================"
+          echo "Creating deployment package"
+          echo "======================================"
+
+          tar \
+            --exclude='backend/.env' \
+            --exclude='backend/.env.*' \
+            --exclude='backend/test' \
+            --exclude='backend/src' \
+            -czf "$PACKAGE" \
+            -C backend \
+            dist \
+            package.json \
+            package-lock.json \
+            node_modules
+
+          echo ""
+          echo "Package:"
+          ls -lh "$PACKAGE"
+
+          echo ""
+          echo "Checking fonts inside package:"
+          tar -tzf "$PACKAGE" | grep '^dist/fonts/' | head -50
+
+          echo ""
+          echo "Checking uploads are NOT inside package:"
+          if tar -tzf "$PACKAGE" | grep -q '^uploads/'; then
+            echo "ERROR: uploads directory found in deployment package."
+            exit 1
+          else
+            echo "OK: customer uploads are not included."
+          fi
+
+      # ==================================================
+      # 12. Configure SSH
+      # ==================================================
+      - name: Configure SSH
+        shell: bash
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "${{ secrets.AWS_SSH_KEY }}" \
+            > ~/.ssh/github_actions
+
+          chmod 600 ~/.ssh/github_actions
+
+          printf '%s\n' "${{ secrets.AWS_KNOWN_HOSTS }}" \
+            > ~/.ssh/known_hosts
+
+          chmod 644 ~/.ssh/known_hosts
+
+      # ==================================================
+      # 13. Upload deployment package
+      # ==================================================
+      - name: Upload deployment package
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
+        run: |
+          set -e
+
+          PACKAGE="gaugemaster-atindia-${{ github.sha }}.tar.gz"
+
+          scp \
+            -i ~/.ssh/github_actions \
+            -o StrictHostKeyChecking=yes \
+            "$PACKAGE" \
+            "${AWS_USER}@${AWS_HOST}:/tmp/"
+
+      # ==================================================
+      # 14. Deploy to AWS
+      # ==================================================
+      - name: Deploy on AWS
+        env:
+          AWS_HOST: ${{ secrets.AWS_HOST }}
+          AWS_USER: ${{ secrets.AWS_USER }}
+        run: |
+          ssh \
+            -i ~/.ssh/github_actions \
+            -o StrictHostKeyChecking=yes \
+            "${AWS_USER}@${AWS_HOST}" \
+            "GITHUB_SHA=${{ github.sha }} bash -s" <<'REMOTE_SCRIPT'
+
+          set -e
+
+          APP_NAME="gaugemaster-atindia"
+          APP_DIR="/srv/customer/gaugemaster-atindia"
+          RELEASE_DIR="$APP_DIR/releases/$GITHUB_SHA"
+          PACKAGE="/tmp/gaugemaster-atindia-$GITHUB_SHA.tar.gz"
+
+          echo "======================================"
+          echo "Deploying Gaugemaster ATINDIA"
+          echo "Commit: $GITHUB_SHA"
+          echo "======================================"
+
+          # ==================================================
+          # 1. Prepare application directories
+          # ==================================================
+          mkdir -p "$APP_DIR/releases"
+          mkdir -p "$APP_DIR/shared"
+
+          # ==================================================
+          # 2. Persistent upload directories
+          # ==================================================
+          echo ""
+          echo "Preparing persistent upload storage..."
+
+          mkdir -p "$APP_DIR/shared/uploads"
+          mkdir -p "$APP_DIR/shared/uploads/certificates"
+          mkdir -p "$APP_DIR/shared/uploads/calibration-procedures"
+          mkdir -p "$APP_DIR/shared/uploads/gauge-diagrams"
+          mkdir -p "$APP_DIR/shared/uploads/logos"
+          mkdir -p "$APP_DIR/shared/uploads/work-instructions"
+
+          # ==================================================
+          # 3. Verify production .env
+          # ==================================================
+          if [ ! -f "$APP_DIR/shared/.env" ]; then
+            echo "ERROR: Production .env not found:"
+            echo "$APP_DIR/shared/.env"
+            exit 1
+          fi
+
+          # ==================================================
+          # 4. Verify deployment package
+          # ==================================================
+          if [ ! -f "$PACKAGE" ]; then
+            echo "ERROR: Deployment package not found:"
+            echo "$PACKAGE"
+            exit 1
+          fi
+
+          # ==================================================
+          # 5. Create release directory
+          # ==================================================
+          mkdir -p "$RELEASE_DIR"
+
+          # ==================================================
+          # 6. Extract application
+          # ==================================================
+          echo ""
+          echo "Extracting release..."
+
+          tar -xzf "$PACKAGE" -C "$RELEASE_DIR"
+
+          # ==================================================
+          # 7. Validate release
+          # ==================================================
+          test -f "$RELEASE_DIR/dist/main.js"
+          test -f "$RELEASE_DIR/package.json"
+
+          # ==================================================
+          # 8. Verify certificate fonts
+          # ==================================================
+          echo ""
+          echo "Checking certificate fonts..."
+
+          if [ ! -d "$RELEASE_DIR/dist/fonts" ]; then
+            echo "ERROR: Certificate fonts missing:"
+            echo "$RELEASE_DIR/dist/fonts"
+            exit 1
+          fi
+
+          FONT_COUNT=$(find "$RELEASE_DIR/dist/fonts" -type f | wc -l)
+
+          echo "Certificate font count: $FONT_COUNT"
+
+          if [ "$FONT_COUNT" -eq 0 ]; then
+            echo "ERROR: No certificate font files found."
+            exit 1
+          fi
+
+          find "$RELEASE_DIR/dist/fonts" -type f -print
+
+          # Create backward-compatibility symlinks for legacy paths (src/fonts and fonts)
+          mkdir -p "$RELEASE_DIR/src"
+          ln -sfn "$RELEASE_DIR/dist/fonts" "$RELEASE_DIR/src/fonts"
+          ln -sfn "$RELEASE_DIR/dist/fonts" "$RELEASE_DIR/fonts"
+
+          echo "Configured font compatibility symlinks: src/fonts -> dist/fonts, fonts -> dist/fonts"
+
+          # ==================================================
+          # 9. Connect persistent uploads
+          #
+          # IMPORTANT:
+          # Never keep real customer uploads in releases.
+          # ==================================================
+          echo ""
+          echo "Configuring persistent uploads..."
+
+          rm -rf "$RELEASE_DIR/uploads"
+
+          ln -s \
+            "$APP_DIR/shared/uploads" \
+            "$RELEASE_DIR/uploads"
+
+          # ==================================================
+          # 10. Verify upload symlink
+          # ==================================================
+          UPLOAD_TARGET=$(readlink -f "$RELEASE_DIR/uploads")
+
+          echo ""
+          echo "Uploads target:"
+          echo "$UPLOAD_TARGET"
+
+          if [ "$UPLOAD_TARGET" != "$APP_DIR/shared/uploads" ]; then
+            echo "ERROR: Upload symlink is incorrect."
+            exit 1
+          fi
+
+          # ==================================================
+          # 11. Connect production environment
+          # ==================================================
+          ln -sfn \
+            "$APP_DIR/shared/.env" \
+            "$RELEASE_DIR/.env"
+
+          # ==================================================
+          # 12. Load production environment
+          # ==================================================
+          set -a
+          source "$APP_DIR/shared/.env"
+          set +a
+
+          echo ""
+          echo "ATINDIA PORT=$PORT"
+
+          # ==================================================
+          # 13. Switch current only after validation
+          # ==================================================
+          echo ""
+          echo "Switching current release..."
+
+          ln -sfn \
+            "$RELEASE_DIR" \
+            "$APP_DIR/current"
+
+          # ==================================================
+          # 14. Verify current release
+          # ==================================================
+          CURRENT_RELEASE=$(readlink -f "$APP_DIR/current")
+
+          echo ""
+          echo "Current release:"
+          echo "$CURRENT_RELEASE"
+
+          if [ "$CURRENT_RELEASE" != "$RELEASE_DIR" ]; then
+            echo "ERROR: Current symlink is incorrect."
+            exit 1
+          fi
+
+          # ==================================================
+          # 15. Verify current uploads
+          # ==================================================
+          CURRENT_UPLOADS=$(readlink -f "$APP_DIR/current/uploads")
+
+          echo ""
+          echo "Current uploads:"
+          echo "$CURRENT_UPLOADS"
+
+          if [ "$CURRENT_UPLOADS" != "$APP_DIR/shared/uploads" ]; then
+            echo "ERROR: Current uploads path is incorrect."
+            exit 1
+          fi
+
+          # ==================================================
+          # 16. Verify current fonts
+          # ==================================================
+          echo ""
+          echo "Current certificate fonts:"
+
+          find "$APP_DIR/current/dist/fonts" \
+            -type f \
+            -print
+
+          # ==================================================
+          # 17. Restart / start PM2
+          # ==================================================
+          cd "$APP_DIR/current"
+
+          if pm2 describe gaugemaster-atindia-api > /dev/null 2>&1; then
+
+            echo ""
+            echo "Restarting Gaugemaster ATINDIA API..."
+
+            pm2 restart gaugemaster-atindia-api --update-env
+
+          else
+
+            echo ""
+            echo "Starting Gaugemaster ATINDIA API..."
+
+            pm2 start dist/main.js \
+              --name gaugemaster-atindia-api \
+              --cwd "$APP_DIR/current"
+
+          fi
+
+          # ==================================================
+          # 18. Save PM2
+          # ==================================================
+          pm2 save
+
+          # ==================================================
+          # 19. Remove deployment package
+          # ==================================================
+          rm -f "$PACKAGE"
+
+          # ==================================================
+          # 20. Keep latest 5 releases
+          # ==================================================
+          cd "$APP_DIR/releases"
+
+          ls -1dt */ 2>/dev/null \
+            | tail -n +6 \
+            | xargs -r rm -rf
+
+          # ==================================================
+          # 21. Final verification
+          # ==================================================
+          echo ""
+          echo "======================================"
+          echo "FINAL DEPLOYMENT VERIFICATION"
+          echo "======================================"
+
+          echo ""
+          echo "PM2:"
+          pm2 status
+
+          echo ""
+          echo "Current release:"
+          readlink -f "$APP_DIR/current"
+
+          echo ""
+          echo "Uploads:"
+          readlink -f "$APP_DIR/current/uploads"
+
+          echo ""
+          echo "Certificate files:"
+          find "$APP_DIR/shared/uploads/certificates" \
+            -maxdepth 1 \
+            -type f | wc -l
+
+          echo ""
+          echo "Certificate fonts:"
+          find "$APP_DIR/current/dist/fonts" \
+            -type f | wc -l
+
+          echo ""
+          echo "======================================"
+          echo "ATINDIA DEPLOYMENT COMPLETED"
+          echo "======================================"
+
+          REMOTE_SCRIPT

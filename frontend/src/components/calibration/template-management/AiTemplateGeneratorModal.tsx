@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,13 +18,12 @@ import {
   Upload,
   FileSpreadsheet,
   Image as ImageIcon,
-  Key,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Eye,
   ArrowRight,
-  ExternalLink,
   Table,
   Layers,
   RotateCcw,
@@ -32,7 +31,11 @@ import {
   FileText,
   FileCode,
   LayoutGrid,
+  ClipboardPaste,
+  PlusCircle,
+  RefreshCw,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import ExcelJS from "exceljs";
@@ -41,30 +44,68 @@ import {
   generateTemplateFromExcel,
   generateTemplateFromPdf,
   generateTemplateFromWord,
-  getStoredGeminiApiKey,
-  saveStoredGeminiApiKey,
   GeneratedTemplateResult,
+  DocumentValidationAudit,
+  isReceiptConditionBlockOrTitle,
+  isMasterTraceabilityBlockOrTitle,
 } from "@/lib/geminiService";
 import { extractDocxTextAndTables } from "@/lib/docxExtractor";
 import { TableGridBlock, MatrixTableBlock, TextBlock, CanvasBlock, SplitRowBlock } from "@/types/template";
 import { CANVAS_PRESETS, CanvasTemplatePreset } from "@/data/canvasPresets";
+import { AiConnectionBadge } from "./AiConnectionBadge";
 
 interface AiTemplateGeneratorModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onApplyTemplate: (result: GeneratedTemplateResult) => void;
+  onApplyTemplate: (result: GeneratedTemplateResult, mode?: "append" | "replace") => void;
+  existingBlocksCount?: number;
+}
+
+function isSpecificationOrToleranceAudit(audit: DocumentValidationAudit | null | undefined): boolean {
+  if (!audit) return false;
+  const t = String(audit.detectedDocumentType || "").toLowerCase();
+  const r = String(audit.rejectionReason || "").toLowerCase();
+  const m = String(audit.metrologySummary || "").toLowerCase();
+  return (
+    t.includes("tolerance") ||
+    t.includes("specification") ||
+    t.includes("mpe") ||
+    t.includes("catalogue") ||
+    t.includes("standard") ||
+    t.includes("limit") ||
+    t.includes("repeatability") ||
+    r.includes("permissible error") ||
+    r.includes("tolerance reference") ||
+    r.includes("specification and tolerance") ||
+    r.includes("specification limits") ||
+    r.includes("allowable error") ||
+    r.includes("repeatability") ||
+    m.includes("specification limits") ||
+    m.includes("permissible error")
+  );
 }
 
 export function AiTemplateGeneratorModal({
   open,
   onOpenChange,
   onApplyTemplate,
+  existingBlocksCount = 0,
 }: AiTemplateGeneratorModalProps) {
-  const [apiKey, setApiKey] = useState<string>(() => getStoredGeminiApiKey());
-  const [showKeyInput, setShowKeyInput] = useState<boolean>(!getStoredGeminiApiKey());
   const [customInstructions, setCustomInstructions] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"pdf" | "word" | "excel" | "image">("pdf");
   const [previewMode, setPreviewMode] = useState<"sheet" | "summary">("sheet");
+  const [applyMode, setApplyMode] = useState<"append" | "replace">("append");
+
+  // Sync default applyMode based on whether existing blocks exist
+  useEffect(() => {
+    if (open) {
+      if (existingBlocksCount > 0) {
+        setApplyMode("append");
+      } else {
+        setApplyMode("replace");
+      }
+    }
+  }, [open, existingBlocksCount]);
 
   // PDF Upload State
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -88,12 +129,8 @@ export function AiTemplateGeneratorModal({
   // Loading & Generation State
   const [isProcessing, setIsProcessing] = useState(false);
   const [extractedResult, setExtractedResult] = useState<GeneratedTemplateResult | null>(null);
+  const [validationError, setValidationError] = useState<DocumentValidationAudit | null>(null);
 
-  const handleSaveApiKey = () => {
-    saveStoredGeminiApiKey(apiKey);
-    toast.success("Gemini API key saved!");
-    setShowKeyInput(false);
-  };
 
   // Process selected image file
   const handleImageSelect = (file: File) => {
@@ -101,6 +138,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid image file (PNG, JPG, WebP)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setImageFile(file);
     const reader = new FileReader();
     reader.onload = () => {
@@ -109,12 +148,102 @@ export function AiTemplateGeneratorModal({
     reader.readAsDataURL(file);
   };
 
+  // Paste image from system clipboard via Button click
+  const handlePasteFromClipboard = async () => {
+    try {
+      if (!navigator.clipboard?.read) {
+        toast.info("Please press Ctrl+V (or ⌘V) on your keyboard to paste your copied image.");
+        return;
+      }
+
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const ext = imageType.split("/")[1] || "png";
+          const file = new File(
+            [blob],
+            `clipboard-image-${Date.now()}.${ext === "jpeg" ? "jpg" : ext}`,
+            { type: imageType }
+          );
+          setActiveTab("image");
+          handleImageSelect(file);
+          toast.success("Image pasted from clipboard!");
+          return;
+        }
+      }
+      toast.error("No image found in clipboard. Copy an image or take a screenshot first (Win+Shift+S / PrtScn).");
+    } catch (err: any) {
+      console.warn("Clipboard read error:", err);
+      toast.info("Clipboard access blocked by browser. Please press Ctrl+V directly to paste your copied image.");
+    }
+  };
+
+  // Global / Modal paste listener (Ctrl+V) when modal is open
+  useEffect(() => {
+    if (!open) return;
+
+    const handleWindowPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      let targetFile: File | null = null;
+
+      // 1. Inspect clipboard items
+      if (items) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].type.startsWith("image/")) {
+            const f = items[i].getAsFile();
+            if (f) {
+              targetFile = f;
+              break;
+            }
+          }
+        }
+      }
+
+      // 2. Fallback to clipboardData.files
+      if (!targetFile && e.clipboardData?.files?.length) {
+        for (let i = 0; i < e.clipboardData.files.length; i++) {
+          const f = e.clipboardData.files[i];
+          if (f.type.startsWith("image/")) {
+            targetFile = f;
+            break;
+          }
+        }
+      }
+
+      // If an image was pasted, prevent default & select it
+      if (targetFile) {
+        e.preventDefault();
+        e.stopPropagation();
+        const ext = targetFile.type.split("/")[1] || "png";
+        const formattedFile = new File(
+          [targetFile],
+          targetFile.name && targetFile.name !== "image.png"
+            ? targetFile.name
+            : `clipboard-image-${Date.now()}.${ext === "jpeg" ? "jpg" : ext}`,
+          { type: targetFile.type }
+        );
+        setActiveTab("image");
+        handleImageSelect(formattedFile);
+        toast.success("Image pasted from clipboard!");
+      }
+    };
+
+    window.addEventListener("paste", handleWindowPaste);
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste);
+    };
+  }, [open]);
+
   // Process selected PDF file
   const handlePdfSelect = (file: File) => {
     if (!file.name.toLowerCase().endsWith(".pdf")) {
       toast.error("Please select a valid PDF file (.pdf)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setPdfFile(file);
     toast.success(`Loaded PDF document: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
   };
@@ -126,6 +255,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid Word document (.docx, .doc)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setWordFile(file);
 
     try {
@@ -151,6 +282,8 @@ export function AiTemplateGeneratorModal({
       toast.error("Please select a valid Excel or CSV file (.xlsx, .xls, .csv)");
       return;
     }
+    setValidationError(null);
+    setExtractedResult(null);
     setExcelFile(file);
 
     try {
@@ -163,8 +296,8 @@ export function AiTemplateGeneratorModal({
         textOutput = `Sheet: CSV\n${text}\n`;
         sheetCount = 1;
       } else {
-        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx
-        const workbook = XLSX.read(buffer, { type: "array" });
+        // XLSX (SheetJS) supports both binary .xls (BIFF8) and OpenXML .xlsx with formula extraction
+        const workbook = XLSX.read(buffer, { type: "array", cellFormula: true });
         sheetCount = workbook.SheetNames.length;
 
         workbook.SheetNames.forEach((sheetName) => {
@@ -172,11 +305,28 @@ export function AiTemplateGeneratorModal({
           if (!worksheet) return;
           textOutput += `Sheet: ${sheetName}\n`;
           const rows: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+          const extractedFormulas: string[] = [];
+
           rows.forEach((row, rowIdx) => {
             if (row && row.some((cell) => cell !== "" && cell !== null && cell !== undefined)) {
               textOutput += `Row ${rowIdx + 1}: ${row.map((c) => String(c)).join(" | ")}\n`;
             }
           });
+
+          // Extract Excel cell formulas (e.g., cell.f = "D31-C31")
+          Object.keys(worksheet).forEach((cellAddr) => {
+            if (cellAddr.startsWith("!")) return;
+            const cell = worksheet[cellAddr];
+            if (cell && cell.f) {
+              const val = cell.v !== undefined ? cell.v : "";
+              extractedFormulas.push(`Cell ${cellAddr}: =${cell.f} (Evaluated Value: ${val})`);
+            }
+          });
+
+          if (extractedFormulas.length > 0) {
+            textOutput += `\n=== DETECTED EXCEL CELL FORMULAS (${sheetName}) ===\n`;
+            textOutput += extractedFormulas.join("\n") + "\n";
+          }
           textOutput += "\n";
         });
       }
@@ -197,12 +347,25 @@ export function AiTemplateGeneratorModal({
         let textOutput = "";
         workbook.eachSheet((worksheet) => {
           textOutput += `Sheet: ${worksheet.name}\n`;
+          const extractedFormulas: string[] = [];
+
           worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
             const rowValues = Array.isArray(row.values)
               ? row.values.slice(1).map((v) => (v !== null && v !== undefined ? String(v) : "")).join(" | ")
               : "";
             textOutput += `Row ${rowNumber}: ${rowValues}\n`;
+
+            row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+              if (cell.formula) {
+                extractedFormulas.push(`Cell R${rowNumber}C${colNumber}: =${cell.formula} (Value: ${cell.result ?? cell.value})`);
+              }
+            });
           });
+
+          if (extractedFormulas.length > 0) {
+            textOutput += `\n=== DETECTED EXCEL CELL FORMULAS (${worksheet.name}) ===\n`;
+            textOutput += extractedFormulas.join("\n") + "\n";
+          }
           textOutput += "\n";
         });
 
@@ -218,15 +381,8 @@ export function AiTemplateGeneratorModal({
     }
   };
 
-  // Generate Template via Gemini
-  const handleGenerate = async () => {
-    const keyToUse = apiKey.trim() || getStoredGeminiApiKey();
-    if (!keyToUse) {
-      toast.error("Please enter a Google Gemini API Key first.");
-      setShowKeyInput(true);
-      return;
-    }
-
+  // Generate Template via Gemini Gateway
+  const handleGenerate = async (forceExtractTable = false) => {
     if (activeTab === "pdf" && !pdfFile) {
       toast.error("Please upload a PDF calibration certificate first.");
       return;
@@ -249,23 +405,87 @@ export function AiTemplateGeneratorModal({
 
     setIsProcessing(true);
     setExtractedResult(null);
+    setValidationError(null);
+
+    const specOverridePrompt = forceExtractTable
+      ? "CRITICAL SPECIFICATION / TOLERANCE TABLE EXTRACTION OVERRIDE: This uploaded file contains a valid metrology specification, tolerance, or Maximum Permissible Error (MPE) table (such as allowable error limits, repeatability, catalogue limits, or reference standards). You MUST mark isValidCalibrationDocument: true, extract all headers, columns, and data rows verbatim into a structured table_grid block, and preserve the table title and reference notes."
+      : "";
+
+    const combinedInstructions = [customInstructions, specOverridePrompt].filter(Boolean).join("\n");
 
     try {
       let result: GeneratedTemplateResult;
       if (activeTab === "pdf" && pdfFile) {
-        result = await generateTemplateFromPdf(pdfFile, customInstructions, keyToUse);
+        result = await generateTemplateFromPdf(pdfFile, combinedInstructions);
       } else if (activeTab === "word" && wordFile) {
         const content = wordSummary || `File: ${wordFile.name}`;
-        result = await generateTemplateFromWord(content, wordFile.name, customInstructions, keyToUse);
+        result = await generateTemplateFromWord(content, wordFile.name, combinedInstructions);
       } else if (activeTab === "image" && imageFile) {
-        result = await generateTemplateFromImage(imageFile, customInstructions, keyToUse);
+        result = await generateTemplateFromImage(imageFile, combinedInstructions);
       } else {
         const summaryToSend = excelSummary || `File name: ${excelFile?.name || "Uploaded workbook"}`;
-        result = await generateTemplateFromExcel(summaryToSend, customInstructions, keyToUse);
+        result = await generateTemplateFromExcel(summaryToSend, combinedInstructions);
+      }
+
+      const isSpecTable = isSpecificationOrToleranceAudit(result.validationAudit);
+
+      // Auto-retry once with forced extraction if rejected solely because it was classified as an MPE / tolerance table
+      if ((!result.isValidCalibrationDocument || !result.blocks || result.blocks.length === 0) && isSpecTable && !forceExtractTable) {
+        toast.info("Detected metrology specification/tolerance table. Extracting table structure...");
+        return await handleGenerate(true);
+      }
+
+      // If blocks are returned even if marked invalid, accept it as a valid specification table
+      if (!result.isValidCalibrationDocument && isSpecTable && Array.isArray(result.blocks) && result.blocks.length > 0) {
+        result.isValidCalibrationDocument = true;
+      }
+
+      // Strict Document Validity Audit Check
+      if (result.isValidCalibrationDocument === false || !result.blocks || result.blocks.length === 0) {
+        const audit: DocumentValidationAudit = result.validationAudit || {
+          isValidCalibrationDocument: false,
+          hasCalibrationData: false,
+          hasMeasurementTables: false,
+          detectedDocumentType: isSpecTable ? "specification_tolerance_table" : "unrelated_document",
+          rejectionReason: isSpecTable
+            ? "Specification or tolerance table detected. Click 'Extract As Specification Table' below to add it to your template."
+            : "The uploaded file does not contain any calibration measurement tables, nominal test points, or tolerance specifications.",
+          metrologySummary: isSpecTable
+            ? "Specification limits and tolerance reference table."
+            : "Zero calibration measurement tables detected.",
+        };
+        setValidationError(audit);
+        toast.error(audit.rejectionReason || "Uploaded file is not a valid calibration document.");
+        return;
+      }
+
+      // Ensure any receipt condition or master traceability blocks are strictly omitted from extracted blocks
+      result.blocks = (result.blocks || []).filter(
+        (b: any) =>
+          !isReceiptConditionBlockOrTitle(b.title || b.id || b.name) &&
+          !isMasterTraceabilityBlockOrTitle(b.title || b.id || b.name)
+      );
+
+      if (result.blocks.length === 0) {
+        const audit: DocumentValidationAudit = {
+          isValidCalibrationDocument: false,
+          hasCalibrationData: false,
+          hasMeasurementTables: false,
+          detectedDocumentType: isSpecTable ? "specification_tolerance_table" : "non_calibration_document",
+          rejectionReason: isSpecTable
+            ? "Specification limits detected. Click 'Extract As Specification Table' to extract this table."
+            : "No calibration measurement tables or test parameters were found in the uploaded file.",
+          metrologySummary: isSpecTable
+            ? "Specification limits and tolerance reference table."
+            : "Zero calibration measurement tables extracted.",
+        };
+        setValidationError(audit);
+        toast.error(audit.rejectionReason);
+        return;
       }
 
       setExtractedResult(result);
-      toast.success(`Successfully extracted "${result.name}" template with ${result.blocks.length} blocks!`);
+      toast.success(`Successfully extracted "${result.name}" template with ${result.blocks.length} block${result.blocks.length === 1 ? "" : "s"}!`);
     } catch (err: any) {
       console.error("AI Generation Error", err);
       toast.error(err.message || "Failed to generate template from document.");
@@ -274,11 +494,10 @@ export function AiTemplateGeneratorModal({
     }
   };
 
-  const handleApply = () => {
+  const handleApply = (mode: "append" | "replace" = applyMode) => {
     if (!extractedResult) return;
-    onApplyTemplate(extractedResult);
+    onApplyTemplate(extractedResult, mode);
     onOpenChange(false);
-    toast.success("Applied AI generated template to Visual Canvas Designer!");
   };
 
   const handleReset = () => {
@@ -290,9 +509,11 @@ export function AiTemplateGeneratorModal({
     setExcelFile(null);
     setExcelSummary(null);
     setExtractedResult(null);
+    setValidationError(null);
   };
 
   const handleLoadPreset = (preset: CanvasTemplatePreset) => {
+    setValidationError(null);
     setExtractedResult({
       name: preset.name,
       description: preset.description,
@@ -499,7 +720,7 @@ export function AiTemplateGeneratorModal({
                 <DialogTitle className="text-base sm:text-lg font-bold flex items-center gap-2 text-white">
                   AI Smart Template Generator
                   <Badge variant="outline" className="text-[10px] text-amber-300 border-amber-500/40 bg-amber-500/10">
-                    Gemini 2.0 / 1.5 Flash
+                    Gemini 3.5 / 3.8 Flash
                   </Badge>
                 </DialogTitle>
                 <DialogDescription className="text-xs text-slate-300">
@@ -508,56 +729,151 @@ export function AiTemplateGeneratorModal({
               </div>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowKeyInput(!showKeyInput)}
-              className="text-xs bg-slate-800/80 hover:bg-slate-700 text-slate-200 border-slate-700 h-8 gap-1.5"
-            >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              {apiKey ? "API Key Configured" : "Enter API Key"}
-            </Button>
-          </div>
-
-          {/* API Key Configuration Dropdown */}
-          {showKeyInput && (
-            <div className="mt-3 p-3 bg-slate-800/90 rounded-lg border border-slate-700 text-xs space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                  <Key className="w-3.5 h-3.5 text-amber-400" />
-                  Google Gemini API Key (Free from AI Studio)
-                </Label>
-                <a
-                  href="https://aistudio.google.com/app/apikey"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  Get Free API Key <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="AIzaSy..."
-                  className="h-8 text-xs bg-slate-900 border-slate-700 font-mono text-white"
-                />
-                <Button size="sm" onClick={handleSaveApiKey} className="h-8 text-xs shrink-0">
-                  Save Key
-                </Button>
-              </div>
+            <div className="flex items-center gap-2">
+              <AiConnectionBadge />
             </div>
-          )}
+          </div>
         </DialogHeader>
 
         {/* Content Body */}
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
+          {validationError && (() => {
+            const isSpec = isSpecificationOrToleranceAudit(validationError);
+            return (
+              <div
+                className={cn(
+                  "p-4 rounded-xl border space-y-3 shadow-xs animate-in fade-in-50 duration-200",
+                  isSpec
+                    ? "border-amber-300 dark:border-amber-800/60 bg-amber-50/90 dark:bg-amber-950/40 text-amber-950 dark:text-amber-200"
+                    : "border-rose-300 dark:border-rose-900/60 bg-rose-50/90 dark:bg-rose-950/40 text-rose-950 dark:text-rose-200"
+                )}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-0.5",
+                      isSpec
+                        ? "bg-amber-500/20 text-amber-600 dark:text-amber-400"
+                        : "bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                    )}
+                  >
+                    {isSpec ? <Table className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
+                  </div>
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <h4
+                        className={cn(
+                          "text-xs font-bold uppercase tracking-wide flex items-center gap-1.5",
+                          isSpec ? "text-amber-800 dark:text-amber-300" : "text-rose-700 dark:text-rose-400"
+                        )}
+                      >
+                        {isSpec ? "Specification / Tolerance Table Detected" : "Invalid Calibration Document"}
+                      </h4>
+                      {validationError.detectedDocumentType && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] uppercase font-mono bg-white/80 dark:bg-slate-950/80",
+                            isSpec
+                              ? "border-amber-300 text-amber-800 dark:text-amber-300"
+                              : "border-rose-300 text-rose-700 dark:text-rose-300"
+                          )}
+                        >
+                          Detected: {validationError.detectedDocumentType.replace(/_/g, " ")}
+                        </Badge>
+                      )}
+                    </div>
+                    <p
+                      className={cn(
+                        "text-xs font-medium leading-relaxed",
+                        isSpec ? "text-amber-950 dark:text-amber-100" : "text-rose-900 dark:text-rose-200"
+                      )}
+                    >
+                      {validationError.rejectionReason || "The uploaded file does not contain any calibration measurement tables, nominals, or test points."}
+                    </p>
+                    {validationError.metrologySummary && (
+                      <p
+                        className={cn(
+                          "text-[11px]",
+                          isSpec ? "text-amber-800/80 dark:text-amber-300/80" : "text-rose-800/80 dark:text-rose-300/80"
+                        )}
+                      >
+                        Metrology Audit: {validationError.metrologySummary}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className={cn(
+                    "pt-2 border-t flex items-center justify-between flex-wrap gap-2 text-[11px]",
+                    isSpec ? "border-amber-200 dark:border-amber-900/50" : "border-rose-200 dark:border-rose-900/50"
+                  )}
+                >
+                  <span className="text-muted-foreground">
+                    {isSpec
+                      ? "This table contains metrology tolerance & specification limits. You can extract it directly to your template."
+                      : <><strong>Expected:</strong> Calibration certificate, inspection report, or drawing with tolerance test tables.</>}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => handleGenerate(true)}
+                      disabled={isProcessing}
+                      className={cn(
+                        "h-7 text-xs font-semibold px-3 shadow-xs text-white",
+                        isSpec
+                          ? "bg-amber-600 hover:bg-amber-700"
+                          : "bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600"
+                      )}
+                    >
+                      {isProcessing ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                          Extracting...
+                        </>
+                      ) : (
+                        <>
+                          <Table className="w-3.5 h-3.5 mr-1.5" />
+                          {isSpec ? "Extract As Specification Table" : "Extract Table Anyway"}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setValidationError(null);
+                        handleReset();
+                      }}
+                      className={cn(
+                        "h-7 text-[11px] px-2 font-medium",
+                        isSpec
+                          ? "text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                          : "text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900/40"
+                      )}
+                    >
+                      <RotateCcw className="w-3 h-3 inline mr-1" />
+                      Clear
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {!extractedResult ? (
             <>
               {/* Tabs for Upload Method */}
-              <Tabs value={activeTab} onValueChange={(val: any) => setActiveTab(val)}>
+              <Tabs
+                value={activeTab}
+                onValueChange={(val: any) => {
+                  setActiveTab(val);
+                  setValidationError(null);
+                }}
+              >
                 <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto p-1 gap-1">
                   <TabsTrigger value="pdf" className="text-xs gap-1.5 py-2">
                     <FileText className="w-4 h-4 text-rose-500" />
@@ -736,6 +1052,7 @@ export function AiTemplateGeneratorModal({
                 {/* Tab 4: Image Upload */}
                 <TabsContent value="image" className="space-y-3 pt-2">
                   <div
+                    tabIndex={0}
                     onClick={() => fileInputRef.current?.click()}
                     onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
                     onDrop={(e) => {
@@ -745,7 +1062,24 @@ export function AiTemplateGeneratorModal({
                         handleImageSelect(e.dataTransfer.files[0]);
                       }
                     }}
-                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[160px]"
+                    onPaste={(e) => {
+                      const items = e.clipboardData?.items;
+                      if (items) {
+                        for (let i = 0; i < items.length; i++) {
+                          if (items[i].type.startsWith("image/")) {
+                            const file = items[i].getAsFile();
+                            if (file) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleImageSelect(file);
+                              toast.success("Image pasted from clipboard!");
+                              return;
+                            }
+                          }
+                        }
+                      }
+                    }}
+                    className="border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-purple-500/60 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 rounded-xl p-6 text-center cursor-pointer transition-all bg-purple-50/20 dark:bg-purple-950/10 flex flex-col items-center justify-center min-h-[170px]"
                   >
                     <input
                       ref={fileInputRef}
@@ -758,27 +1092,84 @@ export function AiTemplateGeneratorModal({
                     />
 
                     {imagePreview ? (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <img
                           src={imagePreview}
                           alt="Uploaded Calibration Standard"
-                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain"
+                          className="max-h-44 max-w-full rounded border shadow-sm mx-auto object-contain bg-white dark:bg-slate-900"
                         />
                         <div className="text-xs text-muted-foreground font-medium">
-                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB) - Click to change
+                          {imageFile?.name} ({(imageFile!.size / 1024).toFixed(1)} KB)
+                        </div>
+                        <div
+                          className="flex items-center justify-center gap-2 pt-1 flex-wrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="h-7 text-xs gap-1.5"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            Change File
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePasteFromClipboard}
+                            className="h-7 text-xs gap-1.5 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800 hover:bg-purple-50 dark:hover:bg-purple-950/40"
+                          >
+                            <ClipboardPaste className="w-3.5 h-3.5" />
+                            Paste New Image
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setImageFile(null);
+                              setImagePreview(null);
+                            }}
+                            className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                          >
+                            Remove
+                          </Button>
                         </div>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         <div className="w-12 h-12 rounded-full bg-purple-500/10 text-purple-600 flex items-center justify-center mx-auto">
                           <Upload className="w-6 h-6" />
                         </div>
-                        <div className="text-xs font-semibold">
-                          Click to upload or Drag & Drop calibration image / standard drawing
+                        <div className="space-y-1">
+                          <div className="text-xs font-semibold">
+                            Click to upload or Drag & Drop calibration image / standard drawing
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Supports PNG, JPG, JPEG, WebP (Max 10MB)
+                          </p>
                         </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          Supports PNG, JPG, JPEG, WebP (Max 10MB)
-                        </p>
+                        <div
+                          className="pt-1 flex items-center justify-center gap-2.5 flex-wrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={handlePasteFromClipboard}
+                            className="h-8 text-xs font-semibold gap-1.5 bg-white dark:bg-slate-900 border-purple-300 dark:border-purple-700 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950/50 shadow-xs transition-all cursor-pointer"
+                          >
+                            <ClipboardPaste className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                            Paste from Clipboard
+                          </Button>
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            or press <kbd className="px-1.5 py-0.5 text-[10px] font-mono font-semibold bg-slate-100 dark:bg-slate-800 border rounded text-slate-700 dark:text-slate-300 shadow-2xs">Ctrl+V</kbd> anywhere
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -797,7 +1188,7 @@ export function AiTemplateGeneratorModal({
                   </Badge>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {CANVAS_PRESETS.slice(0, 5).map((preset) => (
+                  {CANVAS_PRESETS.map((preset) => (
                     <Button
                       key={preset.id}
                       type="button"
@@ -875,6 +1266,16 @@ export function AiTemplateGeneratorModal({
                 </div>
               </div>
 
+              {/* Standard Informative Notice: Receipt Condition & Master Traceability are handled by default */}
+              <div className="bg-sky-500/10 border border-sky-500/30 text-sky-950 dark:text-sky-200 rounded-md px-3 py-1.5 text-[11px] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                  <span>
+                    <strong>Standard Calibration Template:</strong> Gauge receipt condition (visual check) and Traceability of Masters (standard equipments used) are automatically managed by default in Gaugemaster calibration workflows and certificate headers, keeping your measurement tables clean.
+                  </span>
+                </div>
+              </div>
+
               {/* VIEW 1: FULL TABLE FORMAT SHEET PREVIEW */}
               {previewMode === "sheet" ? (
                 <div className="border border-black bg-white dark:bg-slate-950 rounded p-4 space-y-3.5 max-h-[420px] overflow-y-auto shadow-inner font-sans text-black dark:text-slate-100">
@@ -947,10 +1348,94 @@ export function AiTemplateGeneratorModal({
               )}
             </div>
           )}
+
+          {/* Apply Destination Selector (Shown when preview is ready) */}
+          {extractedResult && (
+            <div className="p-3 rounded-xl border bg-card shadow-xs space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-primary" />
+                  Apply Destination
+                </span>
+                {existingBlocksCount > 0 ? (
+                  <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 font-semibold px-2 py-0.5">
+                    {existingBlocksCount} existing table{existingBlocksCount === 1 ? "" : "s"} on canvas
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] bg-slate-500/10 text-muted-foreground border-border px-2 py-0.5">
+                    Canvas is empty
+                  </Badge>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                <label
+                  onClick={() => setApplyMode("append")}
+                  className={cn(
+                    "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
+                    applyMode === "append"
+                      ? "border-emerald-500 bg-emerald-500/10 dark:bg-emerald-950/20 shadow-xs"
+                      : "border-border hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="applyMode"
+                    value="append"
+                    checked={applyMode === "append"}
+                    onChange={() => setApplyMode("append")}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      Add to Existing Tables
+                      <Badge variant="secondary" className="text-[9px] bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 font-semibold">
+                        Keep Existing
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      {existingBlocksCount > 0
+                        ? `Keep all ${existingBlocksCount} existing table(s) intact and append ${extractedResult.blocks.length} new table(s) below.`
+                        : `Add ${extractedResult.blocks.length} new table(s) to canvas.`}
+                    </p>
+                  </div>
+                </label>
+
+                <label
+                  onClick={() => setApplyMode("replace")}
+                  className={cn(
+                    "flex items-start gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all",
+                    applyMode === "replace"
+                      ? "border-amber-500 bg-amber-500/10 dark:bg-amber-950/20 shadow-xs"
+                      : "border-border hover:bg-muted/40"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="applyMode"
+                    value="replace"
+                    checked={applyMode === "replace"}
+                    onChange={() => setApplyMode("replace")}
+                    className="mt-0.5 text-amber-600 focus:ring-amber-500"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-foreground flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
+                      Replace Existing Template
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Clear previous tables on the canvas and replace with this newly extracted template.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
-        <DialogFooter className="p-3 sm:p-4 bg-muted/40 border-t flex items-center justify-between">
+        <DialogFooter className="p-3 sm:p-4 bg-muted/40 border-t flex items-center justify-between gap-2">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -958,7 +1443,7 @@ export function AiTemplateGeneratorModal({
           {!extractedResult ? (
             <Button
               size="sm"
-              onClick={handleGenerate}
+              onClick={() => handleGenerate()}
               disabled={
                 isProcessing ||
                 (activeTab === "pdf"
@@ -984,10 +1469,42 @@ export function AiTemplateGeneratorModal({
               )}
             </Button>
           ) : (
-            <Button size="sm" onClick={handleApply} className="gap-2 bg-primary shadow-sm font-bold">
-              <Check className="w-4 h-4" />
-              Apply to Visual Canvas Designer
-            </Button>
+            <div className="flex items-center gap-2">
+              {existingBlocksCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleApply("replace")}
+                  className="gap-1.5 text-xs border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10 font-semibold"
+                  title="Replace all existing tables on canvas with generated template"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Replace Existing
+                </Button>
+              )}
+              <Button
+                size="sm"
+                onClick={() => handleApply(applyMode)}
+                className={cn(
+                  "gap-2 shadow-sm font-bold text-xs",
+                  applyMode === "append" && existingBlocksCount > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                    : "bg-primary text-primary-foreground"
+                )}
+              >
+                {applyMode === "append" && existingBlocksCount > 0 ? (
+                  <>
+                    <PlusCircle className="w-4 h-4" />
+                    Add Table to Existing Template (+{extractedResult.blocks.length})
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Apply to Visual Canvas Designer
+                  </>
+                )}
+              </Button>
+            </div>
           )}
         </DialogFooter>
       </DialogContent>

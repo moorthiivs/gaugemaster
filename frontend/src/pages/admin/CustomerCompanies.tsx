@@ -17,6 +17,7 @@ import {
   RefreshCw,
   ChevronDown,
   Loader2,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,14 +45,17 @@ import {
 } from "@/components/ui/card";
 import {
   listCompanies,
+  createCompany,
   updateCompanyAccess,
   deleteCompany,
   CompanyListItem,
+  CreateCompanyDto,
   UpdateCompanyAccessDto,
 } from "@/lib/superAdminActions";
 import { useAuth } from "@/lib/auth";
 import CompanyAccessModal from "@/components/admin/CompanyAccessModal";
 import DeleteCompanyConfirmModal from "@/components/admin/DeleteCompanyConfirmModal";
+import CreateCompanyModal from "@/components/admin/CreateCompanyModal";
 
 export default function CustomerCompanies() {
   const { setInspectedCompany } = useAuth();
@@ -60,6 +64,9 @@ export default function CustomerCompanies() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const navigate = useNavigate();
+
+  // Create modal state
+  const [createModalOpen, setCreateModalOpen] = useState(false);
 
   // Access modal state
   const [accessModalOpen, setAccessModalOpen] = useState(false);
@@ -147,6 +154,17 @@ export default function CustomerCompanies() {
   const disabledCount = companies.filter((c) => c.accessStatus === "disabled").length;
   const timeLimitedCount = companies.filter((c) => c.accessStatus === "time_limited").length;
 
+  const handleCreateCompany = async (dto: CreateCompanyDto) => {
+    try {
+      const res = await createCompany(dto);
+      toast.success(res.message || `Company ${dto.companyName} created successfully`);
+      fetchCompanies();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || err?.message || "Failed to create company");
+      throw err;
+    }
+  };
+
   const handleAccessUpdate = async (dto: UpdateCompanyAccessDto) => {
     if (!accessTarget) return;
     try {
@@ -190,14 +208,23 @@ export default function CustomerCompanies() {
               Manage all registered customer companies, access control, and tenant data.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs font-semibold rounded-lg"
-            onClick={fetchCompanies}
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 text-xs font-semibold rounded-lg"
+              onClick={fetchCompanies}
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 text-xs font-bold rounded-lg shadow-sm"
+              onClick={() => setCreateModalOpen(true)}
+            >
+              <Plus className="h-3.5 w-3.5" /> Create Company
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -422,6 +449,13 @@ export default function CustomerCompanies() {
           onConfirm={handleDelete}
         />
       )}
+
+      {/* Create Company Modal */}
+      <CreateCompanyModal
+        open={createModalOpen}
+        onOpenChange={setCreateModalOpen}
+        onCreate={handleCreateCompany}
+      />
     </div>
   );
 }

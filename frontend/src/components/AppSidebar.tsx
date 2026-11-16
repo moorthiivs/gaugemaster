@@ -1,4 +1,5 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Gauge,
@@ -15,6 +16,10 @@ import {
   Building2,
   Activity,
   X,
+  FileText,
+  BookOpen,
+  Compass,
+  RotateCcw,
 } from "lucide-react";
 import {
   Sidebar,
@@ -50,8 +55,8 @@ const navigationGroups = [
     items: [
       { title: "Analytics Dashboard", url: "/dashboard", icon: LayoutDashboard, module: "dashboard", action: "view" },
       { title: "Calibration Execution", url: "/calibration", icon: FileCheck2, module: "calibrations", action: "view" },
-      { title: "Calibration Approval", url: "/calibration/approval", icon: CheckCircle2, module: "calibrations", action: "view" },
-      { title: "Calibration Schedule", url: "/calendar", icon: CalendarRange, module: "instruments", action: "view" },
+      { title: "Calibration Approval", url: "/calibration/approval", icon: CheckCircle2, module: "calibration_approvals", action: "view" },
+      { title: "Calibration Schedule", url: "/calendar", icon: CalendarRange, module: "calibration_schedule", action: "view" },
     ],
   },
   {
@@ -60,12 +65,17 @@ const navigationGroups = [
       { title: "Instrument Master", url: "/instruments", icon: Gauge, module: "instruments", action: "view" },
       { title: "Register Instrument", url: "/instruments/new", icon: PlusCircle, module: "instruments", action: "create" },
       { title: "Calibration Templates", url: "/calibration/templates", icon: Layers, module: "templates", action: "view" },
+      { title: "Calibration Procedure", url: "/calibration-procedures", icon: FileText, module: "calibration_procedures", action: "view" },
+      { title: "Work Instructions", url: "/work-instructions", icon: BookOpen, module: "work_instructions", action: "view" },
+      { title: "Gauge Diagram", url: "/gauge-diagrams", icon: Compass, module: "gauge_diagrams", action: "view" },
+      { title: "Standards", url: "/standards", icon: ShieldCheck, module: "standards", action: "view" },
     ],
   },
   {
     label: "Administration",
     items: [
       { title: "Reports & Analytics", url: "/reports", icon: LineChart, module: "reports", action: "view" },
+      { title: "Recovery Center", url: "/recovery", icon: RotateCcw, module: "recovery", action: "view" },
       { title: "User Access Control", url: "/users", icon: UserCheck, module: "users", action: "view" },
       { title: "System Configuration", url: "/settings", icon: Sliders, module: "settings", action: "view" },
     ],
@@ -76,63 +86,98 @@ export function AppSidebar() {
   const { canAccess } = usePermissions();
   const { user, inspectedCompany, setInspectedCompany, signOut } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  const location = useLocation();
+
+  const isNavActive = (itemUrl: string) => {
+    const currentPath = location.pathname;
+    if (itemUrl === "/calibration") {
+      // Active only on /calibration or execution routes (/calibration/new, /calibration/history)
+      // NOT active on /calibration/templates or /calibration/approval
+      return (
+        currentPath === "/calibration" ||
+        currentPath.startsWith("/calibration/new") ||
+        currentPath.startsWith("/calibration/history")
+      );
+    }
+    if (itemUrl === "/calibration/templates") {
+      return currentPath.startsWith("/calibration/templates");
+    }
+    if (itemUrl === "/calibration/approval") {
+      return currentPath.startsWith("/calibration/approval");
+    }
+    if (itemUrl === "/instruments") {
+      return (
+        currentPath === "/instruments" ||
+        (currentPath.startsWith("/instruments/") && currentPath !== "/instruments/new")
+      );
+    }
+    if (itemUrl === "/instruments/new") {
+      return currentPath === "/instruments/new";
+    }
+    if (itemUrl === "/dashboard" || itemUrl === "/settings") {
+      return currentPath === itemUrl;
+    }
+    return currentPath === itemUrl || currentPath.startsWith(`${itemUrl}/`);
+  };
 
   const activeGroups = user?.isSuperAdmin
     ? (inspectedCompany ? [superAdminGroup, ...navigationGroups] : [superAdminGroup])
     : navigationGroups;
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border/60 bg-sidebar/90 backdrop-blur-md shadow-lg transition-all duration-300">
-      <SidebarHeader className="p-5 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-4">
-        <div className="flex items-center gap-3 overflow-hidden group-data-[collapsible=icon]:justify-center">
-          <div className="flex-shrink-0 p-2 bg-primary/10 rounded-lg border border-primary/20 group-data-[collapsible=icon]:p-1.5 group-data-[collapsible=icon]:mx-auto">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border bg-sidebar shadow-xs transition-all duration-200">
+      <SidebarHeader className="p-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
+        <div className="flex items-center gap-2.5 overflow-hidden group-data-[collapsible=icon]:justify-center">
+          <div className="flex-shrink-0 p-1.5 bg-primary/10 rounded-md border border-primary/20 group-data-[collapsible=icon]:mx-auto">
             <ShieldCheck className="h-5 w-5 text-primary group-data-[collapsible=icon]:h-4 group-data-[collapsible=icon]:w-4" />
           </div>
           <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-            <span className="text-base font-bold tracking-tight text-sidebar-foreground">Gaugemaster</span>
-            <span className="text-[10px] uppercase tracking-wider text-primary font-bold opacity-80">Calibration Suite</span>
+            <span className="text-sm font-bold tracking-tight text-sidebar-foreground">Gaugemaster</span>
+            <span className="text-xs text-muted-foreground font-normal">Calibration Suite</span>
           </div>
         </div>
       </SidebarHeader>
 
-      <SidebarContent className="px-3 space-y-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
+      <SidebarContent className="px-2 space-y-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:items-center">
         {activeGroups.map((group) => {
           const visibleItems = group.items.filter((item) => canAccess(item.module, item.action as any));
           if (visibleItems.length === 0) return null;
 
           return (
             <SidebarGroup key={group.label} className="group-data-[collapsible=icon]:px-0 py-0">
-              <SidebarGroupLabel className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-widest px-3 mb-1 group-data-[collapsible=icon]:hidden">
+              <SidebarGroupLabel className="text-xs font-medium text-muted-foreground px-2 py-1 group-data-[collapsible=icon]:hidden">
                 {group.label}
               </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:items-center">
-                  {visibleItems.map((item) => (
-                    <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
-                      <SidebarMenuButton asChild tooltip={item.title} className="h-9 relative group/btn group-data-[collapsible=icon]:mx-auto">
-                        <NavLink 
-                          to={item.url} 
-                          end 
-                          className={({ isActive }) => cn(
-                            "flex items-center gap-2.5 px-3 w-full h-full rounded-md text-xs font-medium transition-all duration-200 relative group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:mx-auto",
-                            isActive 
-                              ? "bg-primary/15 text-primary font-semibold shadow-xs" 
-                              : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                          )}
+                  {visibleItems.map((item) => {
+                    const isActive = isNavActive(item.url);
+                    return (
+                      <SidebarMenuItem key={item.title} className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
+                        <SidebarMenuButton 
+                          asChild 
+                          isActive={isActive}
+                          tooltip={item.title} 
+                          className="h-8.5 rounded-md"
                         >
-                          {({ isActive }) => (
-                            <>
-                              {isActive && (
-                                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-primary rounded-r-sm group-data-[collapsible=icon]:h-3" />
-                              )}
-                              <item.icon className={cn("h-4 w-4 shrink-0 transition-transform group-hover/btn:scale-105", isActive && "text-primary")} />
-                              <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
-                            </>
-                          )}
-                        </NavLink>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
+                          <NavLink 
+                            to={item.url} 
+                            className={cn(
+                              "flex items-center gap-2.5 px-2.5 w-full h-full rounded-md text-sm font-medium transition-colors group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:mx-auto",
+                              isActive 
+                                ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold" 
+                                : "text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
+                            )}
+                          >
+                            <item.icon className="h-4 w-4 shrink-0 transition-colors" />
+                            <span className="group-data-[collapsible=icon]:hidden truncate">{item.title}</span>
+                          </NavLink>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -151,7 +196,7 @@ export function AppSidebar() {
             <div className="flex items-center gap-2 min-w-0">
               <Building2 className="h-4 w-4 text-primary shrink-0" />
               <div className="min-w-0">
-                <p className="text-[9px] font-extrabold uppercase tracking-wider text-primary">Viewing Tenant</p>
+                <p className="text-2xs font-extrabold uppercase tracking-wider text-primary">Viewing Tenant</p>
                 <p className="text-xs font-bold truncate text-sidebar-foreground">{inspectedCompany.name}</p>
               </div>
             </div>
@@ -181,7 +226,7 @@ export function AppSidebar() {
             </Avatar>
             <div className="flex flex-col min-w-0 group-data-[collapsible=icon]:hidden">
               <span className="text-xs font-bold truncate text-sidebar-foreground">{user?.name || "User"}</span>
-              <span className="text-[10px] text-muted-foreground truncate">{user?.isSuperAdmin ? "Super Admin" : user?.email || "Member"}</span>
+              <span className="text-xs text-muted-foreground truncate">{user?.isSuperAdmin ? "Super Admin" : user?.email || "Member"}</span>
             </div>
           </div>
 
@@ -190,9 +235,10 @@ export function AppSidebar() {
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 group-data-[collapsible=icon]:w-8 group-data-[collapsible=icon]:h-8"
             title="Sign out"
-            onClick={() => {
-              signOut();
-              navigate("/login");
+            onClick={async () => {
+              await signOut();
+              queryClient.clear();
+              navigate("/login", { replace: true });
             }}
           >
             <LogOut className="h-4 w-4" />

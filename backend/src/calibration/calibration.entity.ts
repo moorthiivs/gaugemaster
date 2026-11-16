@@ -7,9 +7,11 @@ import {
   Column,
   CreateDateColumn,
   UpdateDateColumn,
+  DeleteDateColumn,
   ManyToOne,
   OneToMany,
   JoinColumn,
+  Index,
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { CalibrationAuditLog } from './calibration-audit-log.entity';
@@ -19,6 +21,10 @@ import { CalibrationAuditLog } from './calibration-audit-log.entity';
  * Includes calibration data points, reference standard info,
  * environmental conditions, verdict, and certificate/ULR numbers.
  */
+@Index(['companyId', 'certificate_number'], {
+  unique: true,
+  where: '"deleted_at" IS NULL AND "certificate_number" IS NOT NULL',
+})
 @Entity('calibrations')
 export class Calibration {
   @PrimaryColumn('uuid')
@@ -129,6 +135,18 @@ export class Calibration {
   @Column({ nullable: true })
   verdict: string; // "PASS" | "FAIL" | "CONDITIONAL"
 
+  @Column({ nullable: true })
+  calculated_verdict?: string;
+
+  @Column({ type: 'boolean', default: false })
+  is_verdict_overridden?: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  verdict_override_reason?: string;
+
+  @Column({ nullable: true })
+  template_version_id?: string;
+
   @Column({ type: 'text', nullable: true })
   remarks: string;
 
@@ -145,14 +163,59 @@ export class Calibration {
   procedure_reference?: string;
 
   @Column({ nullable: true })
+  procedure_no?: string;
+
+  @Column({ nullable: true })
+  procedure_name?: string;
+
+  @Column({ nullable: true })
+  procedure_date?: string;
+
+  @Column({ nullable: true })
+  procedure_rev?: string;
+
+  @Column({ nullable: true })
   doc_no?: string;
+
+  @Column({ nullable: true })
+  doc_date?: string;
+
+  @Column({ nullable: true })
+  doc_rev?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_doc_no?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_date?: string;
+
+  @Column({ nullable: true })
+  acceptance_criteria_rev?: string;
+
+  @Column({ type: 'text', nullable: true })
+  acceptance_criteria_reference?: string;
 
   // ── Approval Workflow ────────────────────────────────────────
   @Column({ default: 'Calibration Completed' })
-  approval_status: string; // 'Calibration Completed' | 'Approved' | 'Rejected'
+  approval_status: string; // 'Pending Review' | 'Calibration Completed' | 'Reviewed' | 'Pending Approval' | 'Approved' | 'Rejected'
+
+  @Column({ type: 'timestamp', nullable: true })
+  reviewed_at?: Date;
+
+  @Column({ nullable: true })
+  reviewed_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  reviewer_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   approved_at?: Date;
+
+  @Column({ nullable: true })
+  approved_by_id?: string;
+
+  @Column({ type: 'text', nullable: true })
+  approver_remarks?: string;
 
   @Column({ type: 'timestamp', nullable: true })
   rejected_at?: Date;
@@ -162,6 +225,9 @@ export class Calibration {
 
   @Column({ type: 'text', nullable: true })
   rejection_reason?: string;
+
+  @Column({ nullable: true })
+  recalibration_of_id?: string;
 
   // ── Signatories ──────────────────────────────────────────────
   @Column({ nullable: true })
@@ -221,7 +287,7 @@ export class Calibration {
   @Column({ nullable: true })
   companyId: string;
 
-  @ManyToOne(() => User, { eager: true })
+  @ManyToOne(() => User, { eager: true, onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'created_by' })
   created_by?: User;
 
@@ -230,6 +296,21 @@ export class Calibration {
 
   @UpdateDateColumn()
   updated_at: Date;
+
+  @DeleteDateColumn({ name: 'deleted_at', nullable: true })
+  deleted_at?: Date;
+
+  @Column({ nullable: true })
+  deleted_by_id?: string;
+
+  @Column({ nullable: true })
+  deleted_by_name?: string;
+
+  @Column({ type: 'text', nullable: true })
+  deletion_reason?: string | null;
+
+  @Column({ nullable: true })
+  deleted_with_parent_id?: string;
 
   @OneToMany(() => CalibrationAuditLog, (log) => log.calibration, {
     cascade: true,

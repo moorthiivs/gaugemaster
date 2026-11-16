@@ -76,7 +76,16 @@ export function LoginForm() {
     const [email, setEmail] = useState("")
     const [password, setPassword] = useState("")
     const [loading, setLoading] = useState(false);
-    const from = (location.state as any)?.from?.pathname || "/dashboard"
+
+    const searchParams = new URLSearchParams(location.search);
+    const redirectParam = searchParams.get("redirect");
+    const stateFrom = (location.state as any)?.from?.pathname;
+    let from = "/dashboard";
+    if (redirectParam && redirectParam !== "/login" && redirectParam !== "/register" && redirectParam !== "/") {
+        from = redirectParam;
+    } else if (stateFrom && stateFrom !== "/login" && stateFrom !== "/register" && stateFrom !== "/") {
+        from = stateFrom;
+    }
 
     // Auth configuration from backend
     const [authConfig, setAuthConfig] = useState<{
@@ -86,8 +95,8 @@ export function LoginForm() {
     } | null>(null);
 
     useEffect(() => {
-        const searchParams = new URLSearchParams(location.search);
-        if (searchParams.get("session_expired") === "true") {
+        const params = new URLSearchParams(location.search);
+        if (params.get("session_expired") === "true") {
             toast({
                 title: "Session Expired",
                 description: "Your session has expired. Please sign in again to continue.",
@@ -144,6 +153,15 @@ export function LoginForm() {
         try {
             await signInWithGoogleToken(token);
             toast({ title: "Signed in", description: `Welcome back via Google!` });
+
+            const storedUser = localStorage.getItem('auth_user');
+            const parsedUser = storedUser ? JSON.parse(storedUser) : null;
+
+            if (parsedUser?.isSuperAdmin) {
+                navigate("/super-admin/companies", { replace: true });
+                return;
+            }
+
             // Check if user needs onboarding after login
             const setupCompleted = localStorage.getItem('setupCompleted');
             const redirectTo = !setupCompleted ? "/onboarding" : from;
@@ -170,7 +188,7 @@ export function LoginForm() {
                         id="email"
                         type="email"
                         value={email}
-                        placeholder="m@example.com"
+                        placeholder="ivs@gaugemaster.com"
                         onChange={(e) => setEmail(e.target.value)}
                         required
                     />

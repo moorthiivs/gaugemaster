@@ -9,7 +9,7 @@ trigger: always_on
 - Frontend: React vite with TypeScript.
 - Backend: NestJS with TypeScript.
 - Database: PostgreSQL.
-- ORM: Sequelize.
+- ORM: TypeORM.
 - API style: REST APIs.
 
 ## Architecture
@@ -31,7 +31,7 @@ trigger: always_on
 
 ## Database
 
-- Use Sequelize for database access.
+- Use TypeORM for database access.
 - Use migrations for schema changes.
 - Do not modify production database structure directly.
 - Use transactions for operations that must be atomic.

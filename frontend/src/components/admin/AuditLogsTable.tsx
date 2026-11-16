@@ -23,8 +23,17 @@ import {
   SlidersHorizontal
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { YearMonthDatePicker } from "@/components/ui/year-month-date-picker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { toast } from "sonner";
 
 dayjs.extend(utc);
@@ -246,123 +255,116 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
 
           {/* Date Filter */}
           <div className="flex items-center gap-2">
-            <input
-              type="date"
+            <YearMonthDatePicker
               value={dateFilter}
-              onChange={(e) => setDateFilter(e.target.value)}
-              className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              onChange={(val) => setDateFilter(val)}
+              placeholder="Filter by date"
+              className="w-full text-xs h-8"
+              formatPattern="dd-MMM-yyyy"
+              clearable
             />
-            {dateFilter && (
-              <button
-                onClick={() => setDateFilter("")}
-                className="text-xs text-slate-400 hover:text-slate-600 font-medium px-1.5"
-                title="Clear date filter"
-              >
-                Clear
-              </button>
-            )}
           </div>
         </div>
       </div>
 
       {/* ── Table Container ── */}
-      <div className="overflow-x-auto max-h-[640px] overflow-y-auto">
-        <table className="min-w-full divide-y divide-slate-100 text-left">
-          <thead className="bg-slate-50/80 sticky top-0 z-10 backdrop-blur-sm">
-            <tr>
-              <th className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+      <div className="overflow-x-auto max-h-[640px] overflow-y-auto rounded-lg border border-border">
+        <Table>
+          <TableHeader className="bg-muted/60 sticky top-0 z-10 backdrop-blur-sm">
+            <TableRow>
+              <TableHead className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Timestamp
-              </th>
-              <th className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              </TableHead>
+              <TableHead className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 User
-              </th>
-              <th className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              </TableHead>
+              <TableHead className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Action / Event
-              </th>
-              <th className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              </TableHead>
+              <TableHead className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Description & Target
-              </th>
-              <th className="px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              </TableHead>
+              <TableHead className="px-5 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Status
-              </th>
-              <th className="px-5 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              </TableHead>
+              <TableHead className="px-5 py-3 text-right text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                 Payload
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-slate-100">
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {loading ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center text-slate-400 text-sm">
-                  <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-solid border-blue-600 border-r-transparent mb-2" />
+              <TableRow>
+                <TableCell colSpan={6} className="py-16 text-center text-muted-foreground text-sm">
+                  <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-solid border-primary border-r-transparent mb-2" />
                   <p>Loading audit stream...</p>
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : error ? (
-              <tr>
-                <td colSpan={6} className="py-12 text-center text-rose-500 text-sm font-medium">
+              <TableRow>
+                <TableCell colSpan={6} className="py-12 text-center text-destructive text-sm font-medium">
                   {error}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : filteredLogs.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center">
-                  <div className="mx-auto h-12 w-12 bg-slate-50 text-slate-400 rounded-full flex items-center justify-center mb-3">
+              <TableRow>
+                <TableCell colSpan={6} className="py-16 text-center">
+                  <div className="mx-auto h-12 w-12 bg-muted text-muted-foreground rounded-full flex items-center justify-center mb-3">
                     <SlidersHorizontal className="h-6 w-6" />
                   </div>
-                  <p className="text-sm font-medium text-slate-900">No audit events match your filter</p>
-                  <p className="text-xs text-slate-400 mt-1">Try clearing filters or selecting another date</p>
-                </td>
-              </tr>
+                  <p className="text-sm font-medium text-foreground">No audit events match your filter</p>
+                  <p className="text-xs text-muted-foreground mt-1">Try clearing filters or selecting another date</p>
+                </TableCell>
+              </TableRow>
             ) : (
               filteredLogs.map((log) => {
                 const isSuccess = log.status !== "FAILED";
                 const userRole = typeof log.user?.role === "object" ? log.user.role?.name : log.user?.role;
 
                 return (
-                  <tr key={log.id} className="hover:bg-slate-50/80 transition-colors group">
+                  <TableRow key={log.id} className="hover:bg-muted/50 transition-colors group">
                     {/* Timestamp */}
-                    <td className="px-5 py-3.5 whitespace-nowrap">
-                      <div className="text-xs font-semibold text-slate-900">
+                    <TableCell className="px-5 py-3.5 whitespace-nowrap">
+                      <div className="text-xs font-semibold text-foreground">
                         {dayjs(log.createdAt).tz(IST_TZ).format("DD MMM YYYY")}
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5 font-mono">
-                        <Clock className="h-3 w-3 text-slate-400" />
+                      <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5 font-mono">
+                        <Clock className="h-3 w-3 text-muted-foreground" />
                         {dayjs(log.createdAt).tz(IST_TZ).format("hh:mm:ss A")}
                       </div>
                       {log.durationMs !== undefined && log.durationMs !== null && (
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        <div className="text-[10px] text-muted-foreground font-mono mt-0.5">
                           ⚡ {log.durationMs}ms
                         </div>
                       )}
-                    </td>
+                    </TableCell>
 
                     {/* User */}
-                    <td className="px-5 py-3.5 whitespace-nowrap">
+                    <TableCell className="px-5 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-2.5">
-                        <div className="h-8 w-8 rounded-full bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs uppercase border border-slate-200">
-                          {log.user?.name ? log.user.name.charAt(0) : <UserIcon className="h-4 w-4 text-slate-400" />}
+                        <div className="h-8 w-8 rounded-full bg-muted text-foreground flex items-center justify-center font-bold text-xs uppercase border border-border">
+                          {log.user?.name ? log.user.name.charAt(0) : <UserIcon className="h-4 w-4 text-muted-foreground" />}
                         </div>
                         <div>
-                          <div className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
+                          <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                             {log.user?.name || "System / Unauthenticated"}
                             {userRole && (
-                              <span className="text-[10px] font-medium px-1.5 py-0.2 bg-slate-100 text-slate-600 rounded">
+                              <span className="text-[10px] font-medium px-1.5 py-0.2 bg-muted text-muted-foreground rounded">
                                 {userRole}
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-slate-500 truncate max-w-[180px]">
+                          <div className="text-xs text-muted-foreground truncate max-w-[180px]">
                             {log.user?.email || (log.userId ? `ID: ${log.userId.substring(0, 8)}...` : "Public / Internal")}
                           </div>
                         </div>
                       </div>
-                    </td>
+                    </TableCell>
 
                     {/* Action / Event */}
-                    <td className="px-5 py-3.5 whitespace-nowrap">
+                    <TableCell className="px-5 py-3.5 whitespace-nowrap">
                       <span
-                        className={`px-2.5 py-1 inline-flex text-[11px] font-semibold rounded-md border tracking-wide ${getActionBadge(
+                        className={`px-2.5 py-1 inline-flex text-xs font-semibold rounded-md border tracking-wide ${getActionBadge(
                           log.action,
                           log.status
                         )}`}
@@ -370,14 +372,14 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
                         {log.action}
                       </span>
                       {log.method && (
-                        <span className="ml-1.5 text-[10px] font-mono text-slate-400 font-medium">
+                        <span className="ml-1.5 text-[10px] font-mono text-muted-foreground font-medium">
                           {log.method}
                         </span>
                       )}
-                    </td>
+                    </TableCell>
 
                     {/* Description & Target */}
-                    <td className="px-5 py-3.5">
+                    <TableCell className="px-5 py-3.5">
                       <div className="flex items-center gap-1.5">
                         {log.resourceType && (
                           <span
@@ -388,50 +390,50 @@ export const AuditLogsTable: React.FC<AuditLogsTableProps> = ({ companyId }) => 
                             {log.resourceType}
                           </span>
                         )}
-                        <span className="text-xs font-medium text-slate-800">
+                        <span className="text-xs font-medium text-foreground">
                           {log.description || log.resource}
                         </span>
                       </div>
-                      <div className="text-[11px] font-mono text-slate-400 mt-1 truncate max-w-[280px]">
+                      <div className="text-xs font-mono text-muted-foreground mt-1 truncate max-w-[280px]">
                         {log.resource}
                       </div>
-                    </td>
+                    </TableCell>
 
                     {/* Status */}
-                    <td className="px-5 py-3.5 whitespace-nowrap">
+                    <TableCell className="px-5 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         {isSuccess ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                             <CheckCircle2 className="h-3 w-3 text-emerald-500" />
                             {log.statusCode || 200} OK
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
                             <XCircle className="h-3 w-3 text-rose-500" />
                             {log.statusCode || 500} Failed
                           </span>
                         )}
                       </div>
-                    </td>
+                    </TableCell>
 
                     {/* Payload Details View */}
-                    <td className="px-5 py-3.5 whitespace-nowrap text-right">
+                    <TableCell className="px-5 py-3.5 whitespace-nowrap text-right">
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => setSelectedLog(log)}
-                        className="h-8 text-xs font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50/50 gap-1 rounded-md"
+                        className="h-8 text-xs font-medium text-primary hover:text-primary/80 hover:bg-primary/10 gap-1 rounded-md"
                       >
                         <Eye className="h-3.5 w-3.5" />
                         Inspect
                       </Button>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* ── Azure-Style JSON & Context Inspector Dialog ── */}

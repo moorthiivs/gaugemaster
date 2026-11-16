@@ -1,0 +1,200 @@
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, ILike } from 'typeorm';
+import { WorkInstruction } from './work-instruction.entity';
+import { WorkInstructionHistory } from './work-instruction-history.entity';
+import { CreateWorkInstructionDto } from './dto/create-work-instruction.dto';
+import { UpdateWorkInstructionDto } from './dto/update-work-instruction.dto';
+
+@Injectable()
+export class WorkInstructionsService {
+  constructor(
+    @InjectRepository(WorkInstruction)
+    private readonly instructionRepo: Repository<WorkInstruction>,
+    @InjectRepository(WorkInstructionHistory)
+    private readonly historyRepo: Repository<WorkInstructionHistory>,
+  ) {}
+
+  async findAll(companyId?: string, search?: string, id_code?: string, part_name?: string, range?: string) {
+    const baseWhere: any = {};
+    if (companyId) {
+      baseWhere.companyId = companyId;
+    }
+    if (id_code && id_code.trim() && id_code !== 'all') {
+      baseWhere.id_code = ILike(`%${id_code.trim()}%`);
+    }
+    if (part_name && part_name.trim() && part_name !== 'all') {
+      baseWhere.part_name = ILike(`%${part_name.trim()}%`);
+    }
+
+    if (search && search.trim()) {
+      const pattern = ILike(`%${search.trim()}%`);
+      return this.instructionRepo.find({
+        where: [
+          { ...baseWhere, title: pattern },
+          { ...baseWhere, id_code: pattern },
+          { ...baseWhere, part_name: pattern },
+          { ...baseWhere, range: pattern },
+        ],
+        order: { created_at: 'DESC' },
+      });
+    }
+
+    return this.instructionRepo.find({
+      where: baseWhere,
+      order: { created_at: 'DESC' },
+    });
+  }
+
+  async findOne(id: string, companyId?: string) {
+    const where: any = { id };
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    const instruction = await this.instructionRepo.findOne({ where });
+    if (!instruction) {
+      throw new NotFoundException(`Work instruction with ID ${id} not found`);
+    }
+    return instruction;
+  }
+
+  async create(
+    dto: CreateWorkInstructionDto,
+    file: any,
+    user: { id?: string; name?: string; companyId?: string },
+  ) {
+    const targetCompanyId = dto.companyId || user.companyId;
+
+    const instruction = this.instructionRepo.create({
+      title: dto.title,
+      id_code: dto.id_code,
+      part_name: dto.part_name,
+      range: dto.range,
+      instrument_id: dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : undefined,
+      description: dto.description,
+      companyId: targetCompanyId,
+      version: 1,
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      updated_by_id: user.id,
+      updated_by_name: user.name || 'User',
+      document_name: file ? file.originalname : undefined,
+      file_type: file ? file.mimetype : undefined,
+      file_path: file ? `/uploads/work-instructions/${file.filename}` : undefined,
+    });
+
+    const saved = await this.instructionRepo.save(instruction);
+
+    const history = this.historyRepo.create({
+      instruction_id: saved.id,
+      title: saved.title,
+      id_code: saved.id_code,
+      part_name: saved.part_name,
+      range: saved.range,
+      instrument_id: saved.instrument_id,
+      document_name: saved.document_name,
+      file_type: saved.file_type,
+      file_path: saved.file_path,
+      version: saved.version,
+      action_details: 'Initial work instruction uploaded',
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      companyId: targetCompanyId,
+    });
+    await this.historyRepo.save(history);
+
+    return saved;
+  }
+
+  async update(
+    id: string,
+    dto: UpdateWorkInstructionDto,
+    file: any,
+    user: { id?: string; name?: string; companyId?: string },
+  ) {
+    const instruction = await this.findOne(id, user.companyId);
+
+    const isNewFile = !!file;
+    if (isNewFile) {
+      instruction.version += 1;
+      instruction.document_name = file.originalname;
+      instruction.file_type = file.mimetype;
+      instruction.file_path = `/uploads/work-instructions/${file.filename}`;
+    }
+
+    if (dto.title !== undefined) {
+      instruction.title = dto.title;
+    }
+    if (dto.id_code !== undefined) {
+      instruction.id_code = dto.id_code;
+    }
+    if (dto.part_name !== undefined) {
+      instruction.part_name = dto.part_name;
+    }
+    if (dto.range !== undefined) {
+      instruction.range = dto.range;
+    }
+    if (dto.instrument_id !== undefined) {
+      instruction.instrument_id = dto.instrument_id && dto.instrument_id !== 'null' && dto.instrument_id.trim() !== '' ? dto.instrument_id.trim() : null;
+    }
+    if (dto.description !== undefined) {
+      instruction.description = dto.description;
+    }
+
+    instruction.updated_by_id = user.id;
+    instruction.updated_by_name = user.name || 'User';
+
+    const updated = await this.instructionRepo.save(instruction);
+
+    let actionDetails = dto.actionDetails;
+    if (!actionDetails) {
+      if (isNewFile) {
+        actionDetails = `Updated work instruction to version ${updated.version} (${file.originalname})`;
+      } else {
+        actionDetails = `Updated work instruction details`;
+      }
+    }
+
+    const history = this.historyRepo.create({
+      instruction_id: updated.id,
+      title: updated.title,
+      id_code: updated.id_code,
+      part_name: updated.part_name,
+      range: updated.range,
+      instrument_id: updated.instrument_id,
+      document_name: updated.document_name,
+      file_type: updated.file_type,
+      file_path: updated.file_path,
+      version: updated.version,
+      action_details: actionDetails,
+      created_by_id: user.id,
+      created_by_name: user.name || 'User',
+      companyId: updated.companyId,
+    });
+    await this.historyRepo.save(history);
+
+    return updated;
+  }
+
+  async remove(id: string, companyId?: string, user?: any, reason?: string) {
+    const instruction = await this.findOne(id, companyId);
+    await this.instructionRepo.update(id, {
+      deleted_at: new Date(),
+      deleted_by_id: user?.id,
+      deleted_by_name: user?.name || user?.email || 'User',
+      deletion_reason: reason || null,
+    });
+    return { success: true, message: 'Work instruction moved to Recovery Center' };
+  }
+
+  async getHistory(instructionId: string, companyId?: string) {
+    const where: any = { instruction_id: instructionId };
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    return this.historyRepo.find({
+      where,
+      order: { version: 'DESC', created_at: 'DESC' },
+    });
+  }
+}

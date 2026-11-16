@@ -42,7 +42,37 @@ export type Instrument = {
   is_reference_standard?: boolean;
   companyId?: string;
   certificate_file?: string;
-  custom_parameters?: Record<string, any>;
+  custom_parameters?: {
+    diagram_image?: string;
+    diagram_image_width?: number;
+    diagram_image_height?: number;
+    diagram_image_alignment?: "left" | "center" | "right";
+    specifications?: any[];
+    doc_properties?: {
+      doc_no?: string;
+      doc_date?: string;
+      doc_rev?: string;
+      procedure_no?: string;
+      procedure_name?: string;
+      procedure_date?: string;
+      procedure_rev?: string;
+      procedure_reference?: string;
+      acceptance_criteria_doc_no?: string;
+      acceptance_criteria_date?: string;
+      acceptance_criteria_rev?: string;
+      acceptance_criteria_reference?: string;
+      standard_reference?: string;
+    };
+    environmental_defaults?: {
+      temperature?: string;
+      humidity?: string;
+      soaking_time?: string;
+      soaking_start_time?: string;
+      soaking_end_time?: string;
+      receipt_condition?: string;
+    };
+    receipt_condition?: string;
+  } & Record<string, any>;
   created_by?: any;
   updated_by?: any;
 };
@@ -52,6 +82,8 @@ export type Instrument = {
  */
 export type DashboardSummary = {
   total: number;
+  grandTotal?: number;
+  inServiceTotal?: number;
   overallProgress?: {
     total: number;
     calibrated: number;
@@ -59,6 +91,8 @@ export type DashboardSummary = {
   };
   workingTotal?: number;
   referenceTotal?: number;
+  workingActiveTotal?: number;
+  referenceActiveTotal?: number;
   dueThisMonth: number;
   overdue: number;
   workingOverdue?: number;
@@ -73,6 +107,7 @@ export type DashboardSummary = {
   completedTodayCount?: number;
   nextCalibrationDate: string | null;
   dueDatesByMonth: { month: string; plan: number; actual: number }[];
+  workloadByDeviceType?: { deviceType: string; plan: number; actual: number }[];
   dueSoonList: { id: string; name: string; dueDate: string; location?: string; status?: string; is_reference_standard?: boolean }[];
   recentActivity: { id: string; name: string; action: string; at: string; idCode?: string; location?: string }[];
   statusDistribution?: { name: string; value: number }[];
@@ -119,6 +154,7 @@ export interface CalendarInstrument {
   due_date: string;
   last_calibration_date?: string | null;
   status: string;
+  item_status?: string;
   location: string;
   agency: string;
   eventType?: 'completed' | 'due';

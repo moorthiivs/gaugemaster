@@ -69,6 +69,10 @@ export class Setting {
         certYearFormat: string;   // Default: "YYYY" (or "YY")
         certSeqLength: number;    // Default: 5
         certNextSeq: number;      // Auto-incremented, starts at 0
+        certResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom'; // Default: "never"
+        certCustomResetMonths?: number; // In months if custom
+        certStartSeq?: number;    // Starting sequence (e.g. 0, so next is 1)
+        certLastResetPeriod?: string; // e.g. "2026-10", "2026", "FY2026"
 
         // ULR Number Format
         ulrPrefix: string;        // Default: "ULR"
@@ -76,6 +80,10 @@ export class Setting {
         ulrYearFormat: string;    // Default: "YYYY"
         ulrSeqLength: number;     // Default: 5
         ulrNextSeq: number;       // Auto-incremented, starts at 0
+        ulrResetFrequency?: 'never' | 'monthly' | 'yearly' | 'financial_year' | 'custom'; // Default: "never"
+        ulrCustomResetMonths?: number;
+        ulrStartSeq?: number;
+        ulrLastResetPeriod?: string;
 
         headerCompanyName?: string;
         headerCompanySubtitle?: string;
@@ -90,6 +98,19 @@ export class Setting {
         headerBgColor?: string;        // Default: "#54c6f3" — header/footer banner background color
         headerDisplayMode?: string;    // "name" | "logo" | "both"
         companyLogoPath?: string;      // Path to uploaded logo image
+
+        // Certificate Typography & Font Sizes (pt)
+        titleFontSize?: number;
+        tableHeaderFontSize?: number;
+        contentFontSize?: number;
+        labelFontSize?: number;
+        valueFontSize?: number;
+        signatureFontSize?: number;
+
+        // Signature Dimensions & Table Spacing (pt)
+        signatureImageWidth?: number;
+        signatureImageHeight?: number;
+        tableGap?: number;
     };
 
     @Column({ type: "jsonb", nullable: true })
@@ -101,11 +122,28 @@ export class Setting {
     @Column({ type: "integer", default: 15, nullable: true })
     dueReminderThresholdDays: number;
 
+    @Column({ type: "varchar", length: 10, default: "09:00", nullable: true })
+    reminderDispatchTime: string;
+
+    @Column({ type: "varchar", length: 20, nullable: true })
+    lastReminderSentDate: string;
+
     @Column({ type: "jsonb", nullable: true })
     summaryReportConfig: {
         enabled: boolean;
         frequency: string; // 'daily' | 'weekly' | 'monthly'
         managementRecipients?: string[];
     };
+
+    @Column({ type: "jsonb", nullable: true })
+    aiConfig: {
+        apiKey?: string;
+        defaultModel?: string;
+        enabled?: boolean;
+        floatingBotEnabled?: boolean;
+    };
+
+    @Column({ type: "jsonb", nullable: true, default: () => "'[]'" })
+    customInstrumentStatuses: string[];
 }
 

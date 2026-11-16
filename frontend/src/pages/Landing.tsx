@@ -46,7 +46,8 @@ import {
   Mail,
 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
+import { useAuth } from "@/lib/auth";
 
 // Import generated images
 import dashboardPreview from "@/assets/dashboard-preview.png";
@@ -54,6 +55,7 @@ import heroInstruments from "@/assets/hero-instruments.jpg";
 import abstractBg from "@/assets/abstract-bg.jpg";
 
 export default function Index() {
+  const { user, token, loading, isNewCustomer, inspectedCompany } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [plantCount, setPlantCount] = useState<number>(1);
   const [demoModalOpen, setDemoModalOpen] = useState(false);
@@ -308,6 +310,17 @@ export default function Index() {
     "AUTOEQUIP",
     "NEXUS MFG",
   ];
+
+  // If user is already authenticated, redirect to app
+  if (!loading && token && user) {
+    if (user.isSuperAdmin) {
+      return <Navigate to={inspectedCompany ? "/dashboard" : "/super-admin/companies"} replace />;
+    }
+    if (isNewCustomer) {
+      return <Navigate to="/onboarding" replace />;
+    }
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground overflow-x-hidden">
