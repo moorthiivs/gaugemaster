@@ -21,7 +21,7 @@ import { CalibrationAuditLog } from './calibration-audit-log.entity';
  * Includes calibration data points, reference standard info,
  * environmental conditions, verdict, and certificate/ULR numbers.
  */
-@Index(['companyId', 'certificate_number'], {
+@Index('idx_calibrations_company_cert_unique', ['companyId', 'certificate_number'], {
   unique: true,
   where: '"deleted_at" IS NULL AND "certificate_number" IS NOT NULL',
 })
