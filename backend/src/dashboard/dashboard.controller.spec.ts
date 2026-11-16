@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { DashboardController } from './dashboard.controller';
 import { DashboardService } from './dashboard.service';
+import { User } from '../users/user.entity';
+import { createMockRepository } from '../../test/utils/repository.mock';
 
 describe('DashboardController', () => {
   let controller: DashboardController;
@@ -15,6 +18,10 @@ describe('DashboardController', () => {
             fetchDashboard: jest.fn(),
             fetchList: jest.fn(),
           },
+        },
+        {
+          provide: getRepositoryToken(User),
+          useValue: createMockRepository(),
         },
       ],
     }).compile();
