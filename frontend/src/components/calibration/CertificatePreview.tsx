@@ -13,6 +13,21 @@ import { getCoveredCells } from "@/lib/tableSpanUtils";
 import { computeHeaderGroups, computeMatrix2DGrid, normalizeMatrixCell, getMatrixTotalCols, normalizeMatrixTableGeometry } from "@/lib/matrixTableUtils";
 import { resolveCertificateCellValue } from "@/lib/cellValueResolver";
 import { evaluateFormulaExpression, buildRowContext } from "@/lib/formulaEngine";
+import {
+  CertificatePageSlice,
+  calculatePageSlices,
+  getBlocksForPage,
+  paginateCanvasBlocks,
+  countCanvasDataRows,
+} from "@/lib/certificatePagination";
+
+export {
+  calculatePageSlices,
+  getBlocksForPage,
+  paginateCanvasBlocks,
+  countCanvasDataRows,
+};
+export type { CertificatePageSlice };
 
 export function formatUncertainty(val?: string | null, unit?: string): string {
   if (!val || !val.trim()) return "";
@@ -624,7 +639,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                         }
 
                         if (isPointNo) {
-                          val = row.point_number ?? row[col.id] ?? (rIdx + 1);
+                          val = row.point_number ?? row[col.id] ?? ((tbl.__rowIndexOffset || 0) + rIdx + 1);
                           return (
                             <td
                               key={col.id}
@@ -644,7 +659,7 @@ export function CanvasBlocksRenderer({ blocks, isScreen = false }: CanvasBlocksR
                           tableDecimals: colDec,
                           evalFormula: (f: string, r: any, tol: number, d: number) =>
                             evalCanvasFormula(f, r, tol, d, col, tbl.columns || []),
-                          rowIndex: rIdx,
+                          rowIndex: (tbl.__rowIndexOffset || 0) + rIdx,
                         });
 
                         return (
@@ -986,190 +1001,6 @@ let memoryCertConfigCache: any = null;
 let memorySignatoriesCache: any[] | null = null;
 let isFetchingCertConfig = false;
 let isFetchingSignatories = false;
-
-export interface CertificatePageSlice {
-  pageIndex: number;
-  sheetNumber: number;
-  start: number;
-  end: number;
-  isFirst: boolean;
-  isLast: boolean;
-}
-
-export function calculatePageSlices(totalDataRows: number, hasDiagram: boolean = false): CertificatePageSlice[] {
-  if (totalDataRows <= 0) {
-    return [{ pageIndex: 0, sheetNumber: 1, start: 0, end: 0, isFirst: true, isLast: true }];
-  }
-
-  // Page 1 single-page capacity: fits all header metadata, DUC, env, traceability, table, uncertainty, remarks, and signatures.
-  const singleCapacity = hasDiagram ? 14 : 26;
-  if (totalDataRows <= singleCapacity) {
-    return [{
-      pageIndex: 0,
-      sheetNumber: 1,
-      start: 0,
-      end: totalDataRows,
-      isFirst: true,
-      isLast: true,
-    }];
-  }
-
-  // Multi-page capacities:
-  // Sheet 1: has full header, metadata, DUC, procedure & env, traceability, diagram, and continuation note.
-  const p1Capacity = hasDiagram ? 24 : 37;
-  // Intermediate sheets (2 to N-1): only continuation header banner and 1-row metadata bar.
-  const continuationCapacity = 50;
-  // Final sheet: continuation header, 1-row metadata bar, plus uncertainty, remarks, and 3 signatures.
-  const finalSheetCapacity = 36;
-
-  // 2-page range: fits within Sheet 1 + Final Sheet (up to 73 rows without diagram)
-  if (totalDataRows <= p1Capacity + finalSheetCapacity) {
-    const s1 = totalDataRows <= p1Capacity + 12
-      ? Math.ceil(totalDataRows / 2)
-      : Math.min(p1Capacity, totalDataRows - 15);
-    return [
-      { pageIndex: 0, sheetNumber: 1, start: 0, end: s1, isFirst: true, isLast: false },
-      { pageIndex: 1, sheetNumber: 2, start: s1, end: totalDataRows, isFirst: false, isLast: true },
-    ];
-  }
-
-  const slices: CertificatePageSlice[] = [];
-  let currentStart = 0;
-  let remaining = totalDataRows;
-
-  // Sheet 1
-  const p1Count = Math.min(remaining, p1Capacity);
-  slices.push({
-    pageIndex: 0,
-    sheetNumber: 1,
-    start: currentStart,
-    end: currentStart + p1Count,
-    isFirst: true,
-    isLast: false,
-  });
-  currentStart += p1Count;
-  remaining -= p1Count;
-
-  // Intermediate sheets
-  while (remaining > finalSheetCapacity) {
-    if (remaining <= finalSheetCapacity + 14) {
-      const half = Math.ceil(remaining / 2);
-      slices.push({
-        pageIndex: slices.length,
-        sheetNumber: slices.length + 1,
-        start: currentStart,
-        end: currentStart + half,
-        isFirst: false,
-        isLast: false,
-      });
-      currentStart += half;
-      remaining -= half;
-      break;
-    }
-
-    const pCount = Math.min(remaining, continuationCapacity);
-    const remainingAfter = remaining - pCount;
-    if (remainingAfter > 0 && remainingAfter < 10) {
-      const balanced = Math.ceil(remaining / 2);
-      slices.push({
-        pageIndex: slices.length,
-        sheetNumber: slices.length + 1,
-        start: currentStart,
-        end: currentStart + balanced,
-        isFirst: false,
-        isLast: false,
-      });
-      currentStart += balanced;
-      remaining -= balanced;
-      break;
-    }
-
-    slices.push({
-      pageIndex: slices.length,
-      sheetNumber: slices.length + 1,
-      start: currentStart,
-      end: currentStart + pCount,
-      isFirst: false,
-      isLast: false,
-    });
-    currentStart += pCount;
-    remaining -= pCount;
-  }
-
-  // Final sheet
-  if (remaining > 0) {
-    slices.push({
-      pageIndex: slices.length,
-      sheetNumber: slices.length + 1,
-      start: currentStart,
-      end: totalDataRows,
-      isFirst: false,
-      isLast: true,
-    });
-  } else if (slices.length > 0) {
-    slices[slices.length - 1].isLast = true;
-  }
-
-  return slices;
-}
-
-export function getBlocksForPage(
-  blocks: any[] | undefined,
-  slice: CertificatePageSlice
-): any[] | undefined {
-  if (!blocks || !Array.isArray(blocks) || blocks.length === 0) return undefined;
-
-  return blocks
-    .map((block) => {
-      if (
-        (block.type === "table_grid" ||
-          block.type === "table" ||
-          block.type === "matrix_table" ||
-          Array.isArray(block.rows)) &&
-        block.rows
-      ) {
-        return {
-          ...block,
-          rows: block.rows.slice(slice.start, slice.end),
-        };
-      }
-
-      if (block.type === "split_row" && Array.isArray(block.children)) {
-        return {
-          ...block,
-          children: block.children.map((child: any) => {
-            if (
-              child &&
-              (child.type === "table_grid" ||
-                child.type === "table" ||
-                child.type === "matrix_table" ||
-                Array.isArray(child.rows)) &&
-              child.rows
-            ) {
-              return {
-                ...child,
-                rows: child.rows.slice(slice.start, slice.end),
-              };
-            }
-            if ((child?.type === "diagram_block" || child?.type === "diagram") && !slice.isFirst) {
-              return { type: "blank" };
-            }
-            return child;
-          }),
-        };
-      }
-
-      if ((block.type === "diagram" || block.type === "diagram_block") && !slice.isFirst) {
-        return null;
-      }
-      if (block.type === "notes" && !slice.isLast) {
-        return null;
-      }
-
-      return block;
-    })
-    .filter(Boolean);
-}
 
 /**
  * Live HTML preview matching standard NABL calibration certificate layout.
@@ -1728,17 +1559,14 @@ export function CertificatePreview({
     );
   };
 
+  const hasCanvasLayout = Boolean(layoutBlocks && Array.isArray(layoutBlocks) && layoutBlocks.length > 0);
+
   const totalDataRows = useMemo(() => {
-    if (layoutBlocks && Array.isArray(layoutBlocks) && layoutBlocks.length > 0) {
-      const tableBlock = layoutBlocks.find(
-        (b: any) => b && (b.type === "table_grid" || b.type === "table" || (Array.isArray(b.rows) && b.rows.length > 0))
-      );
-      if (tableBlock && Array.isArray(tableBlock.rows)) {
-        return tableBlock.rows.length;
-      }
+    if (hasCanvasLayout) {
+      return countCanvasDataRows(layoutBlocks);
     }
     return points.length;
-  }, [layoutBlocks, points]);
+  }, [hasCanvasLayout, layoutBlocks, points]);
 
   const hasDiagram = useMemo(() => {
     const diag =
@@ -1761,8 +1589,11 @@ export function CertificatePreview({
   }, [calibration]);
 
   const pageSlices = useMemo(() => {
+    if (hasCanvasLayout) {
+      return paginateCanvasBlocks(layoutBlocks, hasDiagram);
+    }
     return calculatePageSlices(totalDataRows, hasDiagram);
-  }, [totalDataRows, hasDiagram]);
+  }, [hasCanvasLayout, layoutBlocks, totalDataRows, hasDiagram]);
 
   const totalPages = pageSlices.length;
   const isCompact = totalDataRows > 7;
